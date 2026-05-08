@@ -149,7 +149,7 @@ namespace MozaPlugin.Devices
             frame[3] = MozaProtocol.DeviceAb9;
             if (payload != null)
                 System.Buffer.BlockCopy(payload, 0, frame, 4, payloadLen);
-            frame[frame.Length - 1] = MozaProtocol.CalculateWireChecksum(frame);
+            frame[frame.Length - 1] = MozaProtocol.CalculateWireChecksum(frame, frame.Length - 1);
             _connection.Send(frame);
         }
 

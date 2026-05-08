@@ -149,6 +149,13 @@ namespace MozaPlugin
         public MozaFirmwareEra TelemetryFirmwareEra { get; set; }
             = MozaFirmwareEra.Auto;
 
+        // Greenfield telemetry pipeline toggle (Phase 5 of the refactor).
+        // false → existing Telemetry/TelemetrySender path.
+        // true (default for Phase 7 live testing) → new Telemetry2/MozaTelemetryHost path.
+        // Byte-diff verified against PitHouse captures for tier-def emission and structurally
+        // fixes the dashboard-switch bug. Flip to false here when reverting to old pipeline.
+        public bool UseNewTelemetryPipeline { get; set; } = false;
+
         // Telemetry send rate in Hz
         public int TelemetrySendRateHz { get; set; } = 20;
 

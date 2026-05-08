@@ -1,24 +1,37 @@
 using System;
 using System.Collections.Generic;
 using System.Linq;
+using MozaPlugin.Telemetry2;
 
 namespace MozaPlugin.Telemetry
 {
     /// <summary>
-    /// Single-switch auto test harness. Flow:
-    ///   1. Wait for initial subscription to settle.
+    /// Single-switch auto test harness driven by <see cref="IMozaTelemetry"/>.
+    /// Pipeline-agnostic: identical flow runs against the old TelemetrySender and
+    /// the new MozaTelemetryHost so wire-trace diffs use the same trigger shape.
+    ///
+    /// Flow:
+    ///   1. Wait for initial subscription to settle (SubscriptionGen ≥ 1).
     ///   2. Enable TestMode for <see cref="PreSwitchTestMs"/> — captures the
     ///      starting dashboard's wire-level test pattern as baseline.
-    ///   3. Determine target slot: opposite of the persisted
-    ///      <see cref="MozaPluginSettings.AutoTestLastSlot"/>. Defaults to
-    ///      slot 1 (alphabetical second dash) if no persisted state.
-    ///   4. SendDashboardSwitch + wait for renegotiate.
-    ///   5. TestMode for <see cref="PostSwitchTestMs"/> on the new dashboard.
-    ///   6. Persist the new slot, finish.
+    ///   3. Determine target slot: ALWAYS slot 1 (alphabetical second dash) when
+    ///      starting on slot 0, else slot 0. Deterministic for v1↔v2 wire-diff
+    ///      comparisons. Old behavior (alternating direction across runs) was
+    ///      removed because identical inputs are required for byte-exact diffs.
+    ///   4. Resolve target profile via callback, then call SwitchToProfile
+    ///      atomically (no race with a separate Profile-set + SendDashboardSwitch).
+    ///   5. Wait for SubscriptionGen to bump (or timeout).
+    ///   6. TestMode for <see cref="PostSwitchTestMs"/> on the new dashboard.
+    ///   7. Finish.
     ///
-    /// On each launch the test alternates direction so debugging captures
-    /// cover both A→B and B→A switch behavior across runs.
-    /// Triggered by <see cref="MozaPluginSettings.EnableAutoTestOnConnect"/>.
+    /// At every state transition we inject a phase-marker frame on the wire
+    /// (grp=0x55 dev=0x55 cmd="MK" + phase id) via
+    /// <see cref="IMozaTelemetry.SendPhaseMarker(byte)"/>. The wheel ignores it;
+    /// the frame appears in the moza-wire-*.jsonl trace so the v1↔v2 diff tool
+    /// can align both runs by phase boundary.
+    ///
+    /// <see cref="Reset"/> re-arms the harness for another run without reconstruction.
+    /// Triggered by <see cref="UI.MozaPluginSettings.EnableAutoTestOnConnect"/>.
     /// </summary>
     internal sealed class DashboardSwitchAutoTest
     {
@@ -28,7 +41,29 @@ namespace MozaPlugin.Telemetry
             PostSwitchTest, Done,
         }
 
-        private readonly TelemetrySender _sender;
+        // Phase ids written to wire trace via IMozaTelemetry.SendPhaseMarker.
+        // Stable values so the diff tool (sim/diff_v1_v2.py) can search for them.
+        private const byte PhaseEnterIdle           = 0x10;
+        private const byte PhaseEnterPreSwitchTest  = 0x11;
+        private const byte PhaseEnterSwitchPending  = 0x12;
+        private const byte PhaseEnterWaitRenegotiate= 0x13;
+        private const byte PhaseEnterPostSwitchTest = 0x14;
+        private const byte PhaseEnterDone           = 0x1F;
+
+        // Resolves a dashboard name to its parsed MultiStreamProfile. Implemented
+        // by the host (MozaPlugin) since profile parsing involves the cache + builtins.
+        public delegate MultiStreamProfile? ProfileResolver(string dashName);
+        // Returns the dashboard cache (nullable) for the fallback dash-list path.
+        public delegate Telemetry.DashboardCache? DashCacheResolver();
+        // Called when the auto-test settles on a target — used to persist the
+        // user-visible TelemetryProfileName so the UI reflects what the auto-test did.
+        public delegate void TargetChosenCallback(string dashName);
+
+        private readonly IMozaTelemetry _telemetry;
+        private readonly ProfileResolver _resolveProfile;
+        private readonly DashCacheResolver _resolveDashCache;
+        private readonly TargetChosenCallback? _onTargetChosen;
+
         private State _state = State.Idle;
         private int _elapsedMs;
         private int _targetSlot = -1;
@@ -38,14 +73,37 @@ namespace MozaPlugin.Telemetry
         private IReadOnlyList<string>? _dashList;
 
         private const int IdleTimeoutMs = 30000;
-        private const int PreSwitchTestMs = 6000;
+        private const int PreSwitchTestMs = 5000;
         private const int RenegotiateTimeoutMs = 10000;
-        private const int PostSwitchTestMs = 6000;
+        private const int PostSwitchTestMs = 5000;
 
-        public DashboardSwitchAutoTest(TelemetrySender sender)
+        public DashboardSwitchAutoTest(
+            IMozaTelemetry telemetry,
+            ProfileResolver resolveProfile,
+            DashCacheResolver resolveDashCache,
+            TargetChosenCallback? onTargetChosen = null)
         {
-            _sender = sender;
+            _telemetry = telemetry ?? throw new ArgumentNullException(nameof(telemetry));
+            _resolveProfile = resolveProfile ?? throw new ArgumentNullException(nameof(resolveProfile));
+            _resolveDashCache = resolveDashCache ?? throw new ArgumentNullException(nameof(resolveDashCache));
+            _onTargetChosen = onTargetChosen;
         }
+
+        // Re-arm the harness so the next Tick runs a fresh single-switch sequence
+        // against the currently-active dashboard. Useful when a caller wants
+        // multiple switches per session for repeated wire-trace captures.
+        public void Reset()
+        {
+            _state = State.Idle;
+            _elapsedMs = 0;
+            _targetSlot = -1;
+            _startSlot = -1;
+            _prevSubscriptionGen = 0;
+            _framesAtPhaseStart = 0;
+            _dashList = null;
+        }
+
+        public bool IsDone => _state == State.Done;
 
         public void Tick(int tickMs)
         {
@@ -63,14 +121,13 @@ namespace MozaPlugin.Telemetry
 
         private void TickIdle()
         {
-            int gen = _sender.SubscriptionGen;
+            int gen = _telemetry.SubscriptionGen;
             if (gen == 0) return; // wait for first subscription
 
-            // Resolve dash list from wheel state, fall back to cache sorted.
-            _dashList = _sender.WheelState?.ConfigJsonList;
+            _dashList = _telemetry.WheelReportedDashboards;
             if (_dashList == null || _dashList.Count < 2)
             {
-                var cache = _sender.DashCache;
+                var cache = _resolveDashCache();
                 if (cache != null)
                 {
                     var sorted = cache.CachedNames
@@ -90,13 +147,8 @@ namespace MozaPlugin.Telemetry
                 return;
             }
 
-            // Pick target slot opposite of last run's slot. First run picks 1.
-            int lastSlot = MozaPlugin.Instance?.Settings?.AutoTestLastSlot ?? -1;
-            _targetSlot = lastSlot == 0 ? 1 : 0;
-            if (_targetSlot >= _dashList.Count) _targetSlot = 0;
-
             // Resolve current slot from active profile name (best effort).
-            string currentName = _sender.ActiveProfileName ?? "";
+            string currentName = _telemetry.ActiveProfileName ?? "";
             _startSlot = -1;
             for (int i = 0; i < _dashList.Count; i++)
             {
@@ -108,18 +160,27 @@ namespace MozaPlugin.Telemetry
                 }
             }
 
-            // If we're already on the target, flip to the other.
+            // Deterministic target slot for v1↔v2 wire-diff comparisons:
+            //   start on slot 0 → switch to slot 1
+            //   start on any other slot → switch to slot 0
+            // Identical input across both pipeline runs is required for the
+            // byte-level diff to be meaningful. Old alternation logic removed.
+            _targetSlot = (_startSlot == 0) ? 1 : 0;
+            if (_targetSlot >= _dashList.Count) _targetSlot = 0;
             if (_startSlot == _targetSlot)
                 _targetSlot = (_targetSlot + 1) % _dashList.Count;
 
             _prevSubscriptionGen = gen;
-            _framesAtPhaseStart = _sender.FramesSent;
-            _sender.TestMode = true;
+            _framesAtPhaseStart = _telemetry.FramesSent;
+            _telemetry.TestMode = true;
             _elapsedMs = 0;
 
             string startName = _startSlot >= 0 && _startSlot < _dashList.Count
                 ? _dashList[_startSlot] : currentName;
             string targetName = _dashList[_targetSlot];
+            // Emit phase marker BEFORE setting TestMode so the diff tool sees
+            // the marker as the first frame of the PreSwitchTest window.
+            _telemetry.SendPhaseMarker(PhaseEnterPreSwitchTest);
             Transition(State.PreSwitchTest,
                 $"start=\"{startName}\"(slot={_startSlot}) " +
                 $"target=\"{targetName}\"(slot={_targetSlot}) " +
@@ -130,14 +191,16 @@ namespace MozaPlugin.Telemetry
         {
             if (_elapsedMs < PreSwitchTestMs) return;
 
-            int frames = _sender.FramesSent - _framesAtPhaseStart;
+            int frames = _telemetry.FramesSent - _framesAtPhaseStart;
             string startName = _startSlot >= 0 && _dashList != null && _startSlot < _dashList.Count
                 ? _dashList[_startSlot] : "?";
             MozaLog.Debug(
                 $"[Moza] AUTO-TEST: pre-switch test done dash=\"{startName}\" " +
                 $"frames={frames} {(frames > 0 ? "PASS" : "FAIL")}");
 
+            _telemetry.TestMode = false;
             _elapsedMs = 0;
+            _telemetry.SendPhaseMarker(PhaseEnterSwitchPending);
             _state = State.SwitchPending;
         }
 
@@ -146,38 +209,39 @@ namespace MozaPlugin.Telemetry
             if (_dashList == null) { _state = State.Done; return; }
             string targetName = _dashList[_targetSlot];
 
-            var plugin = MozaPlugin.Instance;
-            if (plugin != null)
-            {
-                plugin.Settings.TelemetryProfileName = targetName;
-                plugin.Settings.TelemetryMzdashPath = "";
-                plugin.ApplyTelemetrySettings();
-            }
+            // Resolve the target profile WITHOUT going through the plugin's
+            // ApplyTelemetrySettings path — that would set Profile on the host
+            // synchronously, queueing a tier-def for the new dash before the
+            // wheel has accepted the slot change. SwitchToProfile threads the
+            // profile through the renegotiate state machine atomically.
+            var profile = _resolveProfile(targetName);
+            _onTargetChosen?.Invoke(targetName);
 
-            // Capture gen BEFORE the switch — SendDashboardSwitch now emits
-            // tier-def synchronously and bumps SubscriptionGen in the same
-            // call, so reading gen after the call would skip the increment.
-            _prevSubscriptionGen = _sender.SubscriptionGen;
-            _sender.SendDashboardSwitch((uint)_targetSlot);
+            _prevSubscriptionGen = _telemetry.SubscriptionGen;
+            // Marker BEFORE SwitchToProfile so the kind=4 emission is bracketed
+            // by the marker → next-phase-marker pair in the wire trace.
+            _telemetry.SendPhaseMarker(PhaseEnterWaitRenegotiate);
+            _telemetry.SwitchToProfile((uint)_targetSlot, profile);
             _elapsedMs = 0;
             Transition(State.WaitRenegotiate,
-                $"target=\"{targetName}\"(slot={_targetSlot})");
+                $"target=\"{targetName}\"(slot={_targetSlot}) " +
+                $"resolvedProfile={(profile != null ? "yes" : "no")}");
         }
 
         private void TickWaitRenegotiate()
         {
-            int gen = _sender.SubscriptionGen;
+            int gen = _telemetry.SubscriptionGen;
             if (gen != _prevSubscriptionGen)
             {
                 _prevSubscriptionGen = gen;
-                _framesAtPhaseStart = _sender.FramesSent;
+                _framesAtPhaseStart = _telemetry.FramesSent;
+                _telemetry.TestMode = true;
                 _elapsedMs = 0;
                 string targetName = _dashList?[_targetSlot] ?? "?";
+                _telemetry.SendPhaseMarker(PhaseEnterPostSwitchTest);
                 Transition(State.PostSwitchTest,
                     $"target=\"{targetName}\"(slot={_targetSlot}) " +
-                    $"subGen={gen} " +
-                    $"tiers={_sender.ActiveTierCount} " +
-                    $"catalog={_sender.CatalogChannelCount}");
+                    $"subGen={gen}");
                 return;
             }
 
@@ -194,7 +258,7 @@ namespace MozaPlugin.Telemetry
         {
             if (_elapsedMs < PostSwitchTestMs) return;
 
-            int frames = _sender.FramesSent - _framesAtPhaseStart;
+            int frames = _telemetry.FramesSent - _framesAtPhaseStart;
             string targetName = _dashList?[_targetSlot] ?? "?";
             bool ok = frames > 0;
             MozaLog.Debug(
@@ -206,19 +270,10 @@ namespace MozaPlugin.Telemetry
 
         private void Finish(bool persistTarget)
         {
-            _sender.TestMode = false;
-            if (persistTarget && _targetSlot >= 0)
-            {
-                var plugin = MozaPlugin.Instance;
-                if (plugin?.Settings != null)
-                {
-                    plugin.Settings.AutoTestLastSlot = _targetSlot;
-                    plugin.SaveSettings();
-                    MozaLog.Debug(
-                        $"[Moza] AUTO-TEST: persisted AutoTestLastSlot={_targetSlot} " +
-                        "(next run will switch the other direction)");
-                }
-            }
+            _telemetry.TestMode = false;
+            _telemetry.SendPhaseMarker(PhaseEnterDone);
+            // AutoTestLastSlot persistence intentionally removed — deterministic
+            // target slot makes alternation irrelevant for wire-diff captures.
             MozaLog.Debug("[Moza] AUTO-TEST: state=DONE");
             _state = State.Done;
         }

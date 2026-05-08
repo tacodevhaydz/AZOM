@@ -134,6 +134,9 @@ namespace MozaPlugin.Telemetry
             // ── Phase 1: Claim session 0x0B and request FT device-init ─────
             // Claim 0x0B through the dispatcher so we get exclusive routing.
             // This evicts the tile-server parser from 0x0B during download.
+            _sessionOpened.Reset();
+            _downloadComplete.Reset();
+            _ackReceived.Reset();
             _dispatcher.Claim(0x0B, this);
             MozaLog.Debug("[Moza] DashboardDownloader: claimed session 0x0B, sending FT activate...");
             SendFileTransferActivate(0x0B);
@@ -347,9 +350,8 @@ namespace MozaPlugin.Telemetry
             string localAppData = Environment.GetFolderPath(
                 Environment.SpecialFolder.LocalApplicationData).Replace('\\', '/');
 
-            // DIAGNOSTIC: hardcode PH's exact local path prefix to isolate content.
-            string localBase = "C:/Users/giant/AppData/Local/MOZA Pit House/_dashes/8ae5d086b2fcad7486dbe208";
-            string imageBase = "C:/Users/giant/AppData/Local/MOZA Pit House/_dashes";
+            string localBase = $"{localAppData}/MOZA Pit House/_dashes/8ae5d086b2fcad7486dbe208";
+            string imageBase = $"{localAppData}/MOZA Pit House/_dashes";
 
             // Collect all files (dashboards + images)
             var files = new List<(string remotePath, string localPath, string md5Hex)>();
@@ -433,7 +435,9 @@ namespace MozaPlugin.Telemetry
                 0x53, 0xe7, 0x60, 0x2c, 0xc9, 0x60, 0x8a, 0xae
             };
             string md5Hex = FileTransferBuilder.Md5Hex(sessionMd5);
-            string localTempPath = $"C:/Users/giant/_moza_filetransfer_md5_{md5Hex}";
+            string userProfile = Environment.GetFolderPath(
+                Environment.SpecialFolder.UserProfile).Replace('\\', '/');
+            string localTempPath = $"{userProfile}/_moza_filetransfer_md5_{md5Hex}";
             string remoteStagingPath = $"/tmp/_moza_filetransfer_tmp_{timestampMs}";
             uint tokenValue = 0x0005203d;
 

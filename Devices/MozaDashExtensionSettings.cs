@@ -77,6 +77,7 @@ namespace MozaPlugin.Devices
             if (DashRpmDisplayMode >= 0) data.DashRpmDisplayMode = DashRpmDisplayMode;
 
             MozaProfile.UnpackColorsInto(DashRpmColors, data.DashRpmColors);
+            MozaProfile.UnpackColorsInto(DashRpmBlinkColors, data.DashRpmBlinkColors);
             MozaProfile.UnpackColorsInto(DashFlagColors, data.DashFlagColors);
         }
     }

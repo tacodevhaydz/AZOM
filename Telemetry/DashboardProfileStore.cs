@@ -6,6 +6,7 @@ using System.Reflection;
 using System.Security.Cryptography;
 using System.Text;
 using System.Text.RegularExpressions;
+using MozaPlugin.Telemetry2.Protocol;
 using Newtonsoft.Json.Linq;
 
 namespace MozaPlugin.Telemetry
@@ -15,7 +16,7 @@ namespace MozaPlugin.Telemetry
     /// </summary>
     public class DashboardProfileStore
     {
-        private Dictionary<string, TelemetryChannelInfo>? _telemetryMap;
+        private volatile Dictionary<string, TelemetryChannelInfo>? _telemetryMap;
         private volatile List<MultiStreamProfile>? _builtinProfiles;
         private readonly object _builtinLock = new object();
 
@@ -70,7 +71,7 @@ namespace MozaPlugin.Telemetry
                 if (telemetryMap.TryGetValue(url, out var info))
                 {
                     packageLevel = info.PackageLevel;
-                    int bitWidth = BitWidthForCompression(info.Compression);
+                    int bitWidth = CompressionTable.TryGetByName(info.Compression, out var ct) ? ct.BitWidth : 32;
                     double scale = info.SimHubPropertyScale == 0 ? 1.0 : info.SimHubPropertyScale;
                     ch = new ChannelDefinition
                     {
@@ -90,7 +91,7 @@ namespace MozaPlugin.Telemetry
                     // only. No SimHubField / property mapping (those live in
                     // Telemetry.json now); user can manually map via UI.
                     string compression = PickCompressionForUrl(suffix);
-                    int bitWidth = BitWidthForCompression(compression);
+                    int bitWidth = CompressionTable.TryGetByName(compression, out var ct2) ? ct2.BitWidth : 32;
                     packageLevel = 30;
                     ch = new ChannelDefinition
                     {
@@ -204,38 +205,7 @@ namespace MozaPlugin.Telemetry
             return "float";
         }
 
-        private static int BitWidthForCompression(string compression)
-        {
-            switch (compression)
-            {
-                case "bool":            return 1;
-                case "uint3":           return 3;
-                case "int30":
-                case "uint30":
-                case "uint31":          return 5;
-                case "uint8":
-                case "uint8_t":
-                case "int8_t":          return 8;
-                case "uint16_t":
-                case "int16_t":
-                case "float_6000_1":
-                case "float_600_2":
-                case "tyre_pressure_1":
-                case "tyre_temp_1":
-                case "track_temp_1":
-                case "oil_pressure_1":
-                case "brake_temp_1":
-                case "percent_1":       return 16;
-                case "uint24_t":        return 24;
-                case "uint32_t":
-                case "int32_t":
-                case "float":           return 32;
-                case "double":
-                case "uint64_t":
-                case "int64_t":         return 64;
-                default:                return 32;
-            }
-        }
+
 
         public IReadOnlyList<MultiStreamProfile> BuiltinProfiles
         {
@@ -416,8 +386,7 @@ namespace MozaPlugin.Telemetry
                             if (telemetryMap.TryGetValue(url, out var info))
                             {
                                 compression = info.Compression;
-                                if (!TelemetryEncoder.BitWidths.TryGetValue(compression, out bitWidth))
-                                    bitWidth = 32;
+                                bitWidth = CompressionTable.TryGetByName(compression, out var ct3) ? ct3.BitWidth : 32;
                                 field = info.Field;
                                 property = info.SimHubProperty ?? "";
                                 level = info.PackageLevel;
@@ -427,7 +396,7 @@ namespace MozaPlugin.Telemetry
                             else
                             {
                                 compression = PickCompressionForUrl(suffix);
-                                bitWidth = BitWidthForCompression(compression);
+                                bitWidth = CompressionTable.TryGetByName(compression, out var ct4) ? ct4.BitWidth : 32;
                             }
                             // Tier's package_level = fastest (lowest) of its
                             // channels — drives plugin tick scheduling.
@@ -566,8 +535,9 @@ namespace MozaPlugin.Telemetry
                 if (!map.TryGetValue(url, out var info))
                     continue;
 
-                if (!TelemetryEncoder.BitWidths.TryGetValue(info.Compression, out int bits))
+                if (!CompressionTable.TryGetByName(info.Compression, out var ct5))
                     continue;
+                int bits = ct5.BitWidth;
 
                 int level = info.PackageLevel;
                 if (!byLevel.ContainsKey(level))
@@ -620,9 +590,13 @@ namespace MozaPlugin.Telemetry
 
         private Dictionary<string, TelemetryChannelInfo> GetTelemetryMap()
         {
-            if (_telemetryMap == null)
-                _telemetryMap = LoadTelemetryJson();
-            return _telemetryMap;
+            var map = _telemetryMap;
+            if (map == null)
+            {
+                map = LoadTelemetryJson();
+                _telemetryMap = map;
+            }
+            return map;
         }
 
         private Dictionary<string, TelemetryChannelInfo> LoadTelemetryJson()

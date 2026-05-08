@@ -69,16 +69,14 @@ namespace MozaPlugin.Devices
 
         private void OnRefreshTick(object? sender, EventArgs e) => RefreshWheel();
 
-        private void OnLoaded(object sender, RoutedEventArgs e) => _refreshTimer.Start();
+        private void OnLoaded(object sender, RoutedEventArgs e)
+        {
+            if (!_refreshTimer.IsEnabled) _refreshTimer.Start();
+        }
 
         private void OnUnloaded(object sender, RoutedEventArgs e)
         {
-            // Stop the timer AND detach the Tick handler so the dispatcher's
-            // internal timer list cannot keep this control alive past unload.
             _refreshTimer.Stop();
-            _refreshTimer.Tick -= OnRefreshTick;
-            Loaded -= OnLoaded;
-            Unloaded -= OnUnloaded;
         }
 
         private bool ResolvePlugin()
@@ -762,7 +760,7 @@ namespace MozaPlugin.Devices
             {
                 TelemetryProfileCombo.Items.Clear();
 
-                var state = _plugin.TelemetrySender?.WheelState;
+                var state = _plugin.WheelStateForDiagnostics;
                 if (state != null && state.ConfigJsonList.Count > 0)
                 {
                     // Wheel-reported dashboards in configJsonList order
@@ -818,11 +816,9 @@ namespace MozaPlugin.Devices
         private void RefreshTelemetryStatus()
         {
             if (_plugin == null) return;
-            var sender = _plugin.TelemetrySender;
-            if (sender == null) return;
 
             // Re-populate dropdown once when wheel state first becomes available.
-            var state = sender.WheelState;
+            var state = _plugin.WheelStateForDiagnostics;
             if (!_dashComboFromWheelState && state != null && state.ConfigJsonList.Count > 0)
             {
                 _dashComboFromWheelState = true;
@@ -830,17 +826,20 @@ namespace MozaPlugin.Devices
             }
 
             bool enabled = _plugin.Settings.TelemetryEnabled;
-            bool testMode = sender.TestMode;
+            // Both pipelines implement IMozaTelemetry.TestMode now.
+            var active = _plugin.ActiveTelemetry;
+            bool testMode = active?.TestMode ?? false;
+            int framesSent = _plugin.FramesSentForDiagnostics;
 
             if (!enabled)
                 TelemetryStatusLabel.Text = "Disabled";
             else if (testMode)
-                TelemetryStatusLabel.Text = $"Test pattern — {sender.FramesSent} frames sent";
+                TelemetryStatusLabel.Text = $"Test pattern — {framesSent} frames sent";
             else
-                TelemetryStatusLabel.Text = $"Sending — {sender.FramesSent} frames sent";
+                TelemetryStatusLabel.Text = $"Sending — {framesSent} frames sent";
 
             TelemetryTestStopBtn.IsEnabled = testMode;
-            TelemetryTestStartBtn.IsEnabled = !testMode;
+            TelemetryTestStartBtn.IsEnabled = active != null && !testMode;
 
             // Refresh profile info — auto-renegotiate may have swapped
             // the profile on a background thread after a dashboard switch.
@@ -850,7 +849,7 @@ namespace MozaPlugin.Devices
         private void UpdateTelemetryProfileInfo()
         {
             if (_plugin == null) return;
-            var profile = _plugin.TelemetrySender?.Profile;
+            var profile = _plugin.ActiveTelemetry?.Profile;
             if (profile == null || profile.Tiers.Count == 0)
             {
                 TelemetryProfileInfo.Text = "—";
@@ -915,33 +914,25 @@ namespace MozaPlugin.Devices
             if (selected == null) return;
 
             int idx = TelemetryProfileCombo.SelectedIndex;
-            var ts = _plugin.TelemetrySender;
-            var state = ts?.WheelState;
+            var active = _plugin.ActiveTelemetry;
+            var state = _plugin.WheelStateForDiagnostics;
 
             // Wheel-reported mode: dropdown is configJsonList-ordered.
             // Index IS the slot directly.
-            if (state != null && state.ConfigJsonList.Count > 0
+            if (active != null && state != null && state.ConfigJsonList.Count > 0
                 && idx >= 0 && idx < state.ConfigJsonList.Count)
             {
-                // Load the new profile BEFORE sending the switch so that
-                // SendDashboardSwitch can emit a pre-switch tier-def with
-                // the new profile's channels. PitHouse sends tier-def
-                // before FF-SWITCH in the same burst.
+                // Save the new profile name but DON'T apply it yet.
+                // Profile change (ApplyTelemetrySettings) is deferred to
+                // after the new tier-def is sent so value frames stay
+                // coherent with the old tier-def during the catalog wait.
+                // PitHouse trace: tier-def is sent AFTER FF-SWITCH, not before.
                 _plugin.Settings.TelemetryProfileName = selected;
                 _plugin.Settings.TelemetryMzdashPath = "";
                 _plugin.SaveSettings();
-                _plugin.ApplyTelemetrySettings();
 
-                ts!.SendDashboardSwitch((uint)idx);
-
-                var pluginRef = _plugin;
-                System.Threading.ThreadPool.QueueUserWorkItem(_ =>
-                {
-                    // Brief delay for FF-record to reach wheel, then
-                    // renegotiation waits for the full catalog push.
-                    System.Threading.Thread.Sleep(100);
-                    pluginRef.OnActiveDashboardChanged();
-                });
+                active.SendDashboardSwitch((uint)idx);
+                _plugin.OnDashboardSwitched();
 
                 UpdateTelemetryProfileInfo();
                 if (TelemetryMappingsExpander.IsExpanded) PopulateChannelMappingGrid();
@@ -1062,13 +1053,13 @@ namespace MozaPlugin.Devices
         private void TelemetryTestStart_Click(object sender, RoutedEventArgs e)
         {
             if (_plugin == null) return;
-            var ts = _plugin.TelemetrySender;
-            if (ts == null) return;
-            ts.TestMode = true;
+            var active = _plugin.ActiveTelemetry;
+            if (active == null) return;
+            active.TestMode = true;
             if (!_plugin.Settings.TelemetryEnabled)
             {
                 _plugin.ApplyTelemetrySettings();
-                System.Threading.ThreadPool.QueueUserWorkItem(_ => ts.Start());
+                System.Threading.ThreadPool.QueueUserWorkItem(_ => active.Start());
             }
             TelemetryTestStartBtn.IsEnabled = false;
             TelemetryTestStopBtn.IsEnabled = true;
@@ -1077,11 +1068,11 @@ namespace MozaPlugin.Devices
         private void TelemetryTestStop_Click(object sender, RoutedEventArgs e)
         {
             if (_plugin == null) return;
-            var ts = _plugin.TelemetrySender;
-            if (ts == null) return;
-            ts.TestMode = false;
+            var active = _plugin.ActiveTelemetry;
+            if (active == null) return;
+            active.TestMode = false;
             if (!_plugin.Settings.TelemetryEnabled)
-                ts.Stop();
+                active.Stop();
             TelemetryTestStartBtn.IsEnabled = true;
             TelemetryTestStopBtn.IsEnabled = false;
         }
@@ -1116,13 +1107,13 @@ namespace MozaPlugin.Devices
         private void PopulateChannelMappingGrid()
         {
             if (_plugin == null) { TelemetryChannelGrid.ItemsSource = null; return; }
-            var profile = _plugin.TelemetrySender?.Profile;
+            var profile = _plugin.ActiveTelemetry?.Profile;
             if (profile == null || profile.Tiers.Count == 0)
             {
                 // No mzdash loaded: fall back to whatever channel URLs the
                 // wheel has advertised in its catalog. Lets the user see /
                 // edit mappings even without uploading a profile.
-                var catalog = _plugin.TelemetrySender?.WheelChannelCatalog;
+                var catalog = _plugin.WheelChannelCatalogForDiagnostics;
                 if (catalog == null || catalog.Count == 0)
                 {
                     TelemetryChannelGrid.ItemsSource = null;

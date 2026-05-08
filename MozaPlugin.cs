@@ -32,7 +32,21 @@ namespace MozaPlugin
         private int _connectingFlag;
         private MozaHidReader _hidReader = null!;
         private PluginManager _pluginManager = null!;
-        private TelemetrySender _telemetrySender = null!;
+        private TelemetrySender? _telemetrySender;
+        // Greenfield Telemetry2 pipeline. Constructed in Init() when
+        // _settings.UseNewTelemetryPipeline is true; otherwise null and the old
+        // _telemetrySender path runs. Both implement IMozaTelemetry; lifecycle
+        // dispatch goes through the _activeTelemetry accessor below.
+        private global::MozaPlugin.Telemetry2.MozaTelemetryHost? _telemetryHost;
+        private global::MozaPlugin.Telemetry2.IMozaTelemetry? _activeTelemetry =>
+            (global::MozaPlugin.Telemetry2.IMozaTelemetry?)_telemetryHost ?? _telemetrySender;
+
+        // V2-side auto-test instance (pipeline-agnostic harness driven via IMozaTelemetry).
+        // The old pipeline owns its own _autoTest field on TelemetrySender; v2 carries it
+        // here because MozaTelemetryHost has no pollable internal-loop equivalent — the
+        // tick fires from MozaPlugin.DataUpdate.
+        private global::MozaPlugin.Telemetry.DashboardSwitchAutoTest? _hostAutoTest;
+        private long _hostAutoTestLastTickUtc;
         internal DashboardProfileStore DashProfileStore { get; } = new DashboardProfileStore();
         internal DashboardCache DashCache { get; private set; } = null!;
 
@@ -307,6 +321,7 @@ namespace MozaPlugin
             // Clear shutdown flag from any previous plugin instance in this process.
             // SimHub may load+unload plugins without restarting, leaving this true.
             IsShuttingDown = false;
+            Interlocked.Exchange(ref _telemetryStartRequested, 0);
             _pluginManager = pluginManager;
 
             try
@@ -414,7 +429,37 @@ namespace MozaPlugin
                 _hidReader = new MozaHidReader(_data);
                 _hidReader.Start();
 
-                _telemetrySender = new TelemetrySender(_connection);
+                if (_settings.UseNewTelemetryPipeline)
+                {
+                    Action<byte[]> send = _connection.Send;
+                    Action<int, byte[]> sendStream = (kind, frame) =>
+                        _connection.SendStream((global::MozaPlugin.Protocol.StreamKind)kind, frame);
+                    if (_settings.EnableWireTraceFileSink)
+                    {
+                        InitTelemetry2WireTrace();
+                        Action<byte[]> origSend = send;
+                        send = (frame) =>
+                        {
+                            origSend(frame);
+                            try { WriteTelemetry2WireTrace("h2b", frame); } catch { }
+                        };
+                        Action<int, byte[]> origStream = sendStream;
+                        sendStream = (kind, frame) =>
+                        {
+                            origStream(kind, frame);
+                            try { WriteTelemetry2WireTrace("h2b", frame); } catch { }
+                        };
+                    }
+                    _telemetryHost = new global::MozaPlugin.Telemetry2.MozaTelemetryHost(send: send, sendStream: sendStream);
+                    _telemetryHost.CatalogProfileBuilder = (catalog, name) =>
+                        DashProfileStore.BuildProfileFromCatalog(catalog, name);
+                    _connection.MessageReceived += OnInboundForHost;
+                    SimHub.Logging.Current.Info("[Moza] Telemetry pipeline: NEW (Telemetry2 greenfield)");
+                }
+                else
+                {
+                    _telemetrySender = new TelemetrySender(_connection);
+                }
 
                 // Initialize dashboard cache for download-on-connect.
                 string cacheDir = System.IO.Path.Combine(
@@ -424,8 +469,11 @@ namespace MozaPlugin
                 DashCache.LoadFromDisk();
                 if (!string.IsNullOrEmpty(_settings.TelemetryMzdashFolder))
                     DashCache.LoadFromFolder(_settings.TelemetryMzdashFolder);
-                _telemetrySender.DashCache = DashCache;
-                _telemetrySender.SetDownloadEnabled(_settings.TelemetryDownloadDashboard);
+                if (_telemetrySender != null)
+                {
+                    _telemetrySender.DashCache = DashCache;
+                    _telemetrySender.SetDownloadEnabled(_settings.TelemetryDownloadDashboard);
+                }
 
                 ApplyTelemetrySettings();
                 // Don't start telemetry here — defer until wheel is detected.
@@ -455,11 +503,13 @@ namespace MozaPlugin
             try { _reconnectTimer?.Stop(); } catch { }
             try { _saveDebounceTimer?.Stop(); } catch { }
             try { _telemetrySender?.Stop(); } catch { }
+            try { _telemetryHost?.Stop(); } catch { }
             try
             {
                 if (_connection != null)
                 {
                     _connection.MessageReceived -= OnMessageReceived;
+                    _connection.MessageReceived -= OnInboundForHost;
                     _connection.Disconnected -= OnSerialDisconnected;
                 }
             }
@@ -476,6 +526,7 @@ namespace MozaPlugin
             try { _deviceManager?.Dispose(); } catch { }
             try { _hidReader?.Dispose(); } catch { }
             try { _telemetrySender?.Dispose(); } catch { }
+            CloseTelemetry2WireTrace();
             try { _connection?.Dispose(); } catch { }
             try
             {
@@ -493,8 +544,45 @@ namespace MozaPlugin
         public void DataUpdate(PluginManager pluginManager, ref GameData data)
         {
             if (IsShuttingDown) return;
-            _telemetrySender?.UpdateGameData(data.NewData);
-            _telemetrySender?.SetGameRunning(data.GameRunning);
+            _activeTelemetry?.UpdateGameData(data.NewData);
+            _activeTelemetry?.SetGameRunning(data.GameRunning);
+            // Drive the new pipeline's tick — pumps tier-def emissions, heartbeat cadence,
+            // and value-frame bursts. The old TelemetrySender uses its own internal timer
+            // and doesn't need a tick driver here.
+            _telemetryHost?.Tick(System.DateTime.UtcNow.Ticks);
+
+            // Drive the v2-side auto-test (if armed). Computes a real tick-ms delta from
+            // last invocation since DataUpdate cadence varies with game data rate.
+            if (_hostAutoTest != null)
+            {
+                long nowUtc = System.DateTime.UtcNow.Ticks;
+                int dtMs = _hostAutoTestLastTickUtc == 0
+                    ? 16
+                    : (int)((nowUtc - _hostAutoTestLastTickUtc) / System.TimeSpan.TicksPerMillisecond);
+                _hostAutoTestLastTickUtc = nowUtc;
+                if (dtMs > 0 && dtMs < 1000) _hostAutoTest.Tick(dtMs);
+            }
+        }
+
+        // Resolve a dashboard name to its parsed MultiStreamProfile without firing
+        // the ApplyTelemetrySettings full-stack reload (which sets Profile + Mzdash
+        // bytes synchronously, racing the renegotiate state machine when used to
+        // trigger a switch). Mirror of the resolution precedence in
+        // ApplyTelemetrySettings (cache → builtin), minus the mzdash-bytes loading.
+        // Used by DashboardSwitchAutoTest to atomically pass a profile through
+        // SwitchToProfile without touching telemetry.Profile beforehand.
+        internal MultiStreamProfile? ResolveDashboardProfileByName(string name)
+        {
+            if (string.IsNullOrEmpty(name)) return null;
+            if (DashCache != null)
+            {
+                var p = DashCache.TryGetByName(name);
+                if (p != null) return p;
+            }
+            var builtins = DashProfileStore.BuiltinProfiles;
+            if (builtins.Count > 0)
+                return FindProfile(builtins, name);
+            return null;
         }
 
         public void End(PluginManager pluginManager)
@@ -518,6 +606,7 @@ namespace MozaPlugin
                 if (_connection != null)
                 {
                     _connection.MessageReceived -= OnMessageReceived;
+                    _connection.MessageReceived -= OnInboundForHost;
                     _connection.Disconnected -= OnSerialDisconnected;
                 }
             }
@@ -532,6 +621,9 @@ namespace MozaPlugin
 
             // 4. Stop telemetry send loop before tearing down connection.
             _telemetrySender?.Stop();
+            try { _telemetryHost?.Stop(); } catch { }
+            try { _telemetryHost?.Dispose(); } catch { }
+            CloseTelemetry2WireTrace();
 
             // 5. Cancel paced setting-read tasks so they bail out of their
             //    inter-read sleeps instead of running ~300 ms past teardown.
@@ -550,13 +642,13 @@ namespace MozaPlugin
             catch { }
             _ab9Manager?.Dispose();
 
-            // 6. Dispose timers after I/O is gone.
+            // 7. Dispose timers after I/O is gone.
             _saveDebounceTimer?.Dispose();
             _saveDebounceTimer = null;
             _pollTimer?.Dispose();
             _reconnectTimer?.Dispose();
 
-            // 7. Null Instance last so any straggler callback can still no-op via IsShuttingDown.
+            // 8. Null Instance last so any straggler callback can still no-op via IsShuttingDown.
             Instance = null;
         }
 
@@ -603,6 +695,8 @@ namespace MozaPlugin
 
         internal void ClearSettings()
         {
+            _telemetrySender?.Stop();
+            _telemetryHost?.Stop();
             _settings = new MozaPluginSettings();
             this.SaveCommonSettings("MozaPluginSettings", _settings);
             InitProfileSystem();
@@ -622,7 +716,8 @@ namespace MozaPlugin
             {
                 _reconnectTimer.Stop();
                 ClearLedsOnHardware();
-                _telemetrySender.Stop();
+                _telemetrySender?.Stop();
+                _telemetryHost?.Stop();
                 _connection?.Disconnect();
                 _data.IsBaseConnected = false;
                 _data.IsHubConnected = false;
@@ -702,12 +797,117 @@ namespace MozaPlugin
 
         // ===== Telemetry =====
 
-        internal TelemetrySender TelemetrySender => _telemetrySender;
+        internal TelemetrySender? TelemetrySender => _telemetrySender;
+
+        // Pipeline-agnostic accessor for UI controls that need to call into the active
+        // telemetry implementation (e.g. SendDashboardSwitch from the wheel-settings combo).
+        // Returns whichever pipeline is currently instantiated; null if neither is up yet.
+        internal global::MozaPlugin.Telemetry2.IMozaTelemetry? ActiveTelemetry =>
+            (global::MozaPlugin.Telemetry2.IMozaTelemetry?)_telemetryHost ?? _telemetrySender;
+
+        // Surface configJson wheel state from whichever pipeline is active, so the
+        // Diagnostics tab populates regardless of UseNewTelemetryPipeline. Old pipeline:
+        // _telemetrySender.WheelState. New pipeline: _telemetryHost.LastWheelState
+        // (populated by ConfigJsonOp from b2h session 0x09 chunks).
+        internal WheelDashboardState? WheelStateForDiagnostics =>
+            _telemetrySender?.WheelState ?? _telemetryHost?.LastWheelState;
+
+        // Tile-server state (b2h session 0x03 parse) routed from whichever pipeline is active.
+        internal TileServerState? TileServerStateForDiagnostics =>
+            _telemetrySender?.TileServerState ?? _telemetryHost?.TileServerState;
+
+        // Wheel channel catalog (host side: collected by CatalogConsumer from tag=0x04 records).
+        internal System.Collections.Generic.IReadOnlyList<string>? WheelChannelCatalogForDiagnostics =>
+            _telemetrySender?.WheelChannelCatalog ?? _telemetryHost?.WheelChannelCatalog;
+
+        // Per-session traffic counters (in/out chunk counts).
+        internal System.Collections.Generic.IReadOnlyDictionary<byte, (int In, int Out)>? SessionCountsForDiagnostics =>
+            (System.Collections.Generic.IReadOnlyDictionary<byte, (int In, int Out)>?)_telemetrySender?.SessionCounts
+            ?? _telemetryHost?.SessionCounts;
+
+        // Active telemetry running flag — true if either pipeline reports Enabled.
+        internal bool TelemetryEnabledForDiagnostics =>
+            (_telemetrySender?.Enabled ?? false) || (_telemetryHost?.Enabled ?? false);
+
+        // Frame-counter readout from active pipeline.
+        internal int FramesSentForDiagnostics =>
+            _telemetrySender?.FramesSent ?? _telemetryHost?.FramesSent ?? 0;
+
+        // Subscription diagnostics for the "Subscription" section of the Diagnostics tab.
+        // Old pipeline returns its TelemetrySender.SubscriptionDiagnostics directly. New
+        // pipeline materialises an equivalent from MozaTelemetryHost.LastSubscriptionRaw +
+        // ActiveSubscription (channels). Reverse-resolves wheel-catalog idx → URL for the
+        // Channels list display.
+        internal TelemetrySender.SubscriptionDiagnostics? SubscriptionForDiagnostics
+        {
+            get
+            {
+                if (_telemetrySender != null) return _telemetrySender.LastSubscription;
+                if (_telemetryHost == null) return null;
+                var raw = _telemetryHost.LastSubscriptionRaw;
+                if (raw == null) return null;
+                var (bytes, capturedAt) = raw.Value;
+                // Find preamble end: first 14 bytes are preamble (PROTO_VER + FLAG_BASE)
+                // when present; otherwise the message starts straight in section ENABLEs.
+                int preambleLen = 0;
+                if (bytes.Length >= 14 && bytes[0] == 0x07 && bytes[5] == 0x02 && bytes[9] == 0x03)
+                    preambleLen = 14;
+                byte[] preamble = new byte[preambleLen];
+                if (preambleLen > 0) Array.Copy(bytes, 0, preamble, 0, preambleLen);
+                byte[] body = new byte[bytes.Length - preambleLen];
+                Array.Copy(bytes, preambleLen, body, 0, body.Length);
+
+                // Reverse catalog: idx → URL.
+                var catalog = _telemetryHost.WheelChannelCatalog;
+                string LookupUrl(uint idx)
+                {
+                    if (catalog == null || idx == 0 || idx > catalog.Count) return "";
+                    return catalog[(int)idx - 1] ?? "";
+                }
+
+                // Parse TIER records to extract channel list.
+                var channels = new System.Collections.Generic.List<(int Idx, string Url, uint Comp, uint Width)>();
+                int pos = preambleLen;
+                while (pos + 5 <= bytes.Length)
+                {
+                    byte tag = bytes[pos];
+                    uint size = (uint)(bytes[pos + 1] | (bytes[pos + 2] << 8) | (bytes[pos + 3] << 16) | (bytes[pos + 4] << 24));
+                    if (size > (uint)(bytes.Length - pos - 5)) break;
+                    if (tag == 0x01 && size >= 1) // TIER
+                    {
+                        int n = ((int)size - 1) / 16;
+                        for (int c = 0; c < n; c++)
+                        {
+                            int off = pos + 5 + 1 + c * 16;
+                            uint idx = (uint)(bytes[off] | (bytes[off + 1] << 8) | (bytes[off + 2] << 16) | (bytes[off + 3] << 24));
+                            uint comp = (uint)(bytes[off + 4] | (bytes[off + 5] << 8) | (bytes[off + 6] << 16) | (bytes[off + 7] << 24));
+                            uint bw = (uint)(bytes[off + 8] | (bytes[off + 9] << 8) | (bytes[off + 10] << 16) | (bytes[off + 11] << 24));
+                            channels.Add(((int)idx, LookupUrl(idx), comp, bw));
+                        }
+                    }
+                    pos += 5 + (int)size;
+                }
+
+                return new TelemetrySender.SubscriptionDiagnostics
+                {
+                    SessionByte = "0x01",
+                    Format = "v2-type02",
+                    PreambleBytes = preamble,
+                    BodyBytes = body,
+                    Channels = channels,
+                    CapturedAt = capturedAt,
+                };
+            }
+        }
+
+        // Inbound s02 chunks captured in 5s window after last subscription send.
+        internal System.Collections.Generic.IReadOnlyList<byte[]>? SubscriptionResponseForDiagnostics =>
+            _telemetrySender?.LastSubscriptionResponse ?? _telemetryHost?.LastSubscriptionResponse;
 
         /// <summary>Apply settings from MozaPluginSettings to the TelemetrySender.</summary>
         internal void ApplyTelemetrySettings()
         {
-            if (_telemetrySender == null) return;
+            if (_activeTelemetry == null) return;
             var s = _settings;
 
             // One-shot migration from legacy TelemetryProtocolVersion to FirmwareEra.
@@ -737,13 +937,41 @@ namespace MozaPlugin
                 MozaFirmwareEra.TierDefV2_Type02   => (2, FileTransferWireFormat.New2026_04_Type02),
                 _ /* Auto */                       => (2, FileTransferWireFormat.New2026_04_Type02),
             };
-            _telemetrySender.ProtocolVersion = protocolVersion;
-            _telemetrySender.UploadWireFormat = wireFormat;
-            _telemetrySender.AutoFallbackWireFormat = s.TelemetryFirmwareEra == MozaFirmwareEra.Auto;
-            _telemetrySender.UploadDashboard = s.TelemetryUploadDashboard;
-            _telemetrySender.SetDownloadEnabled(s.TelemetryDownloadDashboard);
-            if (s.EnableAutoTestOnConnect)
-                _telemetrySender.EnableAutoTest();
+            // Old-pipeline-only settings (the new pipeline carries the equivalents
+            // through different channels — firmware era selection happens at the
+            // TierDefBuilder level, not as a flag on the host).
+            if (_telemetrySender != null)
+            {
+                _telemetrySender.ProtocolVersion = protocolVersion;
+                _telemetrySender.UploadWireFormat = wireFormat;
+                _telemetrySender.AutoFallbackWireFormat = s.TelemetryFirmwareEra == MozaFirmwareEra.Auto;
+                _telemetrySender.UploadDashboard = s.TelemetryUploadDashboard;
+                _telemetrySender.SetDownloadEnabled(s.TelemetryDownloadDashboard);
+                if (s.EnableAutoTestOnConnect)
+                    _telemetrySender.EnableAutoTest(this);
+            }
+
+            // V2-side auto-test wiring. Old pipeline owns its own auto-test on
+            // TelemetrySender; v2 lives here because the host has no internal pollable
+            // loop. Construct lazily on first ApplyTelemetrySettings, reset on
+            // subsequent calls so the harness re-arms after each settings reload.
+            if (_telemetryHost != null && s.EnableAutoTestOnConnect)
+            {
+                if (_hostAutoTest == null)
+                {
+                    _hostAutoTest = new global::MozaPlugin.Telemetry.DashboardSwitchAutoTest(
+                        _telemetryHost,
+                        ResolveDashboardProfileByName,
+                        () => DashCache,
+                        name => { _settings.TelemetryProfileName = name; });
+                    MozaLog.Info("[Moza] Telemetry2 host: auto-test armed");
+                }
+                else
+                {
+                    _hostAutoTest.Reset();
+                    MozaLog.Debug("[Moza] Telemetry2 host: auto-test re-armed");
+                }
+            }
 
             // Resolve the active multi-stream profile and raw mzdash content.
             //
@@ -831,7 +1059,7 @@ namespace MozaPlugin
                 }
             }
 
-            _telemetrySender.PropertyResolver = ResolvePropertyAsDouble;
+            _activeTelemetry.PropertyResolver = ResolvePropertyAsDouble;
             int tierCount = profile?.Tiers?.Count ?? 0;
             int chCount = 0;
             if (profile != null)
@@ -840,9 +1068,11 @@ namespace MozaPlugin
                 $"[Moza] ApplyTelemetrySettings: setting profile=" +
                 $"{profile?.Name ?? "null"} tiers={tierCount} channels={chCount} " +
                 $"mzdash={mzdashName} settingName={s.TelemetryProfileName}");
-            _telemetrySender.Profile = profile;
-            _telemetrySender.MzdashContent = mzdashContent;
-            _telemetrySender.MzdashName = mzdashName;
+            _activeTelemetry.Profile = profile;
+            _activeTelemetry.MzdashContent = mzdashContent;
+            _activeTelemetry.MzdashName = mzdashName;
+
+
 
             // Advertise dashboard library to the wheel on session 0x09.
             // Wheel echoes names in its next configJson state blob.
@@ -861,7 +1091,8 @@ namespace MozaPlugin
             }
             if (!string.IsNullOrEmpty(mzdashName) && !libraryNames.Contains(mzdashName))
                 libraryNames.Add(mzdashName);
-            _telemetrySender.CanonicalDashboardList = libraryNames;
+            if (_telemetrySender != null)
+                _telemetrySender.CanonicalDashboardList = libraryNames;
         }
 
         /// <summary>
@@ -901,7 +1132,7 @@ namespace MozaPlugin
         /// <summary>Stable identity key for the currently-loaded dashboard.</summary>
         internal string CurrentDashboardKey()
         {
-            var profile = _telemetrySender?.Profile;
+            var profile = _activeTelemetry?.Profile;
             if (profile == null) return "";
             string? keyPath = _settings.TelemetryMzdashPath;
             if (string.IsNullOrEmpty(keyPath) && DashCache != null)
@@ -953,45 +1184,66 @@ namespace MozaPlugin
         /// </summary>
         internal void RestartTelemetry()
         {
-            if (_telemetrySender == null) return;
-            // Don't call Stop() here — StartInner() already calls Stop()
-            // as its first action. Calling it separately creates a race
-            // window where another thread can clear detection flags between
-            // our Stop() and the ThreadPool executing Start().
+            var t = _activeTelemetry;
+            if (t == null) return;
             Interlocked.Exchange(ref _telemetryStartRequested, 0);
             ApplyTelemetrySettings();
-            if (_settings.TelemetryEnabled)
-                StartTelemetryIfReady();
+            if (!_settings.TelemetryEnabled) return;
+            // Bypass StartTelemetryIfReady() — its FramesSent > 0 guard
+            // rejects restarts when the sender is already running.
+            // StartInner() calls Stop() as its first action, resetting all
+            // state (sessions, flag base, preamble) for a true cold-start.
+            if (Interlocked.CompareExchange(ref _telemetryStartRequested, 1, 0) != 0) return;
+            MozaLog.Info("[Moza] Restarting telemetry sender (full cold-start)");
+            ThreadPool.QueueUserWorkItem(_ => t.Start());
         }
 
-        /// <summary>
-        /// Hot-reload the wheel for a new (or cleared) active dashboard
-        /// without tearing down the session. Mirrors PitHouse's mid-game
-        /// dash-change burst (capture
-        /// <c>wireshark/csp/start-game-change-dash.pcapng</c> t≈113-114 s):
-        /// just a tier-def re-send on session 0x01 plus the 0x40 channel-
-        /// config burst. No port close / re-open, no Stop()/Start(), so
-        /// active gameplay isn't disrupted.
-        ///
-        /// Falls back to <see cref="RestartTelemetry"/> when telemetry isn't
-        /// running yet (cold-connect / pre-preamble) — that's the only path
-        /// that opens sessions in the first place.
-        /// </summary>
         internal void OnActiveDashboardChanged()
         {
-            if (_telemetrySender == null) return;
+            var sender = _telemetrySender;
+            if (sender != null && sender.Enabled)
+            {
+                sender.MuteForDashSwitch();
+                MozaLog.Debug("[Moza] OnActiveDashboardChanged: muted value frames, scheduling renegotiation");
 
-            MozaLog.Debug("[Moza] OnActiveDashboardChanged: called");
-            ApplyTelemetrySettings();
+                ThreadPool.QueueUserWorkItem(_ =>
+                {
+                    Thread.Sleep(1500);
+                    sender.RenegotiateForDashboardSwitch();
+                });
+                return;
+            }
 
-            if (!_settings.TelemetryEnabled) return;
+            var host = _telemetryHost;
+            if (host != null && host.Enabled)
+            {
+                MozaLog.Debug("[Moza] OnActiveDashboardChanged (v2): applying telemetry settings");
+                ApplyTelemetrySettings();
+            }
+        }
 
-            bool renegOk = _telemetrySender.RenegotiateForDashboardChange();
-            MozaLog.Debug($"[Moza] OnActiveDashboardChanged: renegotiate={renegOk}");
-            if (renegOk) return;
+        internal void OnDashboardSwitched()
+        {
+            var sender = _telemetrySender;
+            if (sender != null && sender.Enabled)
+            {
+                MozaLog.Debug("[Moza] OnDashboardSwitched: scheduling renegotiation with catalog wait");
 
-            MozaLog.Debug("[Moza] OnActiveDashboardChanged: falling back to StartTelemetryIfReady");
-            StartTelemetryIfReady();
+                ThreadPool.QueueUserWorkItem(_ =>
+                {
+                    sender.RenegotiateForDashboardSwitch(
+                        applyProfile: () => ApplyTelemetrySettings(),
+                        waitForCatalog: true);
+                });
+                return;
+            }
+
+            var host = _telemetryHost;
+            if (host != null && host.Enabled)
+            {
+                MozaLog.Debug("[Moza] OnDashboardSwitched (v2): applying telemetry settings");
+                ApplyTelemetrySettings();
+            }
         }
 
         internal void SetTelemetryEnabled(bool enabled)
@@ -1006,6 +1258,7 @@ namespace MozaPlugin
             else
             {
                 _telemetrySender?.Stop();
+                _telemetryHost?.Stop();
                 // Reset guards so re-enable can start a fresh session.
                 // Without this, FramesSent > 0 and _telemetryStartRequested == 1
                 // cause StartTelemetryIfReady() to bail out on re-enable.
@@ -1026,7 +1279,8 @@ namespace MozaPlugin
         /// </summary>
         private void StartTelemetryIfReady()
         {
-            if (_telemetrySender == null) return;
+            var t = _activeTelemetry;
+            if (t == null) return;
             if (!_settings.TelemetryEnabled) return;
             if (!_connection.IsConnected) return;
             if (!_newWheelDetected && !_oldWheelDetected) return;
@@ -1036,15 +1290,18 @@ namespace MozaPlugin
             // and MaybeSwapProfileForCatalog synthesises a WheelCatalog profile
             // post-preamble.
 
-            // Already running — don't restart (avoids re-probing ports mid-session)
-            if (_telemetrySender.FramesSent > 0) return;
+            // Already running — don't restart (avoids re-probing ports mid-session).
+            // For the new pipeline, t.FramesSent only counts value frames, but the
+            // host's Tick may have produced some before Start fires. Skip the gate
+            // and rely on the host's own re-entry guard (state != Disconnected).
+            if (_telemetryHost == null && t.FramesSent > 0) return;
 
             // Prevent duplicate dispatch (multiple callers may pass the guards above
             // before the background thread increments FramesSent)
             if (Interlocked.CompareExchange(ref _telemetryStartRequested, 1, 0) != 0) return;
 
             MozaLog.Info("[Moza] Wheel detected and telemetry enabled — starting telemetry sender");
-            ThreadPool.QueueUserWorkItem(_ => _telemetrySender.Start());
+            ThreadPool.QueueUserWorkItem(_ => t.Start());
         }
 
         private static MultiStreamProfile? FindProfile(
@@ -1148,7 +1405,8 @@ namespace MozaPlugin
         private void ResetWheelDetection(string reason)
         {
             MozaLog.Debug($"[Moza] {reason}");
-            _telemetrySender.Stop();
+            _telemetrySender?.Stop();
+            _telemetryHost?.Stop();
             _newWheelDetected = false;
             _oldWheelDetected = false;
             _dashDetected = false;
@@ -1157,7 +1415,8 @@ namespace MozaPlugin
             _group3ColorsRead = false;
             _data.ClearWheelIdentity();
             _deviceManager.ResetWheelDetection();
-            _telemetrySender.DetectedDeviceMask = 0;
+            if (_telemetrySender != null)
+                _telemetrySender.DetectedDeviceMask = 0;
             Interlocked.Exchange(ref _telemetryStartRequested, 0);
             _wheelPollMisses = 0;
             _lastKnownWheelModel = "";
@@ -1243,6 +1502,89 @@ namespace MozaPlugin
 
         private volatile int _unmatched;
 
+        // Inbound frame router for the new Telemetry2 pipeline. Parses session-data
+        // chunks from raw frames (grp=0xC3 dev=0x71 7C 00 [ses] [typ] [seq] [body])
+        // and forwards them to the host. Old pipeline does its own subscription
+        // inside TelemetrySender.Start, so this handler runs only when the new
+        // pipeline is active (subscribed in Init when _telemetryHost != null).
+        private void OnInboundForHost(byte[] data)
+        {
+            if (IsShuttingDown || _telemetryHost == null) return;
+            if (data == null || data.Length < 4) return;
+            if (data[0] != 0xC3 || data[1] != 0x71) return;
+
+            // Wire-trace tee: capture ALL 0xC3/0x71 frames (session data + FC acks).
+            if (_telemetry2WireTracePath != null)
+            {
+                try { WriteTelemetry2WireTrace("b2h", data); } catch { }
+            }
+
+            // Session-layer dispatch: 7C 00 prefix = session data/open/close.
+            if (data.Length < 9 || data[2] != 0x7C || data[3] != 0x00) return;
+            byte session = data[4];
+            byte type = data[5];
+            int seq = data[6] | (data[7] << 8);
+            int bodyLen = data.Length - 8;
+            byte[] payload = new byte[bodyLen];
+            Array.Copy(data, 8, payload, 0, bodyLen);
+            try { _telemetryHost.OnInboundChunk(session, type, seq, payload); }
+            catch { /* never let inbound routing crash the read thread */ }
+        }
+
+        // Telemetry2 wire trace state. Path resolved at host construction; appends
+        // one JSONL line per emitted/received frame so post-mortem can diff against
+        // PitHouse bridge captures.
+        private string? _telemetry2WireTracePath;
+        private readonly object _telemetry2WireTraceLock = new object();
+        private System.IO.StreamWriter? _telemetry2WireTraceWriter;
+
+        private void InitTelemetry2WireTrace()
+        {
+            try
+            {
+                string dir = System.IO.Path.Combine(
+                    System.IO.Path.GetDirectoryName(System.Reflection.Assembly.GetExecutingAssembly().Location) ?? ".",
+                    "Logs");
+                System.IO.Directory.CreateDirectory(dir);
+                string ts = DateTime.Now.ToString("yyyyMMdd-HHmmss");
+                _telemetry2WireTracePath = System.IO.Path.Combine(dir, $"moza-wire-{ts}.jsonl");
+                _telemetry2WireTraceWriter = new System.IO.StreamWriter(
+                    _telemetry2WireTracePath, append: true, System.Text.Encoding.UTF8)
+                { AutoFlush = true };
+                MozaLog.Info($"[Moza] Telemetry2 wire trace → {_telemetry2WireTracePath}");
+            }
+            catch
+            {
+                _telemetry2WireTracePath = null;
+                _telemetry2WireTraceWriter = null;
+            }
+        }
+
+        private void CloseTelemetry2WireTrace()
+        {
+            lock (_telemetry2WireTraceLock)
+            {
+                _telemetry2WireTraceWriter?.Dispose();
+                _telemetry2WireTraceWriter = null;
+            }
+        }
+
+        private void WriteTelemetry2WireTrace(string dir, byte[] frame)
+        {
+            if (frame == null || frame.Length == 0) return;
+            var sb = new System.Text.StringBuilder(frame.Length * 2 + 64);
+            double t = (DateTime.UtcNow - new DateTime(1970, 1, 1, 0, 0, 0, DateTimeKind.Utc)).TotalSeconds;
+            sb.Append("{\"t\":").Append(t.ToString("F6", System.Globalization.CultureInfo.InvariantCulture));
+            sb.Append(",\"dir\":\"").Append(dir).Append("\",\"len\":").Append(frame.Length);
+            sb.Append(",\"hex\":\"");
+            for (int i = 0; i < frame.Length; i++) sb.Append(frame[i].ToString("x2"));
+            sb.Append("\"}");
+            lock (_telemetry2WireTraceLock)
+            {
+                _telemetry2WireTraceWriter?.WriteLine(sb.ToString());
+            }
+        }
+
         private void OnMessageReceived(byte[] data)
         {
             // Bail out during shutdown — serial reader thread may deliver a frame
@@ -1284,8 +1626,7 @@ namespace MozaPlugin
                 // PitHouse polls these at ~1 Hz across all four bridge captures
                 // (sim/logs/bridge-20260503-*.jsonl). Semantics not yet decoded
                 // — store raw so future controlled experiments can correlate
-                // values against game state. See plan
-                // /home/rorth/.claude/plans/drifting-moseying-cook.md Phase 0.
+                // values against game state.
                 if (data.Length >= 6 && data[2] == 0x28)
                 {
                     if (data[3] == 0x00 && _data != null)
@@ -1462,8 +1803,10 @@ namespace MozaPlugin
 
             if (value < 0) return; // No valid response
 
-            // Update telemetry sender's heartbeat mask so it only pings detected devices
-            if (deviceId >= 18 && deviceId <= 30)
+            // Update telemetry sender's heartbeat mask so it only pings detected devices.
+            // (DetectedDeviceMask is a TelemetrySender-only field — new pipeline doesn't
+            // use the same heartbeat-gating; it sends keepalives unconditionally.)
+            if (deviceId >= 18 && deviceId <= 30 && _telemetrySender != null)
                 _telemetrySender.DetectedDeviceMask |= (1 << (deviceId - 18));
 
             // Base detection: IsBaseConnected was just set to true by UpdateFromCommand.
@@ -2463,6 +2806,7 @@ namespace MozaPlugin
                 else
                 {
                     _telemetrySender?.Stop();
+                    _telemetryHost?.Stop();
                 }
             }
         }

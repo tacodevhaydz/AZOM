@@ -56,7 +56,7 @@ namespace MozaPlugin.Diagnostics
             int seq = frame[8] | (frame[9] << 8);
             var entry = new Pending
             {
-                Frame = frame,
+                Frame = (byte[])frame.Clone(),
                 LastSentTicks = Environment.TickCount,
                 SendCount = 1,
             };

@@ -43,20 +43,35 @@
 | ffb-curve-y0 | `22 0A` | 1 | int | No read or write group (both -1) — not usable |
 | ffb-disable | `FE` | 2 | int | |
 
-### Group `0x2A` (42) — Calibration / Music
+### Group `0x2A` (42) — Calibration / Music (startup chime)
 
 Group 42 is used for both writes (calibration, music set) and reads (music get). `Dir` column applies.
+
+> **Capture-verified** (2026-05-05) from R25 base. See `usb-capture/startupchime/`.
 
 | Command | ID | Dir | Bytes | Type | Notes |
 |---------|----|-----|-------|------|-------|
 | calibration | `01` | W | 2 | int | |
-| music-preview | `43 00` | W | 1 | int | |
-| music-index-set | `43 01` | W | 1 | int | |
-| music-index-get | `43 02` | R | 1 | int | |
-| music-enabled-set | `43 03` | W | 1 | int | |
-| music-enabled-get | `43 04` | R | 1 | int | |
-| music-volume-set | `44 00` | W | 1 | int | |
-| music-volume-get | `44 01` | R | 1 | int | |
+| music-preview | `43 00` | W | 1 | int | Plays chime at index once (immediate audible feedback) |
+| music-index-set | `43 01` | W | 1 | int | Persists selected startup chime (1–10) |
+| music-index-get | `43 02` | R | 1 | int | Returns active chime index |
+| music-enabled-set | `43 03` | W | 1 | int | 0 = disable, 1 = enable startup chime |
+| music-enabled-get | `43 04` | R | 1 | int | Returns enabled state |
+| music-volume-set | `44 00` | W | 1 | int | 0x00 (mute) – 0xFF (max) |
+| music-volume-get | `44 01` | R | 1 | int | Returns current volume |
+
+**Chime index range:** 1–10 (0x01–0x0A). 10 built-in chimes on R25 base.
+
+**Default volume:** 0x17 (23 decimal, ~9%).
+
+**PitHouse workflow:** read state → `music-index-set(N)` → `music-preview(N)` → periodic re-read.
+
+**Frame example — set chime 5 and preview:**
+```
+7E 03 2A 13 43 01 05 [chk]   ← index-set = 5
+7E 03 2A 13 43 00 05 [chk]   ← preview chime 5
+```
+Both produce ACK response: `7E 03 AA 31 43 0x 05 [chk]` (echo with group|0x80, device nibble-swapped).
 
 ### Group `0x2B` (43) — Status (read-only)
 

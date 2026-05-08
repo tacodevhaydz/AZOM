@@ -23,6 +23,7 @@ namespace MozaPlugin.Telemetry
     {
         private readonly string _cacheDir;
         private readonly DashboardProfileStore _store;
+        private readonly object _lock = new object();
 
         // hash → parsed profile
         private readonly Dictionary<string, MultiStreamProfile> _byHash =
@@ -36,8 +37,8 @@ namespace MozaPlugin.Telemetry
         private readonly Dictionary<string, byte[]> _rawContent =
             new Dictionary<string, byte[]>(StringComparer.OrdinalIgnoreCase);
 
-        public int WheelCacheCount => _byHash.Count;
-        public int FolderProfileCount => _folderProfiles.Count;
+        public int WheelCacheCount { get { lock (_lock) return _byHash.Count; } }
+        public int FolderProfileCount { get { lock (_lock) return _folderProfiles.Count; } }
 
         // --- User folder library (fallback after wheel cache) ---
         private readonly Dictionary<string, MultiStreamProfile> _folderProfiles =
@@ -56,7 +57,7 @@ namespace MozaPlugin.Telemetry
         }
 
         /// <summary>Number of cached profiles.</summary>
-        public int Count => _byHash.Count;
+        public int Count { get { lock (_lock) return _byHash.Count; } }
 
         /// <summary>
         /// Scan the cache directory for previously-saved .mzdash files and parse them.
@@ -74,42 +75,44 @@ namespace MozaPlugin.Telemetry
                 }
             }
 
-            foreach (var file in Directory.GetFiles(_cacheDir, "*.mzdash"))
+            lock (_lock)
             {
-                try
+                foreach (var file in Directory.GetFiles(_cacheDir, "*.mzdash"))
                 {
-                    string hash = Path.GetFileNameWithoutExtension(file);
-                    if (_byHash.ContainsKey(hash)) continue;
-
-                    string content = File.ReadAllText(file);
-                    // The display name is stored as the first line if it starts with "//name:"
-                    string name = hash;
-                    if (content.StartsWith("//name:"))
+                    try
                     {
-                        int nl = content.IndexOf('\n');
-                        if (nl > 0)
+                        string hash = Path.GetFileNameWithoutExtension(file);
+                        if (_byHash.ContainsKey(hash)) continue;
+
+                        string content = File.ReadAllText(file);
+                        string name = hash;
+                        if (content.StartsWith("//name:"))
                         {
-                            name = content.Substring(7, nl - 7).Trim();
-                            content = content.Substring(nl + 1);
+                            int nl = content.IndexOf('\n');
+                            if (nl > 0)
+                            {
+                                name = content.Substring(7, nl - 7).Trim();
+                                content = content.Substring(nl + 1);
+                            }
+                        }
+
+                        var profile = _store.ParseMzdashContent(name, content);
+                        if (profile != null)
+                        {
+                            _byHash[hash] = profile;
+                            _nameToHash[name] = hash;
+                            _rawContent[hash] = System.Text.Encoding.UTF8.GetBytes(content);
+                            MozaLog.Debug($"[Moza] DashboardCache: loaded '{name}' from disk (hash={hash.Substring(0, 8)}...)");
                         }
                     }
-
-                    var profile = _store.ParseMzdashContent(name, content);
-                    if (profile != null)
+                    catch (Exception ex)
                     {
-                        _byHash[hash] = profile;
-                        _nameToHash[name] = hash;
-                        _rawContent[hash] = System.Text.Encoding.UTF8.GetBytes(content);
-                        MozaLog.Debug($"[Moza] DashboardCache: loaded '{name}' from disk (hash={hash.Substring(0, 8)}...)");
+                        MozaLog.Warn($"[Moza] DashboardCache: failed to load {file}: {ex.Message}");
                     }
                 }
-                catch (Exception ex)
-                {
-                    MozaLog.Warn($"[Moza] DashboardCache: failed to load {file}: {ex.Message}");
-                }
-            }
 
-            MozaLog.Debug($"[Moza] DashboardCache: {_byHash.Count} profiles loaded from disk");
+                MozaLog.Debug($"[Moza] DashboardCache: {_byHash.Count} profiles loaded from disk");
+            }
         }
 
         /// <summary>
@@ -120,19 +123,22 @@ namespace MozaPlugin.Telemetry
         public List<string> UpdateFromWheelState(WheelDashboardState state)
         {
             var missing = new List<string>();
-            _nameToHash.Clear();
-
-            if (state.EnabledDashboards == null) return missing;
-
-            foreach (var dash in state.EnabledDashboards)
+            lock (_lock)
             {
-                if (string.IsNullOrEmpty(dash.Title) || string.IsNullOrEmpty(dash.Hash))
-                    continue;
+                _nameToHash.Clear();
 
-                _nameToHash[dash.Title] = dash.Hash;
+                if (state.EnabledDashboards == null) return missing;
 
-                if (!_byHash.ContainsKey(dash.Hash))
-                    missing.Add(dash.Hash);
+                foreach (var dash in state.EnabledDashboards)
+                {
+                    if (string.IsNullOrEmpty(dash.Title) || string.IsNullOrEmpty(dash.Hash))
+                        continue;
+
+                    _nameToHash[dash.Title] = dash.Hash;
+
+                    if (!_byHash.ContainsKey(dash.Hash))
+                        missing.Add(dash.Hash);
+                }
             }
 
             if (missing.Count > 0)
@@ -155,18 +161,20 @@ namespace MozaPlugin.Telemetry
                     return false;
                 }
 
-                _byHash[hash] = profile;
-                _nameToHash[dashboardName] = hash;
-                _rawContent[hash] = System.Text.Encoding.UTF8.GetBytes(mzdashContent);
+                lock (_lock)
+                {
+                    _byHash[hash] = profile;
+                    _nameToHash[dashboardName] = hash;
+                    _rawContent[hash] = System.Text.Encoding.UTF8.GetBytes(mzdashContent);
+                }
 
-                // Persist to disk
+                // Persist to disk (outside lock — file I/O can be slow)
                 try
                 {
                     if (!Directory.Exists(_cacheDir))
                         Directory.CreateDirectory(_cacheDir);
 
                     string filePath = Path.Combine(_cacheDir, $"{hash}.mzdash");
-                    // Prepend name comment for re-loading
                     File.WriteAllText(filePath, $"//name:{dashboardName}\n{mzdashContent}");
                 }
                 catch (Exception ex)
@@ -200,15 +208,16 @@ namespace MozaPlugin.Telemetry
         public MultiStreamProfile? TryGetByName(string name)
         {
             if (string.IsNullOrEmpty(name)) return null;
-            // Wheel cache first (authoritative)
-            if (_nameToHash.TryGetValue(name, out var hash))
+            lock (_lock)
             {
-                if (_byHash.TryGetValue(hash, out var profile))
-                    return profile;
+                if (_nameToHash.TryGetValue(name, out var hash))
+                {
+                    if (_byHash.TryGetValue(hash, out var profile))
+                        return profile;
+                }
+                if (TryGetNormalized(_folderProfiles, name, out var folderProfile))
+                    return folderProfile;
             }
-            // Folder fallback with underscore↔space normalization
-            if (TryGetNormalized(_folderProfiles, name, out var folderProfile))
-                return folderProfile;
             return null;
         }
 
@@ -218,8 +227,11 @@ namespace MozaPlugin.Telemetry
         public MultiStreamProfile? TryGetByHash(string hash)
         {
             if (string.IsNullOrEmpty(hash)) return null;
-            _byHash.TryGetValue(hash, out var profile);
-            return profile;
+            lock (_lock)
+            {
+                _byHash.TryGetValue(hash, out var profile);
+                return profile;
+            }
         }
 
         /// <summary>
@@ -228,35 +240,41 @@ namespace MozaPlugin.Telemetry
         public byte[]? TryGetRawContent(string name)
         {
             if (string.IsNullOrEmpty(name)) return null;
-            // Wheel cache first
-            if (_nameToHash.TryGetValue(name, out var hash))
+            lock (_lock)
             {
-                if (_rawContent.TryGetValue(hash, out var content))
-                    return content;
+                if (_nameToHash.TryGetValue(name, out var hash))
+                {
+                    if (_rawContent.TryGetValue(hash, out var content))
+                        return content;
+                }
+                if (TryGetNormalized(_folderRawContent, name, out var folderContent))
+                    return folderContent;
             }
-            // Folder fallback with underscore↔space normalization
-            if (TryGetNormalized(_folderRawContent, name, out var folderContent))
-                return folderContent;
             return null;
         }
 
         /// <summary>
         /// Check if a hash is cached.
         /// </summary>
-        public bool HasHash(string hash) => _byHash.ContainsKey(hash);
+        public bool HasHash(string hash) { lock (_lock) return _byHash.ContainsKey(hash); }
 
         /// <summary>
         /// All cached dashboard names (wheel cache first, then folder, deduped).
         /// </summary>
-        public IEnumerable<string> CachedNames
+        public IReadOnlyList<string> CachedNames
         {
             get
             {
-                var seen = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
-                foreach (var name in _nameToHash.Keys)
-                    if (seen.Add(name)) yield return name;
-                foreach (var name in _folderProfiles.Keys)
-                    if (seen.Add(name)) yield return name;
+                lock (_lock)
+                {
+                    var result = new List<string>();
+                    var seen = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+                    foreach (var name in _nameToHash.Keys)
+                        if (seen.Add(name)) result.Add(name);
+                    foreach (var name in _folderProfiles.Keys)
+                        if (seen.Add(name)) result.Add(name);
+                    return result;
+                }
             }
         }
 
@@ -266,10 +284,13 @@ namespace MozaPlugin.Telemetry
         /// </summary>
         public void LoadFromFolder(string folderPath)
         {
-            _folderProfiles.Clear();
-            _folderRawContent.Clear();
-            _folderFilePaths.Clear();
-            _folderHashes.Clear();
+            lock (_lock)
+            {
+                _folderProfiles.Clear();
+                _folderRawContent.Clear();
+                _folderFilePaths.Clear();
+                _folderHashes.Clear();
+            }
 
             if (string.IsNullOrEmpty(folderPath) || !Directory.Exists(folderPath))
                 return;
@@ -291,10 +312,13 @@ namespace MozaPlugin.Telemetry
                         hash = sb.ToString();
                     }
 
-                    _folderProfiles[profile.Name] = profile;
-                    _folderRawContent[profile.Name] = rawBytes;
-                    _folderFilePaths[profile.Name] = file;
-                    _folderHashes[profile.Name] = hash;
+                    lock (_lock)
+                    {
+                        _folderProfiles[profile.Name] = profile;
+                        _folderRawContent[profile.Name] = rawBytes;
+                        _folderFilePaths[profile.Name] = file;
+                        _folderHashes[profile.Name] = hash;
+                    }
                 }
                 catch (Exception ex)
                 {
@@ -302,7 +326,7 @@ namespace MozaPlugin.Telemetry
                 }
             }
 
-            MozaLog.Debug($"[Moza] DashboardCache: {_folderProfiles.Count} profiles loaded from folder '{folderPath}'");
+            MozaLog.Debug($"[Moza] DashboardCache: {FolderProfileCount} profiles loaded from folder '{folderPath}'");
         }
 
         /// <summary>
@@ -326,8 +350,11 @@ namespace MozaPlugin.Telemetry
         public string? TryGetFolderFilePath(string name)
         {
             if (string.IsNullOrEmpty(name)) return null;
-            TryGetNormalized(_folderFilePaths, name, out var path);
-            return path;
+            lock (_lock)
+            {
+                TryGetNormalized(_folderFilePaths, name, out var path);
+                return path;
+            }
         }
 
         /// <summary>
@@ -336,11 +363,17 @@ namespace MozaPlugin.Telemetry
         public string? TryGetFolderHash(string name)
         {
             if (string.IsNullOrEmpty(name)) return null;
-            _folderHashes.TryGetValue(name, out var hash);
-            return hash;
+            lock (_lock)
+            {
+                _folderHashes.TryGetValue(name, out var hash);
+                return hash;
+            }
         }
 
         /// <summary>All folder-loaded dashboard names.</summary>
-        public IEnumerable<string> FolderNames => _folderProfiles.Keys;
+        public IReadOnlyList<string> FolderNames
+        {
+            get { lock (_lock) return _folderProfiles.Keys.ToList(); }
+        }
     }
 }

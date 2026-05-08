@@ -51,7 +51,7 @@ namespace MozaPlugin.Protocol
             _data = data;
         }
 
-        private bool _disposed;
+        private volatile bool _disposed;
 
         public void Start()
         {
@@ -112,17 +112,25 @@ namespace MozaPlugin.Protocol
                     foreach (var (device, usages) in devices)
                     {
                         if (!device.TryOpen(out HidStream stream)) continue;
-                        openCount++;
-
-                        bool isHandbrake = HandbrakePattern.IsMatch(device.GetFriendlyName() ?? "");
-                        // ReadDevice owns `stream` and disposes it before returning.
-                        var t = new Thread(() => ReadDevice(device, stream, usages, isHandbrake))
+                        try
                         {
-                            IsBackground = true,
-                            Name = $"MozaHid_{device.ProductID:X4}",
-                        };
-                        threads.Add(t);
-                        t.Start();
+                            openCount++;
+
+                            bool isHandbrake = HandbrakePattern.IsMatch(device.GetFriendlyName() ?? "");
+                            // ReadDevice owns `stream` and disposes it before returning.
+                            var t = new Thread(() => ReadDevice(device, stream, usages, isHandbrake))
+                            {
+                                IsBackground = true,
+                                Name = $"MozaHid_{device.ProductID:X4}",
+                            };
+                            threads.Add(t);
+                            t.Start();
+                        }
+                        catch
+                        {
+                            try { stream.Dispose(); } catch { }
+                            throw;
+                        }
                     }
 
                     if (openCount > 0)

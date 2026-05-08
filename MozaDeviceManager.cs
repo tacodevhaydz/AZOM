@@ -117,7 +117,7 @@ namespace MozaPlugin
             frame[3] = deviceId;
             if (payload != null)
                 System.Buffer.BlockCopy(payload, 0, frame, 4, payloadLen);
-            frame[frame.Length - 1] = MozaProtocol.CalculateWireChecksum(frame);
+            frame[frame.Length - 1] = MozaProtocol.CalculateWireChecksum(frame, frame.Length - 1);
             _connection.Send(frame);
         }
 
@@ -284,6 +284,7 @@ namespace MozaPlugin
                 case "hub":       return MozaProtocol.DeviceHub;
                 case "main":      return MozaProtocol.DeviceMain;
                 case "handbrake": return MozaProtocol.DeviceHandbrake;
+                case "ab9":       return MozaProtocol.DeviceAb9;
                 default:          return MozaProtocol.DeviceBase;
             }
         }

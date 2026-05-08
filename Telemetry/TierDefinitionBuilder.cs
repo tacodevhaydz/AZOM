@@ -3,6 +3,7 @@ using System.Collections.Generic;
 using System.IO;
 using System.Linq;
 using MozaPlugin.Protocol;
+using MozaPlugin.Telemetry2.Protocol;
 
 namespace MozaPlugin.Telemetry
 {
@@ -36,7 +37,20 @@ namespace MozaPlugin.Telemetry
         /// Unknown types get code 0xFFFF (the wheel may ignore them).
         /// </summary>
         public static uint LookupCompressionCode(string compression)
-            => CompressionCodes.TryGetValue(compression ?? "", out var code) ? code : 0xFFFF;
+            => CompressionTable.TryGetByName(compression ?? "", out var entry) ? entry.Code : 0xFFFF;
+
+        public static int DetectSubTiersPerBroadcast(MultiStreamProfile profile)
+        {
+            int tierCount = profile.Tiers.Count;
+            if (tierCount <= 1) return tierCount;
+            int firstPkg = profile.Tiers[0].PackageLevel;
+            for (int j = 1; j < tierCount; j++)
+            {
+                if (profile.Tiers[j].PackageLevel == firstPkg)
+                    return j;
+            }
+            return tierCount;
+        }
 
         /// <summary>
         /// Build the V2 compact tier-def for Type02 firmware in PitHouse's
@@ -55,9 +69,16 @@ namespace MozaPlugin.Telemetry
             using var w = new BinaryWriter(ms);
 
             var idxByUrl = new Dictionary<string, int>(StringComparer.OrdinalIgnoreCase);
+            // First-occurrence wins: the wheel re-indexes URLs from idx=1 after
+            // a dashboard switch, putting fresh entries at low positions while
+            // stale cold-start / prior-dashboard entries linger at higher
+            // positions in our merged view of the catalog. Last-wins would pick
+            // the stale slot — same URL string, but a slot the wheel has
+            // already forgotten — and the wheel cannot bind value frames to it.
+            // Matches BuildTierDefinitionV2's policy (see its comment).
             for (int i = 0; i < wheelCatalog.Count; i++)
             {
-                if (!string.IsNullOrEmpty(wheelCatalog[i]))
+                if (!string.IsNullOrEmpty(wheelCatalog[i]) && !idxByUrl.ContainsKey(wheelCatalog[i]))
                     idxByUrl[wheelCatalog[i]] = i + 1; // 1-based
             }
 
@@ -127,20 +148,7 @@ namespace MozaPlugin.Telemetry
             // by finding the pkg_level repeat: when current tier's pkg_level
             // matches profile.Tiers[0]'s pkg_level after the first tier, that's
             // a broadcast boundary.
-            int subPerBroadcast = 1;
-            if (tierCount > 1)
-            {
-                int firstPkg = profile.Tiers[0].PackageLevel;
-                for (int j = 1; j < tierCount; j++)
-                {
-                    if (profile.Tiers[j].PackageLevel == firstPkg)
-                    {
-                        subPerBroadcast = j;
-                        break;
-                    }
-                }
-                if (subPerBroadcast == 1) subPerBroadcast = tierCount;  // single broadcast
-            }
+            int subPerBroadcast = DetectSubTiersPerBroadcast(profile);
             int broadcastCount = tierCount / subPerBroadcast;
 
             // Total channel count across one broadcast (used as end-marker for
@@ -177,36 +185,6 @@ namespace MozaPlugin.Telemetry
             return ms.ToArray();
         }
 
-        private static readonly Dictionary<string, uint> CompressionCodes =
-            new Dictionary<string, uint>(StringComparer.OrdinalIgnoreCase)
-        {
-            ["bool"]            = 0x00,
-            ["uint3"]           = 0x14,
-            ["int30"]           = 0x0D,
-            ["uint30"]          = 0x0D,  // same encoding as int30
-            ["uint31"]          = 0x0D,  // same encoding as int30
-            ["uint8"]           = 0x01,  // inferred
-            ["uint8_t"]         = 0x01,  // inferred
-            ["int8_t"]          = 0x02,  // inferred
-            ["float_001"]       = 0x17,
-            ["percent_1"]       = 0x0E,
-            ["tyre_pressure_1"] = 0x10,  // inferred (same as uint16_t for 12-bit packing?)
-            ["tyre_temp_1"]     = 0x11,  // inferred
-            ["track_temp_1"]    = 0x12,  // inferred
-            ["oil_pressure_1"]  = 0x13,  // inferred
-            ["uint15"]          = 0x03,  // inferred
-            ["uint16_t"]        = 0x04,
-            ["int16_t"]         = 0x05,  // inferred
-            ["float_6000_1"]    = 0x0F,
-            ["float_600_2"]     = 0x15,  // inferred
-            ["brake_temp_1"]    = 0x16,  // inferred
-            ["float"]           = 0x07,
-            ["int32_t"]         = 0x08,  // inferred
-            ["uint32_t"]        = 0x09,  // inferred
-            ["double"]          = 0x0A,  // inferred
-            ["location_t"]      = 0x0B,  // inferred
-        };
-
         /// <summary>
         /// PitHouse-shape tier-def body (no preamble — caller emits the
         /// preamble TLV separately on first send per session). Layout per
@@ -232,21 +210,29 @@ namespace MozaPlugin.Telemetry
             var idxByUrl = new Dictionary<string, int>(StringComparer.OrdinalIgnoreCase);
             if (wheelCatalog != null && wheelCatalog.Count > 0)
             {
+                // First occurrence wins: after a dashboard switch the wheel
+                // re-indexes from 1 so fresh entries sit at lower positions
+                // while stale cold-start entries linger at higher positions.
                 for (int i = 0; i < wheelCatalog.Count; i++)
                 {
                     string url = wheelCatalog[i];
-                    if (!string.IsNullOrEmpty(url))
+                    if (!string.IsNullOrEmpty(url) && !idxByUrl.ContainsKey(url))
                         idxByUrl[url] = i + 1;
                 }
             }
             else
             {
-                var allChannels = profile.Tiers
-                    .SelectMany(t => t.Channels)
-                    .OrderBy(c => c.Url, StringComparer.OrdinalIgnoreCase)
-                    .ToList();
-                for (int i = 0; i < allChannels.Count; i++)
-                    idxByUrl[allChannels[i].Url] = i + 1;
+                // Deduplicate: broadcast expansion repeats URLs N× which
+                // inflates indices if we count every occurrence.
+                var seen = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+                var unique = new List<ChannelDefinition>();
+                foreach (var ch in profile.Tiers.SelectMany(t => t.Channels))
+                {
+                    if (seen.Add(ch.Url)) unique.Add(ch);
+                }
+                unique.Sort((a, b) => string.Compare(a.Url, b.Url, StringComparison.OrdinalIgnoreCase));
+                for (int i = 0; i < unique.Count; i++)
+                    idxByUrl[unique[i].Url] = i + 1;
             }
 
             for (int f = 0; f < flagBase; f++)
@@ -394,7 +380,7 @@ namespace MozaPlugin.Telemetry
                     int chIndex;
                     if (!channelIndexMap.TryGetValue(ch.Url, out chIndex)) chIndex = 0;
                     uint compCode;
-                    if (!CompressionCodes.TryGetValue(ch.Compression, out compCode)) compCode = 0xFFFF;
+                    compCode = LookupCompressionCode(ch.Compression);
                     w.Write((uint)chIndex);   // channel index (LE)
                     w.Write(compCode);        // compression code (LE)
                     w.Write((uint)ch.BitWidth); // bit width (LE)

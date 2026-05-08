@@ -197,6 +197,10 @@ namespace MozaPlugin.Protocol
                     // burst is up to 7 × 68B = ~500B in under 40ms).
                     ReadBufferSize = 65536,
                     WriteBufferSize = 16384,
+                    // CDC ACM uses DTR as "host connected" signal. Must be true
+                    // so Close() drops DTR and Open() raises it — giving the
+                    // wheel a real disconnect/reconnect on the control lines.
+                    DtrEnable = true,
                 };
                 _port.Open();
                 _port.DiscardInBuffer();
@@ -556,11 +560,6 @@ namespace MozaPlugin.Protocol
                 //    settings writes when flooded (ApplyProfile sends 30+ in a burst).
                 //    Pacing is skipped when the previous write was a stream frame,
                 //    since telemetry-group writes never trigger the drop.
-                // 1) One-shot FIFO: session traffic, settings writes, probes.
-                //    Paced at 4 ms between consecutive one-shots — Moza bases drop
-                //    settings writes when flooded (ApplyProfile sends 30+ in a burst).
-                //    Pacing is skipped when the previous write was a stream frame,
-                //    since telemetry-group writes never trigger the drop.
                 if (_oneShotQueue.TryDequeue(out var msg))
                 {
                     if (lastWasOneShot)
@@ -582,22 +581,21 @@ namespace MozaPlugin.Protocol
                     }
                     didWork = true;
                 }
-                else
+
+                // 2) Stream lane: latest-wins per kind, drained after every FIFO
+                //    item (not only when FIFO is empty). Retransmit + blind
+                //    retransmit can keep the FIFO perpetually non-empty for seconds,
+                //    starving value frames if streams are gated on FIFO-empty.
+                for (int k = 0; k < _streamSlots.Length; k++)
                 {
-                    // 2) Stream lane: latest-wins per kind, drained unpaced so a full
-                    //    telemetry tick (dash + enable + sequence + mode) goes out
-                    //    back-to-back in ~1 ms total instead of 12–28 ms of sleep.
-                    for (int k = 0; k < _streamSlots.Length; k++)
+                    var slot = Interlocked.Exchange(ref _streamSlots[k], null);
+                    if (slot == null) continue;
+                    if (WriteFrame(slot, ref stuffBuf))
                     {
-                        var slot = Interlocked.Exchange(ref _streamSlots[k], null);
-                        if (slot == null) continue;
-                        if (WriteFrame(slot, ref stuffBuf))
-                        {
-                            writeCount++;
-                            lastWriteTs = System.Diagnostics.Stopwatch.GetTimestamp();
-                            lastWasOneShot = false;
-                            didWork = true;
-                        }
+                        writeCount++;
+                        lastWriteTs = System.Diagnostics.Stopwatch.GetTimestamp();
+                        lastWasOneShot = false;
+                        didWork = true;
                     }
                 }
 

@@ -1124,6 +1124,8 @@ namespace MozaPlugin
                 UploadDashboardCheck.IsChecked = s.TelemetryUploadDashboard;
                 DownloadDashboardCheck.IsChecked = s.TelemetryDownloadDashboard;
                 FirmwareEraCombo.SelectedIndex = FirmwareEraToIndex(s.TelemetryFirmwareEra);
+                // Hidden for now: v2 telemetry pipeline UI not shown
+                // UseNewTelemetryPipelineCheck.IsChecked = s.UseNewTelemetryPipeline;
             }
             finally
             {
@@ -1154,6 +1156,18 @@ namespace MozaPlugin
             _plugin.SaveSettings();
             _plugin.RestartTelemetry();
         }
+
+        // Hidden for now: v2 telemetry pipeline UI not shown
+        // private void UseNewTelemetryPipeline_Changed(object sender, RoutedEventArgs e)
+        // {
+        //     if (_suppressEvents) return;
+        //     _plugin.Settings.UseNewTelemetryPipeline = UseNewTelemetryPipelineCheck.IsChecked == true;
+        //     _plugin.SaveSettings();
+        //     // The pipeline implementation is selected at MozaPlugin.Init() time. Toggling
+        //     // mid-session does not swap implementations; user must restart SimHub. We still
+        //     // call RestartTelemetry() so the active pipeline goes through Stop/Start.
+        //     _plugin.RestartTelemetry();
+        // }
 
         private static int FirmwareEraToIndex(MozaFirmwareEra era)
         {
@@ -1249,7 +1263,7 @@ namespace MozaPlugin
         private string BuildDashboardStateText()
         {
             var ts = _plugin.TelemetrySender;
-            var state = ts?.WheelState;
+            var state = _plugin.WheelStateForDiagnostics;
             if (state == null) return "(no configJson state received yet)";
             var sb = new System.Text.StringBuilder();
             sb.AppendLine($"TitleId:        {state.TitleId}");
@@ -1311,8 +1325,7 @@ namespace MozaPlugin
 
         private string BuildTileServerText()
         {
-            var ts = _plugin.TelemetrySender;
-            var tile = ts?.TileServerState;
+            var tile = _plugin.TileServerStateForDiagnostics;
             if (tile == null)
                 return "(no inbound tile-server blob received — plugin PUSHES empty state on 0x03; wheel doesn't push back in current captures)";
             var sb = new System.Text.StringBuilder();
@@ -1331,22 +1344,27 @@ namespace MozaPlugin
         private string BuildSessionStateText()
         {
             var ts = _plugin.TelemetrySender;
-            if (ts == null) return "(telemetry sender not running)";
+            if (ts == null && !_plugin.TelemetryEnabledForDiagnostics)
+                return "(telemetry not running)";
             var sb = new System.Text.StringBuilder();
-            sb.AppendLine($"Enabled:            {ts.Enabled}");
-            sb.AppendLine($"FramesSent:         {ts.FramesSent}");
-            sb.AppendLine($"DisplayDetected:    {ts.DisplayDetected}");
-            sb.AppendLine($"DisplayModelName:   {Blank(ts.DisplayModelName)}");
+            sb.AppendLine($"Pipeline:           {(ts != null ? "OLD (TelemetrySender)" : "NEW (Telemetry2 host)")}");
+            sb.AppendLine($"Enabled:            {_plugin.TelemetryEnabledForDiagnostics}");
+            sb.AppendLine($"FramesSent:         {_plugin.FramesSentForDiagnostics}");
+            sb.AppendLine($"DisplayDetected:    {(ts?.DisplayDetected ?? _plugin.IsDisplayDetected)}");
+            sb.AppendLine($"DisplayModelName:   {Blank(ts?.DisplayModelName ?? _plugin.DisplayModelName)}");
             sb.AppendLine($"FirmwareEra:        {_plugin.Settings.TelemetryFirmwareEra}");
-            sb.AppendLine($"ProtocolVersion:    {ts.ProtocolVersion}");
-            sb.AppendLine($"UploadWireFormat:   {ts.UploadWireFormat}");
-            sb.AppendLine($"FlagByte:           0x{ts.FlagByte:X2}");
-            sb.AppendLine($"UploadDashboard:    {ts.UploadDashboard}");
-            sb.Append    ($"Profile:            {ts.Profile?.Name ?? "(none)"}");
+            if (ts != null)
+            {
+                sb.AppendLine($"ProtocolVersion:    {ts.ProtocolVersion}");
+                sb.AppendLine($"UploadWireFormat:   {ts.UploadWireFormat}");
+                sb.AppendLine($"FlagByte:           0x{ts.FlagByte:X2}");
+                sb.AppendLine($"UploadDashboard:    {ts.UploadDashboard}");
+                sb.Append    ($"Profile:            {ts.Profile?.Name ?? "(none)"}");
+            }
 
             // Per-session chunk counters
-            var counts = ts.SessionCounts;
-            if (counts.Count > 0)
+            var counts = _plugin.SessionCountsForDiagnostics;
+            if (counts != null && counts.Count > 0)
             {
                 sb.AppendLine();
                 sb.AppendLine();
@@ -1364,8 +1382,7 @@ namespace MozaPlugin
 
         private string BuildWheelCatalogText()
         {
-            var ts = _plugin.TelemetrySender;
-            var catalog = ts?.WheelChannelCatalog;
+            var catalog = _plugin.WheelChannelCatalogForDiagnostics;
             if (catalog == null || catalog.Count == 0)
                 return "(no channel catalog received from wheel yet)";
             var sb = new System.Text.StringBuilder();
@@ -1377,8 +1394,7 @@ namespace MozaPlugin
 
         private string BuildSubscriptionText()
         {
-            var ts = _plugin.TelemetrySender;
-            var sub = ts?.LastSubscription;
+            var sub = _plugin.SubscriptionForDiagnostics;
             if (sub == null) return "(no subscription sent yet)";
             var sb = new System.Text.StringBuilder();
             sb.AppendLine($"Sent on session {sub.SessionByte} format={sub.Format}  at {sub.CapturedAt:HH:mm:ss}");
@@ -1397,8 +1413,7 @@ namespace MozaPlugin
 
         private string BuildSubscriptionResponseText()
         {
-            var ts = _plugin.TelemetrySender;
-            var chunks = ts?.LastSubscriptionResponse;
+            var chunks = _plugin.SubscriptionResponseForDiagnostics;
             if (chunks == null || chunks.Count == 0)
                 return "(no inbound chunks captured on session 0x02 in 5s window after subscription)";
             var sb = new System.Text.StringBuilder();
@@ -2012,7 +2027,7 @@ namespace MozaPlugin
         {
             if (WheelFilesGrid == null) return;
             var ts = _plugin.TelemetrySender;
-            var state = ts?.WheelState;
+            var state = _plugin.WheelStateForDiagnostics;
             var rows = new System.Collections.Generic.List<WheelFileRow>();
             if (state != null)
             {

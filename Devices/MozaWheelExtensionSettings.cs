@@ -21,10 +21,10 @@ namespace MozaPlugin.Devices
         public int WheelButtonsIdleEffect { get; set; } = -1;
 
         // Brightness (new wheels 0-100, ES wheels 0-15)
-        public int WheelRpmBrightness { get; set; } = 100;
-        public int WheelButtonsBrightness { get; set; } = 100;
-        public int WheelFlagsBrightness { get; set; } = 100;
-        public int WheelESRpmBrightness { get; set; } = 15;
+        public int WheelRpmBrightness { get; set; } = -1;
+        public int WheelButtonsBrightness { get; set; } = -1;
+        public int WheelFlagsBrightness { get; set; } = -1;
+        public int WheelESRpmBrightness { get; set; } = -1;
 
         // ES/Old wheel
         public int WheelRpmIndicatorMode { get; set; } = -1;

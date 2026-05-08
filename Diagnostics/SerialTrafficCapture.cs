@@ -168,22 +168,23 @@ namespace MozaPlugin.Diagnostics
             }
             sb.Append('"');
             // grp/dev/payload extraction. Two shapes:
-            //   * Tx: full wire frame `7E [N] grp dev payload[N-2] cs`
+            //   * Tx: full wire frame `7E [N] grp dev <body> cs` — body length = frame.Length - 5
+            //     Two N conventions exist:
+            //       legacy (VGS/F1):  N = body.Length excluding grp+dev (= cmd+prefix+...+data)
+            //                         frame.Length = N + 5
+            //       Type02 (CSP/W17): N = body.Length INCLUDING grp+dev
+            //                         frame.Length = N + 3
+            //     We don't trust N for slicing — instead, payload spans from offset 4 to
+            //     frame.Length-1 (= just before checksum). This works for both conventions.
             //   * Rx: parsed message (FrameSplitter already stripped framing) —
-            //     starts directly with `grp dev payload...`
+            //     starts directly with `grp dev payload...`, no checksum.
             int grp = -1, dev = -1, payStart = -1, payEnd = -1;
-            if (frame.Length >= 5 && frame[0] == 0x7E)
+            if (frame.Length >= 6 && frame[0] == 0x7E)
             {
-                // MOZA wire framing: 7E [N] grp dev payload[N] cs.
-                // N counts payload bytes only (excludes grp/dev/cs).
-                int n = frame[1];
-                if (frame.Length >= 4 + n + 1)
-                {
-                    grp = frame[2];
-                    dev = frame[3];
-                    payStart = 4;
-                    payEnd = 4 + n;
-                }
+                grp = frame[2];
+                dev = frame[3];
+                payStart = 4;
+                payEnd = frame.Length - 1; // last byte is checksum
             }
             else if (frame.Length >= 2)
             {

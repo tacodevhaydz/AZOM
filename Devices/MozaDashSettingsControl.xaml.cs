@@ -53,14 +53,14 @@ namespace MozaPlugin.Devices
 
         private void OnRefreshTick(object? sender, EventArgs e) => RefreshDash();
 
-        private void OnLoaded(object sender, RoutedEventArgs e) => _refreshTimer.Start();
+        private void OnLoaded(object sender, RoutedEventArgs e)
+        {
+            if (!_refreshTimer.IsEnabled) _refreshTimer.Start();
+        }
 
         private void OnUnloaded(object sender, RoutedEventArgs e)
         {
             _refreshTimer.Stop();
-            _refreshTimer.Tick -= OnRefreshTick;
-            Loaded -= OnLoaded;
-            Unloaded -= OnUnloaded;
         }
 
         private bool ResolvePlugin()
