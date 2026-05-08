@@ -34,6 +34,7 @@ namespace MozaPlugin
             AutoApplyProfileCheck.IsChecked = plugin.Settings.AutoApplyProfileOnLaunch;
             LimitWheelUpdatesCheck.IsChecked = plugin.Settings.LimitWheelUpdates;
             AlwaysResendBitmaskCheck.IsChecked = plugin.Settings.AlwaysResendBitmask;
+            EnableAb9Check.IsChecked = plugin.Settings.EnableAb9;
             StartCaptureOnNextLaunchCheck.IsChecked = plugin.Settings.StartCaptureOnNextLaunch;
             // Reflect any in-flight capture (e.g. armed from a previous session
             // and started in MozaPlugin.Init) so the user sees Stop instead of
@@ -1069,6 +1070,14 @@ namespace MozaPlugin
             if (_suppressEvents) return;
             _plugin.Settings.AlwaysResendBitmask = AlwaysResendBitmaskCheck.IsChecked == true;
             _plugin.SaveSettings();
+        }
+
+        private void EnableAb9Check_Changed(object sender, RoutedEventArgs e)
+        {
+            if (_suppressEvents) return;
+            // SetAb9Enabled writes the setting, persists, and disconnects on
+            // false — no separate SaveSettings call needed.
+            _plugin.SetAb9Enabled(EnableAb9Check.IsChecked == true);
         }
 
         private void ClearAllSettingsButton_Click(object sender, RoutedEventArgs e)

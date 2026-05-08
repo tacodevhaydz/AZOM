@@ -63,6 +63,14 @@ namespace MozaPlugin
         public string LastWheelbasePort { get; set; } = "";
         public string LastAb9Port { get; set; } = "";
 
+        // AB9 shifter detection toggle. When false, plugin never probes / opens
+        // the AB9 port — defense for users with base-only setups where the
+        // AB9 manager would otherwise try to grab a COM port that may collide
+        // with the wheelbase under Wine. Off by default — most users don't
+        // have an AB9; AB9 owners flip this on once. Existing users with AB9
+        // hardware will need to enable it after upgrade (Newtonsoft fills
+        // missing JSON keys from the C# initializer = false).
+        public bool EnableAb9 { get; set; } = false;
 
         // Whether to automatically apply profile settings on launch
         public bool AutoApplyProfileOnLaunch { get; set; } = true;

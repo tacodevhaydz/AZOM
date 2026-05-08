@@ -745,26 +745,6 @@ namespace MozaPlugin.Telemetry
 
         public void Stop()
         {
-            // Stop trace: log a synthetic stack via MozaLog so we can find
-            // every Stop call, including silent ones from inside StartInner's
-            // pre-init cleanup. Without this we can't tell why subscribers
-            // alternate between 1 and 2 mid-session.
-            try
-            {
-                var st = new System.Diagnostics.StackTrace(skipFrames: 1, fNeedFileInfo: false);
-                var frames = st.GetFrames();
-                var sb = new System.Text.StringBuilder();
-                int max = Math.Min(6, frames?.Length ?? 0);
-                for (int i = 0; i < max; i++)
-                {
-                    var f = frames![i];
-                    sb.Append(f.GetMethod()?.DeclaringType?.Name).Append('.').Append(f.GetMethod()?.Name);
-                    if (i < max - 1) sb.Append(" ← ");
-                }
-                MozaLog.Info($"[Moza] DIAG: TelemetrySender.Stop() called. caller chain: {sb}");
-            }
-            catch { }
-
             _enabled = false;
             _connection.MessageReceived -= OnMessageDuringPreamble;
             if (_sendTimer != null)
@@ -2542,23 +2522,6 @@ namespace MozaPlugin.Telemetry
         /// </summary>
         private void OnMessageDuringPreamble(byte[] data)
         {
-            // Top-of-handler DIAG: snapshot every C3/71/7C session-data frame
-            // for sessions 0x09/0x0a so we can prove whether the handler is
-            // actually reached for chunks that the WIRE log shows arriving.
-            // Placed BEFORE the _enabled / data.Length / data[0] / data[1]
-            // gates so we can see whether one of those gates is dropping the
-            // chunk too.
-            if (data != null && data.Length >= 8 && data[0] == 0xC3 && data[1] == 0x71
-                && data[2] == 0x7C && data[3] == 0x00
-                && (data[4] == 0x09 || data[4] == 0x0A))
-            {
-                int seq = data[6] | (data[7] << 8);
-                MozaLog.Info(
-                    $"[Moza] DIAG: OnMessageDuringPreamble TOP for sess=0x{data[4]:X2} " +
-                    $"type=0x{data[5]:X2} seq={seq} dataLen={data.Length} " +
-                    $"_enabled={_enabled} _preambleComplete={_preambleComplete}");
-            }
-
             if (!_enabled)
                 return;
 
@@ -2642,35 +2605,11 @@ namespace MozaPlugin.Telemetry
                     // Per-session inbound counter for diag tab.
                     BumpSessionCount(session, outbound: false);
 
-                    // Diagnostic: trace every type=0x01 chunk arrival for the
-                    // configJson sessions. Pairs with the WIRE log in
-                    // MozaSerialConnection so we can see whether a chunk
-                    // logged at the read layer reaches the dispatch layer
-                    // (and which branch swallows it).
-                    if (session == 0x09 || session == 0x0a)
-                    {
-                        MozaLog.Info(
-                            $"[Moza] DIAG: OnMessageDuringPreamble entered for sess=0x{session:X2} " +
-                            $"seq={seq} payload={chunkPayload.Length}B " +
-                            $"_enabled={_enabled} _preambleComplete={_preambleComplete}");
-                    }
-
                     // Dispatcher-owned sessions: route exclusively through
                     // dispatcher and ack. Skip all legacy if-chains below.
                     var owner = _dispatcher.GetOwner(session);
                     if (owner != null)
                     {
-                        // Diagnostic: surface unexpected ownership of
-                        // configJson sessions. v1 pipeline does NOT claim
-                        // 0x09/0x0a — anything taking them out of the legacy
-                        // path means dashboard-state decode is dead.
-                        if (session == 0x09 || session == 0x0a)
-                        {
-                            MozaLog.Info(
-                                $"[Moza] DIAG: session 0x{session:X2} chunk seq={seq} routed " +
-                                $"via dispatcher to {owner.GetType().Name} " +
-                                $"(legacy configJson handler bypassed)");
-                        }
                         SendSessionAck(session, (ushort)seq);
                         _dispatcher.DispatchData(session, seq, chunkPayload);
                         return;
@@ -2765,13 +2704,6 @@ namespace MozaPlugin.Telemetry
                     // firmware uses, and the parser drops malformed blobs.
                     if (session == 0x09 || session == 0x0a)
                     {
-                        // Diagnostic: confirm legacy configJson branch entered.
-                        // Pairs with the upstream "DIAG: OnMessageDuringPreamble entered"
-                        // log so we know chunks are actually reaching here vs being
-                        // dropped between subscribers. INFO so it's not filtered out.
-                        MozaLog.Info(
-                            $"[Moza] DIAG: legacy configJson branch entered for sess=0x{session:X2} " +
-                            $"seq={seq} chunkLen={chunkPayload.Length}");
                         SendSessionAck(session, (ushort)seq);
                         if (session == 0x09) _session09InboundSeq = seq;
                         try

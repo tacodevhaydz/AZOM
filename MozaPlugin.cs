@@ -419,7 +419,7 @@ namespace MozaPlugin
                     if (IsShuttingDown) return;
                     if (!_connection.IsConnected)
                         TryConnect();
-                    if (!_ab9Manager.IsConnected)
+                    if (_settings.EnableAb9 && !_ab9Manager.IsConnected)
                         TryConnectAb9();
                 };
                 _reconnectTimer.AutoReset = true;
@@ -743,6 +743,29 @@ namespace MozaPlugin
                 _wheelPollMisses = 0;
                 _lastKnownWheelModel = "";
                 MozaLog.Info("[Moza] Connection disabled");
+            }
+        }
+
+        /// <summary>
+        /// Toggle AB9 shifter detection at runtime. When disabled, disconnect
+        /// any active AB9 connection and clear detection state so the device
+        /// extension UI hides cleanly. When re-enabled, the reconnect timer
+        /// (5 s cadence) picks it up automatically — no explicit start needed.
+        /// </summary>
+        internal void SetAb9Enabled(bool enabled)
+        {
+            _settings.EnableAb9 = enabled;
+            SaveSettings();
+            if (enabled)
+            {
+                MozaLog.Info("[Moza] AB9 detection enabled — next reconnect tick will probe");
+            }
+            else
+            {
+                _ab9Detected = false;
+                _ab9SettingsApplied = false;
+                try { _ab9Manager?.Disconnect(); } catch { }
+                MozaLog.Info("[Moza] AB9 detection disabled — disconnected");
             }
         }
 
@@ -1368,6 +1391,11 @@ namespace MozaPlugin
         private void TryConnectAb9()
         {
             if (_ab9Manager == null) return;
+            // Defense-in-depth: skip if AB9 detection has been disabled by
+            // the user. The reconnect-timer gate at line 422 should already
+            // prevent the call, but guard here too in case future callers
+            // bypass that check.
+            if (!_settings.EnableAb9) return;
             if (_ab9Detected)
             {
                 // Connection dropped after a successful detection — clear so the

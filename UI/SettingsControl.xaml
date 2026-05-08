@@ -809,20 +809,29 @@
 
                         <TextBlock Text="Wheel LED Output (RPM / Buttons)" Style="{StaticResource SectionHeader}"/>
                         <TextBlock TextWrapping="Wrap" Foreground="Gray" FontSize="11" Margin="0,0,0,8"
-                                   Text="Recommended: leave all three options below OFF unless you hit LED issues. These are legacy defensive toggles from before the protocol was reverse-engineered; current firmware does not require them."/>
+                                   Text="Recommended: leave LED options below OFF unless you experience LED issues."/>
                         <StackPanel Orientation="Horizontal" Margin="0,8">
                             <TextBlock Text="Limit updates to wheel" Style="{StaticResource SliderLabel}"/>
                             <CheckBox x:Name="LimitWheelUpdatesCheck" VerticalAlignment="Center"
                                       Checked="LimitWheelUpdatesCheck_Changed" Unchecked="LimitWheelUpdatesCheck_Changed"/>
                         </StackPanel>
-                        <TextBlock Text="Only send LED data when it actually changes. Disable if your wheel stops responding to LED effects."
+                        <TextBlock Text="Only send LED data when it actually changes."
                                    Foreground="Gray" FontSize="11" Margin="0,4,0,0" TextWrapping="Wrap"/>
                         <StackPanel Orientation="Horizontal" Margin="0,8">
                             <TextBlock Text="Always resend bitmask" Style="{StaticResource SliderLabel}"/>
                             <CheckBox x:Name="AlwaysResendBitmaskCheck" VerticalAlignment="Center"
                                       Checked="AlwaysResendBitmaskCheck_Changed" Unchecked="AlwaysResendBitmaskCheck_Changed"/>
                         </StackPanel>
-                        <TextBlock Text="Always send the LED bitmask with color updates, even if unchanged. Enable if your wheel ignores color changes when the same LEDs stay lit."
+                        <TextBlock Text="Always send the LED bitmask with color updates, even if unchanged. Causes extra traffic so do not use unless required."
+                                   Foreground="Gray" FontSize="11" Margin="0,4,0,0" TextWrapping="Wrap"/>
+
+                        <TextBlock Text="AB9 Shifter" Style="{StaticResource SectionHeader}"/>
+                        <StackPanel Orientation="Horizontal" Margin="0,8">
+                            <TextBlock Text="Enable AB9 shifter detection" Style="{StaticResource SliderLabel}"/>
+                            <CheckBox x:Name="EnableAb9Check" VerticalAlignment="Center"
+                                      Checked="EnableAb9Check_Changed" Unchecked="EnableAb9Check_Changed"/>
+                        </StackPanel>
+                        <TextBlock Text="Enable only if you have an AB9 shifter."
                                    Foreground="Gray" FontSize="11" Margin="0,4,0,0" TextWrapping="Wrap"/>
 
                         <TextBlock Text="Dashboard Telemetry" Style="{StaticResource SectionHeader}"/>
@@ -838,10 +847,10 @@
                             <TextBlock Text="Wheel firmware era:" VerticalAlignment="Center" Margin="0,0,8,0"/>
                             <ComboBox x:Name="FirmwareEraCombo" Width="500"
                                       SelectionChanged="FirmwareEra_Changed">
-                                <ComboBoxItem Content="Auto — detect from wheel handshake"/>
-                                <ComboBoxItem Content="2024 era — R9 / older CSP (URL subscription)"/>
-                                <ComboBoxItem Content="2025 era — VGS / GS V2P / F1"/>
-                                <ComboBoxItem Content="2026 era — R5+W17 / KS Pro / post-2026-04 CSP"/>
+                                <ComboBoxItem Content="Auto — Attempt to detect from wheel handshake"/>
+                                <ComboBoxItem Content="2024 era — (URL subscription)"/>
+                                <ComboBoxItem Content="2025 era — VGS"/>
+                                <ComboBoxItem Content="2026 era — CSP/KSP"/>
                             </ComboBox>
                         </StackPanel>
                         <TextBlock TextWrapping="Wrap" Foreground="Gray" FontSize="11" Margin="0,2,0,8"

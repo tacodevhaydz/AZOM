@@ -518,21 +518,6 @@ namespace MozaPlugin.Protocol
                                 $"totalLen={data.Length} payload={bodyLen}B first8={first8}");
                         }
                         SerialTrafficCapture.Instance.RecordRx(CaptureLabel, data);
-                        // Pre-Invoke DIAG: prove whether MessageReceived is
-                        // actually invoked for sess=0x09/0x0a chunks. The WIRE
-                        // log above fires for every frame; if this DIAG is
-                        // missing for a chunk, Invoke wasn't called (and the
-                        // bug is in this read loop).
-                        if (data.Length >= 8 && data[0] == 0xC3 && data[1] == 0x71
-                            && data[2] == 0x7C && data[3] == 0x00
-                            && (data[4] == 0x09 || data[4] == 0x0A))
-                        {
-                            int seq = data[6] | (data[7] << 8);
-                            int subCount = MessageReceived?.GetInvocationList().Length ?? 0;
-                            MozaLog.Info(
-                                $"[Moza] DIAG: pre-Invoke for sess=0x{data[4]:X2} " +
-                                $"type=0x{data[5]:X2} seq={seq} subscribers={subCount}");
-                        }
                         MessageReceived?.Invoke(data);
                         // Move cursor past the consumed wire bytes.
                         cursor = wirePos;
