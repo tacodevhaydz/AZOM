@@ -1410,6 +1410,18 @@ namespace MozaPlugin
                         ScheduleSave();
                     }
                 }
+                else if (!string.IsNullOrEmpty(_settings.LastWheelbasePort)
+                         && string.IsNullOrEmpty(_connection.LastPortName))
+                {
+                    // Connect() cleared the cached port (stale / wrong
+                    // device after USB port change). Wipe the persisted
+                    // setting so we don't repeat the stale-port check on
+                    // every reconnect tick.
+                    MozaLog.Info(
+                        $"[Moza] Cleared stale saved port {_settings.LastWheelbasePort}");
+                    _settings.LastWheelbasePort = "";
+                    ScheduleSave();
+                }
             }
             finally
             {
@@ -1451,6 +1463,14 @@ namespace MozaPlugin
                     _settings.LastAb9Port = port!;
                     ScheduleSave();
                 }
+            }
+            else if (!string.IsNullOrEmpty(_settings.LastAb9Port)
+                     && string.IsNullOrEmpty(_ab9Manager.Connection.LastPortName))
+            {
+                MozaLog.Info(
+                    $"[Moza/AB9] Cleared stale saved port {_settings.LastAb9Port}");
+                _settings.LastAb9Port = "";
+                ScheduleSave();
             }
         }
 

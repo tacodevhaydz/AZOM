@@ -101,6 +101,13 @@ namespace MozaPlugin.Protocol
         private int _portFailureLogged;
         private const int PortDeadThreshold = 10;
 
+        // Set by ReadLoop to the group byte of the first valid frame
+        // received after TryOpen. Used by Connect() to verify a cached
+        // port has the expected MOZA device behind it — not a ghost port,
+        // not a different device that happens to send bytes. 0 = nothing
+        // received yet (0x00 is never a valid response group).
+        private int _firstRxGroup;
+
         public event Action<byte[]>? MessageReceived;
         // Raised on the thread that hit the I/O failure (reader or writer)
         // when the port was force-closed by HandleIoFailure. Subscribers
@@ -170,10 +177,107 @@ namespace MozaPlugin.Protocol
             // byte stream between the two readers, which then loses ~half of
             // each wheel response (visible as missing session 0x09 chunks
             // and false "AB9 shifter detected" on a base-only setup).
+            //
+            // On native Windows, validate via WMI that the cached port
+            // still has a live MOZA device behind it. Moving USB ports causes
+            // Windows to assign a new COM number; the old COM entry may stay
+            // openable as a ghost device in the registry while the real device
+            // is on a different port — writes go into a black hole and the
+            // plugin never discovers the real port.
+            //
+            // When WMI is unavailable (Wine/Proton), open the cached port and
+            // send a quick liveness probe. If no frame arrives within 400ms,
+            // the port is dead — disconnect and let FindMozaPort re-discover.
+            // The brief open+close of the wrong port won't reset the real
+            // device (they're different ttys).
             if (_lastPortName != null
-                && !_activePorts.ContainsKey(_lastPortName)
-                && TryOpen(_lastPortName))
-                return true;
+                && !_activePorts.ContainsKey(_lastPortName))
+            {
+                var wmiPorts = FindAllMozaPorts();
+                bool wmiAvailable = wmiPorts.Count > 0;
+                bool cachedPortValid = false;
+                if (wmiAvailable)
+                {
+                    foreach (var (wmiPort, wmiPid) in wmiPorts)
+                    {
+                        if (string.Equals(wmiPort, _lastPortName, StringComparison.OrdinalIgnoreCase))
+                        {
+                            if (_pidFilter == null || _pidFilter(wmiPid))
+                            {
+                                cachedPortValid = true;
+                                if (wmiPid != null) DiscoveredPid = wmiPid;
+                            }
+                            else
+                            {
+                                MozaLog.Debug(
+                                    $"[Moza] Cached port {_lastPortName} is now PID={wmiPid ?? "?"} (filtered out)");
+                            }
+                            break;
+                        }
+                    }
+                }
+                else if (TryOpen(_lastPortName))
+                {
+                    // No WMI — liveness-probe the cached port. The read
+                    // thread is running; write the appropriate probe and
+                    // validate the response group matches the device type
+                    // we're looking for. A wrong device (or firmware debug
+                    // spam from a non-MOZA device) would respond with an
+                    // unrecognised group and should not be trusted.
+                    byte[] probe;
+                    byte expectedGroup;
+                    if (_probeTarget == MozaProbeTarget.Ab9)
+                    {
+                        probe = Ab9ProbeFrame;
+                        expectedGroup = Ab9RespGroup;
+                    }
+                    else
+                    {
+                        probe = BaseProbeFrame;
+                        expectedGroup = BaseRespGroup;
+                    }
+                    try { _port?.Write(probe, 0, probe.Length); } catch { }
+                    Thread.Sleep(400);
+                    int rxGroup = Volatile.Read(ref _firstRxGroup);
+                    if (rxGroup == expectedGroup)
+                    {
+                        cachedPortValid = true;
+                        MozaLog.Debug(
+                            $"[Moza] Cached port {_lastPortName} responded 0x{rxGroup:X2} — confirmed");
+                    }
+                    else
+                    {
+                        string detail = rxGroup == 0
+                            ? "no response"
+                            : $"unexpected group 0x{rxGroup:X2} (expected 0x{expectedGroup:X2})";
+                        MozaLog.Debug(
+                            $"[Moza] Cached port {_lastPortName}: {detail} — stale, will re-discover");
+                        Disconnect();
+                    }
+                }
+
+                if (!cachedPortValid)
+                {
+                    MozaLog.Debug(
+                        $"[Moza] Clearing saved port {_lastPortName}");
+                    _lastPortName = null;
+                }
+                else
+                {
+                    // WMI path: port was validated but not yet opened.
+                    // Non-WMI path: already opened + probed, _running is true.
+                    if (!_running && !TryOpen(_lastPortName))
+                    {
+                        MozaLog.Debug(
+                            $"[Moza] Cached port {_lastPortName} validated but failed to open — clearing");
+                        _lastPortName = null;
+                    }
+                    else
+                    {
+                        return true;
+                    }
+                }
+            }
 
             var (portName, pid, viaHubProbe) = FindMozaPort(_pidFilter, _probeTarget, () => _shutdownRequested);
             if (portName == null)
@@ -192,6 +296,7 @@ namespace MozaPlugin.Protocol
             while (_oneShotQueue.TryDequeue(out _)) { }
             for (int k = 0; k < _streamSlots.Length; k++)
                 Interlocked.Exchange(ref _streamSlots[k], null);
+            Interlocked.Exchange(ref _firstRxGroup, 0);
 
             try
             {
@@ -517,6 +622,7 @@ namespace MozaPlugin.Protocol
                                 $"[Moza] WIRE sess=0x{sess:X2} type=0x{type:X2} seq={seqWire} " +
                                 $"totalLen={data.Length} payload={bodyLen}B first8={first8}");
                         }
+                        Interlocked.CompareExchange(ref _firstRxGroup, data[0], 0);
                         SerialTrafficCapture.Instance.RecordRx(CaptureLabel, data);
                         MessageReceived?.Invoke(data);
                         // Move cursor past the consumed wire bytes.
