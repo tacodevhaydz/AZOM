@@ -458,11 +458,11 @@ namespace MozaPlugin.Devices
             {
                 StatusDot.Fill = Brushes.Gray;
                 StatusText.Text = "Plugin not loaded";
-                WheelTypeText.Text = "";
-                WheelFwText.Text = "";
                 WheelNotDetectedPanel.Visibility = Visibility.Visible;
-                NewWheelPanel.Visibility = Visibility.Collapsed;
-                EsWheelPanel.Visibility = Visibility.Collapsed;
+                DashboardTab.Visibility = Visibility.Collapsed;
+                RpmTab.Visibility = Visibility.Collapsed;
+                ButtonsTab.Visibility = Visibility.Collapsed;
+                KnobsTab.Visibility = Visibility.Collapsed;
                 return;
             }
 
@@ -486,17 +486,6 @@ namespace MozaPlugin.Devices
                 string modelName = _data!.WheelModelName;
                 string swVersion = _data.WheelSwVersion;
                 string hwVersion = _data.WheelHwVersion;
-
-                WheelTypeText.Text = string.IsNullOrEmpty(modelName) ? "Detecting wheel..." : modelName;
-                var fwParts = new System.Collections.Generic.List<string>();
-                if (!string.IsNullOrEmpty(swVersion)) fwParts.Add($"FW: {swVersion}");
-                if (!string.IsNullOrEmpty(hwVersion)) fwParts.Add($"HW: {hwVersion}");
-                WheelFwText.Text = string.Join("  |  ", fwParts);
-            }
-            else
-            {
-                WheelTypeText.Text = "";
-                WheelFwText.Text = "";
             }
 
             _suppressEvents = true;
@@ -504,10 +493,21 @@ namespace MozaPlugin.Devices
             {
                 bool anyWheel = newWheel || oldWheel;
                 WheelNotDetectedPanel.Visibility = anyWheel ? Visibility.Collapsed : Visibility.Visible;
-                NewWheelPanel.Visibility = newWheel ? Visibility.Visible : Visibility.Collapsed;
-                EsWheelPanel.Visibility = oldWheel ? Visibility.Visible : Visibility.Collapsed;
+
+                var modelInfoForTabs = newWheel ? _plugin?.WheelModelInfo : null;
                 bool showTelemetry = newWheel && (_plugin?.IsDisplayDetected ?? false);
-                TelemetrySection.Visibility = showTelemetry ? Visibility.Visible : Visibility.Collapsed;
+                bool showButtonsTab = newWheel && (modelInfoForTabs?.ButtonLedCount ?? 0) > 0;
+                bool showKnobsTab = newWheel && (modelInfoForTabs?.KnobCount ?? 0) > 0;
+
+                DashboardTab.Visibility = showTelemetry ? Visibility.Visible : Visibility.Collapsed;
+                RpmTab.Visibility = anyWheel ? Visibility.Visible : Visibility.Collapsed;
+                ButtonsTab.Visibility = showButtonsTab ? Visibility.Visible : Visibility.Collapsed;
+                KnobsTab.Visibility = showKnobsTab ? Visibility.Visible : Visibility.Collapsed;
+
+                RpmNewContent.Visibility = newWheel ? Visibility.Visible : Visibility.Collapsed;
+                RpmEsContent.Visibility = oldWheel ? Visibility.Visible : Visibility.Collapsed;
+
+                EnsureVisibleTabSelected();
 
                 if (showTelemetry && _data != null)
                 {
@@ -641,6 +641,29 @@ namespace MozaPlugin.Devices
             {
                 _suppressEvents = false;
             }
+        }
+
+        // Pick the first visible tab whenever the current selection has been
+        // collapsed (e.g. user was on Dashboard, then unplugs the wheel and
+        // reconnects an ES wheel which only exposes RPM).
+        private void EnsureVisibleTabSelected()
+        {
+            var selected = WheelTabs.SelectedItem as TabItem;
+            if (selected != null && selected.Visibility == Visibility.Visible)
+                return;
+
+            foreach (var item in WheelTabs.Items)
+            {
+                if (item is TabItem ti && ti.Visibility == Visibility.Visible)
+                {
+                    WheelTabs.SelectedItem = ti;
+                    return;
+                }
+            }
+
+            // No visible tabs (no wheel detected) — clear selection so a stale
+            // header doesn't stay highlighted.
+            WheelTabs.SelectedIndex = -1;
         }
 
         // Cache SolidColorBrush instances keyed by packed RGB. The 500ms refresh
