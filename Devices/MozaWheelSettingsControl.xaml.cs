@@ -1095,6 +1095,76 @@ namespace MozaPlugin.Devices
             }
         }
 
+        private static string UidToHex(byte[] uid)
+            => uid == null ? "" : BitConverter.ToString(uid).Replace("-", "").ToLowerInvariant();
+
+        private void TelemetryAutoDetect_Click(object sender, RoutedEventArgs e)
+        {
+            if (_plugin == null) return;
+
+            string dashesRoot = System.IO.Path.Combine(
+                Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
+                "MOZA Pit House", "_dashes");
+
+            if (!System.IO.Directory.Exists(dashesRoot))
+            {
+                MessageBox.Show(
+                    $"MOZA Pit House dashboard folder not found at:\n{dashesRoot}\n\n" +
+                    "Install MOZA Pit House and load a dashboard, or use Set Folder… to point at a custom location.",
+                    "Auto-detect dashboard folder",
+                    MessageBoxButton.OK, MessageBoxImage.Warning);
+                return;
+            }
+
+            byte[] uid = _plugin.Data?.WheelMcuUid ?? Array.Empty<byte>();
+            string uidHex = uid.Length == 12 ? UidToHex(uid) : "";
+
+            string? picked = null;
+            string? failReason = null;
+
+            if (!string.IsNullOrEmpty(uidHex))
+            {
+                string candidate = System.IO.Path.Combine(dashesRoot, uidHex);
+                if (System.IO.Directory.Exists(candidate))
+                    picked = candidate;
+                else
+                    failReason = $"No dashboard folder for the connected wheel (UID {uidHex}).\n" +
+                                 $"Looked for:\n{candidate}\n\n" +
+                                 "Open a dashboard in MOZA Pit House for this wheel first.";
+            }
+            else
+            {
+                var guidDirs = System.IO.Directory.GetDirectories(dashesRoot)
+                    .Where(p => System.Text.RegularExpressions.Regex.IsMatch(
+                        new System.IO.DirectoryInfo(p).Name, "^[0-9a-fA-F]{24}$"))
+                    .ToList();
+                if (guidDirs.Count == 1)
+                    picked = guidDirs[0];
+                else if (guidDirs.Count == 0)
+                    failReason = "No wheel-specific dashboard folders found under _dashes. " +
+                                 "Open MOZA Pit House and load a dashboard, then try again.";
+                else
+                    failReason = $"Multiple dashboard folders found ({guidDirs.Count}) and no wheel is connected. " +
+                                 "Connect your wheel and try again, or use Set Folder… to choose manually.";
+            }
+
+            if (picked == null)
+            {
+                MessageBox.Show(failReason, "Auto-detect dashboard folder",
+                    MessageBoxButton.OK, MessageBoxImage.Information);
+                return;
+            }
+
+            _plugin.Settings.TelemetryMzdashFolder = picked;
+            if (!string.IsNullOrEmpty(uidHex))
+                _plugin.Settings.WheelMzdashFolderByUid[uidHex] = picked;
+            _plugin.SaveSettings();
+            _plugin.DashCache?.LoadFromFolder(picked);
+            PopulateDashboardCombo();
+            _plugin.ApplyTelemetrySettings();
+            UpdateFolderInfo();
+        }
+
         private void UpdateFolderInfo()
         {
             if (_plugin == null) return;

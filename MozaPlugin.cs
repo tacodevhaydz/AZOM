@@ -1904,6 +1904,27 @@ namespace MozaPlugin
                 MozaLog.Debug(
                     $"[Moza] Wheel MCU UID ({_data.WheelMcuUid.Length}B): " +
                     MozaLog.RedactBytesHex(_data.WheelMcuUid));
+
+                // Per-wheel mzdash folder auto-switch (mapping populated by the
+                // Auto-detect button). Runs on the serial-reader thread; never
+                // touch WPF here — the 500 ms RefreshWheel tick repopulates the
+                // settings UI. Telemetry restart is unnecessary; dash-detection
+                // below triggers ApplyTelemetrySettings on the new folder.
+                if (_data.WheelMcuUid.Length == 12 && _settings.WheelMzdashFolderByUid != null)
+                {
+                    string uidHex = BitConverter.ToString(_data.WheelMcuUid).Replace("-", "").ToLowerInvariant();
+                    if (_settings.WheelMzdashFolderByUid.TryGetValue(uidHex, out var mappedFolder)
+                        && !string.IsNullOrEmpty(mappedFolder)
+                        && System.IO.Directory.Exists(mappedFolder)
+                        && !string.Equals(mappedFolder, _settings.TelemetryMzdashFolder, StringComparison.OrdinalIgnoreCase))
+                    {
+                        MozaLog.Debug($"[Moza] Auto-switching mzdash folder for wheel {uidHex}: {mappedFolder}");
+                        _settings.TelemetryMzdashFolder = mappedFolder;
+                        SaveSettings();
+                        DashCache?.LoadFromFolder(mappedFolder);
+                    }
+                }
+
                 return;
             }
             if (commandName == "display-mcu-uid" && _data.DisplayMcuUid.Length > 0)

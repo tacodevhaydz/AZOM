@@ -151,6 +151,13 @@ namespace MozaPlugin
         // folder acts as fallback library when cache misses.
         public string TelemetryMzdashFolder { get; set; } = "";
 
+        // Per-wheel mzdash folder mapping. Key = lowercase 24-char wheel MCU UID hex
+        // (DetectDevices captures it on handshake). Value = absolute folder path.
+        // Populated by the Auto-detect button so swapping wheels can switch the active
+        // TelemetryMzdashFolder back to the right `_dashes/<uid>/` automatically.
+        public Dictionary<string, string> WheelMzdashFolderByUid { get; set; }
+            = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
+
         // Byte limit override (0 = auto from profile)
         public int TelemetryByteLimitOverride { get; set; } = 0;
 
