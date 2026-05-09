@@ -46,6 +46,15 @@ namespace MozaPlugin.Protocol
         private volatile bool _stop;
         private long _hidParseErrorCount;
 
+        // Tracks every HidStream that ReadDevice has currently open so Dispose can
+        // forcibly close them. Without this, a device that goes silent leaves the
+        // HidSharp internal reader blocked in stream.Read indefinitely; closing
+        // the stream from outside makes those reads throw and lets ReadDevice
+        // observe `_stop` and exit. Per-thread `finally` removes the stream
+        // before disposing locally, so steady-state size matches active devices.
+        private readonly object _streamsLock = new object();
+        private readonly List<HidStream> _liveStreams = new List<HidStream>();
+
         public MozaHidReader(MozaData data)
         {
             _data = data;
@@ -71,6 +80,17 @@ namespace MozaPlugin.Protocol
             if (_disposed) return;
             _disposed = true;
             _stop = true;
+
+            // Force-close every live stream so any HidSharp internal reader
+            // wedged in stream.Read throws and the owning ReadDevice thread
+            // exits its wait loop.
+            HidStream[] snapshot;
+            lock (_streamsLock) snapshot = _liveStreams.ToArray();
+            foreach (var s in snapshot)
+            {
+                try { s.Close(); } catch { }
+            }
+
             try { _thread?.Join(2000); } catch { }
             _thread = null;
             _data.IsHidConnected = false;
@@ -115,6 +135,8 @@ namespace MozaPlugin.Protocol
                         try
                         {
                             openCount++;
+                            // Register so Dispose() can force-close on shutdown.
+                            lock (_streamsLock) _liveStreams.Add(stream);
 
                             bool isHandbrake = HandbrakePattern.IsMatch(device.GetFriendlyName() ?? "");
                             // ReadDevice owns `stream` and disposes it before returning.
@@ -128,6 +150,7 @@ namespace MozaPlugin.Protocol
                         }
                         catch
                         {
+                            lock (_streamsLock) _liveStreams.Remove(stream);
                             try { stream.Dispose(); } catch { }
                             throw;
                         }
@@ -336,6 +359,9 @@ namespace MozaPlugin.Protocol
                 }
                 finally
                 {
+                    // De-register before dispose so Dispose() doesn't try to close
+                    // a stream that's already on its way out.
+                    lock (_streamsLock) _liveStreams.Remove(stream);
                     // Dispose stream here so Stopped fires while `stopped` is still alive.
                     try { stream.Dispose(); } catch { }
                     // Give receiver a chance to drain Stopped before disposing the event.

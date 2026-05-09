@@ -36,10 +36,24 @@ namespace MozaPlugin.Telemetry
 
         private readonly List<byte> _buffer = new();
         private bool _overflowLogged;
+        // Last accepted inbound seq, or -1 before the first chunk. Used by the
+        // seq-aware AddChunk overload to detect missing chunks (a single dropped
+        // chunk under Wine SerialPort R/W contention silently corrupts the zlib
+        // stream — see TelemetrySender.cs ProbeAndOpenSessions comment for the
+        // pre-existing 0x09 burst issue this guard now catches across sessions).
+        private int _lastSeq = -1;
+        private string _gapTag = "";
 
         public int Length { get { lock (_buffer) return _buffer.Count; } }
 
-        /// <summary>Feed one raw chunk payload (the bytes after session/type/seq).</summary>
+        /// <summary>Last accepted inbound seq, or -1 if no chunks have been
+        /// added since the last <see cref="Clear"/>.</summary>
+        public int LastAcceptedSeq { get { lock (_buffer) return _lastSeq; } }
+
+        /// <summary>Feed one raw chunk payload (the bytes after session/type/seq).
+        /// No seq tracking — caller doesn't have the seq context. Use the
+        /// <see cref="AddChunk(int, byte[])"/> overload when seq is available so
+        /// gaps are detected instead of corrupting the buffer silently.</summary>
         public void AddChunk(byte[] chunk)
         {
             if (chunk == null || chunk.Length < 4) return;
@@ -60,7 +74,65 @@ namespace MozaPlugin.Telemetry
             }
         }
 
-        public void Clear() { lock (_buffer) { _buffer.Clear(); _overflowLogged = false; } }
+        /// <summary>
+        /// Feed one chunk WITH its inbound seq number. Returns true on success;
+        /// false if a seq gap was detected — in that case the buffer is cleared
+        /// and the caller should trigger session-specific recovery (re-issue the
+        /// open / prime / RPC call so the wheel re-emits its burst). Without this
+        /// detection, a single dropped chunk silently corrupts the zlib stream
+        /// and the surrounding handshake (e.g. configJson) fails permanently for
+        /// the lifetime of the session.
+        ///
+        /// First chunk after Clear (or Reset) accepts any seq. <paramref name="tag"/>
+        /// is a free-form label included in the warning log (e.g. "sess=0x09")
+        /// so multi-reassembler diagnostics are distinguishable.
+        /// </summary>
+        public bool AddChunk(int seq, byte[] chunk, string tag = "")
+        {
+            if (chunk == null || chunk.Length < 4) return true;
+            byte[] net = StripCrcTrailer(chunk);
+            lock (_buffer)
+            {
+                if (_lastSeq != -1 && seq != _lastSeq + 1)
+                {
+                    int missing = seq - _lastSeq - 1;
+                    string warnTag = string.IsNullOrEmpty(tag) ? _gapTag : tag;
+                    MozaLog.Warn(
+                        $"[Moza] Reassembler seq gap{(string.IsNullOrEmpty(warnTag) ? "" : $" ({warnTag})")}: " +
+                        $"got seq={seq}, expected {_lastSeq + 1} ({missing} chunk(s) missing); " +
+                        $"clearing {_buffer.Count}B buffer — caller should re-handshake");
+                    _buffer.Clear();
+                    _overflowLogged = false;
+                    _lastSeq = -1;
+                    return false;
+                }
+                if (_buffer.Count + net.Length > MaxBufferBytes)
+                {
+                    if (!_overflowLogged)
+                    {
+                        MozaLog.Warn($"[Moza] SessionDataReassembler exceeded {MaxBufferBytes} bytes ({_buffer.Count}+{net.Length}); dropping buffer");
+                        _overflowLogged = true;
+                    }
+                    _buffer.Clear();
+                    _lastSeq = -1;
+                    return true;
+                }
+                _buffer.AddRange(net);
+                _lastSeq = seq;
+                if (!string.IsNullOrEmpty(tag)) _gapTag = tag;
+                return true;
+            }
+        }
+
+        public void Clear()
+        {
+            lock (_buffer)
+            {
+                _buffer.Clear();
+                _overflowLogged = false;
+                _lastSeq = -1;
+            }
+        }
 
         /// <summary>Snapshot the current reassembled buffer.</summary>
         public byte[] Snapshot()

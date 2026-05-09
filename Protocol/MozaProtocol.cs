@@ -52,26 +52,6 @@ namespace MozaPlugin.Protocol
         public const byte TelemetrySendGroup = 0x43;  // Group for telemetry data frames
         public const byte TelemetryModeGroup = 0x40;  // Group for telemetry mode config (28:02)
 
-        public static byte CalculateChecksum(byte[] data)
-        {
-            int sum = MagicValue;
-            for (int i = 0; i < data.Length; i++)
-                sum += data[i];
-            return (byte)(sum % 256);
-        }
-
-        /// <summary>
-        /// Calculate checksum over the first <paramref name="length"/> bytes of <paramref name="data"/>.
-        /// Useful for patching the checksum in a pre-allocated frame buffer.
-        /// </summary>
-        public static byte CalculateChecksum(byte[] data, int length)
-        {
-            int sum = MagicValue;
-            for (int i = 0; i < length; i++)
-                sum += data[i];
-            return (byte)(sum % 256);
-        }
-
         /// <summary>
         /// Wire-level checksum over a decoded frame. Per doc § 54, each `0x7E`
         /// in the decoded body (positions 2 through <paramref name="bodyEnd"/>-1)

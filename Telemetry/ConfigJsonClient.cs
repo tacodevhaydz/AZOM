@@ -26,6 +26,20 @@ namespace MozaPlugin.Telemetry
         /// <summary>Most recent dashboard state parsed from the device.</summary>
         public WheelDashboardState? LastState => _lastState;
 
+        /// <summary>Result of a seq-aware <see cref="OnChunk(int, byte[])"/> call.</summary>
+        public enum ChunkResult
+        {
+            /// <summary>Chunk accepted; no complete state yet (more chunks expected).</summary>
+            Buffered,
+            /// <summary>State decoded — caller can read <see cref="LastState"/>.</summary>
+            StateReady,
+            /// <summary>Seq gap detected: a prior chunk was dropped on the wire.
+            /// Buffer has been cleared. Caller must re-issue the configJson open
+            /// request so the wheel re-emits its state burst — otherwise the
+            /// handshake is permanently broken for this session lifetime.</summary>
+            GapDetected,
+        }
+
         /// <summary>Feed one session 0x09 device→host chunk payload.</summary>
         public WheelDashboardState? OnChunk(byte[] chunkPayload)
         {
@@ -74,6 +88,54 @@ namespace MozaPlugin.Telemetry
         }
 
         private string _lastMissingShape = "";
+
+        /// <summary>
+        /// Seq-aware variant. Detects when a chunk seq is missing and signals the
+        /// caller to re-handshake — without this, a single dropped chunk under
+        /// Wine SerialPort R/W contention silently corrupts the zlib stream and
+        /// the configJson handshake fails for the lifetime of the session.
+        /// Returns <see cref="ChunkResult.GapDetected"/> on missing seq, in which
+        /// case the buffer has already been cleared and the caller should re-
+        /// issue the configJson open request to make the wheel re-emit its burst.
+        /// </summary>
+        public ChunkResult OnChunk(int seq, byte[] chunkPayload, string tag = "sess=0x09")
+        {
+            if (!_deviceInbox.AddChunk(seq, chunkPayload, tag))
+                return ChunkResult.GapDetected;
+            byte[]? decomp = _deviceInbox.TryDecompress();
+            if (decomp == null) return ChunkResult.Buffered;
+            var state = WheelStateParser.Parse(decomp, out var missing);
+            if (state == null) return ChunkResult.Buffered;
+            _lastState = state;
+            _deviceInbox.Clear();
+            try
+            {
+                MozaLog.Debug(
+                    $"[Moza] configJson state received: TitleId={state.TitleId} " +
+                    $"displayVersion={state.DisplayVersion} resetVersion={state.ResetVersion} " +
+                    $"configJsonList={state.ConfigJsonList.Count} " +
+                    $"enabled={state.EnabledDashboards.Count} disabled={state.DisabledDashboards.Count} " +
+                    $"imageRefMap={state.ImageRefMap.Count} imagePath={state.ImagePath.Count} " +
+                    $"rootDirPath='{state.RootDirPath}'");
+            }
+            catch { /* logging optional in unit tests */ }
+            if (missing.Count > 0)
+            {
+                string shape = string.Join(",", missing);
+                if (shape != _lastMissingShape)
+                {
+                    _lastMissingShape = shape;
+                    try
+                    {
+                        MozaLog.Debug(
+                            $"[Moza] configJson state missing {missing.Count} expected top-level field(s): {shape}. " +
+                            "Firmware may be older than 2025-11 or schema has drifted.");
+                    }
+                    catch { /* logging optional in unit tests */ }
+                }
+            }
+            return ChunkResult.StateReady;
+        }
 
         /// <summary>
         /// Clear reassembly buffer and state so a Stop/Start cycle doesn't

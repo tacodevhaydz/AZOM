@@ -9,6 +9,36 @@ using Timer = System.Timers.Timer;
 namespace MozaPlugin.Telemetry
 {
     /// <summary>
+    /// Lifecycle state of <see cref="TelemetrySender"/>. Replaces the prior
+    /// 3-boolean soup (_enabled / _preambleComplete / _dashSwitchMuted) with
+    /// a single explicit enum so the legal transitions are obvious.
+    ///
+    /// Linear progression: Idle → Starting → Preamble → Active. Active loops
+    /// through DashSwitchMuted whenever the wheel switches dashboards. Stop()
+    /// returns from any state to Idle. Dashswitch entry guards check that we
+    /// are currently Active so a switch requested before preamble completes
+    /// is a no-op (matches the original boolean's effective behavior, which
+    /// was masked by the preamble-only return path in OnTimerElapsedInner).
+    /// </summary>
+    internal enum TelemetryState
+    {
+        /// <summary>Stop() / initial. Timer not running. No outbound traffic.</summary>
+        Idle,
+        /// <summary>StartInner() before the timer kicks. Sessions opening, preamble
+        /// frames staged but tick-driven emission has not started.</summary>
+        Starting,
+        /// <summary>Timer running, ~1s catalog absorption + heartbeats. No value frames yet.</summary>
+        Preamble,
+        /// <summary>Steady state — value frames + heartbeats + periodic streams.</summary>
+        Active,
+        /// <summary>Active sub-state during dashboard switch: profile has been
+        /// applied but the new tier-def hasn't reached the wheel yet, so value
+        /// frames would carry the new layout under the old flag bytes. Tick
+        /// runs every other phase but skips value frames until restored.</summary>
+        DashSwitchMuted,
+    }
+
+    /// <summary>
     /// Periodically encodes game data and sends telemetry frames to the wheel.
     ///
     /// Startup follows PitHouse's observed sequence (from USB capture analysis):
@@ -38,17 +68,20 @@ namespace MozaPlugin.Telemetry
         // by the active-phase tick to fire the PitHouse-observed game-start
         // handshake (see SendGameStartHandshake).
         private volatile bool _gameStartHandshakePending;
-        private volatile bool _dashSwitchMuted;
         private bool[]? _tierDiagEmitted;
-        private volatile bool _enabled;
+        // Lifecycle state — see TelemetryState. Replaces the prior _enabled /
+        // _preambleComplete / _dashSwitchMuted booleans. All reads/writes are
+        // through volatile semantics or the TransitionTo helper.
+        private volatile TelemetryState _state = TelemetryState.Idle;
         private int _tickCounter;
         private int _slowCounter;
         private int _baseTickMs;  // Timer period derived from fastest tier's package_level
         private byte _sequenceCounter;
         private int _displayConfigPage;
 
-        // Preamble state
-        private bool _preambleComplete;
+        // Preamble state — _tierDefPreambleSent is a wire-protocol concern (has the
+        // tag-0x07/0x03 preamble been emitted on the wire), distinct from the
+        // lifecycle TelemetryState.Preamble (are we inside the preamble phase).
         /// <summary>True after the first V2 tier-def preamble (tag 0x07/0x03)
         /// has been sent this session. PitHouse only sends preamble once at
         /// connect; subsequent tier-def re-sends (dashboard switch) omit it.
@@ -75,18 +108,11 @@ namespace MozaPlugin.Telemetry
         //            7c:23 46. Tracked here as `_uploadSession`.
         private readonly SessionRegistry _sessions = new SessionRegistry();
         private readonly SessionDispatcher _dispatcher = new SessionDispatcher();
-        // Sessions in 0x04..0x0a that came up device-initiated. The first one
-        // observed wins as the upload target unless overridden via
-        // `UploadSessionOverride` (UI / test setting).
-        private readonly System.Collections.Generic.HashSet<byte> _ftCandidateSessions = new();
-        private byte _uploadSession = 0x04;  // default; updated when wheel device-inits a candidate session
-        private readonly ManualResetEventSlim _uploadSessionOpened = new ManualResetEventSlim(false);
-        private readonly ManualResetEventSlim _uploadSubMsg1Response = new ManualResetEventSlim(false);
-        private readonly ManualResetEventSlim _uploadSubMsg2Response = new ManualResetEventSlim(false);
-        private readonly ManualResetEventSlim _uploadEndReceived = new ManualResetEventSlim(false);
-        private int _uploadInboundSeq;
-        private int _uploadOutboundSeq;
-        private int _uploadInboundMsgCount;
+        // Wheel-side mzdash upload coordinator. Owns the FT-eligible session
+        // tracking, sub-msg state machine, and dir-listing reassembly that used
+        // to live as a dozen scattered fields here. Constructed in the body of
+        // the constructor below (after _connection is captured).
+        private WheelUploadCoordinator _uploader = null!;
 
         /// <summary>
         /// Outbound seq counter for session 0x02 (telemetry). Tracks the next
@@ -129,6 +155,40 @@ namespace MozaPlugin.Telemetry
         private const int TierDefBlindMaxRounds = 12;
         private const int TierDefBlindIntervalMs = 200;
 
+        // Sess=0x09 establishment retry. Cold-start emits the prime+open-request
+        // pair once in PrimeAndOpenSession09; if the wheel doesn't respond with
+        // device-init (b2h 7c 00 09 81 ...), the configJson handshake never
+        // starts and the dashboard never renders driving telemetry. The tick
+        // helper TickRetryS09IfNotEstablished re-emits the pair every
+        // S09RetryIntervalMs until either the wheel device-inits 0x09 OR the
+        // S09RetryMaxRounds budget is exhausted. Guarded by
+        // _sessions.GetOrCreate(0x09).DeviceInitiated so steady-state and
+        // post-switch sessions are untouched.
+        private int _s09RetryRounds;
+        private int _s09RetryLastTickCount;
+        private const int S09RetryIntervalMs = 1000;
+        private const int S09RetryMaxRounds = 10;
+
+        // Wall-clock timestamp (DateTime.UtcNow.Ticks) of the last Stop()
+        // completion. StartInner checks this on entry — if a fresh Stop
+        // happened within MinSilenceAfterStopMs ago, Start sleeps the
+        // remainder before opening sessions. The wheel has a ~10–14s
+        // internal timeout on sess=0x09 bindings; firing fresh primes
+        // inside that window is silently ignored, which is what makes
+        // SimHub game-switch (plugin reload, Stop+Start in <1s) drop the
+        // configJson handshake. Static so it survives plugin instance
+        // recycle inside the same SimHub process — game-switch reloads
+        // the plugin (new instance) but the wheel-side timeout is across
+        // both instances.
+        private static long _lastStopUtcTicks;
+        private const int MinSilenceAfterStopMs = 11000;
+
+        /// <summary>Time to let the caller's queued FF kind=4 (and other
+        /// in-flight one-shot frames) drain to the wire before Stop's
+        /// FlushPendingWrites discards the queue. Used by
+        /// <see cref="RestartForSwitch"/>.</summary>
+        private const int PreStopDrainMs = 300;
+
         // True once ResolveAutoPolicy has run for this Start() cycle. Reset on
         // every StartInner so each fresh connect re-evaluates the wheel.
         private bool _autoResolutionDone;
@@ -146,9 +206,13 @@ namespace MozaPlugin.Telemetry
         /// Forces a specific session number for dashboard upload. 0 = auto
         /// (use first device-initiated session in 0x04..0x0a, falling back to
         /// 0x04). Set non-zero to override — useful for testing with new
-        /// firmware that prefers 0x07 / 0x09.
+        /// firmware that prefers 0x07 / 0x09. Pass-through to coordinator.
         /// </summary>
-        public byte UploadSessionOverride { get; set; } = 0;
+        public byte UploadSessionOverride
+        {
+            get => _uploader?.UploadSessionOverride ?? 0;
+            set { if (_uploader != null) _uploader.UploadSessionOverride = value; }
+        }
 
         // Active per-era policy. All wire-protocol axes (tier-def session,
         // encoding, preamble policy, blind-retransmit, upload header, V0/V2
@@ -195,16 +259,10 @@ namespace MozaPlugin.Telemetry
         private volatile bool _displayDetected;
         private string _displayModelName = "";
 
-        // Wheel channel catalog (parsed from incoming 7c:00 session data during preamble)
-        private System.Collections.Generic.List<byte> _incomingSessionBuffer = new();
-        private volatile System.Collections.Generic.List<string>? _wheelChannelCatalog;
-        private volatile int _channelBufferLastActivityMs;
-        // Tracks buffer length at last successful catalog parse — drives
-        // continuous parse-on-tick. Wheel announces URLs in batches with up
-        // to ~1.2s gaps (verified against bridge-20260503-112940.jsonl: idx
-        // 1-8 at t+7.124s, idx 9-16 at t+8.328s). Parse on every buffer
-        // growth + merge non-destructively so no URLs get dropped.
-        private int _lastCatalogParseLen;
+        // Wheel channel catalog parser. Owns the inbound 7c:00 byte buffer, the
+        // parsed idx→URL list, and the activity timestamp + last-parse-len used
+        // by the post-startup quiet-window wait. See ChannelCatalogParser.cs.
+        private readonly ChannelCatalogParser _catalogParser = new();
 
         // ── Subscription state ─────────────────────────────────────────
         // Immutable snapshot published atomically by ApplySubscription.
@@ -286,22 +344,15 @@ namespace MozaPlugin.Telemetry
             }
         }
 
-        // Upload-session inbound dir-listing buffer. After upload, wheel pushes
-        // a fresh directory listing on the same session which lets us detect
-        // when the upload is actually live on the device (rather than just
-        // transmitted).
-        private readonly SessionDataReassembler _uploadInbox = new();
-        private volatile bool _uploadDirListingRefreshed;
-        public bool Session04DirListingRefreshed => _uploadDirListingRefreshed;
+        // Upload-session dir-listing tracking is owned by _uploader; expose
+        // its refresh flag here for the diag tab via a thin pass-through.
+        public bool Session04DirListingRefreshed => _uploader?.DirListingRefreshed ?? false;
 
         // RPC on 0x09/0x0a (host→device management RPCs such as completelyRemove).
-        // Replies come back from device in same zlib envelope as configJson state.
-        private int _rpcNextId = 1000;
-        private readonly object _rpcLock = new object();
-        private readonly System.Collections.Generic.Dictionary<int, ManualResetEventSlim> _rpcWaiters
-            = new System.Collections.Generic.Dictionary<int, ManualResetEventSlim>();
-        private readonly System.Collections.Generic.Dictionary<int, byte[]> _rpcReplies
-            = new System.Collections.Generic.Dictionary<int, byte[]>();
+        // Wire-level state and JSON envelope handling live in RpcCallChannel.
+        // _session0aInbox stays here because it's also fed by the configJson handler
+        // outside the RPC flow (session 0x09 vs 0x0a share reassembly machinery).
+        private RpcCallChannel _rpc = null!;
         private readonly SessionDataReassembler _session0aInbox = new();
         // Session 0x03 inbound: 12-byte envelope tile-server state parser.
         private readonly TileServerStateParser _tileServerParser = new();
@@ -319,6 +370,7 @@ namespace MozaPlugin.Telemetry
             set
             {
                 _dashboardCache = value;
+                var prior = _dashboardDownloader;
                 if (value != null)
                     _dashboardDownloader = new DashboardDownloader(
                         _connection, value,
@@ -326,6 +378,9 @@ namespace MozaPlugin.Telemetry
                         _retransmitter, _dispatcher);
                 else
                     _dashboardDownloader = null;
+                // Dispose AFTER swapping so a concurrent observer never sees a
+                // disposed instance through _dashboardDownloader.
+                try { prior?.Dispose(); } catch { }
             }
         }
 
@@ -446,16 +501,29 @@ namespace MozaPlugin.Telemetry
         // TierDefEncoding.V0Url instead of ProtocolVersion == 0.
 
         /// <summary>Channel URLs reported by the wheel during session startup. Null until parsed.</summary>
-        public System.Collections.Generic.IReadOnlyList<string>? WheelChannelCatalog => _wheelChannelCatalog;
+        public System.Collections.Generic.IReadOnlyList<string>? WheelChannelCatalog => _catalogParser.Catalog;
 
-        /// <summary>Raw .mzdash file content for upload to the wheel. Set by ApplyTelemetrySettings.</summary>
-        public byte[]? MzdashContent { get; set; }
+        /// <summary>Raw .mzdash file content for upload to the wheel. Set by
+        /// ApplyTelemetrySettings; consumed by WheelUploadCoordinator.</summary>
+        public byte[]? MzdashContent
+        {
+            get => _uploader?.MzdashContent;
+            set { if (_uploader != null) _uploader.MzdashContent = value; }
+        }
 
         /// <summary>Dashboard name (used for logging). Set by ApplyTelemetrySettings.</summary>
-        public string MzdashName { get; set; } = "";
+        public string MzdashName
+        {
+            get => _uploader?.MzdashName ?? "";
+            set { if (_uploader != null) _uploader.MzdashName = value ?? ""; }
+        }
 
         /// <summary>Whether to upload the dashboard to the wheel on startup.</summary>
-        public bool UploadDashboard { get; set; } = true;
+        public bool UploadDashboard
+        {
+            get => _uploader?.UploadDashboard ?? true;
+            set { if (_uploader != null) _uploader.UploadDashboard = value; }
+        }
 
 
         /// <summary>
@@ -548,8 +616,25 @@ namespace MozaPlugin.Telemetry
         private volatile int _framesSent;
         public int FramesSent => _framesSent;
         private volatile int _postRenegDiagTicks; // counts down from 3 after renegotiation
-        /// <summary>True between Start() and Stop(). Exposed for diagnostics panel.</summary>
-        public bool Enabled => _enabled;
+        /// <summary>True between Start() and Stop(). Exposed for diagnostics panel.
+        /// Preserves the prior `_enabled` boolean's external semantics — anything
+        /// other than Idle counts as "running".</summary>
+        public bool Enabled => _state != TelemetryState.Idle;
+
+        /// <summary>
+        /// Atomic state transition with audit logging. Use this everywhere instead
+        /// of writing to <see cref="_state"/> directly so every change is visible
+        /// in the debug log with its trigger reason. Idempotent: a no-op transition
+        /// (next == current) is silently dropped.
+        /// </summary>
+        private void TransitionTo(TelemetryState next, string reason)
+        {
+            var prev = _state;
+            if (prev == next) return;
+            _state = next;
+            try { MozaLog.Debug($"[Moza] state {prev} → {next} ({reason})"); }
+            catch { /* logging may not be initialised in tests */ }
+        }
         public byte[]? LastFrameSent { get; private set; }
         public TelemetryDiagnostics Diagnostics { get; } = new TelemetryDiagnostics();
 
@@ -557,12 +642,22 @@ namespace MozaPlugin.Telemetry
         internal byte? ActiveFlagBase => _activeSubscription?.FlagBase;
         internal int ActiveTierCount => _tiers?.Length ?? 0;
         public string? ActiveProfileName => _profile?.Name;
-        internal int CatalogChannelCount => _wheelChannelCatalog?.Count ?? 0;
+        internal int CatalogChannelCount => _catalogParser.Count;
         private DashboardSwitchAutoTest? _autoTest;
 
         public TelemetrySender(MozaSerialConnection connection)
         {
             _connection = connection;
+            _rpc = new RpcCallChannel(
+                connection,
+                shouldAbort: () => _state == TelemetryState.Idle || !_connection.IsConnected);
+            _uploader = new WheelUploadCoordinator(
+                connection,
+                shouldAbort: () => _state == TelemetryState.Idle || !_connection.IsConnected,
+                getPolicy: () => _policy,
+                getConfigJsonState: () => _configJson.LastState,
+                sendSessionAck: SendSessionAck,
+                sendSessionEnd: SendSessionEnd);
         }
 
         // Caller passes the MozaPlugin instance directly because Init may call
@@ -606,7 +701,10 @@ namespace MozaPlugin.Telemetry
             }
             if (Interlocked.CompareExchange(ref _startInProgress, 1, 0) != 0)
             {
-                _enabled = false;
+                // A second Start() landed while the first is still inside StartInner.
+                // Force the in-progress run to drop out of any "is running" check by
+                // returning to Idle while we wait for it to release _startInProgress.
+                TransitionTo(TelemetryState.Idle, "Start() superseded in-progress start");
                 var sw = System.Diagnostics.Stopwatch.StartNew();
                 SpinWait.SpinUntil(() => Volatile.Read(ref _startInProgress) == 0, 10000);
                 if (Interlocked.CompareExchange(ref _startInProgress, 1, 0) != 0)
@@ -629,140 +727,184 @@ namespace MozaPlugin.Telemetry
         private void StartInner()
         {
             Stop();
-            _enabled = true;
-            _tickCounter = 0;
-            _framesSent = 0;
-            _sequenceCounter = 0;
-            _slowCounter = 0;
-            _displayConfigPage = 0;
-            _preambleComplete = false;
-            lock (_incomingSessionBuffer) { _incomingSessionBuffer.Clear(); }
-            _lastCatalogParseLen = 0;
-            _wheelChannelCatalog = null;
-            _dashSwitchMuted = false;
-            _nextFlagBase = 0;
-            _activeSubscription = null;
-            _sessionAckSeq = 0;
-            _dashboardDownloadTriggered = false;
-            _preambleTickTarget = Math.Max(1, 1000 / _baseTickMs);
 
+            // Enforce minimum host silence since the last Stop() completion.
+            // The wheel has a ~10–14s internal timeout on sess=0x09 dashboard-
+            // binding state; if Start fires inside that window the wheel
+            // silently ignores fresh prime/open-request emissions and the
+            // configJson handshake never engages. Wire-trace investigation
+            // 2026-05-08 measured failing cycles at 8.4s of silence (wheel
+            // ignored), working at 13.9s (wheel re-engaged in 57ms). The
+            // `_lastStopUtcTicks` is recorded at the END of Stop() so this
+            // measures actual wheel-quiet time, not host clock time. We're
+            // on a ThreadPool thread (StartTelemetryIfReady's QueueUserWorkItem),
+            // so a synchronous Sleep here doesn't block the UI.
+            if (_lastStopUtcTicks != 0)
+            {
+                long elapsedMs = (System.DateTime.UtcNow.Ticks - _lastStopUtcTicks)
+                    / System.TimeSpan.TicksPerMillisecond;
+                int waitMs = (int)System.Math.Max(0, MinSilenceAfterStopMs - elapsedMs);
+                if (waitMs > 0)
+                {
+                    MozaLog.Debug(
+                        $"[Moza] Start: enforcing {waitMs}ms silence " +
+                        $"(elapsed since last Stop: {elapsedMs}ms; min: {MinSilenceAfterStopMs}ms) " +
+                        "so wheel sess=0x09 timeout can clear");
+                    try { System.Threading.Thread.Sleep(waitMs); } catch { }
+                }
+            }
+
+            InitTickStateAndTransitionToStarting();
             BuildCachedFrames();
 
             // Subscribe early so we catch fc:00 acks during port probing AND preamble
             _connection.MessageReceived += OnMessageDuringPreamble;
 
-            // Probe for available ports and open sessions.
-            // This may run on a background thread (dispatched by StartTelemetryIfReady)
-            // so the serial read thread stays free to deliver fc:00 ack responses.
+            // Probe for available ports and open sessions. May run on a
+            // background thread (dispatched by StartTelemetryIfReady) so the
+            // serial read thread stays free to deliver fc:00 ack responses.
             ProbeAndOpenSessions();
-
-            // Bail out if Stop() was called while we were probing
-            if (!_enabled) return;
+            if (_state == TelemetryState.Idle) return;
 
             // Universal Hub: PitHouse fires a 5-frame burst enumerating hub
-            // slots ~300ms after sessions open (gfdsgfd.pcapng f54501 t=17.08s,
-            // sessions opened at t=16.77s). Each frame asks for the device-type
-            // code on a slot; hub responds with `e4/0x21 cmd 01 NN VV`. Plugin
-            // mirrors this so wheel firmware sees the same handshake and
-            // populates per-port device metadata. Skipped when no hub detected.
+            // slots ~300ms after sessions open. Plugin mirrors this so wheel
+            // firmware sees the same handshake and populates per-port device
+            // metadata. Skipped when no hub detected.
             if (_connection.HubProbeSucceeded)
                 SendHubSlotEnumeration();
 
-            // Prime session 0x09 (configJson state push channel). Wheels we've
-            // observed (KS Pro on Universal Hub, plugin v0.8.3) only open
-            // 0x05/0x07 in their device-init burst, NOT 0x09 — leaving the
-            // configJson handshake stuck and the wheel display unable to
-            // resolve which dashboard is active. Pithouse encourages 0x09 by
-            // sending an empty data frame on it before any clean session
-            // opens (mozahubstartup.pcapng frame 639 t=2.345). Mirror that
-            // here so wheels include 0x09 in their burst.
-            SendSessionPrime(0x09, 0x0001);
+            PrimeAndOpenSession09();
+            QueueBackgroundUploadIfReady();
+            if (_state == TelemetryState.Idle) return;
 
-            // Post-2026-04 CSP firmware needs an explicit host-init session-open
-            // request with a port-9-specific magic before it will device-init
-            // the configJson channel. Verified in
-            // `wireshark/csp/startup, change knob colors, ...pcapng` — wheel
-            // opens 0x09 (`7c 00 09 81 ...`) only after host emits
-            // `7c 1e 6c 80 [seq] 00 09 00 fe 01`. The legacy `SendSessionPrime`
-            // alone does NOT trigger device-init on this firmware.
-            SendConfigJsonOpenRequest(0x09, seq: 0x000B);
-
-            // Dashboard upload runs as a background task, NOT inline. Reasons:
-            //   1. Different wheel firmwares device-init the upload session
-            //      (0x04..0x0a) at very different times — observed 40 ms (older
-            //      direct-base firmware) up to ~11 s (KS Pro on RS21-W18-MC SW,
-            //      direct base; diagnostics bundle 20260426-115430o). A
-            //      foreground wait long enough to cover the slow case stalls
-            //      tier def + telemetry timer for the same duration.
-            //   2. Host-opening the upload session as a fallback races the
-            //      wheel's eventual late device-init burst — wheel responds by
-            //      closing session 0x02 mid-tier-def, killing telemetry.
-            //
-            // Decoupled flow: tier def + display config + telemetry timer fire
-            // immediately. Upload waits in the background for the wheel to
-            // device-init an FT session, then sends. If the wheel never opens
-            // one (very old firmware or wheels without dash) the background
-            // task times out at 60 s and exits silently.
-            if (UploadDashboard && MzdashContent != null && _mgmtPort != 0)
-                ThreadPool.QueueUserWorkItem(_ => RunBackgroundDashboardUpload());
-
-            if (!_enabled) return;
-
-            // Open session 0x03 (doc [docs/protocol/sessions/lifecycle.md]: host opens 0x03
-            // 150-450ms after 0x01/0x02 on new firmware). Sim stubs this but real
-            // hardware expects it. Fire-and-forget: we don't rely on its ack.
-            // Tile-server data push deferred until after tier def — pushing
-            // immediately after open collided with the wheel's session 0x09
-            // configJson state burst (under Wine SerialPort R/W contention),
-            // costing 6 of 7 state chunks.
+            // Open session 0x03 (host opens 0x03 150-450ms after 0x01/0x02 on
+            // new firmware). Tile-server push deferred until after tier def —
+            // pushing immediately after open collided with the wheel's session
+            // 0x09 configJson state burst under Wine SerialPort R/W contention.
             SendSessionOpen(0x03, 0x03);
 
             WaitForChannelCatalogQuiet(quietMs: 200, timeoutMs: 2000);
-            ParseWheelChannelCatalog();
+            _catalogParser.TryParse();
             MaybeSwapProfileForCatalog();
 
-            // Session 0x02 init handshake. PitHouse bridge captures show two
-            // small FF records sent on sess=0x02 (kind=2 timestamp/nonce,
-            // kind=7 slot-index) shortly after open. Without these the wheel
-            // silently ignores dashboard-switch FF records on a fresh session
-            // 0x02 — visible as a missing FF kind=4 echo and post-switch
-            // test-data not displaying on the new dashboard. See
-            // `docs/protocol/findings/2026-05-07-sess02-init-protocol-and-stale-catalog.md`.
-            //
-            // Sent AFTER `WaitForChannelCatalogQuiet` so the wheel's initial
-            // b2h sess=0x02 TLV state push has fully arrived and our auto-FC-
-            // acks have flowed back. PitHouse delays ~3 s between sess=0x02
-            // open and the first kind=2 — the post-startup quiet window
-            // gives an equivalent settling period.
+            // Sess=0x02 init handshake (kind=2 nonce + kind=7 slot-index). Sent
+            // AFTER WaitForChannelCatalogQuiet so the wheel's initial b2h
+            // sess=0x02 TLV state push has fully arrived. Without these the
+            // wheel silently ignores dashboard-switch FF records on a fresh
+            // session 0x02. See docs/protocol/findings/
+            // 2026-05-07-sess02-init-protocol-and-stale-catalog.md.
             SendSessionInitHandshake();
 
-            // Push empty-state tile-server blob on session 0x03 (matches
-            // PitHouse behaviour: always pushed on connect, wheel never
-            // echoes back — host→wheel only). 12-byte envelope
-            // `FF 01 00 [comp_sz+4 LE] FF 00 [uncomp_sz BE24]` + zlib.
-            // Deferred to here so session 0x09 state push has completed
-            // arriving first.
+            // Empty-state tile-server blob on session 0x03 (host→wheel only,
+            // wheel never echoes). 12-byte envelope. Deferred to after session
+            // 0x09 state push so the wheel's burst doesn't get crowded out
+            // under Wine SerialPort contention.
             SendTileServerState();
 
-            // Probe the Display sub-device inside the wheel.
-            // Pithouse sends this at t=9.97 (after telemetry starts at t=9.88).
-            // The response tells us if the wheel has a built-in display.
-            // Non-blocking: responses are caught by OnMessageDuringPreamble.
+            // Probe the wheel's built-in Display sub-device. Non-blocking:
+            // responses are caught by OnMessageDuringPreamble.
             SendDisplayProbe();
+            if (_state == TelemetryState.Idle) return;
 
-            // Final check before creating the timer — if Stop() was called during
-            // tier definition or display probe, don't create an orphaned timer.
-            if (!_enabled) return;
+            StartTickTimer();
+        }
 
+        // ── StartInner phase helpers ────────────────────────────────────────
+
+        /// <summary>Reset per-session counters, parsers, and subscription state,
+        /// and TransitionTo Starting. The state stays Starting through session
+        /// probes and frame staging; <see cref="StartTickTimer"/> transitions
+        /// to Preamble once the tick timer is armed.</summary>
+        private void InitTickStateAndTransitionToStarting()
+        {
+            TransitionTo(TelemetryState.Starting, "StartInner: begin");
+            _tickCounter = 0;
+            _framesSent = 0;
+            _sequenceCounter = 0;
+            _slowCounter = 0;
+            _displayConfigPage = 0;
+            _catalogParser.Reset();
+            _nextFlagBase = 0;
+            _activeSubscription = null;
+            _sessionAckSeq = 0;
+            _dashboardDownloadTriggered = false;
+            _preambleTickTarget = Math.Max(1, 1000 / _baseTickMs);
+        }
+
+        /// <summary>Prime session 0x09 (configJson state push) plus the
+        /// post-2026-04 CSP host-init open request. Wheels we've observed
+        /// (KS Pro on Universal Hub) only open 0x05/0x07 in their device-init
+        /// burst, NOT 0x09 — leaving the configJson handshake stuck. Pithouse
+        /// encourages 0x09 by sending an empty data frame on it before any
+        /// clean session opens; post-2026-04 CSP firmware also needs an
+        /// explicit host-init open with a port-9-specific magic before it
+        /// will device-init the channel.</summary>
+        private void PrimeAndOpenSession09()
+        {
+            SendSessionPrime(0x09, 0x0001);
+            SendConfigJsonOpenRequest(0x09, seq: 0x000B);
+        }
+
+        /// <summary>Dispatch the dashboard upload to the ThreadPool. Different
+        /// wheel firmwares device-init the upload session (0x04..0x0a) at very
+        /// different times — observed 40 ms (older direct-base firmware) up
+        /// to ~11 s (KS Pro on RS21-W18-MC SW). A foreground wait long enough
+        /// to cover the slow case would stall tier def + telemetry timer for
+        /// the same duration. Decoupled: upload waits in background for an
+        /// FT-eligible device-init, then sends; on 60 s timeout exits silently
+        /// and the wheel renders previously-cached dashboard.</summary>
+        private void QueueBackgroundUploadIfReady()
+        {
+            if (UploadDashboard && MzdashContent != null && _mgmtPort != 0)
+                ThreadPool.QueueUserWorkItem(_ => _uploader.RunBackgroundUpload());
+        }
+
+        /// <summary>Final phase: arm the tick timer and transition to Preamble.
+        /// The first ~_preambleTickTarget ticks run heartbeat-only frames in
+        /// <see cref="TickPreamble"/>; once the tick counter reaches that
+        /// target the state flips to Active and value frames begin.</summary>
+        private void StartTickTimer()
+        {
             double intervalMs = _baseTickMs;
             _sendTimer = new Timer(intervalMs) { AutoReset = true };
             _sendTimer.Elapsed += OnTimerElapsed;
             _sendTimer.Start();
+            TransitionTo(TelemetryState.Preamble, "StartInner: timer started");
+        }
+
+        /// <summary>
+        /// Send end-marker close frames for sessions 0x01/0x02/0x03 so the wheel
+        /// sees a clean shutdown handshake. Mirrors the pre-open close burst in
+        /// <see cref="ProbeAndOpenSessions"/> but on the way out.
+        ///
+        /// Wheel-managed sessions (0x04..0x0a, including 0x09 configJson) are
+        /// LEFT ALONE. Wire-trace investigation 2026-05-08 (multiple traces +
+        /// post-game-switch evidence) confirmed:
+        ///   - The wheel-side sess=0x09 NEVER gets explicitly closed even
+        ///     across SimHub plugin reloads — its end stays alive indefinitely.
+        ///   - Closing it host-side is either a no-op or a regression; it does
+        ///     NOT shorten the wheel's internal timeout, which is the actual
+        ///     gate on re-engagement.
+        ///   - The wheel has a ~10–14 second internal timeout on sess=0x09
+        ///     dashboard-binding state. Before that timeout, fresh prime/open-
+        ///     request emissions are ignored regardless of what the host does.
+        ///
+        /// The reliable bridge across the wheel timeout is host silence. See
+        /// <see cref="MinSilenceAfterStopMs"/> and the gate in
+        /// <see cref="StartInner"/>.
+        /// </summary>
+        private void CloseHostSessions()
+        {
+            if (!_connection.IsConnected) return;
+            try { SendSessionClose(0x01); } catch { }
+            try { SendSessionClose(0x02); } catch { }
+            try { SendSessionClose(0x03); } catch { }
+            try { System.Threading.Thread.Sleep(100); } catch { }
         }
 
         public void Stop()
         {
-            _enabled = false;
+            TransitionTo(TelemetryState.Idle, "Stop()");
             _connection.MessageReceived -= OnMessageDuringPreamble;
             if (_sendTimer != null)
             {
@@ -777,27 +919,27 @@ namespace MozaPlugin.Telemetry
             // (16 KB WriteBufferSize at 115200 baud).
             _connection.FlushPendingWrites();
 
+            // Now that the queue is clear and the timer can't enqueue more,
+            // emit the shutdown SessionClose triplet so the wheel sees a clean
+            // close. Done AFTER FlushPendingWrites (which calls DiscardOutBuffer)
+            // so the closes aren't dropped along with the in-flight value frames.
+            CloseHostSessions();
+
             // Wake any blocked SendRpcCall waiters so they unblock with a null
             // reply rather than sit on Wait() until their per-call timeout fires
             // (those callers may be on the SimHub UI thread).
-            DrainRpcWaiters();
+            _rpc.DrainWaiters();
 
             try { _ackReceived.Reset(); } catch (ObjectDisposedException) { }
             try { _mgmtResponseEvent.Reset(); } catch (ObjectDisposedException) { }
-            try { _uploadSessionOpened.Reset(); } catch (ObjectDisposedException) { }
-            try { _uploadSubMsg1Response.Reset(); } catch (ObjectDisposedException) { }
-            try { _uploadSubMsg2Response.Reset(); } catch (ObjectDisposedException) { }
-            try { _uploadEndReceived.Reset(); } catch (ObjectDisposedException) { }
+            try { _uploader?.Reset(); } catch { }
             _sessions.Reset();
             _dispatcher.Reset();
-            _ftCandidateSessions.Clear();
-            _uploadSession = 0x04;
-            _uploadInboundSeq = 0;
-            _uploadOutboundSeq = 0;
-            _uploadInboundMsgCount = 0;
             _session09InboundSeq = 0;
             _session09OutboundSeq = 0;
             _session09ReplySent = false;
+            _s09RetryRounds = 0;
+            _s09RetryLastTickCount = 0;
             _session02OutboundSeq = 0;
             _session01OutboundSeq = 0;
             _tierDefPreambleSent = false;
@@ -817,28 +959,18 @@ namespace MozaPlugin.Telemetry
             try { _session0aInbox.Clear(); } catch { }
             // Reset so StartTelemetryIfReady() won't skip us on re-enable
             _framesSent = 0;
-        }
 
-        /// <summary>
-        /// Wake every outstanding RPC waiter with a null reply. Called from Stop()
-        /// and Dispose() so callers blocked in SendRpcCall.Wait() return promptly
-        /// instead of hitting their own timeout.
-        /// </summary>
-        private void DrainRpcWaiters()
-        {
-            ManualResetEventSlim[] waiters;
-            lock (_rpcLock)
-            {
-                if (_rpcWaiters.Count == 0) return;
-                waiters = new ManualResetEventSlim[_rpcWaiters.Count];
-                _rpcWaiters.Values.CopyTo(waiters, 0);
-                // Don't clear the dictionary here — the waiting SendRpcCall will
-                // remove its own entry under the lock and dispose its waiter.
-            }
-            foreach (var w in waiters)
-            {
-                try { w.Set(); } catch (ObjectDisposedException) { }
-            }
+            // Record the moment the close burst left the wire. The next
+            // StartInner gates on this — if Start fires within
+            // MinSilenceAfterStopMs of this Stop, it sleeps the remainder
+            // before opening sessions. The wheel has a ~10–14s internal
+            // timeout on sess=0x09 dashboard-binding state; emitting fresh
+            // primes inside that window is silently ignored. SimHub plugin
+            // reload (game switch) was the failure case — Stop+Start was
+            // running back-to-back in <1s, well inside the timeout. Manual
+            // disable+enable normally has enough human delay to clear it,
+            // but rapid clicks would have the same issue without this gate.
+            _lastStopUtcTicks = System.DateTime.UtcNow.Ticks;
         }
 
         public void UpdateGameData(StatusDataBase? data)
@@ -1037,7 +1169,7 @@ namespace MozaPlugin.Telemetry
         /// </summary>
         private void SendSessionInitHandshake()
         {
-            if (!_enabled || !_connection.IsConnected) return;
+            if (_state == TelemetryState.Idle || !_connection.IsConnected) return;
 
             byte[] init2 = global::MozaPlugin.Protocol.SessionPropertyPushBuilder
                 .BuildSessionInitField2Body();
@@ -1056,25 +1188,35 @@ namespace MozaPlugin.Telemetry
         /// Mute value frame emission. Called before the Profile is changed
         /// so the wheel never receives frames with a mismatched data layout
         /// (new profile channels packed into old tier-def flag slots).
+        /// Only meaningful when running steady-state (Active); pre-Active
+        /// states ignore the request because value frames aren't flowing yet.
         /// </summary>
         internal void MuteForDashSwitch()
         {
-            _dashSwitchMuted = true;
+            if (_state == TelemetryState.Active)
+                TransitionTo(TelemetryState.DashSwitchMuted, "MuteForDashSwitch");
+        }
+
+        /// <summary>Restore Active from DashSwitchMuted. No-op if not currently muted.</summary>
+        private void UnmuteAfterDashSwitch(string reason)
+        {
+            if (_state == TelemetryState.DashSwitchMuted)
+                TransitionTo(TelemetryState.Active, reason);
         }
 
         internal void RenegotiateForDashboardSwitch()
         {
-            if (!_enabled || !_connection.IsConnected)
+            if (_state == TelemetryState.Idle || !_connection.IsConnected)
             {
-                _dashSwitchMuted = false;
+                UnmuteAfterDashSwitch("renegotiate skipped (idle/disconnected)");
                 return;
             }
             try
             {
-                ParseWheelChannelCatalog();
+                _catalogParser.TryParse();
                 MozaLog.Debug(
                     $"[Moza] Dashboard switch renegotiation: " +
-                    $"catalog={_wheelChannelCatalog?.Count ?? -1} " +
+                    $"catalog={_catalogParser.Catalog?.Count ?? -1} " +
                     $"flagBase=0x{_nextFlagBase:X2}");
                 ApplySubscription(force: true);
             }
@@ -1084,15 +1226,15 @@ namespace MozaPlugin.Telemetry
             }
             finally
             {
-                _dashSwitchMuted = false;
+                UnmuteAfterDashSwitch("renegotiate finished");
             }
         }
 
         internal void RenegotiateForDashboardSwitch(Action? applyProfile, bool waitForCatalog)
         {
-            if (!_enabled || !_connection.IsConnected)
+            if (_state == TelemetryState.Idle || !_connection.IsConnected)
             {
-                MozaLog.Debug($"[Moza] DashSwitch renegotiation skipped: enabled={_enabled} connected={_connection.IsConnected}");
+                MozaLog.Debug($"[Moza] DashSwitch renegotiation skipped: state={_state} connected={_connection.IsConnected}");
                 return;
             }
 
@@ -1107,11 +1249,17 @@ namespace MozaPlugin.Telemetry
                 MozaLog.Debug(
                     $"[Moza] DashSwitch: pre-swap state: profile=\"{oldProfile}\" " +
                     $"tiers={oldTierCount} flagBase=0x{oldFlagBase:X2} " +
-                    $"catalog={_wheelChannelCatalog?.Count ?? -1} " +
+                    $"catalog={_catalogParser.Catalog?.Count ?? -1} " +
                     $"nextFlagBase=0x{_nextFlagBase:X2}");
 
                 int muteStart = Environment.TickCount;
-                _dashSwitchMuted = true;
+                // Active → DashSwitchMuted via the helper. If we're still in
+                // Preamble (rare — would need a wheel-initiated kind=4 echo
+                // before cold-start preamble completed), the helper no-ops and
+                // we proceed with the renegotiation steps; the preamble path
+                // will still exit with state Active so this block never leaves
+                // the system in an inconsistent state.
+                MuteForDashSwitch();
 
                 // Apply the new profile FIRST so we know which channel URLs the
                 // wheel must advertise before we can build a valid tier-def.
@@ -1140,7 +1288,7 @@ namespace MozaPlugin.Telemetry
             }
             finally
             {
-                _dashSwitchMuted = false;
+                UnmuteAfterDashSwitch("renegotiate (with profile) finished");
             }
         }
 
@@ -1155,32 +1303,27 @@ namespace MozaPlugin.Telemetry
         /// <see cref="TierDefinitionBuilder.BuildTierDefinitionV2"/>, which the
         /// wheel cannot bind to display elements.
         ///
-        /// Clears <see cref="_incomingSessionBuffer"/> on entry so we only see
+        /// Clears the catalog parser's byte buffer on entry so we only see
         /// activity that arrives AFTER the profile swap. Polls every 20 ms,
         /// re-parses on every buffer growth, and exits as soon as every
-        /// required URL is present in <see cref="_wheelChannelCatalog"/>.
+        /// required URL is present in the parsed catalog.
         /// </summary>
         private void WaitForCatalogCoverage(int renegotiateStartTickMs)
         {
-            int oldBufLen;
-            lock (_incomingSessionBuffer)
-            {
-                oldBufLen = _incomingSessionBuffer.Count;
-                _incomingSessionBuffer.Clear();
-            }
-            // Do NOT clear _wheelChannelCatalog: post-switch parse stats show
-            // the wheel uses BACKREFS heavily (backref=16 in the 17:46 trace)
-            // to keep prior URLs alive at high indices while only re-announcing
-            // the changed low-index slots. ParseWheelChannelCatalog needs the
-            // existing entries to resolve those backrefs.
+            int oldBufLen = _catalogParser.BufferLength;
+            // Drop chunk bytes accumulated before the switch. Do NOT clear the
+            // parsed catalog: post-switch parse stats show the wheel uses
+            // BACKREFS heavily (backref=16 in the 17:46 trace) to keep prior
+            // URLs alive at high indices while only re-announcing the changed
+            // low-index slots. The parser needs the existing entries to
+            // resolve those backrefs.
             //
             // Stale-slot duplicates are handled in
             // BuildTierDefinitionMessageType02 / BuildTierDefinitionV2 via
             // first-occurrence-wins (lowest matching idx wins) so a URL that
             // appears at both a fresh low position and a stale high position
             // resolves to the fresh one.
-            _lastCatalogParseLen = 0;
-            _channelBufferLastActivityMs = 0;
+            _catalogParser.ClearBuffer();
 
             // Required URLs are the de-duplicated set of channel URLs across
             // the new profile's tiers. Profile.Tiers is already broadcast-
@@ -1217,22 +1360,21 @@ namespace MozaPlugin.Telemetry
 
             while (Environment.TickCount < deadline)
             {
-                if (!_enabled || !_connection.IsConnected)
+                if (_state == TelemetryState.Idle || !_connection.IsConnected)
                 {
                     MozaLog.Debug("[Moza] DashSwitch: catalog wait aborted (disconnected/disabled)");
                     return;
                 }
 
-                int curBufLen;
-                lock (_incomingSessionBuffer) curBufLen = _incomingSessionBuffer.Count;
+                int curBufLen = _catalogParser.BufferLength;
 
                 if (curBufLen > lastParseLen)
                 {
-                    ParseWheelChannelCatalog();
+                    _catalogParser.TryParse();
                     lastParseLen = curBufLen;
                 }
 
-                var catalog = _wheelChannelCatalog;
+                var catalog = _catalogParser.Catalog;
                 finalCatalogCount = catalog?.Count ?? 0;
                 if (catalog != null && requiredUrls.Count > 0)
                 {
@@ -1265,12 +1407,11 @@ namespace MozaPlugin.Telemetry
             }
 
             // Final parse pass in case the buffer grew during the last sleep.
-            int tailBufLen;
-            lock (_incomingSessionBuffer) tailBufLen = _incomingSessionBuffer.Count;
+            int tailBufLen = _catalogParser.BufferLength;
             if (tailBufLen > lastParseLen)
             {
-                ParseWheelChannelCatalog();
-                var catalog = _wheelChannelCatalog;
+                _catalogParser.TryParse();
+                var catalog = _catalogParser.Catalog;
                 finalCatalogCount = catalog?.Count ?? 0;
                 if (catalog != null && requiredUrls.Count > 0)
                 {
@@ -1303,7 +1444,7 @@ namespace MozaPlugin.Telemetry
                 // Build a list of which URLs were missing for diagnostics.
                 var missing = new System.Text.StringBuilder();
                 int missCount = 0;
-                var catalog = _wheelChannelCatalog;
+                var catalog = _catalogParser.Catalog;
                 foreach (var url in requiredUrls)
                 {
                     bool found = false;
@@ -1335,11 +1476,44 @@ namespace MozaPlugin.Telemetry
         public void SwitchToProfile(uint slotIndex, MultiStreamProfile? newProfile)
         {
             SendDashboardSwitch(slotIndex);
+            if (newProfile != null) Profile = newProfile;
+            RestartForSwitch();
+        }
+
+        /// <summary>
+        /// Stop+Start cycle for dashboard switches. Used when the kind=4 has
+        /// already been sent by the caller (UI knob in MozaWheelSettingsControl,
+        /// or auto-test via SwitchToProfile) — we just need to rebind our
+        /// session state to match the new dashboard. The wheel's ~10–14s
+        /// internal sess=0x09 timeout is the gate on re-engagement; the
+        /// silence enforcement inside <see cref="StartInner"/> (via
+        /// <c>_lastStopUtcTicks</c>) handles that automatically — no need
+        /// for explicit Sleep here.
+        ///
+        /// PreStopDrainMs: critical. The caller's FF kind=4 frame is in the
+        /// one-shot queue when this runs; Stop's <c>FlushPendingWrites</c>
+        /// would discard it before the TX thread writes it to the wire
+        /// (symptom: "wheel doesn't even switch dashboards visually"). Sleep
+        /// first to let the queue drain naturally — ~300ms covers the queued
+        /// kind=4 plus any other in-flight one-shot frames.
+        /// </summary>
+        public void RestartForSwitch()
+        {
             System.Threading.ThreadPool.QueueUserWorkItem(_ =>
             {
-                RenegotiateForDashboardSwitch(
-                    applyProfile: newProfile != null ? () => { Profile = newProfile; } : null,
-                    waitForCatalog: true);
+                try
+                {
+                    // Let the caller's kind=4 (and any other in-flight one-shot
+                    // frames) actually transmit before Stop's FlushPendingWrites
+                    // discards the queue.
+                    System.Threading.Thread.Sleep(PreStopDrainMs);
+                    Stop();   // CloseHostSessions (01/02/03) + records _lastStopUtcTicks
+                    Start();  // StartInner enforces MinSilenceAfterStopMs gate before opening
+                }
+                catch (Exception ex)
+                {
+                    MozaLog.Error($"[Moza] RestartForSwitch failed: {ex.Message}");
+                }
             });
         }
 
@@ -1439,7 +1613,7 @@ namespace MozaPlugin.Telemetry
             System.Threading.Thread.Sleep(100);
 
             byte mgmtPort = TryOpenSession(MgmtSession, OpenAckTimeoutMs);
-            if (!_enabled || !_connection.IsConnected) return;
+            if (_state == TelemetryState.Idle || !_connection.IsConnected) return;
             byte telemetryPort = TryOpenSession(TelemSession, OpenAckTimeoutMs);
 
             _mgmtPort = mgmtPort;
@@ -1507,7 +1681,7 @@ namespace MozaPlugin.Telemetry
 
         /// <summary>
         /// Wait for the wheel's pre-tier-def channel registration burst to stop
-        /// arriving. Polls <see cref="_channelBufferLastActivityMs"/> — once the
+        /// arriving. Polls <see cref="ChannelCatalogParser.LastActivityMs"/> — once the
         /// last activity is older than <paramref name="quietMs"/>, we assume the
         /// wheel is done pushing its channel URLs.
         /// </summary>
@@ -1516,11 +1690,10 @@ namespace MozaPlugin.Telemetry
             int deadline = Environment.TickCount + timeoutMs;
             while (Environment.TickCount < deadline)
             {
-                if (!_enabled || !_connection.IsConnected) return;
-                int lastAct = _channelBufferLastActivityMs;
+                if (_state == TelemetryState.Idle || !_connection.IsConnected) return;
+                int lastAct = _catalogParser.LastActivityMs;
                 int idle = lastAct == 0 ? 0 : Environment.TickCount - lastAct;
-                int bufCount;
-                lock (_incomingSessionBuffer) bufCount = _incomingSessionBuffer.Count;
+                int bufCount = _catalogParser.BufferLength;
                 if (bufCount > 0 && idle >= quietMs)
                     return;
                 Thread.Sleep(20);
@@ -1693,7 +1866,7 @@ namespace MozaPlugin.Telemetry
             MozaLog.Debug(
                 $"[Moza] Subscription applied: \"{_profile.Name}\" " +
                 $"{chCount}ch/{_profile.Tiers.Count}t " +
-                $"catalog={_wheelChannelCatalog?.Count ?? -1}");
+                $"catalog={_catalogParser.Count}");
         }
 
         /// <summary>
@@ -1705,7 +1878,7 @@ namespace MozaPlugin.Telemetry
         /// </summary>
         /// <remarks>
         /// Decision order (per plan §3):
-        ///   1. <c>_wheelChannelCatalog</c> non-empty → Era2026 (catalog push
+        ///   1. <c>_catalogParser.Catalog</c> non-empty → Era2026 (catalog push
         ///      is the strongest signal that the wheel speaks Type02).
         ///   2. <c>EraPolicy.GuessFromWheelModel(WheelModelName)</c> hits →
         ///      use that.
@@ -1720,7 +1893,7 @@ namespace MozaPlugin.Telemetry
 
             MozaWheelEra resolved;
             string reason;
-            int catalogCount = _wheelChannelCatalog?.Count ?? 0;
+            int catalogCount = _catalogParser.Count;
             if (catalogCount > 0)
             {
                 resolved = MozaWheelEra.Era2026;
@@ -1782,7 +1955,7 @@ namespace MozaPlugin.Telemetry
             // IMPORTANT: never assign to the Profile PROPERTY here — the
             // setter re-expands tiers (broadcasts × subCount) causing
             // exponential growth across repeated calls. Use local var only.
-            var catalog = _wheelChannelCatalog;
+            var catalog = _catalogParser.Catalog;
             if (catalog != null && catalog.Count > 0)
             {
                 if (_policy.Encoding == TierDefEncoding.V0Url)
@@ -1893,7 +2066,7 @@ namespace MozaPlugin.Telemetry
                     // where a pinned Era2026 wheel fails to push its catalog
                     // in the WaitForChannelCatalogQuiet window.
                     bool cspIdx = _policy.Encoding == TierDefEncoding.V2Type02;
-                    if (cspIdx && (_wheelChannelCatalog == null || _wheelChannelCatalog.Count == 0))
+                    if (cspIdx && (_catalogParser.Catalog == null || _catalogParser.Catalog.Count == 0))
                     {
                         MozaLog.Debug(
                             "[Moza] No wheel catalog — using alphabetic indices for initial tier-def. " +
@@ -1910,7 +2083,7 @@ namespace MozaPlugin.Telemetry
                             profile, flagBase,
                             includeEnableEntries: true,
                             useWheelCatalogIndices: true,
-                            wheelCatalog: _wheelChannelCatalog,
+                            wheelCatalog: _catalogParser.Catalog,
                             prevFlagBase: prevSub?.FlagBase,
                             prevTierCount: prevSub?.TierCount ?? 0,
                             prevSubPerBroadcast: prevSub?.SubTiersPerBroadcast ?? 0);
@@ -2062,275 +2235,6 @@ namespace MozaPlugin.Telemetry
         }
 
         /// <summary>
-        /// Pick the file-transfer session number to upload on. Priority:
-        /// <list type="number">
-        ///   <item><see cref="UploadSessionOverride"/> if non-zero.</item>
-        ///   <item>0x04 if the wheel device-initiated it (legacy behaviour, all
-        ///   firmwares observed).</item>
-        ///   <item>The first session in 0x04..0x0a the wheel device-initiated
-        ///   (covers new firmware that may shift the file-transfer session).</item>
-        ///   <item>0x04 fallback if no candidate seen yet — the upload waiter
-        ///   will then either time out or proceed via host-initiated open.</item>
-        /// </list>
-        /// </summary>
-        private byte ChooseUploadSession()
-        {
-            if (UploadSessionOverride != 0) return UploadSessionOverride;
-            lock (_ftCandidateSessions)
-            {
-                if (_ftCandidateSessions.Contains((byte)0x04)) return 0x04;
-                foreach (byte b in new byte[] { 0x05, 0x06, 0x07, 0x08, 0x09, 0x0a })
-                    if (_ftCandidateSessions.Contains(b)) return b;
-            }
-            return 0x04;
-        }
-
-        /// <summary>
-        /// Upload the .mzdash dashboard file via the file-transfer protocol.
-        /// Wheel opens the upload session from its own side shortly after the
-        /// host brings up mgmt + telemetry; we wait up to 2 s for that open,
-        /// then send:
-        ///
-        ///   1. Sub-msg 1 (path registration) — wait for device echo (~6 chunks)
-        ///   2. Sub-msg 2 (file content push) — wait for device ack (~6 chunks)
-        ///   3. Type=0x00 end marker — wait for device end reply
-        ///
-        /// Sizing follows PitHouse's observed 64-byte max chunk size; CRC32 per
-        /// chunk via <see cref="TierDefinitionBuilder.ChunkMessage"/>.
-        ///
-        /// The session number is dynamic. 2025-11 firmware uses 0x04; 2026-04
-        /// firmware has been observed using 0x05 / 0x07 / 0x09 depending on
-        /// what the host requests via 7c:23 46. Plugin selects via
-        /// <see cref="ChooseUploadSession"/>.
-        /// </summary>
-        /// <summary>
-        /// Background upload entry point. Runs on a worker thread so a slow-to-
-        /// open file-transfer session (KS Pro on RS21-W18-MC SW: ~11 s) doesn't
-        /// stall tier def + telemetry start. Waits up to 60 s for the wheel to
-        /// device-init any session in 0x04..0x0a, then runs the legacy upload
-        /// path. If the wait expires, logs and bails — the wheel will render a
-        /// previously-cached dashboard, or nothing if it has none.
-        ///
-        /// Stop() flips _enabled to false and the next checkpoint exits cleanly.
-        /// </summary>
-        private void RunBackgroundDashboardUpload()
-        {
-            try
-            {
-                if (!_enabled || !_connection.IsConnected) return;
-
-                // 60 s ceiling: covers the slowest firmware observed (~11 s) with
-                // headroom. If the wheel hasn't opened an FT session by then it
-                // either doesn't support uploads on this firmware or is wedged —
-                // either way, retrying won't help and host-opening 0x04 races the
-                // wheel's eventual late burst (closes session 0x02, kills telemetry).
-                const int FtBurstWaitMs = 60000;
-                if (!_uploadSessionOpened.Wait(FtBurstWaitMs))
-                {
-                    MozaLog.Warn(
-                        $"[Moza] No file-transfer session device-opened within " +
-                        $"{FtBurstWaitMs}ms — skipping dashboard upload. " +
-                        "Wheel may render previously-cached dashboard.");
-                    return;
-                }
-
-                if (!_enabled || !_connection.IsConnected) return;
-                SendDashboardUpload();
-            }
-            catch (Exception ex)
-            {
-                MozaLog.Warn($"[Moza] Background dashboard upload failed: {ex.Message}");
-            }
-        }
-
-        private void SendDashboardUpload()
-        {
-            var content = MzdashContent;
-            if (content == null || content.Length == 0) return;
-            if (!_connection.IsConnected) return;
-
-            // Pick the upload session from the wheel's device-init burst.
-            // Picker prefers 0x04 if device-initiated; otherwise first of
-            // 0x05..0x0a. Caller (RunBackgroundDashboardUpload) already
-            // waited for at least one to open.
-            byte uploadSess = ChooseUploadSession();
-            _uploadSession = uploadSess;
-
-            // Skip-if-unchanged: if the wheel already reported this dashboard
-            // as loaded (via session 0x09 state) and the MD5 matches, don't
-            // re-upload. Saves ~1 s of handshake per reconnect.
-            if (CanSkipUpload(content))
-            {
-                MozaLog.Debug(
-                    $"[Moza] Dashboard \"{MzdashName}\" already loaded on wheel (hash match) — skipping upload");
-                return;
-            }
-
-            string dashboardName = !string.IsNullOrEmpty(MzdashName) ? MzdashName : "dashboard";
-            uint token = DashboardUploader.PickToken();
-            long tsMs = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds();
-
-            // Probe-based wire-format selection. Older wheels (VGS, GS V2P,
-            // CS V2.1, etc.) accept Legacy2025_11; newer wheels (W17 CS Pro /
-            // W18 KS Pro / W13 FSR V2 on 2026-04+ firmware) silently drop
-            // Legacy and only ack New2026_04. Identity probes (`wheel-sw-version`
-            // = `RS21-W18-MC SW`) carry no build/version field, so we can't
-            // pick from a string match. Try the user-configured format first
-            // (default New2026_04 — most wheels in the wild now), and on
-            // sub-msg 1 ack timeout, fall back to the other format.
-            bool fellBack = false;
-            DashboardUploader.UploadPayload upload =
-                DashboardUploader.BuildUpload(content, dashboardName, token, tsMs, _policy.UploadWireFormat);
-
-            MozaLog.Debug(
-                $"[Moza] Uploading dashboard \"{dashboardName}\" via session 0x{uploadSess:X2} " +
-                $"(wire={_policy.UploadWireFormat}): " +
-                $"raw={upload.UncompressedSize}B md5={upload.Md5Hex} token=0x{token:X8}");
-
-            _uploadSubMsg1Response.Reset();
-            _uploadSubMsg2Response.Reset();
-            _uploadEndReceived.Reset();
-            _uploadInboundMsgCount = 0;
-
-            // Sub-msg 1: path registration.
-            int seq1 = _uploadOutboundSeq + 1;
-            var subMsg1Frames = TierDefinitionBuilder.ChunkMessage(
-                upload.SubMsg1PathRegistration, uploadSess, ref seq1);
-            foreach (var frame in subMsg1Frames)
-            {
-                if (!_enabled || !_connection.IsConnected) return;
-                _connection.Send(frame);
-            }
-            _uploadOutboundSeq = seq1;
-
-            // Wait for device's path echo (capture shows ~6 chunks, arrives within ~200ms).
-            if (!_uploadSubMsg1Response.Wait(2000))
-            {
-                // Probe fallback: flip wire format and retry sub-msg 1 once.
-                // Only runs when policy.AutoFallbackUploadWireFormat is true
-                // (era=Auto). When the user picked a specific era we honour it
-                // strictly so the logged wire format reflects their choice and
-                // a wedged upload is diagnosable instead of always converging
-                // on the fallback.
-                if (!_policy.AutoFallbackUploadWireFormat)
-                {
-                    MozaLog.Warn(
-                        $"[Moza] Session 0x{uploadSess:X2} sub-msg 1 ack timeout with " +
-                        $"wire={_policy.UploadWireFormat} — fallback disabled (era pinned by user)");
-                }
-                else
-                {
-                    var fallback = _policy.UploadWireFormat == FileTransferWireFormat.New2026_04
-                        ? FileTransferWireFormat.Legacy2025_11
-                        : FileTransferWireFormat.New2026_04;
-                    MozaLog.Warn(
-                        $"[Moza] Session 0x{uploadSess:X2} sub-msg 1 ack timeout with " +
-                        $"wire={_policy.UploadWireFormat} — retrying with wire={fallback}");
-
-                    _policy.UploadWireFormat = fallback;
-                    fellBack = true;
-                    upload = DashboardUploader.BuildUpload(content, dashboardName, token, tsMs, _policy.UploadWireFormat);
-
-                    _uploadSubMsg1Response.Reset();
-                    _uploadSubMsg2Response.Reset();
-                    _uploadInboundMsgCount = 0;
-
-                    seq1 = _uploadOutboundSeq + 1;
-                    subMsg1Frames = TierDefinitionBuilder.ChunkMessage(
-                        upload.SubMsg1PathRegistration, uploadSess, ref seq1);
-                    foreach (var frame in subMsg1Frames)
-                    {
-                        if (!_enabled || !_connection.IsConnected) return;
-                        _connection.Send(frame);
-                    }
-                    _uploadOutboundSeq = seq1;
-
-                    if (!_uploadSubMsg1Response.Wait(2000))
-                        MozaLog.Warn(
-                            $"[Moza] Session 0x{uploadSess:X2} sub-msg 1 ack timeout on fallback " +
-                            $"wire={_policy.UploadWireFormat} — wheel may not be in upload-ready state");
-                    else
-                        MozaLog.Debug(
-                            $"[Moza] Wire format auto-detected: wheel accepts {_policy.UploadWireFormat} " +
-                            "(cached for this session)");
-                }
-            }
-            // Suppress unused warning when fallback didn't fire.
-            _ = fellBack;
-
-            // Sub-msg 2: file content push. May be split across multiple sub-msgs
-            // for new-firmware uploads when the body exceeds 0xFFFF bytes (TODO:
-            // true multi-sub-msg chunking; today this is single-element for both
-            // formats — see FileTransferBuilder.BuildFileContentChunked).
-            _uploadInboundMsgCount = 0; // reset so next threshold triggers sub-msg 2 event
-            int seq2 = _uploadOutboundSeq + 1;
-            for (int chunkIdx = 0; chunkIdx < upload.SubMsg2Chunks.Count; chunkIdx++)
-            {
-                var subMsg2 = upload.SubMsg2Chunks[chunkIdx];
-                var subMsg2Frames = TierDefinitionBuilder.ChunkMessage(subMsg2, uploadSess, ref seq2);
-                foreach (var frame in subMsg2Frames)
-                {
-                    if (!_enabled || !_connection.IsConnected) return;
-                    _connection.Send(frame);
-                }
-            }
-            _uploadOutboundSeq = seq2;
-
-            if (!_uploadSubMsg2Response.Wait(3000))
-                MozaLog.Warn($"[Moza] Session 0x{uploadSess:X2} sub-msg 2 response timeout");
-
-            // End marker on the upload session.
-            SendSessionEnd(uploadSess, (ushort)_uploadOutboundSeq);
-
-            if (_uploadEndReceived.Wait(1000))
-                MozaLog.Debug($"[Moza] Dashboard upload complete (session 0x{uploadSess:X2} closed by device)");
-            else
-                MozaLog.Debug("[Moza] Dashboard upload finished; device did not echo end marker within 1s");
-
-            // Wheel's 2025-11 firmware fires a post-upload state refresh on
-            // the upload session (updated directory listing) and session 0x09
-            // (updated configJson state blob including the newly-uploaded
-            // dashboard). Continue pumping so OnMessageDuringPreamble can ack
-            // + consume those chunks before the preamble phase ends and the
-            // handler detaches.
-            int preRefreshCount = _uploadInboundMsgCount;
-            Thread.Sleep(500);
-            int refreshChunks = _uploadInboundMsgCount - preRefreshCount;
-            if (refreshChunks > 0)
-                MozaLog.Debug(
-                    $"[Moza] Session 0x{uploadSess:X2} post-upload state refresh: {refreshChunks} chunks");
-        }
-
-        /// <summary>
-        /// Compare the active mzdash MD5 against the wheel's reported hash from
-        /// its last session 0x09 state blob. Wheel stores hash as ASCII-hex of
-        /// ASCII-hex of MD5 (observed: `33 63 31 64 ...` = ASCII of
-        /// "3c1d..."). Returns true when the wheel already has this exact
-        /// dashboard loaded in enableManager.
-        /// </summary>
-        private bool CanSkipUpload(byte[] content)
-        {
-            var state = _configJson.LastState;
-            if (state == null || state.EnabledDashboards.Count == 0) return false;
-            byte[] md5 = FileTransferBuilder.ComputeMd5(content);
-            string md5Hex = FileTransferBuilder.Md5Hex(md5);
-            string wireHash = AsciiHexOfAsciiHex(md5Hex);
-            foreach (var entry in state.EnabledDashboards)
-            {
-                if (string.Equals(entry.Hash, wireHash, StringComparison.OrdinalIgnoreCase))
-                    return true;
-            }
-            return false;
-        }
-
-        private static string AsciiHexOfAsciiHex(string ascii)
-        {
-            var sb = new System.Text.StringBuilder(ascii.Length * 2);
-            foreach (var c in ascii) sb.Append(((byte)c).ToString("x2"));
-            return sb.ToString();
-        }
-
-        /// <summary>
         /// Fire once per session: reply to the wheel's configJson state blob
         /// with a <c>configJson()</c> canonical library list. Wheel uses this
         /// to refresh its <c>configJsonList</c> field, which PitHouse reads
@@ -2357,7 +2261,7 @@ namespace MozaPlugin.Telemetry
             var frames = TierDefinitionBuilder.ChunkMessage(reply, session, ref seq);
             foreach (var frame in frames)
             {
-                if (!_enabled || !_connection.IsConnected) return;
+                if (_state == TelemetryState.Idle || !_connection.IsConnected) return;
                 _connection.Send(frame);
             }
             _session09OutboundSeq = seq;
@@ -2401,131 +2305,16 @@ namespace MozaPlugin.Telemetry
             });
         }
 
-        private int _session0aOutboundSeq;
-
         /// <summary>
-        /// Send a host→wheel JSON RPC call on session 0x0a and optionally wait
-        /// for the wheel's reply. Wire format matches configJson: 9-byte
-        /// envelope ([flag=0x00][comp_size:u32 LE][uncomp_size:u32 LE]) wrapping
-        /// a zlib stream of `{"<method>()": arg, "id": N}`. Reply has shape
-        /// `{"id": N, "result": ...}` and is decoded by HandleRpcReply.
-        /// Returns the decoded reply bytes on success, null on timeout.
+        /// Send a host→wheel JSON RPC call on session 0x0a and wait for the wheel's
+        /// reply. Thin pass-through to <see cref="RpcCallChannel.Call"/> — kept on
+        /// TelemetrySender so external callers (Settings UI, completelyRemove flow)
+        /// don't need to know about the helper.
         /// </summary>
         public byte[]? SendRpcCall(string method, object arg, int timeoutMs = 2000)
         {
-            if (!_connection.IsConnected) return null;
             if (Volatile.Read(ref _disposed) != 0) return null;
-            int id;
-            var waiter = new ManualResetEventSlim(false);
-            lock (_rpcLock)
-            {
-                id = _rpcNextId++;
-                _rpcWaiters[id] = waiter;
-            }
-            byte[] envelope = BuildRpcCallEnvelope(method, arg, id);
-            int seq = _session0aOutboundSeq + 1;
-            var frames = TierDefinitionBuilder.ChunkMessage(envelope, 0x0a, ref seq);
-            foreach (var frame in frames)
-            {
-                if (!_enabled || !_connection.IsConnected) { CleanupRpcWaiter(id); return null; }
-                _connection.Send(frame);
-            }
-            _session0aOutboundSeq = seq;
-            bool acked = waiter.Wait(timeoutMs);
-            byte[]? reply = null;
-            lock (_rpcLock)
-            {
-                _rpcReplies.TryGetValue(id, out reply);
-                _rpcReplies.Remove(id);
-                _rpcWaiters.Remove(id);
-            }
-            waiter.Dispose();
-            return acked ? reply : null;
-        }
-
-        private void CleanupRpcWaiter(int id)
-        {
-            lock (_rpcLock)
-            {
-                if (_rpcWaiters.TryGetValue(id, out var w))
-                {
-                    _rpcWaiters.Remove(id);
-                    try { w.Dispose(); } catch { }
-                }
-            }
-        }
-
-        private static byte[] BuildRpcCallEnvelope(string method, object arg, int id)
-        {
-            var root = new Newtonsoft.Json.Linq.JObject();
-            root[$"{method}()"] = Newtonsoft.Json.Linq.JToken.FromObject(arg);
-            root["id"] = id;
-            string json = root.ToString(Newtonsoft.Json.Formatting.None);
-            byte[] uncompressed = System.Text.Encoding.UTF8.GetBytes(json);
-            byte[] compressed = ZlibCompress(uncompressed);
-            var env = new byte[9 + compressed.Length];
-            env[0] = 0x00;
-            uint c = (uint)compressed.Length;
-            env[1] = (byte)(c & 0xFF); env[2] = (byte)((c >> 8) & 0xFF);
-            env[3] = (byte)((c >> 16) & 0xFF); env[4] = (byte)((c >> 24) & 0xFF);
-            uint u = (uint)uncompressed.Length;
-            env[5] = (byte)(u & 0xFF); env[6] = (byte)((u >> 8) & 0xFF);
-            env[7] = (byte)((u >> 16) & 0xFF); env[8] = (byte)((u >> 24) & 0xFF);
-            Array.Copy(compressed, 0, env, 9, compressed.Length);
-            return env;
-        }
-
-        private static byte[] ZlibCompress(byte[] data)
-        {
-            using var output = new System.IO.MemoryStream();
-            output.WriteByte(0x78);
-            output.WriteByte(0x9C);
-            using (var deflate = new System.IO.Compression.DeflateStream(
-                output, System.IO.Compression.CompressionLevel.Optimal, leaveOpen: true))
-                deflate.Write(data, 0, data.Length);
-            uint a = 1, b = 0;
-            for (int i = 0; i < data.Length; i++)
-            {
-                a = (a + data[i]) % 65521;
-                b = (b + a) % 65521;
-            }
-            uint adler = (b << 16) | a;
-            output.WriteByte((byte)((adler >> 24) & 0xFF));
-            output.WriteByte((byte)((adler >> 16) & 0xFF));
-            output.WriteByte((byte)((adler >> 8) & 0xFF));
-            output.WriteByte((byte)(adler & 0xFF));
-            return output.ToArray();
-        }
-
-        /// <summary>
-        /// Decode a session 0x0a reply and route to the waiter by `id`. Method
-        /// name is NOT inspected — replies route solely on integer id, which
-        /// accommodates:
-        /// - standard replies `{"id": N, "result": ...}`
-        /// - method-keyed replies `{"<method>()": <value>, "id": N}`
-        /// - empty-method replies `{"()": "", "id": N}` (observed on reset, 2026-04-21)
-        /// Caller's `SendRpcCall` assigns any integer id; wheel echoes it back.
-        /// </summary>
-        private void HandleRpcReply(byte[] uncompressed)
-        {
-            try
-            {
-                string json = System.Text.Encoding.UTF8.GetString(uncompressed);
-                var obj = Newtonsoft.Json.Linq.JObject.Parse(json);
-                var idTok = obj["id"];
-                if (idTok == null) return;
-                int id = (int)idTok;
-                lock (_rpcLock)
-                {
-                    _rpcReplies[id] = uncompressed;
-                    if (_rpcWaiters.TryGetValue(id, out var waiter))
-                        waiter.Set();
-                }
-            }
-            catch (Exception ex)
-            {
-                MozaLog.Debug($"[Moza] RPC reply parse failed: {ex.Message}");
-            }
+            return _rpc.Call(method, arg, timeoutMs);
         }
 
         private static int CountOccurrences(string haystack, string needle)
@@ -2608,7 +2397,7 @@ namespace MozaPlugin.Telemetry
         /// </summary>
         private void OnMessageDuringPreamble(byte[] data)
         {
-            if (!_enabled)
+            if (_state == TelemetryState.Idle)
                 return;
 
             // data layout from MozaSerialConnection: [group, device, cmdPayload...]
@@ -2661,23 +2450,16 @@ namespace MozaPlugin.Telemetry
                     // upload pump re-runs ChooseUploadSession() after the wait
                     // so bursts that don't include 0x04 (KS Pro on Universal
                     // Hub opens 0x05/0x07/0x09/0x0a) still resolve correctly.
-                    if (session >= 0x04 && session <= 0x0b)
-                    {
-                        lock (_ftCandidateSessions) _ftCandidateSessions.Add(session);
-                        _uploadSessionOpened.Set();
-                    }
-                    // Route device-init through dispatcher. If a consumer
-                    // (e.g. DashboardDownloader) has claimed this session, it
-                    // gets the notification exclusively. Otherwise fall through
-                    // to legacy upload-session tracking.
+                    // Route device-init through dispatcher first so we can check
+                    // ownership before redirecting the upload coordinator's
+                    // ActiveSession (we don't want NoteDeviceInit to re-point
+                    // ActiveSession to a session that DashboardDownloader has
+                    // claimed for its own download flow).
                     _dispatcher.DispatchOpen(session, openSeq);
-                    // Legacy: update _uploadSession for sessions not yet
-                    // claimed by a dispatcher consumer.
                     if (session >= 0x04 && session <= 0x0b
-                        && session != 0x09 && session != 0x0a
                         && _dispatcher.GetOwner(session) == null)
                     {
-                        _uploadSession = session;
+                        _uploader.NoteDeviceInit(session);
                     }
                     return;
                 }
@@ -2738,45 +2520,13 @@ namespace MozaPlugin.Telemetry
                     // after some chunks, but sub-msg events fire once enough chunks
                     // arrive to assume the device replied. Session number is
                     // dynamic (see ChooseUploadSession).
-                    if (session == _uploadSession)
+                    // Upload-session inbound: ack here so the wheel sees the host
+                    // is keeping up, then forward to WheelUploadCoordinator which
+                    // owns the sub-msg-1/2 wait events and dir-listing reassembly.
+                    if (session == _uploader.ActiveSession)
                     {
                         SendSessionAck(session, (ushort)seq);
-                        _uploadInboundSeq = seq;
-                        _uploadInboundMsgCount++;
-                        // After ~5 chunks on the upload session from the device,
-                        // assume a sub-msg reply has fully arrived (capture shows
-                        // 6 chunks per response). SendDashboardUpload resets the
-                        // counter to 0 between sub-msg 1 and sub-msg 2, so both
-                        // thresholds are 5.
-                        if (_uploadInboundMsgCount >= 5 && !_uploadSubMsg1Response.IsSet)
-                            _uploadSubMsg1Response.Set();
-                        else if (_uploadInboundMsgCount >= 5 && !_uploadSubMsg2Response.IsSet)
-                            _uploadSubMsg2Response.Set();
-
-                        // 2025-11 firmware also pushes a zlib-compressed directory
-                        // listing on the upload session (initial + post-upload
-                        // refresh). Reassemble + decompress so the plugin can
-                        // confirm the upload landed in the wheel's FS. Same
-                        // 9-byte envelope as session 0x09 configJson state.
-                        _uploadInbox.AddChunk(chunkPayload);
-                        byte[]? dirBlob = _uploadInbox.TryDecompress();
-                        if (dirBlob != null)
-                        {
-                            _uploadInbox.Clear();
-                            _uploadDirListingRefreshed = true;
-                            try
-                            {
-                                string json = System.Text.Encoding.UTF8.GetString(dirBlob);
-                                MozaLog.Debug(
-                                    $"[Moza] Session 0x{session:X2} dir listing: {dirBlob.Length} bytes, " +
-                                    $"children≈{CountOccurrences(json, "\"name\"")}");
-                            }
-                            catch (Exception ex)
-                            {
-                                MozaLog.Debug(
-                                    $"[Moza] Session 0x{session:X2} dir listing decode: {ex.Message}");
-                            }
-                        }
+                        _uploader.NoteInboundChunk(session, seq, chunkPayload);
                     }
 
                     // configJson state push from wheel. Older firmware uses
@@ -2799,11 +2549,39 @@ namespace MozaPlugin.Telemetry
                                 $"first8={BitConverter.ToString(chunkPayload, 0, Math.Min(8, chunkPayload.Length))}");
                         }
                         catch { }
-                        var state = _configJson.OnChunk(chunkPayload);
-                        if (state != null)
+                        // Seq-aware path: detect a dropped chunk and re-handshake
+                        // instead of silently corrupting the zlib stream. Wire-trace
+                        // analysis (2026-05-08) showed a single missing seq=14 on
+                        // sess=0x09 under Wine R/W contention permanently broke the
+                        // configJson handshake for the session lifetime.
+                        var result = _configJson.OnChunk(seq, chunkPayload, $"sess=0x{session:X2}");
+                        if (result == ConfigJsonClient.ChunkResult.StateReady)
                         {
-                            MaybeSendConfigJsonReply(state, session);
-                            MaybeTriggerDashboardDownload(state);
+                            var state = _configJson.LastState;
+                            if (state != null)
+                            {
+                                MaybeSendConfigJsonReply(state, session);
+                                MaybeTriggerDashboardDownload(state);
+                            }
+                        }
+                        else if (result == ConfigJsonClient.ChunkResult.GapDetected)
+                        {
+                            // Re-issue the open request so the wheel re-emits its
+                            // state burst from scratch. Buffer was already cleared
+                            // by the reassembler. Use a fresh seq so the wheel
+                            // doesn't dedupe against the prior open.
+                            try
+                            {
+                                int recoverySeq = unchecked((ushort)(seq + 0x100));
+                                MozaLog.Warn(
+                                    $"[Moza] session 0x{session:X2} configJson gap recovery: " +
+                                    $"re-issuing open request with seq=0x{recoverySeq:X4}");
+                                SendConfigJsonOpenRequest(session, (ushort)recoverySeq);
+                            }
+                            catch (Exception ex)
+                            {
+                                MozaLog.Warn($"[Moza] configJson recovery emit failed: {ex.Message}");
+                            }
                         }
                     }
 
@@ -2815,12 +2593,17 @@ namespace MozaPlugin.Telemetry
                     // the duplicate as a sequence-number violation and retransmits.
                     if (session == 0x0a)
                     {
-                        _session0aInbox.AddChunk(chunkPayload);
-                        byte[]? replyBlob = _session0aInbox.TryDecompress();
-                        if (replyBlob != null)
+                        // Seq-aware: a missing chunk corrupts the RPC reply
+                        // envelope. Clear and let the calling SendRpcCall time
+                        // out — the next RPC will re-establish its own seq train.
+                        if (_session0aInbox.AddChunk(seq, chunkPayload, "sess=0x0a"))
                         {
-                            _session0aInbox.Clear();
-                            HandleRpcReply(replyBlob);
+                            byte[]? replyBlob = _session0aInbox.TryDecompress();
+                            if (replyBlob != null)
+                            {
+                                _session0aInbox.Clear();
+                                _rpc.HandleReply(replyBlob);
+                            }
                         }
                     }
 
@@ -2866,7 +2649,7 @@ namespace MozaPlugin.Telemetry
                     // (FlagByte) or the mgmt session (0x01) depending on firmware
                     // — V0 URL-subscription firmware (CSP post-2026-04) sends URL
                     // entries on 0x01 while V2-compact firmware uses 0x02. Collect
-                    // from both during preamble so ParseWheelChannelCatalog sees
+                    // from both during preamble so ChannelCatalogParser sees
                     // entries regardless of which session the wheel uses.
                     // Always accumulate catalog data — no gate. The tick
                     // handler detects changes after 2s of quiet and re-issues
@@ -2878,13 +2661,11 @@ namespace MozaPlugin.Telemetry
                         Array.Copy(data, 8, raw, 0, raw.Length);
                         if (raw.Length >= 5)
                         {
+                            // Drop the 4-byte CRC trailer; feed the rest to the
+                            // catalog parser. AppendChunk also stamps LastActivityMs
+                            // so quiet-window waits work without an external clock.
                             int netLen = raw.Length - 4;
-                            lock (_incomingSessionBuffer)
-                            {
-                                for (int k = 0; k < netLen; k++)
-                                    _incomingSessionBuffer.Add(raw[k]);
-                            }
-                            _channelBufferLastActivityMs = Environment.TickCount;
+                            _catalogParser.AppendChunk(raw, 0, netLen);
                         }
                     }
                 }
@@ -2901,7 +2682,7 @@ namespace MozaPlugin.Telemetry
                     }
                     // Legacy routing for non-dispatcher sessions.
                     if (session == _mgmtPort) _mgmtResponseEvent.Set();
-                    if (session == _uploadSession) _uploadEndReceived.Set();
+                    _uploader.NoteEndMarker(session);
                 }
 
                 return;
@@ -2921,222 +2702,6 @@ namespace MozaPlugin.Telemetry
                     _displayModelName = System.Text.Encoding.ASCII.GetString(data, 4, nameLen);
                     _displayDetected = true;
                     MozaLog.Debug($"[Moza] Display sub-device detected: \"{_displayModelName}\"");
-                }
-            }
-        }
-
-        /// <summary>
-        /// Parse the wheel's channel catalog from the buffered incoming 7c:00 session data.
-        /// The wheel sends tag 0x04 entries with channel URLs during the preamble.
-        /// </summary>
-        private static bool CatalogEquals(
-            System.Collections.Generic.IReadOnlyList<string>? a,
-            System.Collections.Generic.IReadOnlyList<string>? b)
-        {
-            if (a == null && b == null) return true;
-            if (a == null || b == null) return false;
-            if (a.Count != b.Count) return false;
-            for (int i = 0; i < a.Count; i++)
-                if (!string.Equals(a[i], b[i], System.StringComparison.Ordinal))
-                    return false;
-            return true;
-        }
-
-        /// <summary>
-        /// Scan <see cref="_incomingSessionBuffer"/> for a complete catalog:
-        /// ≥3 plausible 0x04 URL entries followed by a 0x06 end-marker.
-        /// Caller must hold <c>lock (_incomingSessionBuffer)</c>.
-        /// </summary>
-        private bool HasCompleteCatalog()
-        {
-            int cnt = _incomingSessionBuffer.Count;
-            if (cnt <= 30) return false;
-
-            int urlCount = 0;
-            for (int ci = 0; ci + 5 <= cnt; ci++)
-            {
-                byte b = _incomingSessionBuffer[ci];
-                if (b == 0x04)
-                {
-                    uint sz = (uint)(_incomingSessionBuffer[ci + 1]
-                        | (_incomingSessionBuffer[ci + 2] << 8)
-                        | (_incomingSessionBuffer[ci + 3] << 16)
-                        | (_incomingSessionBuffer[ci + 4] << 24));
-                    if (sz >= 1 && sz < 200 && ci + 5 + (int)sz <= cnt)
-                    {
-                        urlCount++;
-                        ci += 4 + (int)sz;
-                    }
-                }
-                else if (b == 0x06 && urlCount >= 3)
-                {
-                    return true;
-                }
-            }
-            return false;
-        }
-
-        private void ParseWheelChannelCatalog()
-        {
-            byte[] buffer;
-            lock (_incomingSessionBuffer)
-            {
-                if (_incomingSessionBuffer.Count == 0) return;
-                buffer = _incomingSessionBuffer.ToArray();
-            }
-
-            // Pre-scan: any tag=0x04 records present? Buffer fills with end-
-            // marker noise (06 04 ... val) post-renegotiate; parsing every tick
-            // is wasted work. Skip + suppress logging unless URL records exist.
-            bool hasUrlRecord = false;
-            for (int b = 0; b + 5 < buffer.Length; b++)
-            {
-                if (buffer[b] == 0x04)
-                {
-                    uint sz = (uint)(buffer[b + 1] | (buffer[b + 2] << 8)
-                                   | (buffer[b + 3] << 16) | (buffer[b + 4] << 24));
-                    if (sz >= 1 && sz < 200 && b + 5 + (int)sz <= buffer.Length)
-                    {
-                        hasUrlRecord = true;
-                        break;
-                    }
-                }
-            }
-            if (!hasUrlRecord) return;
-
-            // Diagnostic: hex-dump first 128 bytes of catalog buffer
-            int dumpLen = Math.Min(buffer.Length, 128);
-            var hex = new System.Text.StringBuilder(dumpLen * 3);
-            for (int d = 0; d < dumpLen; d++)
-            {
-                if (d > 0) hex.Append('-');
-                hex.Append(buffer[d].ToString("X2"));
-            }
-            MozaLog.Debug($"[Moza] Catalog buffer dump ({buffer.Length} bytes): {hex}");
-
-            // Scan-forward for `04`-tag URL records. Each record encodes its
-            // canonical wheel-firmware idx in the byte at offset i+5 (1-based).
-            // Wheel re-indexes URLs per dashboard — same URL gets different idx
-            // before/after a dash switch (verified in moza-wire 161929: idx 4 =
-            // Gear under Core, idx 4 = TyreTempFrontRight under Grids). Plugin
-            // MUST honor the wheel's idx, not parse-order positional.
-            //
-            // Catalog stored as List<string?> indexed by idx-1; nulls fill
-            // unannounced gaps. Merge writes URLs at canonical positions.
-            var parsed = new System.Collections.Generic.Dictionary<int, string>();
-            int i = 0;
-            int diagFullUrl = 0, diagPrefixUrl = 0, diagAbbrUrl = 0;
-            int diagBackRef = 0, diagBackRefFail = 0;
-            int diagSizeReject = 0, diagPlausReject = 0;
-            var existingCatalog = _wheelChannelCatalog;
-            while (i + 6 < buffer.Length)
-            {
-                byte tag = buffer[i];
-                if (tag != 0x04) { i++; continue; }
-                uint param = (uint)(buffer[i + 1] | (buffer[i + 2] << 8) |
-                             (buffer[i + 3] << 16) | (buffer[i + 4] << 24));
-                if (param < 1 || param >= 200 || i + 5 + (int)param > buffer.Length)
-                {
-                    diagSizeReject++;
-                    i++; continue;
-                }
-                int idx = buffer[i + 5];  // wheel-firmware-canonical idx (1-based)
-                int urlLen = (int)param - 1;
-                int urlStart = i + 6;
-
-                if (urlLen == 0)
-                {
-                    // Backref: payload is just the idx byte. Resolve URL from
-                    // the existing catalog at this idx; record the same idx
-                    // in our parse map so merge preserves the binding.
-                    if (existingCatalog != null && idx >= 1 && idx <= existingCatalog.Count
-                        && !string.IsNullOrEmpty(existingCatalog[idx - 1]))
-                    {
-                        parsed[idx] = existingCatalog[idx - 1];
-                        diagBackRef++;
-                    }
-                    else
-                    {
-                        diagBackRefFail++;
-                    }
-                    i += 5 + (int)param;
-                    continue;
-                }
-
-                bool plausible = urlLen >= 3
-                    && ((buffer[urlStart] == (byte)'v'
-                         && buffer[urlStart + 1] == (byte)'1'
-                         && buffer[urlStart + 2] == (byte)'/')
-                        || buffer[urlStart] == 0x01
-                        || (buffer[urlStart] == 0x5C
-                            && urlLen >= 4
-                            && buffer[urlStart + 1] == 0x31));
-                if (!plausible) { diagPlausReject++; i++; continue; }
-                string url;
-                if (buffer[urlStart] == 0x01)
-                {
-                    url = "v1/gameData/" + System.Text.Encoding.ASCII.GetString(
-                        buffer, urlStart + 1, urlLen - 1);
-                    diagPrefixUrl++;
-                }
-                else if (buffer[urlStart] == 0x5C && buffer[urlStart + 1] == 0x31)
-                {
-                    string suffix = System.Text.Encoding.ASCII.GetString(
-                        buffer, urlStart + 2, urlLen - 2);
-                    suffix = suffix
-                        .Replace("\\t", "TyreTemp")
-                        .Replace("\\P", "TyrePressure")
-                        .Replace("{FL}", "FrontLeft")
-                        .Replace("{FR}", "FrontRight")
-                        .Replace("{RL}", "RearLeft")
-                        .Replace("{RR}", "RearRight");
-                    url = "v1/gameData/" + suffix;
-                    diagAbbrUrl++;
-                }
-                else
-                {
-                    url = System.Text.Encoding.ASCII.GetString(buffer, urlStart, urlLen);
-                    diagFullUrl++;
-                }
-                if (idx >= 1) parsed[idx] = url;
-                i += 5 + (int)param;
-            }
-            MozaLog.Debug(
-                $"[Moza] Catalog parse stats: full={diagFullUrl} prefix={diagPrefixUrl} " +
-                $"abbr={diagAbbrUrl} backref={diagBackRef} backrefFail={diagBackRefFail} " +
-                $"sizeReject={diagSizeReject} plausReject={diagPlausReject} " +
-                $"distinct-idx={parsed.Count}");
-
-            if (parsed.Count > 0)
-            {
-                // Build/extend the idx-positional catalog. Latest wheel
-                // announcement wins per idx (dashboard switches re-index URLs).
-                var prior = _wheelChannelCatalog;
-                int maxIdx = parsed.Keys.Max();
-                int newSize = Math.Max(maxIdx, prior?.Count ?? 0);
-                var merged = new System.Collections.Generic.List<string>(newSize);
-                for (int k = 0; k < newSize; k++)
-                {
-                    string? entry = (prior != null && k < prior.Count) ? prior[k] : null;
-                    if (parsed.TryGetValue(k + 1, out var u)) entry = u;
-                    merged.Add(entry ?? "");
-                }
-                bool changed = prior == null
-                    || prior.Count != merged.Count
-                    || !prior.SequenceEqual(merged, StringComparer.OrdinalIgnoreCase);
-                if (changed)
-                {
-                    _wheelChannelCatalog = merged;
-                    var diff = new System.Text.StringBuilder();
-                    foreach (var kv in parsed.OrderBy(kv => kv.Key))
-                    {
-                        bool wasDifferent = prior == null
-                            || kv.Key - 1 >= prior.Count
-                            || !string.Equals(prior[kv.Key - 1], kv.Value, StringComparison.OrdinalIgnoreCase);
-                        if (wasDifferent) diff.Append($" [{kv.Key}]={kv.Value}");
-                    }
-                    MozaLog.Debug(
-                        $"[Moza] Wheel channel catalog updated (size {prior?.Count ?? 0}→{merged.Count}):{diff}");
                 }
             }
         }
@@ -3169,281 +2734,354 @@ namespace MozaPlugin.Telemetry
 
         private void OnTimerElapsedInner()
         {
-            if (!_enabled || !_connection.IsConnected)
+            if (_state == TelemetryState.Idle || !_connection.IsConnected)
                 return;
-
-            var tiers = _tiers;
-            // No-profile bootstrap: when builtins/mzdash are unavailable the
-            // sender starts with `_tiers == null`. Rather than bail (which
-            // strands preamble forever and prevents catalog reception), keep
-            // the preamble ticking so the wheel-side catalog frames get
-            // buffered + parsed. After preamble completes, MaybeSwapProfile-
-            // ForCatalog synthesises a WheelCatalog profile from what the
-            // wheel advertised, populating `_tiers` for subsequent ticks.
-            bool noProfile = tiers == null || tiers.Length == 0;
 
             try
             {
-                // Preamble phase: ~1 second of session ack processing + heartbeats.
-                // No telemetry, enable, or channel config until preamble completes.
-                if (!_preambleComplete)
+                // Preamble: ~1 second of heartbeats while the wheel acks our
+                // session opens and pushes its initial catalog + state. No
+                // telemetry, no value frames; once the tick countdown elapses
+                // we transition to Active and fall into the steady-state path.
+                if (_state == TelemetryState.Preamble)
                 {
-                    _tickCounter++;
-
-                    int slowInterval = Math.Max(1, 1000 / _baseTickMs);
-                    if (_tickCounter % slowInterval == 0)
-                        SendHeartbeat();
-
-                    if (_tickCounter >= _preambleTickTarget)
-                    {
-                        _preambleComplete = true;
-
-                        ParseWheelChannelCatalog();
-                        ApplySubscription(force: false);
-
-                        _tickCounter = 0;
-                        _slowCounter = 0;
-                    }
+                    TickPreamble();
                     return;
                 }
 
-                // Continuous catalog absorption. Wheel pushes URL records in
-                // batches with ~1.2s gaps; parse every time the buffer grows
-                // and merge non-destructively so URLs are never dropped.
-                {
-                    int curLen;
-                    lock (_incomingSessionBuffer) curLen = _incomingSessionBuffer.Count;
-                    if (curLen > _lastCatalogParseLen)
-                    {
-                        ParseWheelChannelCatalog();
-                        _lastCatalogParseLen = curLen;
-                        if (curLen > 4096)
-                        {
-                            lock (_incomingSessionBuffer) _incomingSessionBuffer.Clear();
-                            _lastCatalogParseLen = 0;
-                        }
-                    }
-                }
-
+                // Steady-state (Active or DashSwitchMuted).
+                TickAbsorbCatalogIfChanged();
                 _autoTest?.Tick(_baseTickMs);
 
-                // Re-read _tiers: MaybeSwapProfileForCatalog may have rebuilt.
-                tiers = _tiers;
+                // Re-read _tiers: MaybeSwapProfileForCatalog may have rebuilt
+                // them above (synthesised from wheel-advertised catalog when
+                // no profile was loaded at Start time).
+                var tiers = _tiers;
                 if (tiers == null || tiers.Length == 0)
                     return;
 
-                // Post-renegotiation diagnostic: log first few ticks
-                if (_postRenegDiagTicks > 0)
-                {
-                    bool useV0Diag = _policy.Encoding == TierDefEncoding.V0Url;
-                    MozaLog.Debug(
-                        $"[Moza] TICK DIAG: tiers={tiers.Length} " +
-                        $"testMode={TestMode} gameRunning={_gameRunning} " +
-                        $"useV0={useV0Diag} tickCounter={_tickCounter} " +
-                        $"profile={_profile?.Name ?? "null"} " +
-                        $"catalog={_wheelChannelCatalog?.Count ?? -1} " +
-                        $"framesSent={_framesSent}");
-                    _postRenegDiagTicks--;
-                }
+                TickPostRenegDiagnostic(tiers);
+                TickFireGameStartHandshake();
 
-                if (_gameStartHandshakePending)
-                {
-                    _gameStartHandshakePending = false;
-                    SendGameStartHandshake();
-                }
-
-                // Active phase: telemetry + enable + periodic streams
                 // Muted during dashboard switch transition: Profile has already
                 // changed but the new tier-def hasn't been sent yet. Sending
                 // value frames with the new data layout under the old flag bytes
-                // gives the wheel garbage it can't decode.
-                if (_dashSwitchMuted)
-                    goto postValueFrames;
+                // gives the wheel garbage it can't decode. All other tick phases
+                // still run during DashSwitchMuted.
+                if (_state != TelemetryState.DashSwitchMuted)
+                    TickEmitValueFrames(tiers);
 
-                GameDataSnapshot snapshot = TestMode
-                    ? default
-                    : GameDataSnapshot.FromStatusData(_latestGameData);
-
-                // PitHouse capture wireshark/csp/start-game-change-dash.pcapng
-                // (CSP / Type02 firmware) shows host outbound telemetry value
-                // frames use the bit-packed 7d:23 group=0x43 path (1689 frames
-                // observed). Session 0x02 FF records are reserved for property
-                // pushes (kind=14 baseline brightness, kind=15 setting,
-                // kind=10 standby) — verified by histogramming all FF kinds in
-                // capture. Earlier comment claiming Type02 uses V0 FF for
-                // telemetry was wrong. V0 FF is only for true V0 URL
-                // subscription (Era2024 / TierDefEncoding.V0Url).
-                bool useV0Values = _policy.Encoding == TierDefEncoding.V0Url;
-                if (useV0Values)
-                {
-                    // V0 / Type02 firmware: emit per-channel value frames only
-                    // while a game is actively running (or TestMode for the
-                    // diagnostic pattern). PitHouse stays silent at idle on
-                    // session 0x02; bursting V0 frames there collides with
-                    // property-push records (brightness/standby on kinds 1, 10,
-                    // 14, etc.) per bridge capture 2026-04-29.
-                    if (TestMode || _gameRunning)
-                        SendV0ValueFrames(snapshot);
-                }
-                else
-                {
-                    // Legacy V2 path: always send. BuildTestFrame vs
-                    // BuildFrameFromSnapshot differentiates test/live within
-                    // the loop.
-                    byte subFlagBase = _activeSubscription?.FlagBase ?? 0;
-                    for (int i = 0; i < tiers.Length; i++)
-                    {
-                        var tier = tiers[i];
-                        if (_tickCounter % tier.TickInterval != 0)
-                            continue;
-
-                        // Match flag byte to the tier-def we last sent: each
-                        // tier-def claims `flagBase + tierIdx` (BuildTier-
-                        // DefinitionMessage line 289). Wheel routes value
-                        // frames by flag byte → registered tier.
-                        byte flagByte = (byte)(subFlagBase + i);
-                        byte[] frame = TestMode
-                            ? tier.Builder.BuildTestFrame(flagByte)
-                            : tier.Builder.BuildFrameFromSnapshot(snapshot, flagByte);
-
-                        // Diagnostic: log first emission of each tier after test mode starts
-                        if (TestMode && _tierDiagEmitted != null && i < _tierDiagEmitted.Length && !_tierDiagEmitted[i])
-                        {
-                            _tierDiagEmitted[i] = true;
-                            var p = tier.Builder.Profile;
-                            MozaLog.Debug(
-                                $"[Moza] TIER-EMIT t[{i}] flag=0x{flagByte:X2} " +
-                                $"tickInterval={tier.TickInterval} " +
-                                $"name={p?.Name ?? "?"} ch={p?.Channels?.Count ?? 0} " +
-                                $"bits={p?.TotalBits ?? 0} bytes={p?.TotalBytes ?? 0} " +
-                                $"frameLen={frame.Length}");
-                        }
-
-                        // Latest-wins per tier: if the last frame for this tier is still
-                        // queued (e.g. write thread stalled under Wine syscall overhead),
-                        // overwrite it so the wheel gets the freshest snapshot instead
-                        // of a growing backlog.
-                        if (i < 8)
-                            _connection.SendStream((StreamKind)((int)StreamKind.TierDash0 + i), frame);
-                        else
-                            _connection.Send(frame);
-
-                        if (i == 0)
-                        {
-                            LastFrameSent = frame;
-                            _framesSent++;
-                            Diagnostics.RecordFrame(frame);
-                        }
-                    }
-                }
-
-                postValueFrames:
-
-                // Gate FFB-enable + sequence-counter on gameRunning. PitHouse capture
-                // 2026-04-29 (R5 base, idle Nebula) shows zero `0x41/0x17 fdde` and
-                // `0x2D/0x13 f531` frames during idle — those streams only fire while
-                // a game is actively driving telemetry. Sending them at idle wastes
-                // bandwidth and was the largest plugin-vs-PitHouse drift source.
-                if (TestMode || _gameRunning)
-                {
-                    _connection.SendStream(StreamKind.Enable, _cachedEnableFrame);
-                    if (SendSequenceCounter)
-                        _connection.SendStream(StreamKind.Sequence, BuildSequenceCounterFrame());
-                }
-
-                // Peripheral output polls (handbrake + pedals). PitHouse polls these
-                // at fixed cadence; mirror with sub-tick gating relative to the base
-                // tick rate (default 30 ms = ~33 Hz). Each modulo target picks an
-                // emit interval that approximates PitHouse's measured rate.
-                //   tick % 3 != 0 = ~22 Hz (PitHouse 22 Hz handbrake-presence)
-                //   tick % 3 == 0 = ~11 Hz (PitHouse 10 Hz handbrake-output)
-                //   tick % 5 == 0 = ~6.6 Hz (PitHouse 7 Hz pedal-output × 3)
-                if (_tickCounter % 3 != 0)
-                    _connection.Send(_handbrakePresenceFrame);
-                if (_tickCounter % 3 == 0)
-                    _connection.Send(_handbrakeOutputFrame);
-                if (_tickCounter % 5 == 0)
-                {
-                    _connection.Send(_pedalThrottleOutFrame);
-                    _connection.Send(_pedalBrakeOutFrame);
-                    _connection.Send(_pedalClutchOutFrame);
-                }
-
-                // LED state poll — group 1 frequent (~18 Hz target → tick%2==0
-                // gives ~16.5 Hz on 33 Hz base), group 2 occasional (~1.7 Hz
-                // target → tick%20==0 gives ~1.65 Hz).
-                if (_tickCounter % 2 == 0)
-                    _connection.Send(_ledStatePollGroup1);
-                if (_tickCounter % 20 == 0)
-                    _connection.Send(_ledStatePollGroup2);
-
-                // Retransmit unacked session-data chunks. PitHouse re-emits each
-                // chunk at ~1.4 Hz (50× over 37 s capture) until acked. Plugin
-                // mirrors that with a 200 ms minimum gap between retransmits per
-                // chunk and a 100-attempt safety cap to bound queue growth on a
-                // permanently silent wheel.
-                foreach (var chunk in _retransmitter.DueRetransmits(intervalMs: 200, maxRetries: 100))
-                {
-                    if (!_enabled || !_connection.IsConnected) break;
-                    _connection.Send(chunk);
-                }
-
-                if (_tierDefBlindFrames != null
-                    && _tierDefBlindSentRounds < TierDefBlindMaxRounds
-                    && (Environment.TickCount - _tierDefBlindLastTickCount) >= TierDefBlindIntervalMs)
-                {
-                    _tierDefBlindSentRounds++;
-                    _tierDefBlindLastTickCount = Environment.TickCount;
-                    for (int i = 0; i < _tierDefBlindFrames.Length; i++)
-                    {
-                        if (!_enabled || !_connection.IsConnected) break;
-                        _connection.Send(_tierDefBlindFrames[i]);
-                    }
-                    MozaLog.Debug(
-                        $"[Moza] Blind retransmit round {_tierDefBlindSentRounds}/{TierDefBlindMaxRounds} " +
-                        $"({_tierDefBlindFrames.Length} chunks)");
-                    if (_tierDefBlindSentRounds >= TierDefBlindMaxRounds)
-                        _tierDefBlindFrames = null;
-                }
+                TickEmitEnableAndSequence();
+                TickEmitPeripheralPolls();
+                TickEmitLedStatePolls();
+                TickEmitRetransmits();
+                TickEmitTierDefBlindRetransmits();
+                TickRetryS09IfNotEstablished();
 
                 _tickCounter++;
 
-                // PitHouse-mirror widget polls: one frame per outer tick
-                // (33Hz). Cycle of 80 slots = each frame fires ~0.4/s,
-                // matching capture cadence ~0.2/s within tolerable range.
-                if (_tickCounter % 10 == 0)
-                    SendWidgetStatePoll();
-
-                int slow = Math.Max(1, 1000 / _baseTickMs);
-                if (_slowCounter++ % slow == 0)
-                {
-                    // SendHeartbeat() emits group-0 length-0 presence pings to
-                    // each detected device. PitHouse capture (2026-04-29) shows
-                    // none of these on the wire — PitHouse uses 0x43-keepalives
-                    // (SendDashKeepalive below) for the same purpose. Skipping
-                    // here removes ~4 frames/s of plugin-only noise. Hot-swap
-                    // detection still works via PollStatus's wheel-model probe.
-                    SendDashKeepalive();
-                    // Plugin's per-tick mode poll was ~3/s vs PitHouse 0.7/s (2026-04-29
-                    // diff). Move to slow path (1 Hz) and only when telemetry-mode setting
-                    // is enabled.
-                    if (SendTelemetryMode)
-                        _connection.SendStream(StreamKind.Mode, _cachedModeFrame);
-                    // Throttle display-config to every other slow tick (~0.5 Hz). PitHouse
-                    // emits the (7c27, 7c27, 7c23) trio at <1 Hz; plugin previously fired at
-                    // 1 Hz which made 7c23 ~7× too frequent vs PitHouse baseline.
-                    if ((_slowCounter & 1) == 1)
-                        SendDisplayConfig();
-                    else if (_slowCounter % 4 == 0)
-                        Send28xPoll();
-                    SendStatusPush();
-                    SendSession09Keepalive();
-                }
+                TickEmitWidgetPoll();
+                TickEmitSlowPath();
             }
             catch (Exception ex)
             {
                 MozaLog.Warn($"[Moza] Telemetry send error: {ex.Message}");
             }
+        }
+
+        // ── Tick-phase helpers ──────────────────────────────────────────────
+
+        private void TickPreamble()
+        {
+            _tickCounter++;
+
+            int slowInterval = Math.Max(1, 1000 / _baseTickMs);
+            if (_tickCounter % slowInterval == 0)
+                SendHeartbeat();
+
+            if (_tickCounter >= _preambleTickTarget)
+            {
+                TransitionTo(TelemetryState.Active, "preamble countdown elapsed");
+
+                _catalogParser.TryParse();
+                ApplySubscription(force: false);
+
+                _tickCounter = 0;
+                _slowCounter = 0;
+            }
+        }
+
+        /// <summary>Continuous catalog absorption. Wheel pushes URL records
+        /// in batches with ~1.2s gaps; parse every time the buffer grows and
+        /// merge non-destructively so URLs are never dropped.</summary>
+        private void TickAbsorbCatalogIfChanged()
+        {
+            int curLen = _catalogParser.BufferLength;
+            if (curLen > _catalogParser.LastParsedBufferLen)
+            {
+                _catalogParser.TryParse();
+                if (_catalogParser.BufferLength > 4096)
+                {
+                    // Buffer-overrun guard: post-renegotiate noise can fill the
+                    // buffer with redundant end-marker bytes; drop them since
+                    // the parser keeps the merged catalog cached.
+                    _catalogParser.ClearBuffer();
+                }
+            }
+        }
+
+        private void TickPostRenegDiagnostic(TierState[] tiers)
+        {
+            if (_postRenegDiagTicks <= 0) return;
+            bool useV0Diag = _policy.Encoding == TierDefEncoding.V0Url;
+            MozaLog.Debug(
+                $"[Moza] TICK DIAG: tiers={tiers.Length} " +
+                $"testMode={TestMode} gameRunning={_gameRunning} " +
+                $"useV0={useV0Diag} tickCounter={_tickCounter} " +
+                $"profile={_profile?.Name ?? "null"} " +
+                $"catalog={_catalogParser.Catalog?.Count ?? -1} " +
+                $"framesSent={_framesSent}");
+            _postRenegDiagTicks--;
+        }
+
+        private void TickFireGameStartHandshake()
+        {
+            if (!_gameStartHandshakePending) return;
+            _gameStartHandshakePending = false;
+            SendGameStartHandshake();
+        }
+
+        /// <summary>Active-phase value frame emission. PitHouse captures
+        /// confirm V2 (Type02 firmware) host telemetry uses the bit-packed
+        /// 7d:23 group=0x43 path; V0 (Era2024 URL subscription) uses per-
+        /// channel FF records on session 0x02. Game-running gating: V0 is
+        /// idle-silent (PitHouse stays quiet on sess=02 at idle); V2 always
+        /// emits (BuildTestFrame vs BuildFrameFromSnapshot differentiates
+        /// test/live within the loop).</summary>
+        private void TickEmitValueFrames(TierState[] tiers)
+        {
+            GameDataSnapshot snapshot = TestMode
+                ? default
+                : GameDataSnapshot.FromStatusData(_latestGameData);
+
+            bool useV0Values = _policy.Encoding == TierDefEncoding.V0Url;
+            if (useV0Values)
+            {
+                if (TestMode || _gameRunning)
+                    SendV0ValueFrames(snapshot);
+                return;
+            }
+
+            byte subFlagBase = _activeSubscription?.FlagBase ?? 0;
+            for (int i = 0; i < tiers.Length; i++)
+            {
+                var tier = tiers[i];
+                if (_tickCounter % tier.TickInterval != 0)
+                    continue;
+
+                // Match flag byte to the tier-def we last sent: each tier-def
+                // claims `flagBase + tierIdx` (BuildTierDefinitionMessage). Wheel
+                // routes value frames by flag byte → registered tier.
+                byte flagByte = (byte)(subFlagBase + i);
+                byte[] frame = TestMode
+                    ? tier.Builder.BuildTestFrame(flagByte)
+                    : tier.Builder.BuildFrameFromSnapshot(snapshot, flagByte);
+
+                if (TestMode && _tierDiagEmitted != null && i < _tierDiagEmitted.Length && !_tierDiagEmitted[i])
+                {
+                    _tierDiagEmitted[i] = true;
+                    var p = tier.Builder.Profile;
+                    MozaLog.Debug(
+                        $"[Moza] TIER-EMIT t[{i}] flag=0x{flagByte:X2} " +
+                        $"tickInterval={tier.TickInterval} " +
+                        $"name={p?.Name ?? "?"} ch={p?.Channels?.Count ?? 0} " +
+                        $"bits={p?.TotalBits ?? 0} bytes={p?.TotalBytes ?? 0} " +
+                        $"frameLen={frame.Length}");
+                }
+
+                // Latest-wins per tier: if the last frame for this tier is still
+                // queued (e.g. write thread stalled under Wine syscall overhead),
+                // overwrite it so the wheel gets the freshest snapshot instead
+                // of a growing backlog.
+                if (i < 8)
+                    _connection.SendStream((StreamKind)((int)StreamKind.TierDash0 + i), frame);
+                else
+                    _connection.Send(frame);
+
+                if (i == 0)
+                {
+                    LastFrameSent = frame;
+                    _framesSent++;
+                    Diagnostics.RecordFrame(frame);
+                }
+            }
+        }
+
+        /// <summary>FFB-enable + sequence-counter. Both gated on gameRunning
+        /// because PitHouse only emits these while a game is actively driving
+        /// telemetry — bursting them at idle is the largest plugin-vs-PitHouse
+        /// drift source observed in 2026-04-29 captures.</summary>
+        private void TickEmitEnableAndSequence()
+        {
+            if (!TestMode && !_gameRunning) return;
+            _connection.SendStream(StreamKind.Enable, _cachedEnableFrame);
+            if (SendSequenceCounter)
+                _connection.SendStream(StreamKind.Sequence, BuildSequenceCounterFrame());
+        }
+
+        /// <summary>Peripheral output polls (handbrake + pedals). PitHouse
+        /// polls these at fixed cadence; sub-tick gating approximates the
+        /// observed rates relative to the base tick rate (default 33 Hz).</summary>
+        private void TickEmitPeripheralPolls()
+        {
+            //   tick % 3 != 0 = ~22 Hz (PitHouse 22 Hz handbrake-presence)
+            //   tick % 3 == 0 = ~11 Hz (PitHouse 10 Hz handbrake-output)
+            //   tick % 5 == 0 = ~6.6 Hz (PitHouse 7 Hz pedal-output × 3)
+            if (_tickCounter % 3 != 0)
+                _connection.Send(_handbrakePresenceFrame);
+            if (_tickCounter % 3 == 0)
+                _connection.Send(_handbrakeOutputFrame);
+            if (_tickCounter % 5 == 0)
+            {
+                _connection.Send(_pedalThrottleOutFrame);
+                _connection.Send(_pedalBrakeOutFrame);
+                _connection.Send(_pedalClutchOutFrame);
+            }
+        }
+
+        /// <summary>LED state polls. Group 1 ~18 Hz (tick%2 on 33 Hz base);
+        /// group 2 ~1.7 Hz (tick%20).</summary>
+        private void TickEmitLedStatePolls()
+        {
+            if (_tickCounter % 2 == 0)
+                _connection.Send(_ledStatePollGroup1);
+            if (_tickCounter % 20 == 0)
+                _connection.Send(_ledStatePollGroup2);
+        }
+
+        /// <summary>Retransmit unacked session-data chunks. PitHouse re-emits
+        /// each chunk at ~1.4 Hz (50× over a 37s capture) until acked; mirror
+        /// with a 200ms minimum gap and a 100-attempt safety cap.</summary>
+        private void TickEmitRetransmits()
+        {
+            foreach (var chunk in _retransmitter.DueRetransmits(intervalMs: 200, maxRetries: 100))
+            {
+                if (_state == TelemetryState.Idle || !_connection.IsConnected) break;
+                _connection.Send(chunk);
+            }
+        }
+
+        /// <summary>Tier-def blind retransmit rounds. Some firmwares need the
+        /// tier-def re-sent a few times during cold-start before it sticks;
+        /// fire each blind round at TierDefBlindIntervalMs cadence up to
+        /// TierDefBlindMaxRounds, then stop (and free the buffer).</summary>
+        private void TickEmitTierDefBlindRetransmits()
+        {
+            if (_tierDefBlindFrames == null) return;
+            if (_tierDefBlindSentRounds >= TierDefBlindMaxRounds) return;
+            if (Environment.TickCount - _tierDefBlindLastTickCount < TierDefBlindIntervalMs) return;
+
+            _tierDefBlindSentRounds++;
+            _tierDefBlindLastTickCount = Environment.TickCount;
+            for (int i = 0; i < _tierDefBlindFrames.Length; i++)
+            {
+                if (_state == TelemetryState.Idle || !_connection.IsConnected) break;
+                _connection.Send(_tierDefBlindFrames[i]);
+            }
+            MozaLog.Debug(
+                $"[Moza] Blind retransmit round {_tierDefBlindSentRounds}/{TierDefBlindMaxRounds} " +
+                $"({_tierDefBlindFrames.Length} chunks)");
+            if (_tierDefBlindSentRounds >= TierDefBlindMaxRounds)
+                _tierDefBlindFrames = null;
+        }
+
+        /// <summary>Re-emit the sess=0x09 prime + ConfigJson open request until
+        /// the wheel device-inits 0x09 (b2h <c>7c 00 09 81 ...</c>) or the retry
+        /// budget is exhausted. Cold-start fires the pair once from
+        /// <see cref="PrimeAndOpenSession09"/>; if the wheel doesn't respond
+        /// (Wine SerialPort R/W contention, dropped chunk, slow firmware) the
+        /// configJson handshake never starts and the dashboard never renders.
+        ///
+        /// Guarded by <c>_sessions.GetOrCreate(0x09).DeviceInitiated</c> — once
+        /// the wheel emits its device-init the retry stops naturally and never
+        /// fires again for this Start cycle. Steady-state and post-switch
+        /// sessions are untouched (we never close 0x09 host-side, so
+        /// DeviceInitiated stays true across switches).</summary>
+        private void TickRetryS09IfNotEstablished()
+        {
+            if (_state == TelemetryState.Idle) return;
+            if (_s09RetryRounds >= S09RetryMaxRounds) return;
+            if (!_connection.IsConnected) return;
+
+            var s09 = _sessions.GetOrCreate(0x09);
+            if (s09.DeviceInitiated) return;
+
+            int now = Environment.TickCount;
+            if (_s09RetryRounds > 0 && (now - _s09RetryLastTickCount) < S09RetryIntervalMs)
+                return;
+
+            _s09RetryRounds++;
+            _s09RetryLastTickCount = now;
+
+            // Use a fresh seq for the OpenRequest so the wheel doesn't dedupe
+            // against the prior open. Match the recovery-seq pattern from the
+            // A9 gap-recovery path (recoverySeq = seq + 0x100).
+            ushort recoverySeq = (ushort)(0x000B + _s09RetryRounds * 0x10);
+            MozaLog.Warn(
+                $"[Moza] sess=0x09 not yet device-initiated; retry round " +
+                $"{_s09RetryRounds}/{S09RetryMaxRounds} (open-seq=0x{recoverySeq:X4})");
+
+            try
+            {
+                SendSessionPrime(0x09, (ushort)(0x0001 + _s09RetryRounds));
+                SendConfigJsonOpenRequest(0x09, recoverySeq);
+            }
+            catch (Exception ex)
+            {
+                MozaLog.Warn($"[Moza] sess=0x09 retry emit failed: {ex.Message}");
+            }
+
+            if (_s09RetryRounds >= S09RetryMaxRounds)
+            {
+                MozaLog.Warn(
+                    $"[Moza] sess=0x09 retry budget exhausted after {S09RetryMaxRounds} rounds " +
+                    "— wheel will not engage configJson handshake. Dashboard rendering may fail. " +
+                    "Recovery: disable+re-enable plugin.");
+            }
+        }
+
+        /// <summary>Widget-state poll cycle. Cycle of 80 slots at one frame per
+        /// 10 ticks gives ~0.4/s per slot; PitHouse capture cadence is ~0.2/s
+        /// per slot, within tolerable range.</summary>
+        private void TickEmitWidgetPoll()
+        {
+            if (_tickCounter % 10 == 0)
+                SendWidgetStatePoll();
+        }
+
+        /// <summary>~1 Hz slow path: dash keepalive, mode frame, display
+        /// config, 28x poll, status push, session 0x09 keepalive. Display
+        /// config is throttled to every other slow tick (~0.5 Hz) to match
+        /// PitHouse cadence.</summary>
+        private void TickEmitSlowPath()
+        {
+            int slow = Math.Max(1, 1000 / _baseTickMs);
+            if (_slowCounter++ % slow != 0) return;
+
+            // SendHeartbeat() emits group-0 length-0 presence pings; PitHouse
+            // capture (2026-04-29) shows none of these on the wire — PitHouse
+            // uses 0x43-keepalives (SendDashKeepalive below) instead. Skipping
+            // SendHeartbeat here removes ~4 frames/s of plugin-only noise.
+            // Hot-swap detection still works via PollStatus's wheel-model probe.
+            SendDashKeepalive();
+            if (SendTelemetryMode)
+                _connection.SendStream(StreamKind.Mode, _cachedModeFrame);
+            if ((_slowCounter & 1) == 1)
+                SendDisplayConfig();
+            else if (_slowCounter % 4 == 0)
+                Send28xPoll();
+            SendStatusPush();
+            SendSession09Keepalive();
         }
 
         // ── Session management ──────────────────────────────────────────────
@@ -3545,7 +3183,7 @@ namespace MozaPlugin.Telemetry
         private void SendV0ValueFrames(GameDataSnapshot snapshot)
         {
             var profile = _profile;
-            var catalog = _wheelChannelCatalog;
+            var catalog = _catalogParser.Catalog;
 
             // Catalog-less fallback: in TestMode without a wheel-advertised
             // channel catalog, iterate the loaded profile's channels and
@@ -3609,7 +3247,7 @@ namespace MozaPlugin.Telemetry
                 var frames = TierDefinitionBuilder.ChunkMessage(vframe, FlagByte, ref seq);
                 foreach (var frame in frames)
                 {
-                    if (!_enabled || !_connection.IsConnected) return;
+                    if (_state == TelemetryState.Idle || !_connection.IsConnected) return;
                     SendAndTrackChunk(frame);
                 }
                 anySent = true;
@@ -3953,7 +3591,10 @@ namespace MozaPlugin.Telemetry
         /// </summary>
         private void Send28xPoll()
         {
-            if (!_preambleComplete) return;
+            // Past-preamble guard: the original check was `!_preambleComplete`,
+            // which is true in any state PRIOR to Active. Both Active and
+            // DashSwitchMuted are post-preamble, so accept either.
+            if (_state != TelemetryState.Active && _state != TelemetryState.DashSwitchMuted) return;
             if (!_connection.IsConnected) return;
             _connection.Send(BuildGroup40Frame3(0x28, 0x00, 0x00));
             _connection.Send(BuildGroup40Frame3(0x28, 0x01, 0x00));
@@ -3979,7 +3620,10 @@ namespace MozaPlugin.Telemetry
         private int _widgetPollIndex;
         private void SendWidgetStatePoll()
         {
-            if (!_preambleComplete) return;
+            // Past-preamble guard: the original check was `!_preambleComplete`,
+            // which is true in any state PRIOR to Active. Both Active and
+            // DashSwitchMuted are post-preamble, so accept either.
+            if (_state != TelemetryState.Active && _state != TelemetryState.DashSwitchMuted) return;
             if (!_connection.IsConnected) return;
             SendOneWidgetPoll();
         }
@@ -4174,10 +3818,9 @@ namespace MozaPlugin.Telemetry
             Stop();
             try { _ackReceived.Dispose(); } catch { }
             try { _mgmtResponseEvent.Dispose(); } catch { }
-            try { _uploadSessionOpened.Dispose(); } catch { }
-            try { _uploadSubMsg1Response.Dispose(); } catch { }
-            try { _uploadSubMsg2Response.Dispose(); } catch { }
-            try { _uploadEndReceived.Dispose(); } catch { }
+            try { _uploader?.Dispose(); } catch { }
+            try { _dashboardDownloader?.Dispose(); } catch { }
+            try { _rpc?.Dispose(); } catch { }
         }
 
         private class TierState

@@ -18,8 +18,21 @@ namespace MozaPlugin.Telemetry
     ///   4. Response: zlib-compressed mzdash JSON in 4360-byte blocks
     /// See docs/protocol/dashboard-upload/download-session-0x0b.md.
     /// </summary>
-    public sealed class DashboardDownloader : ISessionConsumer
+    public sealed class DashboardDownloader : ISessionConsumer, IDisposable
     {
+        // Idempotent dispose guard. ManualResetEventSlim throws on
+        // double-dispose; SimHub plugin reload can drop a downloader and
+        // construct a new one, racing the cleanup.
+        private int _disposed;
+
+        public void Dispose()
+        {
+            if (Interlocked.Exchange(ref _disposed, 1) != 0) return;
+            try { _downloadComplete.Dispose(); } catch { }
+            try { _ackReceived.Dispose(); } catch { }
+            try { _sessionOpened.Dispose(); } catch { }
+        }
+
         private const int WindowSize = 4;
         private byte _session; // dynamic: whichever FT session the wheel device-inits
         public byte ActiveSession => _session;
@@ -139,6 +152,12 @@ namespace MozaPlugin.Telemetry
             _ackReceived.Reset();
             _dispatcher.Claim(0x0B, this);
             MozaLog.Debug("[Moza] DashboardDownloader: claimed session 0x0B, sending FT activate...");
+            // Whole-body try/finally so EVERY exit path (including future ones)
+            // releases the dispatcher claim. ReleaseAll(this) covers both the
+            // initial 0x0B claim and any session the wheel migrated us to via
+            // OnOpen — without enumerating sessions in each return site.
+            try
+            {
             SendFileTransferActivate(0x0B);
 
             if (!_sessionOpened.IsSet)
@@ -147,7 +166,6 @@ namespace MozaPlugin.Telemetry
                 if (!_sessionOpened.Wait(15_000))
                 {
                     MozaLog.Warn("[Moza] DashboardDownloader: no FT session opened by wheel");
-                    _dispatcher.Release(0x0B, this);
                     return 0;
                 }
             }
@@ -193,7 +211,6 @@ namespace MozaPlugin.Telemetry
                 byte[] rd; lock (_responseBuffer) { rd = _responseBuffer.ToArray(); _responseBuffer.Clear(); }
                 _receiving = false;
                 MozaLog.Debug($"[Moza] DashboardDownloader: replay response = {rd.Length} bytes");
-                _dispatcher.Release(_session, this);
                 return 0;
             }
 
@@ -305,7 +322,6 @@ namespace MozaPlugin.Telemetry
             if (responseData.Length == 0)
             {
                 MozaLog.Warn("[Moza] DashboardDownloader: empty response");
-                _dispatcher.Release(_session, this);
                 return 0;
             }
 
@@ -315,7 +331,6 @@ namespace MozaPlugin.Telemetry
             if (decompressed == null || decompressed.Length == 0)
             {
                 MozaLog.Warn("[Moza] DashboardDownloader: decompression failed");
-                _dispatcher.Release(_session, this);
                 return 0;
             }
 
@@ -336,8 +351,14 @@ namespace MozaPlugin.Telemetry
 
             MozaLog.Debug(
                 $"[Moza] DashboardDownloader: ingested {ingested}/{mzdashFiles.Count} dashboards");
-            _dispatcher.Release(_session, this);
             return ingested;
+            }
+            finally
+            {
+                // Always release every claim we hold — covers initial 0x0B and
+                // any session migrated by OnOpen.
+                try { _dispatcher.ReleaseAll(this); } catch { }
+            }
         }
 
         // ── Request body construction (5 sections) ─────────────────────────
@@ -491,6 +512,7 @@ namespace MozaPlugin.Telemetry
         ///   [00 00] null + [52 00] + remote path + [00 00] + [10] + MD5 + [00]
         ///   + token[1:3] + token BE32 + FF×4 + checksum
         /// </summary>
+        // TODO: dashboard upload (in progress) — do not remove
         private static byte[] BuildStagingBlock(string remoteStagingPath, byte[] md5, uint token)
         {
             byte[] remotePath = Encoding.Unicode.GetBytes(remoteStagingPath);
@@ -516,6 +538,7 @@ namespace MozaPlugin.Telemetry
         ///   Cap2 (session 0x04, 82 entries):  preamble FC 00 [token[1:4]] FF×4
         /// Counter: starts at 8184 (2×4092), stride 4092. Last entry counter = token.
         /// </summary>
+        // TODO: dashboard upload (in progress) — do not remove
         private static byte[] BuildTransferManifest(
             string localTempPath, string remoteStagingPath, byte[] md5,
             uint token, int entryCount, int chunkStride)

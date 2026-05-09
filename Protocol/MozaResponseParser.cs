@@ -91,15 +91,14 @@ namespace MozaPlugin.Protocol
                 group = 100;
             }
 
-            foreach (var kvp in MozaCommandDatabase.Commands)
+            // Group-indexed scan: skips ~99% of the command database for any
+            // given inbound message. CommandId may contain 0xFF wildcards so we
+            // still walk the per-group bucket linearly, but each bucket is at
+            // most ~30 entries vs the full ~200+.
+            var bucket = MozaCommandDatabase.CommandsForGroup(group);
+            for (int idx = 0; idx < bucket.Count; idx++)
             {
-                var cmd = kvp.Value;
-
-                // Match against ReadGroup or WriteGroup
-                bool groupMatch = (cmd.ReadGroup != 0xFF && cmd.ReadGroup == group)
-                               || (cmd.WriteGroup != 0xFF && cmd.WriteGroup == group);
-                if (!groupMatch)
-                    continue;
+                var cmd = bucket[idx];
 
                 if (deviceHint != null && cmd.DeviceType != deviceHint)
                     continue;
@@ -123,7 +122,7 @@ namespace MozaPlugin.Protocol
                 var valueData = new byte[payload.Length - cmd.CommandId.Length];
                 Array.Copy(payload, cmd.CommandId.Length, valueData, 0, valueData.Length);
 
-                var result = new ParsedResponse { Name = kvp.Key, DeviceId = deviceId, PayloadLength = valueData.Length };
+                var result = new ParsedResponse { Name = cmd.Name, DeviceId = deviceId, PayloadLength = valueData.Length };
 
                 if (cmd.PayloadType == "array")
                 {

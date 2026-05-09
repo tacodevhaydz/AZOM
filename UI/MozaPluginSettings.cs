@@ -10,28 +10,46 @@ namespace MozaPlugin
     /// </summary>
     public class MozaPluginSettings
     {
-        // Wheel LED mode settings (-1 = not yet saved)
-        public int WheelTelemetryMode { get; set; } = -1;
-        public int WheelIdleEffect { get; set; } = -1;
-        public int WheelButtonsIdleEffect { get; set; } = -1;
+        // Wheel LED mode settings (-1 = not yet saved).
+        // Backing-field-volatile auto-properties: torn reads are possible when
+        // LoadSlotIntoActive (serial-reader thread) writes while the UI/telemetry
+        // threads read. `volatile int` reads/writes are atomic and ordered on
+        // .NET, which is sufficient — we hold _slotsLock for the dictionary
+        // mutation but not for these flat fields.
+        private volatile int _wheelTelemetryMode = -1;
+        public int WheelTelemetryMode { get => _wheelTelemetryMode; set => _wheelTelemetryMode = value; }
+        private volatile int _wheelIdleEffect = -1;
+        public int WheelIdleEffect { get => _wheelIdleEffect; set => _wheelIdleEffect = value; }
+        private volatile int _wheelButtonsIdleEffect = -1;
+        public int WheelButtonsIdleEffect { get => _wheelButtonsIdleEffect; set => _wheelButtonsIdleEffect = value; }
 
         // Wheel input settings cached locally — newer KS-family firmware
         // silently drops read-back for these (cmd 9 / cmd 10), so we have to
         // remember them ourselves across restarts.
-        public int WheelPaddlesMode { get; set; } = -1; // display 0/1/2 (Buttons/Combined/Split)
-        public int WheelClutchPoint { get; set; } = -1; // 0..100
-        public int WheelKnobMode { get; set; } = -1;    // legacy 0=Buttons, 1=Knob
-        public int WheelStickMode { get; set; } = -1;   // new FW: 0=off,1=left,2=right,3=both; old FW: 0=off,1=left
+        private volatile int _wheelPaddlesMode = -1; // display 0/1/2 (Buttons/Combined/Split)
+        public int WheelPaddlesMode { get => _wheelPaddlesMode; set => _wheelPaddlesMode = value; }
+        private volatile int _wheelClutchPoint = -1; // 0..100
+        public int WheelClutchPoint { get => _wheelClutchPoint; set => _wheelClutchPoint = value; }
+        private volatile int _wheelKnobMode = -1;    // legacy 0=Buttons, 1=Knob
+        public int WheelKnobMode { get => _wheelKnobMode; set => _wheelKnobMode = value; }
+        private volatile int _wheelStickMode = -1;   // new FW: 0=off,1=left,2=right,3=both; old FW: 0=off,1=left
+        public int WheelStickMode { get => _wheelStickMode; set => _wheelStickMode = value; }
 
         // ES/Old wheel mode settings (-1 = not yet saved)
-        public int WheelRpmIndicatorMode { get; set; } = -1;
-        public int WheelRpmDisplayMode { get; set; } = -1;
+        private volatile int _wheelRpmIndicatorMode = -1;
+        public int WheelRpmIndicatorMode { get => _wheelRpmIndicatorMode; set => _wheelRpmIndicatorMode = value; }
+        private volatile int _wheelRpmDisplayMode = -1;
+        public int WheelRpmDisplayMode { get => _wheelRpmDisplayMode; set => _wheelRpmDisplayMode = value; }
 
         // Brightness settings (-1 = not yet saved; defaults: new wheel/dash=100, old wheel=15)
-        public int WheelRpmBrightness { get; set; } = 100;
-        public int WheelButtonsBrightness { get; set; } = 100;
-        public int WheelFlagsBrightness { get; set; } = 100;
-        public int WheelESRpmBrightness { get; set; } = 15;
+        private volatile int _wheelRpmBrightness = 100;
+        public int WheelRpmBrightness { get => _wheelRpmBrightness; set => _wheelRpmBrightness = value; }
+        private volatile int _wheelButtonsBrightness = 100;
+        public int WheelButtonsBrightness { get => _wheelButtonsBrightness; set => _wheelButtonsBrightness = value; }
+        private volatile int _wheelFlagsBrightness = 100;
+        public int WheelFlagsBrightness { get => _wheelFlagsBrightness; set => _wheelFlagsBrightness = value; }
+        private volatile int _wheelESRpmBrightness = 15;
+        public int WheelESRpmBrightness { get => _wheelESRpmBrightness; set => _wheelESRpmBrightness = value; }
         public int DashRpmBrightness { get; set; } = 100;
         public int DashFlagsBrightness { get; set; } = 100;
         // Wheel-integrated dashboard display brightness (0..100) and standby
@@ -53,7 +71,8 @@ namespace MozaPlugin
         // Group 3 per-LED ring colors (up to 56 LEDs). Readable from wheel but persisted
         // for profile switching. Packed as R<<16 | G<<8 | B.
         public int[]? WheelKnobRingColors { get; set; }
-        public int WheelKnobRingBrightness { get; set; } = -1;
+        private volatile int _wheelKnobRingBrightness = -1;
+        public int WheelKnobRingBrightness { get => _wheelKnobRingBrightness; set => _wheelKnobRingBrightness = value; }
 
         // Connection enabled (persisted toggle)
         public bool ConnectionEnabled { get; set; } = true;
@@ -102,7 +121,7 @@ namespace MozaPlugin
         // Code-only toggle — not serialized so changing the default here
         // is the only way to flip it. Avoids stale persisted values.
         [Newtonsoft.Json.JsonIgnore]
-        public bool EnableWireTraceFileSink { get; set; } = false;
+        public bool EnableWireTraceFileSink { get; set; } = true;
 
         [Newtonsoft.Json.JsonIgnore]
         public bool EnableAutoTestOnConnect { get; set; } = false;

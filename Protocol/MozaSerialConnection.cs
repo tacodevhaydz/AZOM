@@ -889,39 +889,76 @@ namespace MozaPlugin.Protocol
         }
 
         /// <summary>
-        /// Run ProbeMozaDevice on a background thread with a hard time budget (ms).
+        /// Run the probe on a background thread with a hard time budget (ms).
         /// Returns (responded, reachable). reachable=false means open/timeout failed
         /// — caller can skip this port in subsequent passes.
+        ///
+        /// On timeout, the outer thread closes the SerialPort to unblock any inner
+        /// syscall (Open/Write/Read) — without this, a stuck Write would leave the
+        /// probe thread alive holding the port handle until the OS eventually
+        /// returned, leaking threads under repeat probe pressure.
         /// </summary>
         private static (bool responded, bool reachable) ProbeWithTimeout(string portName, int timeoutMs, ProbeKind kind)
         {
             bool responded = false;
             bool reachable = false;
+            SerialPort? portRef = null;
+
             var t = new Thread(() =>
             {
-                try { (responded, reachable) = ProbeMozaDevice(portName, kind); }
+                SerialPort? probe = null;
+                try
+                {
+                    probe = new SerialPort(portName, MozaProtocol.BaudRate)
+                    {
+                        ReadTimeout = 300,
+                        WriteTimeout = 300
+                    };
+                    // Publish BEFORE Open() so a timed-out caller can close the
+                    // port even if Open itself blocks on a syscall.
+                    System.Threading.Volatile.Write(ref portRef, probe);
+                    probe.Open();
+                    (responded, reachable) = ProbeMozaDeviceCore(probe, kind, portName);
+                }
                 catch { responded = false; reachable = false; }
+                finally
+                {
+                    try { probe?.Close(); } catch { }
+                    try { probe?.Dispose(); } catch { }
+                }
             })
             { IsBackground = true, Name = $"MozaProbe-{portName}" };
             t.Start();
+
             if (!t.Join(timeoutMs))
             {
-                MozaLog.Debug($"[Moza] Probe {portName}: timed out after {timeoutMs}ms, skipping");
+                // Force the inner syscall to throw by closing the port from
+                // this side. .NET SerialPort.Close from another thread while
+                // a Write is in progress is documented to throw IOException
+                // on the blocked call — which the inner catch handles.
+                var p = System.Threading.Volatile.Read(ref portRef);
+                try { p?.Close(); } catch { }
+                try { p?.Dispose(); } catch { }
+                try { t.Join(500); } catch { }
+                MozaLog.Debug($"[Moza] Probe {portName}: timed out after {timeoutMs}ms (port force-closed)");
                 return (false, false);
             }
             return (responded, reachable);
         }
 
         /// <summary>
-        /// Open port, send the requested probe, and confirm the reply by checking
-        /// the response group at wire offset 2 against the expected toggled-bit-7
-        /// group for the kind being probed. Disambiguating by response group stops
-        /// AB9 (dev id 0x12, same as Hub) from being misidentified as a hub when
-        /// both share the bus.
+        /// Send the requested probe on an already-open port and confirm the reply
+        /// by checking the response group at wire offset 2 against the expected
+        /// toggled-bit-7 group for the kind being probed. Disambiguating by response
+        /// group stops AB9 (dev id 0x12, same as Hub) from being misidentified as a
+        /// hub when both share the bus.
         /// Single-message probe avoids the v0.7.0 issue where back-to-back base+hub
         /// writes left the device in a state where it stopped answering after reopen.
+        ///
+        /// Caller (ProbeWithTimeout) owns the port lifecycle so a hung syscall can
+        /// be unblocked by closing the port from outside.
         /// </summary>
-        private static (bool responded, bool reachable) ProbeMozaDevice(string portName, ProbeKind kind)
+        private static (bool responded, bool reachable) ProbeMozaDeviceCore(SerialPort probe, ProbeKind kind, string portName)
         {
             byte[] msg;
             byte expectedRespGroup;
@@ -935,58 +972,48 @@ namespace MozaPlugin.Protocol
 
             try
             {
-                using (var probe = new SerialPort(portName, MozaProtocol.BaudRate)
+                probe.DiscardInBuffer();
+                probe.Write(msg, 0, msg.Length);
+
+                System.Threading.Thread.Sleep(100);
+
+                bool responded = false;
+                int avail = probe.BytesToRead;
+                if (avail >= 3)
                 {
-                    ReadTimeout = 300,
-                    WriteTimeout = 300
-                })
-                {
-                    probe.Open();
-                    probe.DiscardInBuffer();
-
-                    probe.Write(msg, 0, msg.Length);
-
-                    System.Threading.Thread.Sleep(100);
-
-                    bool responded = false;
-                    int avail = probe.BytesToRead;
-                    if (avail >= 3)
+                    // Read up to 128 wire bytes so a leading AB9 debug
+                    // frame (`len=59 group=0x0E dev=0x21`, 61 bytes wire)
+                    // doesn't crowd out the actual probe reply behind it.
+                    // Scan for the first start byte whose group byte at
+                    // offset +2 matches the expected response — survives
+                    // leading firmware-debug spam without false-positive
+                    // on a 0x0E frame that happens to land in the wait
+                    // window.
+                    var buf = new byte[Math.Min(avail, 128)];
+                    int n = probe.Read(buf, 0, buf.Length);
+                    byte firstSeenGroup = 0xFF;
+                    for (int i = 0; i + 2 < n; i++)
                     {
-                        // Read up to 128 wire bytes so a leading AB9 debug
-                        // frame (`len=59 group=0x0E dev=0x21`, 61 bytes wire)
-                        // doesn't crowd out the actual probe reply behind it.
-                        // Scan for the first start byte whose group byte at
-                        // offset +2 matches the expected response — survives
-                        // leading firmware-debug spam without false-positive
-                        // on a 0x0E frame that happens to land in the wait
-                        // window.
-                        var buf = new byte[Math.Min(avail, 128)];
-                        int n = probe.Read(buf, 0, buf.Length);
-                        byte firstSeenGroup = 0xFF;
-                        for (int i = 0; i + 2 < n; i++)
+                        if (buf[i] != MozaProtocol.MessageStart) continue;
+                        byte respGroup = buf[i + 2];
+                        if (firstSeenGroup == 0xFF) firstSeenGroup = respGroup;
+                        if (respGroup == expectedRespGroup)
                         {
-                            if (buf[i] != MozaProtocol.MessageStart) continue;
-                            byte respGroup = buf[i + 2];
-                            if (firstSeenGroup == 0xFF) firstSeenGroup = respGroup;
-                            if (respGroup == expectedRespGroup)
-                            {
-                                responded = true;
-                                break;
-                            }
-                        }
-                        if (!responded && firstSeenGroup != 0xFF)
-                        {
-                            // Saw at least one frame but none from the device
-                            // family we asked for — log so a wrong-target hit
-                            // (or pure debug spam) is visible without
-                            // confusing the operator with "found".
-                            MozaLog.Debug(
-                                $"[Moza] Probe {portName} {kind}: first reply group 0x{firstSeenGroup:X2} != expected 0x{expectedRespGroup:X2}");
+                            responded = true;
+                            break;
                         }
                     }
-                    probe.Close();
-                    return (responded, true);
+                    if (!responded && firstSeenGroup != 0xFF)
+                    {
+                        // Saw at least one frame but none from the device
+                        // family we asked for — log so a wrong-target hit
+                        // (or pure debug spam) is visible without
+                        // confusing the operator with "found".
+                        MozaLog.Debug(
+                            $"[Moza] Probe {portName} {kind}: first reply group 0x{firstSeenGroup:X2} != expected 0x{expectedRespGroup:X2}");
+                    }
                 }
+                return (responded, true);
             }
             catch (Exception ex)
             {

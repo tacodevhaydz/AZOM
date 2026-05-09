@@ -10,6 +10,19 @@ namespace MozaPlugin.Protocol
         private static readonly Dictionary<string, MozaCommand> _commands = new Dictionary<string, MozaCommand>();
         public static IReadOnlyDictionary<string, MozaCommand> Commands => _commands;
 
+        // Group-indexed lookup built once at static-constructor end. Each command
+        // appears under both its ReadGroup and WriteGroup keys (skipping 0xFF =
+        // not-applicable). Lets MozaResponseParser scan only the commands matching
+        // the inbound group instead of iterating all ~200+ entries per message.
+        private static readonly Dictionary<byte, List<MozaCommand>> _byGroup
+            = new Dictionary<byte, List<MozaCommand>>();
+        public static IReadOnlyList<MozaCommand> CommandsForGroup(byte group)
+        {
+            return _byGroup.TryGetValue(group, out var list)
+                ? (IReadOnlyList<MozaCommand>)list
+                : System.Array.Empty<MozaCommand>();
+        }
+
         static MozaCommandDatabase()
         {
             // ===== WHEELBASE (device: base, read group 40, write group 41) =====
@@ -318,8 +331,23 @@ namespace MozaPlugin.Protocol
         private static void AddCommand(string name, string device, byte readGroup, byte writeGroup,
             byte[] commandId, int payloadBytes, string payloadType)
         {
-            _commands[name] = new MozaCommand(name, device, readGroup, writeGroup,
+            var cmd = new MozaCommand(name, device, readGroup, writeGroup,
                 commandId, payloadBytes, payloadType);
+            _commands[name] = cmd;
+            // Index by both groups so the parser can fetch all commands matching
+            // an inbound group in one lookup. 0xFF means "not applicable".
+            if (readGroup != 0xFF)
+            {
+                if (!_byGroup.TryGetValue(readGroup, out var rl))
+                    _byGroup[readGroup] = rl = new List<MozaCommand>();
+                rl.Add(cmd);
+            }
+            if (writeGroup != 0xFF && writeGroup != readGroup)
+            {
+                if (!_byGroup.TryGetValue(writeGroup, out var wl))
+                    _byGroup[writeGroup] = wl = new List<MozaCommand>();
+                wl.Add(cmd);
+            }
         }
 
         public static MozaCommand? Get(string name)

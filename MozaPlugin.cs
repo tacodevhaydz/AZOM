@@ -318,10 +318,25 @@ namespace MozaPlugin
 
         public void Init(PluginManager pluginManager)
         {
+            // Defensive: if Init() is called twice without End() (host reload path
+            // or upgrade-in-place), tear down any live resources from the prior
+            // init before re-creating them. CleanupPartialInit is idempotent and
+            // tolerates already-disposed objects, so calling it on a fully-set-up
+            // plugin is safe — the next allocations below replace the now-disposed
+            // references with fresh instances.
+            if (_connection != null || _telemetrySender != null || _hidReader != null)
+            {
+                MozaLog.Warn("[Moza] Init() called with prior state still live — tearing down before re-init");
+                try { CleanupPartialInit(); } catch { }
+            }
+
             // Clear shutdown flag from any previous plugin instance in this process.
             // SimHub may load+unload plugins without restarting, leaving this true.
             IsShuttingDown = false;
             Interlocked.Exchange(ref _telemetryStartRequested, 0);
+            // Reset detection flags so a plugin reload doesn't carry over stale
+            // "device detected" state from the prior session.
+            ResetDetectionFlags();
             _pluginManager = pluginManager;
 
             try
@@ -527,6 +542,8 @@ namespace MozaPlugin
             try { _hidReader?.Dispose(); } catch { }
             try { _telemetrySender?.Dispose(); } catch { }
             CloseTelemetry2WireTrace();
+            try { global::MozaPlugin.Diagnostics.SerialTrafficCapture.Instance.StopFileSink(); } catch { }
+            try { global::MozaPlugin.Diagnostics.SerialTrafficCapture.Instance.Stop(); } catch { }
             try { _connection?.Dispose(); } catch { }
             try
             {
@@ -595,6 +612,11 @@ namespace MozaPlugin
             _pollTimer?.Stop();
             _reconnectTimer?.Stop();
 
+            // Clear detection flags up-front. If SimHub re-uses this plugin instance
+            // across load/unload, the next Init() also clears them — together this
+            // makes detection state deterministic on a fresh start.
+            ResetDetectionFlags();
+
             // 2. Persist settings and clear LEDs while connection is still alive.
             try { this.SaveCommonSettings("MozaPluginSettings", _settings); } catch { }
             try { ClearLedsOnHardware(); } catch { }
@@ -624,6 +646,11 @@ namespace MozaPlugin
             try { _telemetryHost?.Stop(); } catch { }
             try { _telemetryHost?.Dispose(); } catch { }
             CloseTelemetry2WireTrace();
+
+            // Stop the wire-traffic capture singleton so its file handle is
+            // released and the ring stops accumulating across plugin reloads.
+            try { global::MozaPlugin.Diagnostics.SerialTrafficCapture.Instance.StopFileSink(); } catch { }
+            try { global::MozaPlugin.Diagnostics.SerialTrafficCapture.Instance.Stop(); } catch { }
 
             // 5. Cancel paced setting-read tasks so they bail out of their
             //    inter-read sleeps instead of running ~300 ms past teardown.
@@ -1257,14 +1284,23 @@ namespace MozaPlugin
             var sender = _telemetrySender;
             if (sender != null && sender.Enabled)
             {
-                MozaLog.Debug("[Moza] OnDashboardSwitched: scheduling renegotiation with catalog wait");
+                MozaLog.Debug("[Moza] OnDashboardSwitched: scheduling Stop+Start pipeline cycle");
 
-                ThreadPool.QueueUserWorkItem(_ =>
-                {
-                    sender.RenegotiateForDashboardSwitch(
-                        applyProfile: () => ApplyTelemetrySettings(),
-                        waitForCatalog: true);
-                });
+                // Stage the new dashboard's profile + mzdash content INTO the
+                // sender first so the post-Start cold-start sequence builds
+                // tier-def from the right channels. ApplyTelemetrySettings
+                // sets Profile + MzdashContent + MzdashName as side effects.
+                ApplyTelemetrySettings();
+
+                // Cycle the pipeline. RestartForSwitch handles the kind=4 drain
+                // wait (so the UI knob's just-emitted FF kind=4 actually lands
+                // before Stop discards the queue), then Stop+Start. The
+                // ~10–14s wheel sess=0x09 timeout is enforced inside StartInner
+                // via _lastStopUtcTicks, so we don't need an explicit settle
+                // here — Start automatically waits the right amount before
+                // opening sessions. Don't re-send FF kind=4 here; the wheel-UI
+                // knob already did.
+                sender.RestartForSwitch();
                 return;
             }
 
@@ -1435,6 +1471,26 @@ namespace MozaPlugin
             try { _telemetrySender?.Pause(); } catch { }
             if (_newWheelDetected || _oldWheelDetected || _dashDetected)
                 ResetWheelDetection("Serial disconnect — resetting wheel detection");
+        }
+
+        /// <summary>
+        /// Clear ALL device-detection flags. Called at the top of both Init() and
+        /// End() so a plugin reload (load → unload → load same process) doesn't
+        /// carry over stale "device detected" state from a prior session. Differs
+        /// from <see cref="ResetWheelDetection"/> which is scoped to wheel hot-swap
+        /// recovery and intentionally preserves base/hub/handbrake/pedals state.
+        /// </summary>
+        private void ResetDetectionFlags()
+        {
+            _baseDetected = false;
+            _dashDetected = false;
+            _newWheelDetected = false;
+            _oldWheelDetected = false;
+            _handbrakeDetected = false;
+            _pedalsDetected = false;
+            _hubDetected = false;
+            _ab9Detected = false;
+            _ab9SettingsApplied = false;
         }
 
         private void ResetWheelDetection(string reason)
