@@ -30,6 +30,10 @@ Net payload per full data chunk: **54 bytes** (58 minus 4-byte CRC). All data ch
 
 **Session-open ACK must echo host's open_seq.** When host sends type=0x81 session open with `seq_lo:seq_hi`, wheel's `fc:00` ack must carry same seq value. Pithouse maintains monotonic port counter incrementing on each disconnect/reconnect; if wheel always replies with `ack_seq=0`, Pithouse treats as stale and retries endlessly (observed: 552 retries over 2.5 minutes). Counter starts at 1 on first power-on but increments across sessions.
 
+**Inbound data chunks must be acked with the specific received seq, not a running max.** Verified 2026-05-09: when our handler tracked the highest seen seq and acked that running max, the wheel — which evidently keys its retransmit-suppression on per-seq acks — kept re-pushing earlier seqs every ~1 s indefinitely (e.g. `seq=5..14` retransmitted on a 20 s cadence after we'd already advanced our running max to 21). Each chunk should `SendSessionAck(session, seq)` with the literal seq just received. See `2026-05-09-acks-dedup-and-catalog-persistence.md`.
+
+**Wheel retransmits must be deduped by seq before being fed to a parser.** The wheel re-pushes any unacked chunk on a ~1 s cadence; chunks routinely arrive 2-3× before our ack lands. Parsers that buffer-and-walk (`ChannelCatalogParser`, `TileServerStateParser`, the inbound side of any size-prefixed TLV stream) must track per-session highest seen seq and drop retransmits, otherwise duplicated bytes misalign the size-prefix walk and mid-stream records parse as garbage.
+
 ### Session data chunk CRC — 4 bytes LE
 
 **Verified 2026-04-24 (again).** Each session `7c:00` data chunk carries a **4-byte CRC32-LE** trailer over the net body. A previous revision of this section briefly claimed 3 bytes; that claim was an artifact of a buggy `extract_frames` helper that dropped the last 2 bytes of each frame (real CRC's last byte + frame checksum). When raw tshark output is inspected directly every chunk's last 4 bytes match `zlib.crc32(net)` LE exactly.
