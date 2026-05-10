@@ -143,6 +143,16 @@ namespace MozaPlugin
         // values to a device that isn't attached.
         public Ab9Settings? Ab9 { get; set; }
 
+        // ===== Active dashboard for this game profile =====
+        // Stable key in the same format MozaPlugin.GetActiveDashboardKeyCandidates() emits:
+        //   "wheel:<configJsonId>"     — wheel-resident dashboard, stable across re-uploads
+        //   "file:<filename>:<sha1-8>" — custom .mzdash file
+        //   "builtin:<name>"           — embedded plugin profile
+        // Null = no preference; the wheel keeps whatever dashboard is currently displayed
+        // when this profile loads. Captured from the active dashboard at SaveSettings()
+        // time; re-applied by ApplyProfile() so each SimHub game gets its own dashboard.
+        public string? TelemetryDashboardKey { get; set; }
+
         // ===== ProfileBase abstract implementation =====
 
         public override void CopyProfilePropertiesFrom(MozaProfile p)
@@ -214,6 +224,8 @@ namespace MozaPlugin
             DashFlagColors = CloneArray(p.DashFlagColors);
 
             Ab9 = p.Ab9?.Clone();
+
+            TelemetryDashboardKey = p.TelemetryDashboardKey;
         }
 
         // ===== Capture current state =====
@@ -221,9 +233,17 @@ namespace MozaPlugin
         /// <summary>
         /// Populate this profile by capturing all current device state.
         /// </summary>
-        public void CaptureFromCurrent(MozaPluginSettings settings, MozaData data)
+        /// <param name="activeDashboardKey">
+        /// Identity of the currently-loaded dashboard, in the same format
+        /// <see cref="MozaPlugin.GetActiveDashboardKeyCandidates"/> returns.
+        /// Pass <c>null</c> to leave <see cref="TelemetryDashboardKey"/> untouched
+        /// (e.g. when the plugin can't resolve a key — early init, no profile loaded).
+        /// </param>
+        public void CaptureFromCurrent(MozaPluginSettings settings, MozaData data, string? activeDashboardKey = null)
         {
             if (!data.BaseSettingsRead) return;
+            if (!string.IsNullOrEmpty(activeDashboardKey))
+                TelemetryDashboardKey = activeDashboardKey;
 
             // Base/Motor
             Limit = data.Limit; FfbStrength = data.FfbStrength; Torque = data.Torque;

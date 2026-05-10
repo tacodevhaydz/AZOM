@@ -210,12 +210,62 @@ namespace MozaPlugin
         // Whether to send the 0x2D/F5:31 sequence counter to the base (~30 Hz)
         public bool TelemetrySendSequenceCounter { get; set; } = true;
 
-        // Per-dashboard user channel mappings. Outer key = DashboardProfileStore.GetDashboardKey
-        // (e.g. "builtin:Formula 1" or "file:custom.mzdash:a1b2c3d4"). Inner key =
-        // channel URL (e.g. "v1/gameData/Rpm"). Value = SimHub property path
-        // (e.g. "DataCorePlugin.GameData.Rpms"). Empty value clears the override.
-        public Dictionary<string, Dictionary<string, string>> TelemetryChannelMappings { get; set; }
-            = new Dictionary<string, Dictionary<string, string>>(StringComparer.OrdinalIgnoreCase);
+        // LEGACY (pre-2026-05-09): single-level dashboard → url → property dict, NOT
+        // scoped per wheel and using a brittle dashboard key (file SHA1 changes on
+        // every PitHouse re-save; cleared on dropdown switch). Kept solely for
+        // one-shot migration into TelemetryChannelMappingsByWheel — see
+        // MigrateLegacyChannelMappingsIfNeeded(). New code never writes here.
+        public Dictionary<string, Dictionary<string, string>>? TelemetryChannelMappings { get; set; }
+
+        // Per-wheel, per-dashboard channel mappings.
+        //   Outer key:  Wheel MCU UID hex (24 lowercase chars from MozaData.WheelMcuUid),
+        //               or "" when UID is unknown (pre-detect / legacy migration).
+        //   Middle key: Dashboard identity from MozaPlugin.GetActiveDashboardKeyCandidates().
+        //               Preferred: "wheel:&lt;configJsonId&gt;" (stable, survives re-uploads).
+        //               Fallback:  "file:&lt;filename&gt;:&lt;sha1-first-8&gt;" (custom mzdash file).
+        //               Fallback:  "builtin:&lt;profileName&gt;" (embedded profile).
+        //   Inner key:  Channel URL (e.g. "v1/gameData/Rpm").
+        //   Value:      SimHub property path (e.g. "DataCorePlugin.GameData.Rpms").
+        //               Empty/missing = use Telemetry.json default.
+        public Dictionary<string, Dictionary<string, Dictionary<string, string>>> TelemetryChannelMappingsByWheel { get; set; }
+            = new Dictionary<string, Dictionary<string, Dictionary<string, string>>>(StringComparer.OrdinalIgnoreCase);
+
+        /// <summary>
+        /// One-shot migration: copy entries from the legacy single-level
+        /// <see cref="TelemetryChannelMappings"/> into <see cref="TelemetryChannelMappingsByWheel"/>
+        /// under the empty-wheel slot ("") so users upgrading from 2026-05-08 or earlier
+        /// don't lose their per-dashboard mappings. The legacy field is cleared after
+        /// migration so it serializes as null on the next save and never re-runs.
+        /// Returns true when a migration actually happened (caller should SaveSettings()).
+        /// </summary>
+        public bool MigrateLegacyChannelMappingsIfNeeded()
+        {
+            var legacy = TelemetryChannelMappings;
+            if (legacy == null || legacy.Count == 0) return false;
+
+            if (TelemetryChannelMappingsByWheel == null)
+                TelemetryChannelMappingsByWheel =
+                    new Dictionary<string, Dictionary<string, Dictionary<string, string>>>(StringComparer.OrdinalIgnoreCase);
+
+            if (!TelemetryChannelMappingsByWheel.TryGetValue("", out var emptyWheel))
+            {
+                emptyWheel = new Dictionary<string, Dictionary<string, string>>(StringComparer.OrdinalIgnoreCase);
+                TelemetryChannelMappingsByWheel[""] = emptyWheel;
+            }
+
+            foreach (var kv in legacy)
+            {
+                if (string.IsNullOrEmpty(kv.Key) || kv.Value == null) continue;
+                // Don't clobber an existing entry under the empty-wheel slot — first
+                // wins. (Subsequent loads of the legacy field shouldn't happen because
+                // we null it out below, but be defensive.)
+                if (emptyWheel.ContainsKey(kv.Key)) continue;
+                emptyWheel[kv.Key] = new Dictionary<string, string>(kv.Value, StringComparer.OrdinalIgnoreCase);
+            }
+
+            TelemetryChannelMappings = null;
+            return true;
+        }
 
         // Per-wheel-model setting slots. Keyed by wheel model name (from data.WheelModelName).
         // The flat Wheel* properties above represent the CURRENTLY-ACTIVE wheel; on save we

@@ -1230,34 +1230,148 @@ namespace MozaPlugin.Devices
 
         // ===== Channel mappings =====
 
+        // 2 Hz refresh of the "Current value" column while the expander is open.
+        // Stopped on collapse so we don't pay the GetPropertyValue cost when the
+        // user can't see the values.
+        private DispatcherTimer? _mappingValueTimer;
+        private static readonly TimeSpan MappingValueInterval = TimeSpan.FromMilliseconds(500);
+
         private void TelemetryMappingsExpander_Expanded(object sender, RoutedEventArgs e)
-            => PopulateChannelMappingGrid();
-
-        private void TelemetryApplyMappings_Click(object sender, RoutedEventArgs e)
         {
-            if (_plugin == null || TelemetryChannelGrid.ItemsSource is not IEnumerable<ChannelMappingRow> rows)
-                return;
-
-            foreach (var row in rows)
-                _plugin.SetChannelMapping(row.Url, row.SimHubProperty);
-
-            _plugin.RestartTelemetry();
             PopulateChannelMappingGrid();
-            TelemetryMappingStatus.Text = $"Applied at {DateTime.Now:HH:mm:ss}";
+            StartMappingValueTimer();
+        }
+
+        private void TelemetryMappingsExpander_Collapsed(object sender, RoutedEventArgs e)
+        {
+            StopMappingValueTimer();
+        }
+
+        private void StartMappingValueTimer()
+        {
+            if (_mappingValueTimer != null) return;
+            _mappingValueTimer = new DispatcherTimer(DispatcherPriority.Background)
+            {
+                Interval = MappingValueInterval,
+            };
+            _mappingValueTimer.Tick += MappingValueTimer_Tick;
+            _mappingValueTimer.Start();
+            // Push values immediately so the user doesn't see "—" for the first 500ms.
+            MappingValueTimer_Tick(this, EventArgs.Empty);
+        }
+
+        private void StopMappingValueTimer()
+        {
+            if (_mappingValueTimer == null) return;
+            _mappingValueTimer.Stop();
+            _mappingValueTimer.Tick -= MappingValueTimer_Tick;
+            _mappingValueTimer = null;
+        }
+
+        private void MappingValueTimer_Tick(object? sender, EventArgs e)
+        {
+            if (_plugin == null) return;
+            if (TelemetryChannelGrid.ItemsSource is not IEnumerable<ChannelMappingRow> rows) return;
+            foreach (var row in rows)
+            {
+                if (string.IsNullOrEmpty(row.SimHubProperty))
+                {
+                    row.CurrentValueText = "";
+                    continue;
+                }
+                var raw = _plugin.GetPropertyValueForDisplay(row.SimHubProperty);
+                row.CurrentValueText = FormatPropertyValue(raw);
+            }
+        }
+
+        private static string FormatPropertyValue(object? value)
+        {
+            if (value == null) return "(null)";
+            switch (value)
+            {
+                case bool b: return b ? "true" : "false";
+                case double d: return (!double.IsNaN(d) && !double.IsInfinity(d)) ? d.ToString("0.###") : d.ToString();
+                case float f: return (!float.IsNaN(f) && !float.IsInfinity(f)) ? f.ToString("0.###") : f.ToString();
+                case int i: return i.ToString();
+                case long l: return l.ToString();
+                case uint ui: return ui.ToString();
+                case ushort us: return us.ToString();
+                case short sh: return sh.ToString();
+                case byte by: return by.ToString();
+                case TimeSpan ts: return ts.ToString(@"mm\:ss\.fff");
+                case string s: return s.Length > 32 ? s.Substring(0, 32) + "…" : s;
+                default:
+                    var str = value.ToString() ?? "";
+                    return str.Length > 32 ? str.Substring(0, 32) + "…" : str;
+            }
+        }
+
+        // WPF's editable ComboBox SelectAlls its inner TextBox the moment the
+        // dropdown opens. With auto-open driven by our filter that means every
+        // 3rd keystroke selects the user's whole search query — and the next
+        // keystroke replaces it. Reset the selection to caret-at-end on open so
+        // the user keeps typing into their existing text. Deferred via Background
+        // dispatcher so the override runs AFTER ComboBox's internal SelectAll.
+        private void TelemetryPropCombo_DropDownOpened(object sender, EventArgs e)
+        {
+            if (sender is not ComboBox cb) return;
+            cb.Dispatcher.BeginInvoke(new Action(() =>
+            {
+                if (cb.Template?.FindName("PART_EditableTextBox", cb) is TextBox tb)
+                {
+                    int len = tb.Text?.Length ?? 0;
+                    tb.SelectionStart = len;
+                    tb.SelectionLength = 0;
+                }
+            }), DispatcherPriority.Background);
         }
 
         private void TelemetryResetMappings_Click(object sender, RoutedEventArgs e)
         {
             if (_plugin == null) return;
+            // Restore each channel to its Telemetry.json default before clearing
+            // the override dict — otherwise the live profile keeps the user's
+            // last typed value until the next telemetry restart.
+            if (TelemetryChannelGrid.ItemsSource is IEnumerable<ChannelMappingRow> rows)
+            {
+                foreach (var row in rows)
+                    _plugin.UpdateActiveChannelMapping(row.Url, "");
+            }
             _plugin.ClearCurrentDashboardMappings();
-            _plugin.RestartTelemetry();
             PopulateChannelMappingGrid();
             TelemetryMappingStatus.Text = $"Reset to defaults at {DateTime.Now:HH:mm:ss}";
+        }
+
+        // Subscribed once per row by PopulateChannelMappingGrid. Auto-saves the
+        // mapping (debounced 500ms inside SaveSettings) AND live-rewires the
+        // active profile's channel — no telemetry restart needed because the
+        // wire format (tier-def, channel indices, compression) is unchanged.
+        private void OnMappingRowPropertyChanged(object? sender, PropertyChangedEventArgs e)
+        {
+            if (_plugin == null) return;
+            if (e.PropertyName != nameof(ChannelMappingRow.SimHubProperty)) return;
+            if (sender is not ChannelMappingRow row) return;
+            if (string.IsNullOrEmpty(row.Url)) return;
+            _plugin.SetChannelMapping(row.Url, row.SimHubProperty);
+            TelemetryMappingStatus.Text = $"Saved at {DateTime.Now:HH:mm:ss}";
         }
 
         private void PopulateChannelMappingGrid()
         {
             if (_plugin == null) { TelemetryChannelGrid.ItemsSource = null; return; }
+
+            // Unsubscribe from prior rows so stale rows can be GC'd and we don't
+            // double-fire OnMappingRowPropertyChanged when the same plugin
+            // instance re-populates the grid (dashboard switch, Reset).
+            if (TelemetryChannelGrid.ItemsSource is IEnumerable<ChannelMappingRow> oldRows)
+            {
+                foreach (var r in oldRows) r.PropertyChanged -= OnMappingRowPropertyChanged;
+            }
+
+            // Snapshot the SimHub property name list once per populate so all rows
+            // share the same backing list (avoids N copies of a 500-entry list).
+            var props = _plugin.GetAllSimHubPropertyNames();
+
             var profile = _plugin.ActiveTelemetry?.Profile;
             if (profile == null || profile.Tiers.Count == 0)
             {
@@ -1277,8 +1391,12 @@ namespace MozaPlugin.Devices
                 foreach (var url in catalog.OrderBy(u => u, StringComparer.OrdinalIgnoreCase))
                 {
                     if (string.IsNullOrEmpty(url)) { idx++; continue; }
+                    // AllProperties MUST be set before SimHubProperty so the
+                    // setter's filter step sees the full list. Object initializers
+                    // assign in source order, so list AllProperties first.
                     catalogRows.Add(new ChannelMappingRow
                     {
+                        AllProperties = props,
                         Name = url,
                         Url = url,
                         PackageLevel = 0,
@@ -1288,6 +1406,14 @@ namespace MozaPlugin.Devices
                     idx++;
                 }
                 TelemetryChannelGrid.ItemsSource = catalogRows;
+                // Now that initial-state filter passes have run with dropdown
+                // auto-open suppressed, allow further user-typed input to open
+                // the dropdown. Also subscribe for auto-save on every edit.
+                foreach (var r in catalogRows)
+                {
+                    r.AllowDropdownOpen = true;
+                    r.PropertyChanged += OnMappingRowPropertyChanged;
+                }
                 TelemetryMappingStatus.Text =
                     $"(no dashboard loaded — showing {catalogRows.Count} wheel-advertised channels)";
                 return;
@@ -1306,8 +1432,12 @@ namespace MozaPlugin.Devices
                     if (DashboardProfileStore.IsInternalChannel(ch.SimHubProperty)) continue;
                     if (!seen.Add(ch.Url)) continue;
 
+                    // AllProperties MUST be set before SimHubProperty so the
+                    // setter's filter step sees the full list. Object initializers
+                    // assign in source order, so list AllProperties first.
                     rows.Add(new ChannelMappingRow
                     {
+                        AllProperties = props,
                         Name = ch.Name,
                         Url = ch.Url,
                         PackageLevel = ch.PackageLevel,
@@ -1317,10 +1447,29 @@ namespace MozaPlugin.Devices
                 }
             }
             TelemetryChannelGrid.ItemsSource = rows;
+            // Now that initial-state filter passes have run with dropdown auto-open
+            // suppressed, allow further user-typed input to open the dropdown.
+            // Also subscribe for auto-save on every edit.
+            foreach (var r in rows)
+            {
+                r.AllowDropdownOpen = true;
+                r.PropertyChanged += OnMappingRowPropertyChanged;
+            }
         }
 
         private sealed class ChannelMappingRow : INotifyPropertyChanged
         {
+            // Min characters before the filter activates. Below this we keep the
+            // dropdown empty (and the help text reminds the user to type more) —
+            // SimHub's full property list can be 1500+ entries, so filtering on
+            // 1-2 chars renders too many items for the ComboBox to virtualize
+            // smoothly.
+            private const int MinSearchChars = 3;
+            // Cap filtered results — protects the dropdown from a substring like
+            // "data" matching half the universe. The user narrows further by
+            // adding chars; if 200 isn't enough they can paste the full path.
+            private const int MaxFilteredResults = 200;
+
             public string Name { get; set; } = "";
             public string Url { get; set; } = "";
             public int PackageLevel { get; set; }
@@ -1332,13 +1481,127 @@ namespace MozaPlugin.Devices
                 get => _simHubProperty;
                 set
                 {
-                    if (_simHubProperty == value) return;
-                    _simHubProperty = value ?? "";
+                    var v = (value ?? "").Trim();
+                    if (_simHubProperty == v) return;
+                    _simHubProperty = v;
                     PropertyChanged?.Invoke(this, new PropertyChangedEventArgs(nameof(SimHubProperty)));
+                    // Clear the live value so the next refresh repopulates from
+                    // the new path, and the user doesn't see a stale value
+                    // matched against an unrelated property name.
+                    CurrentValueText = "";
+                    UpdateFilteredProperties();
                 }
             }
 
-            public IReadOnlyList<string> KnownProperties => KnownSimHubProperties.Paths;
+            /// <summary>
+            /// Master snapshot of every SimHub property name (set once by the populator
+            /// from <see cref="MozaPlugin.GetAllSimHubPropertyNames"/>). The ComboBox
+            /// dropdown does NOT bind to this directly — it would render thousands
+            /// of rows on every open. Instead we filter into <see cref="FilteredProperties"/>
+            /// on each keystroke.
+            /// </summary>
+            public IReadOnlyList<string> AllProperties { get; set; } = KnownSimHubProperties.Paths;
+
+            private IReadOnlyList<string> _filteredProperties = Array.Empty<string>();
+            /// <summary>
+            /// Live, filtered subset of <see cref="AllProperties"/>. Bound to the
+            /// ComboBox.ItemsSource. Replaced wholesale (immutable-list swap) on each
+            /// keystroke so the ComboBox doesn't see a Clear+Add cycle while the user
+            /// is mid-click on a dropdown item — that race lost the SelectedItem
+            /// reference and made selections silently fail. Populated by
+            /// <see cref="UpdateFilteredProperties"/>: empty until the user types
+            /// <see cref="MinSearchChars"/>+ characters, then case-insensitive
+            /// substring match against AllProperties (capped at
+            /// <see cref="MaxFilteredResults"/>).
+            /// </summary>
+            public IReadOnlyList<string> FilteredProperties
+            {
+                get => _filteredProperties;
+                private set
+                {
+                    _filteredProperties = value ?? Array.Empty<string>();
+                    PropertyChanged?.Invoke(this, new PropertyChangedEventArgs(nameof(FilteredProperties)));
+                }
+            }
+
+            private bool _isDropDownOpen;
+            /// <summary>
+            /// TwoWay-bound to ComboBox.IsDropDownOpen. Auto-opened by the filter
+            /// step on user input when there are matches; closed when the typed
+            /// text is an exact property name (the user picked / typed in full).
+            /// </summary>
+            public bool IsDropDownOpen
+            {
+                get => _isDropDownOpen;
+                set
+                {
+                    if (_isDropDownOpen == value) return;
+                    _isDropDownOpen = value;
+                    PropertyChanged?.Invoke(this, new PropertyChangedEventArgs(nameof(IsDropDownOpen)));
+                }
+            }
+
+            /// <summary>
+            /// Gate that suppresses auto-open during the initial populate (when
+            /// SimHubProperty is set to an existing override and we don't want
+            /// the dropdown to pop open on every row). Set true by the populator
+            /// after the row is wired into the grid.
+            /// </summary>
+            public bool AllowDropdownOpen { get; set; }
+
+            private string _currentValueText = "";
+            public string CurrentValueText
+            {
+                get => _currentValueText;
+                set
+                {
+                    if (_currentValueText == value) return;
+                    _currentValueText = value ?? "";
+                    PropertyChanged?.Invoke(this, new PropertyChangedEventArgs(nameof(CurrentValueText)));
+                }
+            }
+
+            private void UpdateFilteredProperties()
+            {
+                string query = _simHubProperty;
+                if (string.IsNullOrEmpty(query) || query.Length < MinSearchChars)
+                {
+                    FilteredProperties = Array.Empty<string>();
+                    if (AllowDropdownOpen) IsDropDownOpen = false;
+                    return;
+                }
+
+                // Build a fresh list off-bind, then swap. Atomic from the binding's
+                // perspective — the previous list reference is still alive while
+                // any in-flight click on a dropdown item finishes committing.
+                var seen = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+                var list = new List<string>(MaxFilteredResults);
+                bool exactMatchSeen = false;
+                var src = AllProperties;
+                if (src != null)
+                {
+                    for (int i = 0; i < src.Count; i++)
+                    {
+                        var p = src[i];
+                        if (string.IsNullOrEmpty(p)) continue;
+                        if (p.IndexOf(query, StringComparison.OrdinalIgnoreCase) < 0) continue;
+                        if (!seen.Add(p)) continue; // dedupe defence-in-depth (source is already unique)
+                        list.Add(p);
+                        if (string.Equals(p, query, StringComparison.OrdinalIgnoreCase))
+                            exactMatchSeen = true;
+                        if (list.Count >= MaxFilteredResults) break;
+                    }
+                }
+
+                FilteredProperties = list;
+
+                // If the typed text is exactly a property name (user picked from
+                // the dropdown or typed the full path), close — no point keeping
+                // the dropdown open. Otherwise auto-open while filter has hits so
+                // the user can see the narrowing list as they type.
+                if (!AllowDropdownOpen) return;
+                IsDropDownOpen = !exactMatchSeen && list.Count > 0;
+            }
 
             public event PropertyChangedEventHandler? PropertyChanged;
         }

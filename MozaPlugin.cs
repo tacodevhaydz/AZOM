@@ -2,6 +2,7 @@ using System;
 using System.Collections.Generic;
 using System.IO;
 using System.Reflection;
+using System.Text;
 using System.Threading;
 using System.Timers;
 using System.Windows.Media;
@@ -350,6 +351,16 @@ namespace MozaPlugin
                 // Null-guard for upgraded settings missing ProfileStore
                 if (_settings.ProfileStore == null)
                     _settings.ProfileStore = new MozaProfileStore();
+
+                // One-shot upgrade: pre-2026-05-09 settings stored channel mappings in
+                // TelemetryChannelMappings (single-level, not wheel-scoped). Move them
+                // into TelemetryChannelMappingsByWheel[""] so users keep their data
+                // when they install this build.
+                if (_settings.MigrateLegacyChannelMappingsIfNeeded())
+                {
+                    MozaLog.Info("[Moza] Migrated legacy TelemetryChannelMappings to per-wheel schema (under empty-wheel slot \"\")");
+                    this.SaveCommonSettings("MozaPluginSettings", _settings);
+                }
 
 
                 // Restore blink colors from settings (write-only, can't be polled from device)
@@ -707,7 +718,17 @@ namespace MozaPlugin
 
         internal void SaveSettings()
         {
-            _settings.ProfileStore?.CurrentProfile?.CaptureFromCurrent(_settings, _data);
+            // Resolve the current dashboard key (wheel:<id> > file:<...> > builtin:<name>)
+            // so the active SimHub profile records which dashboard the user picked.
+            // Re-applied on profile load so each game keeps its own dashboard selection.
+            string? activeDashKey = null;
+            try
+            {
+                var cands = GetActiveDashboardKeyCandidates();
+                if (cands.Count > 0) activeDashKey = cands[0];
+            }
+            catch { /* candidate resolver is conservative; ignore early-init errors */ }
+            _settings.ProfileStore?.CurrentProfile?.CaptureFromCurrent(_settings, _data, activeDashKey);
             // Mirror the active flat Wheel* fields into the per-wheel-model slot
             // so each physical wheel keeps its own brightness/mode/input settings
             // across reloads (see MozaPluginSettings.PerWheelSlots).
@@ -1153,20 +1174,23 @@ namespace MozaPlugin
             // Apply user channel mappings for the selected dashboard (overrides
             // each channel's SimHubProperty string by URL). Must run before
             // assigning Profile so the frame builder binds resolvers correctly.
-            if (profile != null)
+            // Walk candidate dashboard keys (wheel:<id>, file:<...>, builtin:<name>)
+            // under the current wheel UID; first hit wins so a freshly-saved
+            // wheel:<id> entry overrides any orphaned legacy file:<...> entry.
+            if (profile != null && s.TelemetryChannelMappingsByWheel != null)
             {
-                // Resolve the file path for GetDashboardKey — single-file override,
-                // folder library, or null (builtin).
-                string? keyPath = s.TelemetryMzdashPath;
-                if (string.IsNullOrEmpty(keyPath) && DashCache != null)
-                    keyPath = DashCache.TryGetFolderFilePath(profile.Name);
-
-                string dashboardKey = DashboardProfileStore.GetDashboardKey(
-                    keyPath, profile);
-                if (s.TelemetryChannelMappings != null &&
-                    s.TelemetryChannelMappings.TryGetValue(dashboardKey, out var overrides))
+                string wheelKey = CurrentWheelKey();
+                if (s.TelemetryChannelMappingsByWheel.TryGetValue(wheelKey, out var middle) &&
+                    middle != null)
                 {
-                    DashboardProfileStore.ApplyUserMappings(profile, overrides);
+                    foreach (var dashKey in GetActiveDashboardKeyCandidates())
+                    {
+                        if (middle.TryGetValue(dashKey, out var overrides) && overrides != null)
+                        {
+                            DashboardProfileStore.ApplyUserMappings(profile, overrides);
+                            break;
+                        }
+                    }
                 }
             }
 
@@ -1221,6 +1245,80 @@ namespace MozaPlugin
                 _pluginManager?.GetPropertyValue(path), path);
         }
 
+        // Latched once per plugin lifetime so a SimHub API change doesn't spam the log.
+        private bool _allPropertiesNamesWarned;
+
+        /// <summary>
+        /// Snapshot of every property name SimHub currently exposes (DataCorePlugin.GameData.*,
+        /// game-specific Acc.Physics.* / R3E.* / etc., plus paths registered by other plugins).
+        /// Used by the channel-mappings ComboBox autocomplete. Sorted case-insensitively.
+        /// Falls back to the curated <see cref="KnownSimHubProperties.Paths"/> list when
+        /// the live API is unavailable (PluginManager null, exception, or missing method).
+        /// </summary>
+        public IReadOnlyList<string> GetAllSimHubPropertyNames()
+        {
+            try
+            {
+                var pm = _pluginManager;
+                if (pm != null)
+                {
+                    // PluginManager.GetAllPropertiesNames() returns IEnumerable<string> — verified
+                    // in libs/SimHub/SimHub.Plugins.dll. Guarded by reflection so older SimHub
+                    // builds without this method degrade to the static fallback.
+                    var mi = pm.GetType().GetMethod("GetAllPropertiesNames",
+                        System.Reflection.BindingFlags.Instance |
+                        System.Reflection.BindingFlags.Public |
+                        System.Reflection.BindingFlags.NonPublic);
+                    if (mi != null)
+                    {
+                        var names = mi.Invoke(pm, null) as System.Collections.IEnumerable;
+                        if (names != null)
+                        {
+                            // SimHub can register the same property under multiple
+                            // plugins (DataCorePlugin / Plugins.PersistantTrackerPlugin
+                            // overlap, Custom Series), and the autocomplete dropdown
+                            // would otherwise show duplicates. Dedupe here so every
+                            // consumer of the live list gets a unique-name snapshot.
+                            var seen = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+                            var list = new List<string>(256);
+                            foreach (var n in names)
+                            {
+                                if (n is string s && !string.IsNullOrEmpty(s) && seen.Add(s))
+                                    list.Add(s);
+                            }
+                            list.Sort(StringComparer.OrdinalIgnoreCase);
+                            return list;
+                        }
+                    }
+                }
+            }
+            catch (Exception ex)
+            {
+                if (!_allPropertiesNamesWarned)
+                {
+                    _allPropertiesNamesWarned = true;
+                    MozaLog.Warn("[Moza] GetAllPropertiesNames failed; falling back to static list: " + ex.Message);
+                }
+            }
+            return KnownSimHubProperties.Paths;
+        }
+
+        /// <summary>
+        /// Resolve the current raw value of a SimHub property for UI display in the
+        /// channel-mappings grid. Returns null when the path is empty, internal-only,
+        /// or unresolvable. The caller formats for display.
+        /// </summary>
+        public object? GetPropertyValueForDisplay(string? path)
+        {
+            if (string.IsNullOrEmpty(path)) return null;
+            // @internal/ values bypass SimHub — surface them as the resolved double
+            // so the UI shows the live wheel angle etc. instead of "(not found)".
+            if (path!.StartsWith("@internal/", StringComparison.Ordinal))
+                return ResolveInternalChannel(path);
+            try { return _pluginManager?.GetPropertyValue(path); }
+            catch { return null; }
+        }
+
         private double ResolveInternalChannel(string path)
         {
             switch (path)
@@ -1240,53 +1338,201 @@ namespace MozaPlugin
             }
         }
 
-        /// <summary>Stable identity key for the currently-loaded dashboard.</summary>
-        internal string CurrentDashboardKey()
+        /// <summary>
+        /// Stable per-physical-wheel key. 24-char lowercase hex of the wheel's STM32 MCU
+        /// UID (firmware-resident, persists across plugin reload and SimHub restart).
+        /// Returns "" when the UID hasn't been read yet (cold start before wheel detect)
+        /// or when all bytes are zero — both treated as "unknown wheel" so mappings still
+        /// land somewhere instead of being dropped on the floor.
+        /// </summary>
+        internal string CurrentWheelKey()
         {
-            var profile = _activeTelemetry?.Profile;
-            if (profile == null) return "";
-            string? keyPath = _settings.TelemetryMzdashPath;
-            if (string.IsNullOrEmpty(keyPath) && DashCache != null)
-                keyPath = DashCache.TryGetFolderFilePath(profile.Name);
-            return DashboardProfileStore.GetDashboardKey(keyPath, profile);
+            var uid = _data?.WheelMcuUid;
+            if (uid == null || uid.Length != 12) return "";
+            bool allZero = true;
+            for (int i = 0; i < 12; i++) { if (uid[i] != 0) { allZero = false; break; } }
+            if (allZero) return "";
+            var sb = new StringBuilder(24);
+            for (int i = 0; i < 12; i++) sb.Append(uid[i].ToString("x2"));
+            return sb.ToString();
         }
 
-        /// <summary>Set or clear a per-channel SimHub property override for the current dashboard.</summary>
+        /// <summary>
+        /// Candidate dashboard keys for the user's currently-selected dashboard,
+        /// highest priority first:
+        /// <list type="number">
+        ///   <item><c>wheel:&lt;id&gt;</c> — when configJson reports a matching enabled-dashboard entry with a non-empty Id (stable across re-uploads)</item>
+        ///   <item><c>file:&lt;filename&gt;:&lt;sha1-first-8&gt;</c> — when a file path is resolvable</item>
+        ///   <item><c>builtin:&lt;name&gt;</c> — fallback for embedded profiles</item>
+        /// </list>
+        /// Caller iterates the list when looking up; primary writer uses index 0.
+        ///
+        /// Reads from <c>_settings.TelemetryProfileName</c> / <c>TelemetryMzdashPath</c>
+        /// (the user-intent source of truth — updates synchronously in the dropdown
+        /// SelectionChanged handler) and only falls back to <c>_activeTelemetry.Profile.Name</c>
+        /// when settings is empty. Earlier the candidate list mirrored the running
+        /// pipeline's profile, which lags settings between SelectionChanged and the
+        /// async ApplyTelemetrySettings → caused stale TelemetryDashboardKey saves
+        /// (every-other-switch loss across game switches) and a redundant Stop+Start
+        /// at startup when the saved key didn't appear to match the (still-null)
+        /// active profile.
+        /// </summary>
+        internal IReadOnlyList<string> GetActiveDashboardKeyCandidates()
+        {
+            var s = _settings;
+            string profileName = s?.TelemetryProfileName ?? "";
+            string mzdashPath = s?.TelemetryMzdashPath ?? "";
+
+            // Settings empty (cold launch before any selection) → fall back to
+            // the running profile's name so we still produce candidates if
+            // telemetry happens to be assembled from a non-settings source.
+            if (string.IsNullOrEmpty(profileName) && string.IsNullOrEmpty(mzdashPath))
+            {
+                profileName = _activeTelemetry?.Profile?.Name ?? "";
+            }
+
+            if (string.IsNullOrEmpty(profileName) && string.IsNullOrEmpty(mzdashPath))
+                return Array.Empty<string>();
+
+            var result = new List<string>(3);
+
+            // 1) wheel:<id> — match selected name against configJson catalog
+            if (!string.IsNullOrEmpty(profileName))
+            {
+                var state = WheelStateForDiagnostics;
+                if (state != null && state.EnabledDashboards != null)
+                {
+                    foreach (var entry in state.EnabledDashboards)
+                    {
+                        if (entry == null || string.IsNullOrEmpty(entry.Id)) continue;
+                        bool nameMatch =
+                            string.Equals(entry.Title, profileName, StringComparison.OrdinalIgnoreCase) ||
+                            string.Equals(entry.DirName, profileName, StringComparison.OrdinalIgnoreCase);
+                        if (nameMatch)
+                        {
+                            result.Add("wheel:" + entry.Id);
+                            break;
+                        }
+                    }
+                }
+            }
+
+            // 2) file:<filename>:<sha1>
+            string? keyPath = mzdashPath;
+            if (string.IsNullOrEmpty(keyPath) && DashCache != null && !string.IsNullOrEmpty(profileName))
+                keyPath = DashCache.TryGetFolderFilePath(profileName);
+            if (!string.IsNullOrEmpty(keyPath))
+            {
+                // GetDashboardKey reads profile?.Name only in the loadedPath==null
+                // branch (which we don't take here — keyPath is non-empty). Pass
+                // the running profile if we have one but it's unused.
+                string fileKey = DashboardProfileStore.GetDashboardKey(keyPath, _activeTelemetry?.Profile!);
+                if (!string.IsNullOrEmpty(fileKey) && !result.Contains(fileKey))
+                    result.Add(fileKey);
+            }
+
+            // 3) builtin:<name>
+            if (!string.IsNullOrEmpty(profileName))
+            {
+                string builtinKey = "builtin:" + profileName;
+                if (!result.Contains(builtinKey))
+                    result.Add(builtinKey);
+            }
+
+            return result;
+        }
+
+        /// <summary>
+        /// Live-rewire the host-side value source for a single channel without
+        /// touching the wire — finds the matching channel in the active profile by
+        /// URL and updates its <see cref="ChannelDefinition.SimHubProperty"/> in place.
+        /// The frame builder's resolver lambdas read this field per-frame (see
+        /// <see cref="TelemetryFrameBuilder"/>), so the new property is used on the
+        /// very next telemetry frame. Safe to call while telemetry is running.
+        /// </summary>
+        internal void UpdateActiveChannelMapping(string channelUrl, string propertyPath)
+        {
+            var profile = _activeTelemetry?.Profile;
+            if (profile == null || string.IsNullOrEmpty(channelUrl)) return;
+            string trimmed = (propertyPath ?? "").Trim();
+            foreach (var tier in profile.Tiers)
+            {
+                foreach (var ch in tier.Channels)
+                {
+                    if (string.Equals(ch.Url, channelUrl, StringComparison.OrdinalIgnoreCase))
+                        ch.SimHubProperty = trimmed;
+                }
+            }
+        }
+
+        /// <summary>Set or clear a per-channel SimHub property override for the current wheel + dashboard.</summary>
         internal void SetChannelMapping(string channelUrl, string propertyPath)
         {
             if (string.IsNullOrEmpty(channelUrl)) return;
-            string key = CurrentDashboardKey();
-            if (string.IsNullOrEmpty(key)) return;
+            var candidates = GetActiveDashboardKeyCandidates();
+            if (candidates.Count == 0) return;
+            string dashKey = candidates[0]; // write to the highest-priority key
+            string wheelKey = CurrentWheelKey();
 
-            _settings.TelemetryChannelMappings ??=
-                new System.Collections.Generic.Dictionary<string,
+            if (_settings.TelemetryChannelMappingsByWheel == null)
+                _settings.TelemetryChannelMappingsByWheel =
+                    new System.Collections.Generic.Dictionary<string,
+                        System.Collections.Generic.Dictionary<string,
+                            System.Collections.Generic.Dictionary<string, string>>>(StringComparer.OrdinalIgnoreCase);
+
+            if (!_settings.TelemetryChannelMappingsByWheel.TryGetValue(wheelKey, out var middle))
+            {
+                middle = new System.Collections.Generic.Dictionary<string,
                     System.Collections.Generic.Dictionary<string, string>>(StringComparer.OrdinalIgnoreCase);
+                _settings.TelemetryChannelMappingsByWheel[wheelKey] = middle;
+            }
 
-            if (!_settings.TelemetryChannelMappings.TryGetValue(key, out var inner))
+            if (!middle.TryGetValue(dashKey, out var inner))
             {
                 inner = new System.Collections.Generic.Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
-                _settings.TelemetryChannelMappings[key] = inner;
+                middle[dashKey] = inner;
             }
 
             string trimmed = (propertyPath ?? "").Trim();
             if (string.IsNullOrEmpty(trimmed))
+            {
                 inner.Remove(channelUrl);
+                // Tidy: drop empty inner dict, then empty middle dict, so the JSON
+                // doesn't accumulate empty objects after every reset-to-default.
+                if (inner.Count == 0) middle.Remove(dashKey);
+                if (middle.Count == 0) _settings.TelemetryChannelMappingsByWheel.Remove(wheelKey);
+            }
             else
+            {
                 inner[channelUrl] = trimmed;
+            }
+
+            // Live-rewire the active profile's matching channel so the next
+            // frame uses the new property. No tier-def restart — we already
+            // negotiated the wire format with the wheel; we're just changing
+            // where the host pulls each channel's value from.
+            UpdateActiveChannelMapping(channelUrl, trimmed);
 
             SaveSettings();
         }
 
-        /// <summary>Clear all per-channel overrides for the currently-loaded dashboard.</summary>
+        /// <summary>Clear all per-channel overrides for the current wheel + dashboard, across every candidate key.</summary>
         internal void ClearCurrentDashboardMappings()
         {
-            string key = CurrentDashboardKey();
-            if (string.IsNullOrEmpty(key)) return;
-            if (_settings.TelemetryChannelMappings != null &&
-                _settings.TelemetryChannelMappings.Remove(key))
+            var candidates = GetActiveDashboardKeyCandidates();
+            if (candidates.Count == 0) return;
+            string wheelKey = CurrentWheelKey();
+            if (_settings.TelemetryChannelMappingsByWheel == null) return;
+            if (!_settings.TelemetryChannelMappingsByWheel.TryGetValue(wheelKey, out var middle)) return;
+
+            bool changed = false;
+            foreach (var key in candidates)
             {
-                SaveSettings();
+                if (middle.Remove(key)) changed = true;
             }
+            if (middle.Count == 0)
+                _settings.TelemetryChannelMappingsByWheel.Remove(wheelKey);
+            if (changed) SaveSettings();
         }
 
         /// <summary>
@@ -1309,8 +1555,147 @@ namespace MozaPlugin
             ThreadPool.QueueUserWorkItem(_ => t.Start());
         }
 
+        // Set when ApplyProfile sees a TelemetryDashboardKey but the wheel state isn't
+        // ready yet (cold start, hub re-enumeration, etc.). PollStatus retries once
+        // the wheel catalog arrives. Cleared after a successful apply or when the user
+        // manually picks a dashboard (manual action wins over a stale profile setting).
+        private string? _pendingProfileDashboardKey;
+        private long _pendingProfileDashboardKeyDeadlineTicks;
+        // Stop retrying after this long so a profile authored against a different wheel
+        // catalog doesn't pin the pending-key forever.
+        private static readonly TimeSpan PendingProfileKeyTimeout = TimeSpan.FromMinutes(5);
+
+        /// <summary>
+        /// Apply <see cref="MozaProfile.TelemetryDashboardKey"/> to the wheel: switch
+        /// the active dashboard so each SimHub game/profile gets its own. Defers to
+        /// the next poll tick when the wheel state isn't ready.
+        /// Returns true when the key was applied or dropped (no further retry needed).
+        /// </summary>
+        internal bool ApplyTelemetryDashboardFromProfile(MozaProfile profile)
+        {
+            if (profile == null) return true;
+            string? key = profile.TelemetryDashboardKey;
+            if (string.IsNullOrEmpty(key)) return true; // no preference recorded
+
+            // Already on the requested dashboard? No-op — avoid a redundant
+            // Stop+Start. The candidate list reads from _settings (the user-intent
+            // source of truth), so this matches at plugin startup when the saved
+            // profile key equals the user's last selection — no needless restart
+            // cycle that would arm IsInSilenceCooldown and silently suppress the
+            // user's first manual SendDashboardSwitch.
+            try
+            {
+                var current = GetActiveDashboardKeyCandidates();
+                foreach (var c in current)
+                {
+                    if (string.Equals(c, key, StringComparison.OrdinalIgnoreCase))
+                    {
+                        MozaLog.Debug("[Moza] ApplyTelemetryDashboardFromProfile: already on " + key + " — no-op");
+                        return true;
+                    }
+                }
+            }
+            catch { /* fall through to apply attempt */ }
+
+            if (key!.StartsWith("wheel:", StringComparison.OrdinalIgnoreCase))
+            {
+                string id = key.Substring("wheel:".Length);
+                var sender = _telemetrySender;
+                var state = WheelStateForDiagnostics;
+                if (state == null || state.EnabledDashboards == null || sender == null)
+                    return false; // not ready — caller defers
+
+                WheelDashboardEntry? match = null;
+                foreach (var entry in state.EnabledDashboards)
+                {
+                    if (entry != null && string.Equals(entry.Id, id, StringComparison.OrdinalIgnoreCase))
+                    {
+                        match = entry;
+                        break;
+                    }
+                }
+                if (match == null)
+                {
+                    MozaLog.Info("[Moza] Profile dashboard key not found in current wheel catalog (id=" +
+                                 id + "); leaving current selection");
+                    return true; // wheel doesn't have this dashboard; stop retrying
+                }
+
+                // Locate the slot in ConfigJsonList (UI-ordered library names) by name.
+                int slot = -1;
+                if (state.ConfigJsonList != null)
+                {
+                    for (int i = 0; i < state.ConfigJsonList.Count; i++)
+                    {
+                        var name = state.ConfigJsonList[i];
+                        if (string.IsNullOrEmpty(name)) continue;
+                        if (string.Equals(name, match.Title, StringComparison.OrdinalIgnoreCase) ||
+                            string.Equals(name, match.DirName, StringComparison.OrdinalIgnoreCase))
+                        {
+                            slot = i;
+                            break;
+                        }
+                    }
+                }
+                if (slot < 0)
+                {
+                    MozaLog.Info("[Moza] Profile dashboard '" + match.Title +
+                                 "' missing from configJsonList; leaving current selection");
+                    return true;
+                }
+
+                MozaLog.Info($"[Moza] Applying profile dashboard '{match.Title}' (id={id}, slot={slot})");
+                _settings.TelemetryProfileName = match.Title;
+                _settings.TelemetryMzdashPath = "";
+                PersistSettings();
+                OnDashboardSwitched((uint)slot);
+                return true;
+            }
+
+            if (key.StartsWith("file:", StringComparison.OrdinalIgnoreCase))
+            {
+                // file:<filename>:<sha1-first-8> — try to resolve from DashCache (folder
+                // library or wheel-download cache) by filename. If we can't find the
+                // exact file we don't fail loudly — the user can always re-pick.
+                string remainder = key.Substring("file:".Length);
+                int colon = remainder.LastIndexOf(':');
+                string filename = colon > 0 ? remainder.Substring(0, colon) : remainder;
+                string? path = DashCache?.TryGetFolderFilePath(System.IO.Path.GetFileNameWithoutExtension(filename));
+                if (!string.IsNullOrEmpty(path) && System.IO.File.Exists(path))
+                {
+                    MozaLog.Info("[Moza] Applying profile dashboard file: " + path);
+                    _settings.TelemetryMzdashPath = path!;
+                    _settings.TelemetryProfileName = "";
+                    PersistSettings();
+                    OnDashboardSwitched();
+                    return true;
+                }
+                MozaLog.Info("[Moza] Profile dashboard file not resolvable (" + filename +
+                             "); leaving current selection");
+                return true;
+            }
+
+            if (key.StartsWith("builtin:", StringComparison.OrdinalIgnoreCase))
+            {
+                string name = key.Substring("builtin:".Length);
+                MozaLog.Info("[Moza] Applying profile dashboard (builtin): " + name);
+                _settings.TelemetryProfileName = name;
+                _settings.TelemetryMzdashPath = "";
+                PersistSettings();
+                OnActiveDashboardChanged();
+                return true;
+            }
+
+            MozaLog.Warn("[Moza] Unknown TelemetryDashboardKey prefix: " + key);
+            return true;
+        }
+
         internal void OnActiveDashboardChanged()
         {
+            // Manual action wins: user picked a dashboard from the UI dropdown,
+            // so abandon any pending profile-driven switch waiting for the catalog.
+            _pendingProfileDashboardKey = null;
+
             var sender = _telemetrySender;
             if (sender != null && sender.Enabled)
             {
@@ -1334,12 +1719,22 @@ namespace MozaPlugin
             }
         }
 
-        internal void OnDashboardSwitched()
+        /// <summary>
+        /// Slot-aware dashboard switch entry point. Used when the wheel's
+        /// configJsonList provides a 0-based slot index (UI dropdown selection,
+        /// profile-driven switch by name). The TelemetrySender emits FF kind=4
+        /// on session 0x02 and waits for the wheel's b2h kind=4 echo (with
+        /// retry) before tearing the pipeline down for the new tier-def.
+        /// </summary>
+        internal void OnDashboardSwitched(uint slot)
         {
+            _pendingProfileDashboardKey = null;
+
             var sender = _telemetrySender;
             if (sender != null && sender.Enabled)
             {
-                MozaLog.Debug("[Moza] OnDashboardSwitched: scheduling Stop+Start pipeline cycle");
+                MozaLog.Debug(
+                    $"[Moza] OnDashboardSwitched(slot={slot}): scheduling switch + Stop+Start pipeline cycle");
 
                 // Stage the new dashboard's profile + mzdash content INTO the
                 // sender first so the post-Start cold-start sequence builds
@@ -1347,14 +1742,37 @@ namespace MozaPlugin
                 // sets Profile + MzdashContent + MzdashName as side effects.
                 ApplyTelemetrySettings();
 
-                // Cycle the pipeline. RestartForSwitch handles the kind=4 drain
-                // wait (so the UI knob's just-emitted FF kind=4 actually lands
-                // before Stop discards the queue), then Stop+Start. The
-                // ~10–14s wheel sess=0x09 timeout is enforced inside StartInner
-                // via _lastStopUtcTicks, so we don't need an explicit settle
-                // here — Start automatically waits the right amount before
-                // opening sessions. Don't re-send FF kind=4 here; the wheel-UI
-                // knob already did.
+                // SwitchToProfile(slot, null) emits the FF kind=4 then runs
+                // Stop+Start. Profile was already staged above, so we pass
+                // null and the existing Profile sticks.
+                sender.SwitchToProfile(slot, null);
+                return;
+            }
+
+            var host = _telemetryHost;
+            if (host != null && host.Enabled)
+            {
+                MozaLog.Debug(
+                    $"[Moza] OnDashboardSwitched(slot={slot}) (v2): applying telemetry settings");
+                ApplyTelemetrySettings();
+            }
+        }
+
+        /// <summary>
+        /// Slot-less dashboard switch entry point. Used by file-mode and
+        /// builtin-fallback paths where the wheel's configJsonList doesn't
+        /// expose a slot for the new dashboard — no FF kind=4 is emitted; the
+        /// sender just cycles Stop+Start so the new profile takes effect.
+        /// </summary>
+        internal void OnDashboardSwitched()
+        {
+            _pendingProfileDashboardKey = null;
+
+            var sender = _telemetrySender;
+            if (sender != null && sender.Enabled)
+            {
+                MozaLog.Debug("[Moza] OnDashboardSwitched: scheduling Stop+Start pipeline cycle (no slot)");
+                ApplyTelemetrySettings();
                 sender.RestartForSwitch();
                 return;
             }
@@ -1598,6 +2016,42 @@ namespace MozaPlugin
         {
             if (IsShuttingDown) return;
             if (!_connection.IsConnected) return;
+
+            // Retry a deferred profile-driven dashboard switch once the wheel catalog
+            // arrives. Stops retrying after PendingProfileKeyTimeout so a profile
+            // authored against a different wheel doesn't pin this state forever.
+            if (_pendingProfileDashboardKey != null)
+            {
+                if (DateTime.UtcNow.Ticks > _pendingProfileDashboardKeyDeadlineTicks)
+                {
+                    MozaLog.Info("[Moza] Pending profile dashboard apply timed out (key=" +
+                                 _pendingProfileDashboardKey + "); giving up");
+                    _pendingProfileDashboardKey = null;
+                }
+                else
+                {
+                    var profile = _settings.ProfileStore?.CurrentProfile;
+                    if (profile != null &&
+                        string.Equals(profile.TelemetryDashboardKey, _pendingProfileDashboardKey, StringComparison.OrdinalIgnoreCase))
+                    {
+                        try
+                        {
+                            if (ApplyTelemetryDashboardFromProfile(profile))
+                                _pendingProfileDashboardKey = null;
+                        }
+                        catch (Exception ex)
+                        {
+                            MozaLog.Warn("[Moza] Pending dashboard apply retry threw: " + ex.Message);
+                            _pendingProfileDashboardKey = null;
+                        }
+                    }
+                    else
+                    {
+                        // Profile changed under us — drop the stale pending key.
+                        _pendingProfileDashboardKey = null;
+                    }
+                }
+            }
 
             // Hot-swap detection: track whether the locked wheel is still responding
             // and periodically verify the model name hasn't changed.
@@ -2736,6 +3190,32 @@ namespace MozaPlugin
             // would corrupt the profile if concurrent device reads have overwritten _data
             // with stale values before the device has processed our writes.
             PersistSettings();
+
+            // Apply the profile-recorded dashboard preference last so the wheel
+            // settings are in place before we ask it to switch dashboards. If the
+            // wheel catalog isn't ready yet (cold start before configJson arrives),
+            // queue the switch for the next PollStatus tick.
+            if (!string.IsNullOrEmpty(profile.TelemetryDashboardKey))
+            {
+                bool applied = false;
+                try { applied = ApplyTelemetryDashboardFromProfile(profile); }
+                catch (Exception ex)
+                {
+                    MozaLog.Warn("[Moza] ApplyTelemetryDashboardFromProfile threw: " + ex.Message);
+                    applied = true; // don't infinitely retry on a broken key
+                }
+                if (!applied)
+                {
+                    _pendingProfileDashboardKey = profile.TelemetryDashboardKey;
+                    _pendingProfileDashboardKeyDeadlineTicks =
+                        DateTime.UtcNow.Add(PendingProfileKeyTimeout).Ticks;
+                    MozaLog.Debug("[Moza] Profile dashboard apply deferred — wheel state not ready");
+                }
+                else
+                {
+                    _pendingProfileDashboardKey = null;
+                }
+            }
         }
 
         private void ApplyBaseSettingIfSet(int value, Action<int> setData, params string[] commands)

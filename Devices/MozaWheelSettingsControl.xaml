@@ -86,13 +86,15 @@
                         </StackPanel>
                         <Expander x:Name="TelemetryMappingsExpander" Header="Channel mappings"
                                   IsExpanded="False" Margin="0,4,0,0"
-                                  Expanded="TelemetryMappingsExpander_Expanded">
+                                  Expanded="TelemetryMappingsExpander_Expanded"
+                                  Collapsed="TelemetryMappingsExpander_Collapsed">
                             <StackPanel Margin="0,8,0,0">
-                                <TextBlock Text="Assign SimHub properties to each dashboard channel. Blank falls back to the URL default."
+                                <TextBlock Text="Assign SimHub properties to each dashboard channel. Type 3+ characters to search the live property list (substring, case-insensitive); the dropdown opens when matches are found. Blank falls back to the URL default. Edits save automatically and rewire the active dashboard on the next frame — no telemetry restart. Current value updates twice a second."
                                            Foreground="Gray" FontSize="11" TextWrapping="Wrap" Margin="0,0,0,6"/>
                                 <DataGrid x:Name="TelemetryChannelGrid" AutoGenerateColumns="False"
                                           HeadersVisibility="Column" CanUserAddRows="False" CanUserDeleteRows="False"
-                                          GridLinesVisibility="Horizontal" MaxHeight="400" Margin="0,0,0,6">
+                                          GridLinesVisibility="Horizontal" MaxHeight="400" Margin="0,0,0,6"
+                                          EnableRowVirtualization="True" EnableColumnVirtualization="True">
                                     <DataGrid.Columns>
                                         <DataGridTextColumn Header="Channel"     Binding="{Binding Name}"         IsReadOnly="True" Width="120"/>
                                         <DataGridTextColumn Header="URL"         Binding="{Binding Url}"          IsReadOnly="True" Width="*"/>
@@ -101,15 +103,24 @@
                                             <DataGridTemplateColumn.CellTemplate>
                                                 <DataTemplate>
                                                     <ComboBox IsEditable="True"
-                                                              ItemsSource="{Binding KnownProperties}"
-                                                              Text="{Binding SimHubProperty, UpdateSourceTrigger=PropertyChanged, Mode=TwoWay}"/>
+                                                              IsTextSearchEnabled="False"
+                                                              StaysOpenOnEdit="True"
+                                                              MaxDropDownHeight="320"
+                                                              VirtualizingStackPanel.IsVirtualizing="True"
+                                                              VirtualizingStackPanel.VirtualizationMode="Recycling"
+                                                              ItemsSource="{Binding FilteredProperties}"
+                                                              IsDropDownOpen="{Binding IsDropDownOpen, Mode=TwoWay}"
+                                                              Text="{Binding SimHubProperty, UpdateSourceTrigger=PropertyChanged, Mode=TwoWay}"
+                                                              DropDownOpened="TelemetryPropCombo_DropDownOpened"/>
                                                 </DataTemplate>
                                             </DataGridTemplateColumn.CellTemplate>
                                         </DataGridTemplateColumn>
+                                        <DataGridTextColumn Header="Current value"
+                                                            Binding="{Binding CurrentValueText}"
+                                                            IsReadOnly="True" Width="120"/>
                                     </DataGrid.Columns>
                                 </DataGrid>
                                 <StackPanel Orientation="Horizontal">
-                                    <Button Content="Apply mappings"    Click="TelemetryApplyMappings_Click" Padding="6,2" Margin="0,0,8,0"/>
                                     <Button Content="Reset to defaults" Click="TelemetryResetMappings_Click" Padding="6,2"/>
                                     <TextBlock x:Name="TelemetryMappingStatus" Foreground="Gray" FontSize="11"
                                                VerticalAlignment="Center" Margin="12,0,0,0"/>
