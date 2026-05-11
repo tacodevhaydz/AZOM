@@ -613,6 +613,13 @@ namespace MozaPlugin
         // intensity slider — 0 disables the effect entirely) and a 500 ms
         // debounce so quick ratcheting up/down of gears doesn't pile triggers
         // on the wire.
+        //
+        // Transitions *into* neutral ("N") never fire — they represent
+        // dis-engagement, not a shift. An H-pattern shift produces two
+        // transitions ("1"→"N"→"2"); we want the bump on engagement (N→2),
+        // not on the stick leaving the prior gear (1→N). Sequential / paddle
+        // shifts go directly between gears and still fire normally. The 500 ms
+        // debounce remains for rapid ratcheting between non-neutral gears.
         private void CheckGearshiftEvent(GameData data)
         {
             if (!_data.IsConnected) return;
@@ -625,13 +632,18 @@ namespace MozaPlugin
                 return; // warm-up: record the first observed value, don't fire
             }
             if (gear == _lastGearString) return;
-            var now = DateTime.UtcNow;
-            if ((now - _lastGearShiftSendUtc).TotalMilliseconds < GearShiftDebounceMs)
-            {
-                _lastGearString = gear; // still update the latch so we don't repeatedly debounce-fire on the same shift
-                return;
-            }
+            // Update the latch on every change so we don't compare against a
+            // stale value on the next tick. Whether we *fire* is decided after.
+            string previous = _lastGearString;
             _lastGearString = gear;
+            // Skip dis-engagement transitions (anything → neutral). For an
+            // H-pattern shifter this is the "stick leaves prior gear" event;
+            // suppressing it means the next change (N → new gear) is what
+            // actually triggers the bump. Some games report neutral as "0"
+            // instead of "N" — treat both as neutral.
+            if (gear == "N" || gear == "0") return;
+            var now = DateTime.UtcNow;
+            if ((now - _lastGearShiftSendUtc).TotalMilliseconds < GearShiftDebounceMs) return;
             _lastGearShiftSendUtc = now;
             _deviceManager.WriteSetting("base-gearshift-event", 1);
         }
