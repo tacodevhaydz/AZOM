@@ -1405,23 +1405,6 @@ namespace MozaPlugin.Telemetry
             });
         }
 
-        /// <summary>
-        /// Look up the 0-based configJsonList slot index for a dashboard by
-        /// title. Returns -1 if not found or wheel state unavailable.
-        /// </summary>
-        public int FindDashboardSlot(string title)
-        {
-            var state = WheelState;
-            if (state == null) return -1;
-            for (int i = 0; i < state.ConfigJsonList.Count; i++)
-            {
-                if (string.Equals(state.ConfigJsonList[i], title,
-                    System.StringComparison.OrdinalIgnoreCase))
-                    return i;
-            }
-            return -1;
-        }
-
         /// <summary>Convenience: push display standby timeout in minutes (converts to ms).</summary>
         public void SendDashDisplayStandbyMinutes(int minutes)
         {
@@ -2471,8 +2454,7 @@ namespace MozaPlugin.Telemetry
                     // received, not a running max — same fix as the mgmt-port
                     // path below. Running max would silently drop retransmits
                     // of older seqs (wheel sees stale ack, keeps re-pushing).
-                    // _sessionAckSeq is kept up-to-date for diagnostics and
-                    // the periodic SendStatusPush re-ack path.
+                    // _sessionAckSeq is kept up-to-date for diagnostics.
                     if (session == FlagByte)
                     {
                         if (seq > _sessionAckSeq)
@@ -3442,7 +3424,6 @@ namespace MozaPlugin.Telemetry
                 SendDisplayConfig();
             else if (_slowCounter % 8 == 0)
                 Send28xPoll();
-            SendStatusPush();
             SendSession09Keepalive();
         }
 
@@ -4199,10 +4180,11 @@ namespace MozaPlugin.Telemetry
             if (frame != null) _connection.Send(frame);
         }
 
-        // Build any group/dev frame from raw payload bytes.
+        // Build any group/dev frame from raw payload bytes. Wire layout is
+        // [start, length, grp, dev, payload..., checksum] — total = payload.Length + 5.
         private byte[] BuildGenericFrame(byte grp, byte dev, byte[] payload)
         {
-            var frame = new byte[payload.Length + 4];
+            var frame = new byte[payload.Length + 5];
             frame[0] = MozaProtocol.MessageStart;
             frame[1] = (byte)payload.Length;
             frame[2] = grp;
@@ -4213,10 +4195,9 @@ namespace MozaPlugin.Telemetry
         }
 
         // Build grp=0x40 dev=0x17 frame from raw payload bytes.
-        // Wraps with start byte, length, cmd bytes, checksum.
         private byte[] BuildGroup40Bytes(byte[] payload)
         {
-            var frame = new byte[payload.Length + 4];
+            var frame = new byte[payload.Length + 5];
             frame[0] = MozaProtocol.MessageStart;
             frame[1] = (byte)payload.Length;
             frame[2] = 0x40;
@@ -4277,18 +4258,6 @@ namespace MozaPlugin.Telemetry
 
             _cachedDisplayConfigFrames = frames;
             _cachedDisplayConfigPageCount = pageCount;
-        }
-
-        private void SendStatusPush()
-        {
-            // Disabled. Per-chunk acks at the inbound dispatch (line 2315
-            // SendSessionAck on session==FlagByte) cover steady-state ack
-            // requirements. The 1Hz re-ack here was emitting a stale running-
-            // max ack — useful when ack reliability was poor under the old
-            // running-max ack bug, but redundant now and a footgun for
-            // cross-epoch staleness (running-max from a prior session
-            // re-acked into a new session). 2026-05-09 trace analysis
-            // showed this was the only remaining stale-running-max ack site.
         }
 
         public void Dispose()

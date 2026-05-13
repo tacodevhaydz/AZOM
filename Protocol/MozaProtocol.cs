@@ -52,6 +52,30 @@ namespace MozaPlugin.Protocol
         public const byte TelemetrySendGroup = 0x43;  // Group for telemetry data frames
         public const byte TelemetryModeGroup = 0x40;  // Group for telemetry mode config (28:02)
 
+        // Response groups — request group with bit 7 toggled per MozaResponseParser.
+        public const byte BaseRespGroup = 0xAB;             // BaseReadSettings (0x2B) bit7-toggled
+        public const byte HubRespGroup  = 0xE4;             // HubRead (0x64) bit7-toggled
+        public const byte Ab9RespGroup  = 0x89;             // AB9 probe group (0x09) bit7-toggled
+        public const byte SerialStreamRespGroup    = 0xC3;  // TelemetrySendGroup (0x43) bit7-toggled
+        public const byte WheelChannelCfgRespGroup = 0xC0;  // TelemetryModeGroup (0x40) bit7-toggled
+
+        // Wheel device id 0x17 (DeviceWheel = 23) with nibbles swapped, as it
+        // appears in response frames at data[1].
+        public const byte WheelDeviceIdSwapped = 0x71;
+
+        // Boot/firmware debug noise on data[0] — silenced everywhere.
+        public const byte FirmwareDebugGroup = 0x0E;
+
+        // SerialStream chunk header opcodes at payload[2] under SerialStreamRespGroup.
+        public const byte SerialStreamOpcodeData = 0x7C;  // chunk data / dashboard-activate
+        public const byte SerialStreamOpcodeCtrl = 0xFC;  // session open / ack
+
+        // Channel-config burst opcodes at payload[2] under WheelChannelCfgRespGroup:
+        //   1E 00/01 — channel CC enable read per page
+        //   28 00/01/02 — WheelGetCfg_GetMultiFunction{Switch,Num,Left}
+        public const byte WheelCfgOpcodeChannelEnable = 0x1E;
+        public const byte WheelCfgOpcodeMultiFunction = 0x28;
+
         /// <summary>
         /// Wire-level checksum over a decoded frame. Per doc § 54, each `0x7E`
         /// in the decoded body (positions 2 through <paramref name="bodyEnd"/>-1)

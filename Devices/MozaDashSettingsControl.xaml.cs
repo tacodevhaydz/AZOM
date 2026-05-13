@@ -4,6 +4,7 @@ using System.Windows.Controls;
 using System.Windows.Input;
 using System.Windows.Media;
 using System.Windows.Threading;
+using MozaPlugin.UI;
 
 namespace MozaPlugin.Devices
 {
@@ -13,7 +14,8 @@ namespace MozaPlugin.Devices
         private MozaDeviceManager? _device;
         private MozaData? _data;
         private MozaPluginSettings? _settings;
-        private bool _suppressEvents;
+        private readonly EventSuppressor _suppressor = new EventSuppressor();
+        private bool _suppressEvents => _suppressor.Suppressed;
         private bool _swatchesBuilt;
 
         private readonly DispatcherTimer _refreshTimer;
@@ -36,13 +38,13 @@ namespace MozaPlugin.Devices
 
         public MozaDashSettingsControl()
         {
-            _suppressEvents = true;
-            InitializeComponent();
+            using (_suppressor.Begin())
+            {
+                InitializeComponent();
 
-            if (ResolvePlugin())
-                BuildColorSwatches();
-
-            _suppressEvents = false;
+                if (ResolvePlugin())
+                    BuildColorSwatches();
+            }
 
             _refreshTimer = new DispatcherTimer { Interval = TimeSpan.FromMilliseconds(500) };
             _refreshTimer.Tick += OnRefreshTick;
@@ -228,8 +230,7 @@ namespace MozaPlugin.Devices
 
             bool dashDetected = dashConnected;
 
-            _suppressEvents = true;
-            try
+            using (_suppressor.Begin())
             {
                 DashNotDetectedPanel.Visibility = dashDetected ? Visibility.Collapsed : Visibility.Visible;
                 DashPanel.Visibility = dashDetected ? Visibility.Visible : Visibility.Collapsed;
@@ -252,10 +253,6 @@ namespace MozaPlugin.Devices
                     UpdateSwatches(_dashRpmColorSwatches, _data.DashRpmColors, 10);
                     UpdateSwatches(_dashFlagColorSwatches, _data.DashFlagColors, 6);
                 }
-            }
-            finally
-            {
-                _suppressEvents = false;
             }
         }
 

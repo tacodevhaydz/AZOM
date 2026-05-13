@@ -8,6 +8,7 @@ using System.Windows.Shapes;
 using System.Windows.Threading;
 using MozaPlugin.Devices;
 using MozaPlugin.Telemetry;
+using MozaPlugin.UI;
 using SerialTrafficCapture = MozaPlugin.Diagnostics.SerialTrafficCapture;
 
 namespace MozaPlugin
@@ -19,7 +20,8 @@ namespace MozaPlugin
         private readonly MozaData _data;
         private readonly DispatcherTimer _refreshTimer;
         private readonly DispatcherTimer _steeringAngleTimer;
-        private bool _suppressEvents;
+        private readonly EventSuppressor _suppressor = new EventSuppressor();
+        private bool _suppressEvents => _suppressor.Suppressed;
         private readonly DateTime[] _buttonLastPressed = new DateTime[MozaData.MaxButtons];
 
         public SettingsControl(MozaPlugin plugin)
@@ -28,34 +30,35 @@ namespace MozaPlugin
             _device = plugin.DeviceManager;
             _data = plugin.Data;
 
-            _suppressEvents = true;
-            InitializeComponent();
-            ConnectionToggle.IsChecked = plugin.ConnectionEnabled;
-            AutoApplyProfileCheck.IsChecked = plugin.Settings.AutoApplyProfileOnLaunch;
-            LimitWheelUpdatesCheck.IsChecked = plugin.Settings.LimitWheelUpdates;
-            AlwaysResendBitmaskCheck.IsChecked = plugin.Settings.AlwaysResendBitmask;
-            GearshiftVibrateOnNeutralCheck.IsChecked = plugin.Settings.GearshiftVibrateOnNeutral;
+            using (_suppressor.Begin())
             {
-                int dbMs = plugin.Settings.GearshiftDebounceMs;
-                if (dbMs < 0) dbMs = 0;
-                if (dbMs > 1000) dbMs = 1000;
-                // Snap to 50 ms grid so the slider thumb sits on a tick when the
-                // persisted value came from an older build / a manual edit.
-                dbMs = ((dbMs + 25) / 50) * 50;
-                GearshiftDebounceSlider.Value = dbMs;
-                GearshiftDebounceValue.Text = $"{dbMs} ms";
+                InitializeComponent();
+                ConnectionToggle.IsChecked = plugin.ConnectionEnabled;
+                AutoApplyProfileCheck.IsChecked = plugin.Settings.AutoApplyProfileOnLaunch;
+                LimitWheelUpdatesCheck.IsChecked = plugin.Settings.LimitWheelUpdates;
+                AlwaysResendBitmaskCheck.IsChecked = plugin.Settings.AlwaysResendBitmask;
+                GearshiftVibrateOnNeutralCheck.IsChecked = plugin.Settings.GearshiftVibrateOnNeutral;
+                {
+                    int dbMs = plugin.Settings.GearshiftDebounceMs;
+                    if (dbMs < 0) dbMs = 0;
+                    if (dbMs > 1000) dbMs = 1000;
+                    // Snap to 50 ms grid so the slider thumb sits on a tick when the
+                    // persisted value came from an older build / a manual edit.
+                    dbMs = ((dbMs + 25) / 50) * 50;
+                    GearshiftDebounceSlider.Value = dbMs;
+                    GearshiftDebounceValue.Text = $"{dbMs} ms";
+                }
+                DisableSerialProbeFallbackCheck.IsChecked = plugin.Settings.DisableSerialProbeFallback;
+                StartCaptureOnNextLaunchCheck.IsChecked = plugin.Settings.StartCaptureOnNextLaunch;
+                // Reflect any in-flight capture (e.g. armed from a previous session
+                // and started in MozaPlugin.Init) so the user sees Stop instead of
+                // a stale Start button when they open the Diagnostics tab.
+                if (SerialTrafficCapture.Instance.Enabled)
+                {
+                    SerialCaptureToggleButton.Content = "Stop capture";
+                    SerialCaptureStatusText.Text = "capturing… (armed from prior session — click Stop when ready)";
+                }
             }
-            DisableSerialProbeFallbackCheck.IsChecked = plugin.Settings.DisableSerialProbeFallback;
-            StartCaptureOnNextLaunchCheck.IsChecked = plugin.Settings.StartCaptureOnNextLaunch;
-            // Reflect any in-flight capture (e.g. armed from a previous session
-            // and started in MozaPlugin.Init) so the user sees Stop instead of
-            // a stale Start button when they open the Diagnostics tab.
-            if (SerialTrafficCapture.Instance.Enabled)
-            {
-                SerialCaptureToggleButton.Content = "Stop capture";
-                SerialCaptureStatusText.Text = "capturing… (armed from prior session — click Stop when ready)";
-            }
-            _suppressEvents = false;
 
             InitProfilesTab();
 
@@ -119,8 +122,7 @@ namespace MozaPlugin
             RestartBanner.Visibility = _plugin.DeviceDefinitionDeployed
                 ? Visibility.Visible : Visibility.Collapsed;
 
-            _suppressEvents = true;
-            try
+            using (_suppressor.Begin())
             {
                 RefreshBaseTab();
                 RefreshWheelTab();
@@ -132,10 +134,6 @@ namespace MozaPlugin
                 RefreshExtendedLedGroups();
                 RefreshWheelFilesTab();
                 RefreshDiagnosticsTab();
-            }
-            finally
-            {
-                _suppressEvents = false;
             }
         }
 
@@ -853,13 +851,14 @@ namespace MozaPlugin
 
         private void ApplyFfbCurvePreset(int[] p)
         {
-            _suppressEvents = true;
-            FfbCurveY1Slider.Value = p[0]; FfbCurveY1Value.Text = $"{p[0]}"; _data.FfbCurveY1 = p[0];
-            FfbCurveY2Slider.Value = p[1]; FfbCurveY2Value.Text = $"{p[1]}"; _data.FfbCurveY2 = p[1];
-            FfbCurveY3Slider.Value = p[2]; FfbCurveY3Value.Text = $"{p[2]}"; _data.FfbCurveY3 = p[2];
-            FfbCurveY4Slider.Value = p[3]; FfbCurveY4Value.Text = $"{p[3]}"; _data.FfbCurveY4 = p[3];
-            FfbCurveY5Slider.Value = p[4]; FfbCurveY5Value.Text = $"{p[4]}"; _data.FfbCurveY5 = p[4];
-            _suppressEvents = false;
+            using (_suppressor.Begin())
+            {
+                FfbCurveY1Slider.Value = p[0]; FfbCurveY1Value.Text = $"{p[0]}"; _data.FfbCurveY1 = p[0];
+                FfbCurveY2Slider.Value = p[1]; FfbCurveY2Value.Text = $"{p[1]}"; _data.FfbCurveY2 = p[1];
+                FfbCurveY3Slider.Value = p[2]; FfbCurveY3Value.Text = $"{p[2]}"; _data.FfbCurveY3 = p[2];
+                FfbCurveY4Slider.Value = p[3]; FfbCurveY4Value.Text = $"{p[3]}"; _data.FfbCurveY4 = p[3];
+                FfbCurveY5Slider.Value = p[4]; FfbCurveY5Value.Text = $"{p[4]}"; _data.FfbCurveY5 = p[4];
+            }
             // Always write fixed X breakpoints first
             _device.WriteSetting("base-ffb-curve-x1", 20); _device.WriteSetting("base-ffb-curve-x2", 40);
             _device.WriteSetting("base-ffb-curve-x3", 60); _device.WriteSetting("base-ffb-curve-x4", 80);
@@ -912,13 +911,14 @@ namespace MozaPlugin
 
         private void ApplyHbCurvePreset(int[] p)
         {
-            _suppressEvents = true;
-            HbY1Slider.Value = p[0]; HbY1Value.Text = $"{p[0]}"; _data.HandbrakeCurve[0] = p[0];
-            HbY2Slider.Value = p[1]; HbY2Value.Text = $"{p[1]}"; _data.HandbrakeCurve[1] = p[1];
-            HbY3Slider.Value = p[2]; HbY3Value.Text = $"{p[2]}"; _data.HandbrakeCurve[2] = p[2];
-            HbY4Slider.Value = p[3]; HbY4Value.Text = $"{p[3]}"; _data.HandbrakeCurve[3] = p[3];
-            HbY5Slider.Value = p[4]; HbY5Value.Text = $"{p[4]}"; _data.HandbrakeCurve[4] = p[4];
-            _suppressEvents = false;
+            using (_suppressor.Begin())
+            {
+                HbY1Slider.Value = p[0]; HbY1Value.Text = $"{p[0]}"; _data.HandbrakeCurve[0] = p[0];
+                HbY2Slider.Value = p[1]; HbY2Value.Text = $"{p[1]}"; _data.HandbrakeCurve[1] = p[1];
+                HbY3Slider.Value = p[2]; HbY3Value.Text = $"{p[2]}"; _data.HandbrakeCurve[2] = p[2];
+                HbY4Slider.Value = p[3]; HbY4Value.Text = $"{p[3]}"; _data.HandbrakeCurve[3] = p[3];
+                HbY5Slider.Value = p[4]; HbY5Value.Text = $"{p[4]}"; _data.HandbrakeCurve[4] = p[4];
+            }
             for (int i = 0; i < 5; i++)
                 _device.WriteFloat($"handbrake-y{i + 1}", p[i]);
             _plugin.SaveSettings();
@@ -929,8 +929,8 @@ namespace MozaPlugin
         private void HbCurvePreset_Exponential(object s, RoutedEventArgs e) => ApplyHbCurvePreset(HbCurvePresets[2]);
         private void HbCurvePreset_Parabolic(object s, RoutedEventArgs e) => ApplyHbCurvePreset(HbCurvePresets[3]);
 
-        private void HandbrakeMinSlider_ValueChanged(object s, RoutedPropertyChangedEventArgs<double> e) { if (_suppressEvents) return; int v = (int)Math.Round(e.NewValue); if (v > _data.HandbrakeMax) { v = _data.HandbrakeMax; _suppressEvents = true; HandbrakeMinSlider.Value = v; _suppressEvents = false; } HandbrakeMinValue.Text = $"{v}%"; _data.HandbrakeMin = v; _device.WriteSetting("handbrake-min", v); _plugin.SaveSettings(); }
-        private void HandbrakeMaxSlider_ValueChanged(object s, RoutedPropertyChangedEventArgs<double> e) { if (_suppressEvents) return; int v = (int)Math.Round(e.NewValue); if (v < _data.HandbrakeMin) { v = _data.HandbrakeMin; _suppressEvents = true; HandbrakeMaxSlider.Value = v; _suppressEvents = false; } HandbrakeMaxValue.Text = $"{v}%"; _data.HandbrakeMax = v; _device.WriteSetting("handbrake-max", v); _plugin.SaveSettings(); }
+        private void HandbrakeMinSlider_ValueChanged(object s, RoutedPropertyChangedEventArgs<double> e) { if (_suppressEvents) return; int v = (int)Math.Round(e.NewValue); if (v > _data.HandbrakeMax) { v = _data.HandbrakeMax; using (_suppressor.Begin()) HandbrakeMinSlider.Value = v; } HandbrakeMinValue.Text = $"{v}%"; _data.HandbrakeMin = v; _device.WriteSetting("handbrake-min", v); _plugin.SaveSettings(); }
+        private void HandbrakeMaxSlider_ValueChanged(object s, RoutedPropertyChangedEventArgs<double> e) { if (_suppressEvents) return; int v = (int)Math.Round(e.NewValue); if (v < _data.HandbrakeMin) { v = _data.HandbrakeMin; using (_suppressor.Begin()) HandbrakeMaxSlider.Value = v; } HandbrakeMaxValue.Text = $"{v}%"; _data.HandbrakeMax = v; _device.WriteSetting("handbrake-max", v); _plugin.SaveSettings(); }
         private void HbY1Slider_ValueChanged(object s, RoutedPropertyChangedEventArgs<double> e) { if (_suppressEvents) return; int v = (int)Math.Round(e.NewValue); HbY1Value.Text = $"{v}"; _data.HandbrakeCurve[0] = v; _device.WriteFloat("handbrake-y1", v); _plugin.SaveSettings(); }
         private void HbY2Slider_ValueChanged(object s, RoutedPropertyChangedEventArgs<double> e) { if (_suppressEvents) return; int v = (int)Math.Round(e.NewValue); HbY2Value.Text = $"{v}"; _data.HandbrakeCurve[1] = v; _device.WriteFloat("handbrake-y2", v); _plugin.SaveSettings(); }
         private void HbY3Slider_ValueChanged(object s, RoutedPropertyChangedEventArgs<double> e) { if (_suppressEvents) return; int v = (int)Math.Round(e.NewValue); HbY3Value.Text = $"{v}"; _data.HandbrakeCurve[2] = v; _device.WriteFloat("handbrake-y3", v); _plugin.SaveSettings(); }
@@ -1040,13 +1040,14 @@ namespace MozaPlugin
             Slider y1, Slider y2, Slider y3, Slider y4, Slider y5,
             TextBlock l1, TextBlock l2, TextBlock l3, TextBlock l4, TextBlock l5)
         {
-            _suppressEvents = true;
-            y1.Value = curve[0]; l1.Text = $"{curve[0]}"; dataArray[0] = curve[0];
-            y2.Value = curve[1]; l2.Text = $"{curve[1]}"; dataArray[1] = curve[1];
-            y3.Value = curve[2]; l3.Text = $"{curve[2]}"; dataArray[2] = curve[2];
-            y4.Value = curve[3]; l4.Text = $"{curve[3]}"; dataArray[3] = curve[3];
-            y5.Value = curve[4]; l5.Text = $"{curve[4]}"; dataArray[4] = curve[4];
-            _suppressEvents = false;
+            using (_suppressor.Begin())
+            {
+                y1.Value = curve[0]; l1.Text = $"{curve[0]}"; dataArray[0] = curve[0];
+                y2.Value = curve[1]; l2.Text = $"{curve[1]}"; dataArray[1] = curve[1];
+                y3.Value = curve[2]; l3.Text = $"{curve[2]}"; dataArray[2] = curve[2];
+                y4.Value = curve[3]; l4.Text = $"{curve[3]}"; dataArray[3] = curve[3];
+                y5.Value = curve[4]; l5.Text = $"{curve[4]}"; dataArray[4] = curve[4];
+            }
             for (int i = 0; i < 5; i++)
                 _device.WriteFloat($"pedals-{pedal}-y{i + 1}", curve[i]);
             _plugin.SaveSettings();
@@ -1072,8 +1073,8 @@ namespace MozaPlugin
 
         // Throttle direction + range + curve sliders
         private void ThrottleDirCheck_Click(object sender, RoutedEventArgs e) { if (_suppressEvents) return; int v = ThrottleDirCheck.IsChecked == true ? 1 : 0; _data.PedalsThrottleDir = v; _device.WriteSetting("pedals-throttle-dir", v); _plugin.SaveSettings(); }
-        private void ThrottleMinSlider_ValueChanged(object s, RoutedPropertyChangedEventArgs<double> e) { if (_suppressEvents) return; int v = (int)Math.Round(e.NewValue); if (v > _data.PedalsThrottleMax) { v = _data.PedalsThrottleMax; _suppressEvents = true; ThrottleMinSlider.Value = v; _suppressEvents = false; } ThrottleMinValue.Text = $"{v}%"; _data.PedalsThrottleMin = v; _device.WriteSetting("pedals-throttle-min", v); _plugin.SaveSettings(); }
-        private void ThrottleMaxSlider_ValueChanged(object s, RoutedPropertyChangedEventArgs<double> e) { if (_suppressEvents) return; int v = (int)Math.Round(e.NewValue); if (v < _data.PedalsThrottleMin) { v = _data.PedalsThrottleMin; _suppressEvents = true; ThrottleMaxSlider.Value = v; _suppressEvents = false; } ThrottleMaxValue.Text = $"{v}%"; _data.PedalsThrottleMax = v; _device.WriteSetting("pedals-throttle-max", v); _plugin.SaveSettings(); }
+        private void ThrottleMinSlider_ValueChanged(object s, RoutedPropertyChangedEventArgs<double> e) { if (_suppressEvents) return; int v = (int)Math.Round(e.NewValue); if (v > _data.PedalsThrottleMax) { v = _data.PedalsThrottleMax; using (_suppressor.Begin()) ThrottleMinSlider.Value = v; } ThrottleMinValue.Text = $"{v}%"; _data.PedalsThrottleMin = v; _device.WriteSetting("pedals-throttle-min", v); _plugin.SaveSettings(); }
+        private void ThrottleMaxSlider_ValueChanged(object s, RoutedPropertyChangedEventArgs<double> e) { if (_suppressEvents) return; int v = (int)Math.Round(e.NewValue); if (v < _data.PedalsThrottleMin) { v = _data.PedalsThrottleMin; using (_suppressor.Begin()) ThrottleMaxSlider.Value = v; } ThrottleMaxValue.Text = $"{v}%"; _data.PedalsThrottleMax = v; _device.WriteSetting("pedals-throttle-max", v); _plugin.SaveSettings(); }
         private void ThrottleY1Slider_ValueChanged(object s, RoutedPropertyChangedEventArgs<double> e) { if (_suppressEvents) return; int v = (int)Math.Round(e.NewValue); ThrottleY1Value.Text = $"{v}"; _data.PedalsThrottleCurve[0] = v; _device.WriteFloat("pedals-throttle-y1", v); _plugin.SaveSettings(); }
         private void ThrottleY2Slider_ValueChanged(object s, RoutedPropertyChangedEventArgs<double> e) { if (_suppressEvents) return; int v = (int)Math.Round(e.NewValue); ThrottleY2Value.Text = $"{v}"; _data.PedalsThrottleCurve[1] = v; _device.WriteFloat("pedals-throttle-y2", v); _plugin.SaveSettings(); }
         private void ThrottleY3Slider_ValueChanged(object s, RoutedPropertyChangedEventArgs<double> e) { if (_suppressEvents) return; int v = (int)Math.Round(e.NewValue); ThrottleY3Value.Text = $"{v}"; _data.PedalsThrottleCurve[2] = v; _device.WriteFloat("pedals-throttle-y3", v); _plugin.SaveSettings(); }
@@ -1087,8 +1088,8 @@ namespace MozaPlugin
         // Brake direction + range + curve sliders
         private void BrakeDirCheck_Click(object sender, RoutedEventArgs e) { if (_suppressEvents) return; int v = BrakeDirCheck.IsChecked == true ? 1 : 0; _data.PedalsBrakeDir = v; _device.WriteSetting("pedals-brake-dir", v); _plugin.SaveSettings(); }
         private void BrakeAngleRatioSlider_ValueChanged(object s, RoutedPropertyChangedEventArgs<double> e) { if (_suppressEvents) return; int v = (int)Math.Round(e.NewValue); BrakeAngleRatioValue.Text = $"{v}%"; _data.PedalsBrakeAngleRatio = v; _device.WriteFloat("pedals-brake-angle-ratio", v); _plugin.SaveSettings(); }
-        private void BrakeMinSlider_ValueChanged(object s, RoutedPropertyChangedEventArgs<double> e) { if (_suppressEvents) return; int v = (int)Math.Round(e.NewValue); if (v > _data.PedalsBrakeMax) { v = _data.PedalsBrakeMax; _suppressEvents = true; BrakeMinSlider.Value = v; _suppressEvents = false; } BrakeMinValue.Text = $"{v}%"; _data.PedalsBrakeMin = v; _device.WriteSetting("pedals-brake-min", v); _plugin.SaveSettings(); }
-        private void BrakeMaxSlider_ValueChanged(object s, RoutedPropertyChangedEventArgs<double> e) { if (_suppressEvents) return; int v = (int)Math.Round(e.NewValue); if (v < _data.PedalsBrakeMin) { v = _data.PedalsBrakeMin; _suppressEvents = true; BrakeMaxSlider.Value = v; _suppressEvents = false; } BrakeMaxValue.Text = $"{v}%"; _data.PedalsBrakeMax = v; _device.WriteSetting("pedals-brake-max", v); _plugin.SaveSettings(); }
+        private void BrakeMinSlider_ValueChanged(object s, RoutedPropertyChangedEventArgs<double> e) { if (_suppressEvents) return; int v = (int)Math.Round(e.NewValue); if (v > _data.PedalsBrakeMax) { v = _data.PedalsBrakeMax; using (_suppressor.Begin()) BrakeMinSlider.Value = v; } BrakeMinValue.Text = $"{v}%"; _data.PedalsBrakeMin = v; _device.WriteSetting("pedals-brake-min", v); _plugin.SaveSettings(); }
+        private void BrakeMaxSlider_ValueChanged(object s, RoutedPropertyChangedEventArgs<double> e) { if (_suppressEvents) return; int v = (int)Math.Round(e.NewValue); if (v < _data.PedalsBrakeMin) { v = _data.PedalsBrakeMin; using (_suppressor.Begin()) BrakeMaxSlider.Value = v; } BrakeMaxValue.Text = $"{v}%"; _data.PedalsBrakeMax = v; _device.WriteSetting("pedals-brake-max", v); _plugin.SaveSettings(); }
         private void BrakeY1Slider_ValueChanged(object s, RoutedPropertyChangedEventArgs<double> e) { if (_suppressEvents) return; int v = (int)Math.Round(e.NewValue); BrakeY1Value.Text = $"{v}"; _data.PedalsBrakeCurve[0] = v; _device.WriteFloat("pedals-brake-y1", v); _plugin.SaveSettings(); }
         private void BrakeY2Slider_ValueChanged(object s, RoutedPropertyChangedEventArgs<double> e) { if (_suppressEvents) return; int v = (int)Math.Round(e.NewValue); BrakeY2Value.Text = $"{v}"; _data.PedalsBrakeCurve[1] = v; _device.WriteFloat("pedals-brake-y2", v); _plugin.SaveSettings(); }
         private void BrakeY3Slider_ValueChanged(object s, RoutedPropertyChangedEventArgs<double> e) { if (_suppressEvents) return; int v = (int)Math.Round(e.NewValue); BrakeY3Value.Text = $"{v}"; _data.PedalsBrakeCurve[2] = v; _device.WriteFloat("pedals-brake-y3", v); _plugin.SaveSettings(); }
@@ -1101,8 +1102,8 @@ namespace MozaPlugin
 
         // Clutch direction + range + curve sliders
         private void ClutchDirCheck_Click(object sender, RoutedEventArgs e) { if (_suppressEvents) return; int v = ClutchDirCheck.IsChecked == true ? 1 : 0; _data.PedalsClutchDir = v; _device.WriteSetting("pedals-clutch-dir", v); _plugin.SaveSettings(); }
-        private void ClutchMinSlider_ValueChanged(object s, RoutedPropertyChangedEventArgs<double> e) { if (_suppressEvents) return; int v = (int)Math.Round(e.NewValue); if (v > _data.PedalsClutchMax) { v = _data.PedalsClutchMax; _suppressEvents = true; ClutchMinSlider.Value = v; _suppressEvents = false; } ClutchMinValue.Text = $"{v}%"; _data.PedalsClutchMin = v; _device.WriteSetting("pedals-clutch-min", v); _plugin.SaveSettings(); }
-        private void ClutchMaxSlider_ValueChanged(object s, RoutedPropertyChangedEventArgs<double> e) { if (_suppressEvents) return; int v = (int)Math.Round(e.NewValue); if (v < _data.PedalsClutchMin) { v = _data.PedalsClutchMin; _suppressEvents = true; ClutchMaxSlider.Value = v; _suppressEvents = false; } ClutchMaxValue.Text = $"{v}%"; _data.PedalsClutchMax = v; _device.WriteSetting("pedals-clutch-max", v); _plugin.SaveSettings(); }
+        private void ClutchMinSlider_ValueChanged(object s, RoutedPropertyChangedEventArgs<double> e) { if (_suppressEvents) return; int v = (int)Math.Round(e.NewValue); if (v > _data.PedalsClutchMax) { v = _data.PedalsClutchMax; using (_suppressor.Begin()) ClutchMinSlider.Value = v; } ClutchMinValue.Text = $"{v}%"; _data.PedalsClutchMin = v; _device.WriteSetting("pedals-clutch-min", v); _plugin.SaveSettings(); }
+        private void ClutchMaxSlider_ValueChanged(object s, RoutedPropertyChangedEventArgs<double> e) { if (_suppressEvents) return; int v = (int)Math.Round(e.NewValue); if (v < _data.PedalsClutchMin) { v = _data.PedalsClutchMin; using (_suppressor.Begin()) ClutchMaxSlider.Value = v; } ClutchMaxValue.Text = $"{v}%"; _data.PedalsClutchMax = v; _device.WriteSetting("pedals-clutch-max", v); _plugin.SaveSettings(); }
         private void ClutchY1Slider_ValueChanged(object s, RoutedPropertyChangedEventArgs<double> e) { if (_suppressEvents) return; int v = (int)Math.Round(e.NewValue); ClutchY1Value.Text = $"{v}"; _data.PedalsClutchCurve[0] = v; _device.WriteFloat("pedals-clutch-y1", v); _plugin.SaveSettings(); }
         private void ClutchY2Slider_ValueChanged(object s, RoutedPropertyChangedEventArgs<double> e) { if (_suppressEvents) return; int v = (int)Math.Round(e.NewValue); ClutchY2Value.Text = $"{v}"; _data.PedalsClutchCurve[1] = v; _device.WriteFloat("pedals-clutch-y2", v); _plugin.SaveSettings(); }
         private void ClutchY3Slider_ValueChanged(object s, RoutedPropertyChangedEventArgs<double> e) { if (_suppressEvents) return; int v = (int)Math.Round(e.NewValue); ClutchY3Value.Text = $"{v}"; _data.PedalsClutchCurve[2] = v; _device.WriteFloat("pedals-clutch-y3", v); _plugin.SaveSettings(); }
@@ -1156,18 +1157,13 @@ namespace MozaPlugin
 
             _plugin.ClearSettings();
 
-            _suppressEvents = true;
-            try
+            using (_suppressor.Begin())
             {
                 AutoApplyProfileCheck.IsChecked = _plugin.Settings.AutoApplyProfileOnLaunch;
                 LimitWheelUpdatesCheck.IsChecked = _plugin.Settings.LimitWheelUpdates;
                 ConnectionToggle.IsChecked = _plugin.Settings.ConnectionEnabled;
                 ProfileListControl.DataContext = null;
                 ProfileListControl.DataContext = _plugin.ProfileStore;
-            }
-            finally
-            {
-                _suppressEvents = false;
             }
         }
 
@@ -1189,8 +1185,7 @@ namespace MozaPlugin
             if (_telemetryUIInitialized) return;
             _telemetryUIInitialized = true;
 
-            _suppressEvents = true;
-            try
+            using (_suppressor.Begin())
             {
                 var s = _plugin.Settings;
                 UploadDashboardCheck.IsChecked = s.TelemetryUploadDashboard;
@@ -1198,10 +1193,6 @@ namespace MozaPlugin
                 FirmwareEraCombo.SelectedIndex = (int)s.TelemetryWheelEra;
                 // Hidden for now: v2 telemetry pipeline UI not shown
                 // UseNewTelemetryPipelineCheck.IsChecked = s.UseNewTelemetryPipeline;
-            }
-            finally
-            {
-                _suppressEvents = false;
             }
         }
 
@@ -2328,8 +2319,7 @@ namespace MozaPlugin
             // Seed the controls from the profile (or defaults). Suppress events
             // so this seed pass doesn't fire WriteSlider for every control.
             var ab9 = _plugin.Settings?.ProfileStore?.CurrentProfile?.Ab9 ?? new Ab9Settings();
-            _suppressEvents = true;
-            try
+            using (_suppressor.Begin())
             {
                 SetAb9ModeCombo(ab9.Mode);
                 SetAb9Slider(Ab9MechResistanceSlider, Ab9MechResistanceValue, ab9.MechanicalResistance);
@@ -2337,10 +2327,6 @@ namespace MozaPlugin
                 SetAb9Slider(Ab9DampingSlider,        Ab9DampingValue,        ab9.NaturalDamping);
                 SetAb9Slider(Ab9FrictionSlider,       Ab9FrictionValue,       ab9.NaturalFriction);
                 SetAb9Slider(Ab9MaxTorqueSlider,      Ab9MaxTorqueValue,      ab9.MaxTorqueLimit);
-            }
-            finally
-            {
-                _suppressEvents = false;
             }
             _ab9UiSeeded = true;
         }

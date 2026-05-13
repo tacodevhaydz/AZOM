@@ -618,10 +618,12 @@ namespace MozaPlugin.Protocol
                                 $"[Moza] Received msg #{messageCount}: len={payloadLength} " +
                                 $"group=0x{data[0]:X2} dev=0x{data[1]:X2} ({data.Length} bytes)");
                         }
-                        // Diagnostic: per-chunk log for 0xC3/71/7C/00 SerialStream
-                        // frames so we can verify session 0x09 chunk reception.
-                        if (data.Length >= 8 && data[0] == 0xC3 && data[1] == 0x71 &&
-                            data[2] == 0x7C && data[3] == 0x00)
+                        // Diagnostic: per-chunk log for SerialStream session-data
+                        // frames (0xC3 / wheel / 7C / 00) — session 0x09 chunk reception.
+                        if (data.Length >= 8 && data[0] == MozaProtocol.SerialStreamRespGroup
+                            && data[1] == MozaProtocol.WheelDeviceIdSwapped
+                            && data[2] == MozaProtocol.SerialStreamOpcodeData
+                            && data[3] == 0x00)
                         {
                             byte sess = data[4];
                             byte type = data[5];
@@ -1007,11 +1009,6 @@ namespace MozaPlugin.Protocol
         private static readonly byte[] HubProbeFrame  = BuildProbe(new byte[] { 0x7E, 0x03, 0x64, 0x12, 0x03, 0x00, 0x00, 0x00 });
         private static readonly byte[] Ab9ProbeFrame  = BuildProbe(new byte[] { 0x7E, 0x00, 0x09, 0x12, 0x00 });
 
-        // Expected response groups (request group with bit 7 toggled, per MozaResponseParser).
-        private const byte BaseRespGroup = 0xAB;
-        private const byte HubRespGroup  = 0xE4;
-        private const byte Ab9RespGroup  = 0x89;
-
         private static byte[] BuildProbe(byte[] frame)
         {
             // Wire-level checksum so the probe stays valid if the payload ever
@@ -1101,9 +1098,9 @@ namespace MozaPlugin.Protocol
             byte expectedRespGroup;
             switch (kind)
             {
-                case ProbeKind.Base: msg = BaseProbeFrame; expectedRespGroup = BaseRespGroup; break;
-                case ProbeKind.Hub:  msg = HubProbeFrame;  expectedRespGroup = HubRespGroup;  break;
-                case ProbeKind.Ab9:  msg = Ab9ProbeFrame;  expectedRespGroup = Ab9RespGroup;  break;
+                case ProbeKind.Base: msg = BaseProbeFrame; expectedRespGroup = MozaProtocol.BaseRespGroup; break;
+                case ProbeKind.Hub:  msg = HubProbeFrame;  expectedRespGroup = MozaProtocol.HubRespGroup;  break;
+                case ProbeKind.Ab9:  msg = Ab9ProbeFrame;  expectedRespGroup = MozaProtocol.Ab9RespGroup;  break;
                 default: return (false, false);
             }
 

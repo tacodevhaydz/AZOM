@@ -1,13 +1,11 @@
 using System;
 using System.Collections.Generic;
 using System.IO;
-using System.Reflection;
 using System.Text;
 using System.Threading;
 using System.Timers;
 using System.Windows.Media;
 using GameReaderCommon;
-using Newtonsoft.Json.Linq;
 using SimHub.Plugins;
 using MozaPlugin.Devices;
 using MozaPlugin.Protocol;
@@ -2217,16 +2215,18 @@ namespace MozaPlugin
         {
             if (IsShuttingDown || _telemetryHost == null) return;
             if (data == null || data.Length < 4) return;
-            if (data[0] != 0xC3 || data[1] != 0x71) return;
+            if (data[0] != MozaProtocol.SerialStreamRespGroup
+                || data[1] != MozaProtocol.WheelDeviceIdSwapped) return;
 
-            // Wire-trace tee: capture ALL 0xC3/0x71 frames (session data + FC acks).
+            // Wire-trace tee: capture ALL SerialStream frames (session data + FC acks).
             if (_telemetry2WireTracePath != null)
             {
                 try { WriteTelemetry2WireTrace("b2h", data); } catch { }
             }
 
             // Session-layer dispatch: 7C 00 prefix = session data/open/close.
-            if (data.Length < 9 || data[2] != 0x7C || data[3] != 0x00) return;
+            if (data.Length < 9 || data[2] != MozaProtocol.SerialStreamOpcodeData
+                || data[3] != 0x00) return;
             byte session = data[4];
             byte type = data[5];
             int seq = data[6] | (data[7] << 8);
@@ -2299,7 +2299,7 @@ namespace MozaPlugin
             if (IsShuttingDown) return;
 
             // Filter firmware debug noise before parsing/logging
-            if (data.Length >= 1 && data[0] == 0x0E)
+            if (data.Length >= 1 && data[0] == MozaProtocol.FirmwareDebugGroup)
                 return;
 
             // Filter SerialStream control frames (group 0xC3 response to 0x43,
@@ -2307,15 +2307,17 @@ namespace MozaPlugin
             // chunks (fc:00 session opens/acks, 7c:00 data) handled by
             // TelemetrySender's session-layer handlers — not command responses.
             // Without this, sessions 0x01..0x0E opens spam Unmatched log lines.
-            if (data.Length >= 4 && data[0] == 0xC3 &&
-                (data[2] == 0x7C || data[2] == 0xFC) && data[3] == 0x00)
+            if (data.Length >= 4 && data[0] == MozaProtocol.SerialStreamRespGroup &&
+                (data[2] == MozaProtocol.SerialStreamOpcodeData ||
+                 data[2] == MozaProtocol.SerialStreamOpcodeCtrl) && data[3] == 0x00)
                 return;
 
             // Filter wheel's `7c:23` dashboard-activate advertisements (group
             // 0xC3 device 0x71, payload starts with `7C 23`). Wheel broadcasts
             // active display config periodically — informational, not a command
             // response. Absorbed by TelemetrySender.
-            if (data.Length >= 4 && data[0] == 0xC3 && data[2] == 0x7C && data[3] == 0x23)
+            if (data.Length >= 4 && data[0] == MozaProtocol.SerialStreamRespGroup
+                && data[2] == MozaProtocol.SerialStreamOpcodeData && data[3] == 0x23)
                 return;
 
             // Filter group 0x40 channel-config burst echoes (0xC0 response):
@@ -2325,15 +2327,17 @@ namespace MozaPlugin
             // EEPROM value per channel/query. Not actionable at plugin level —
             // just confirms the probe landed. Mark wheel alive so watchdog
             // doesn't reset detection.
-            if (data.Length >= 4 && data[0] == 0xC0 && data[1] == 0x71 &&
-                (data[2] == 0x1E || data[2] == 0x28))
+            if (data.Length >= 4 && data[0] == MozaProtocol.WheelChannelCfgRespGroup
+                && data[1] == MozaProtocol.WheelDeviceIdSwapped
+                && (data[2] == MozaProtocol.WheelCfgOpcodeChannelEnable ||
+                    data[2] == MozaProtocol.WheelCfgOpcodeMultiFunction))
             {
                 // Capture raw 28:00 / 28:01 reply bytes before swallowing.
                 // PitHouse polls these at ~1 Hz across all four bridge captures
                 // (sim/logs/bridge-20260503-*.jsonl). Semantics not yet decoded
                 // — store raw so future controlled experiments can correlate
                 // values against game state.
-                if (data.Length >= 6 && data[2] == 0x28)
+                if (data.Length >= 6 && data[2] == MozaProtocol.WheelCfgOpcodeMultiFunction)
                 {
                     if (data[3] == 0x00 && _data != null)
                     {
@@ -2441,8 +2445,8 @@ namespace MozaPlugin
             if (IsShuttingDown) return;
             if (data == null || data.Length < 2) return;
 
-            // Filter firmware debug noise (group 0x0E) before parsing.
-            if (data[0] == 0x0E) return;
+            // Filter firmware debug noise before parsing.
+            if (data[0] == MozaProtocol.FirmwareDebugGroup) return;
 
             var result = MozaResponseParser.Parse(data);
             if (!result.HasValue) return;
@@ -2563,7 +2567,8 @@ namespace MozaPlugin
                     if (!_dashDetected)
                     {
                         _dashDetected = true;
-                        DeployDeviceDefinition("MOZA Dashboard", "MozaPlugin.Devices.Dash.device.json");
+                        if (DeviceDefinitionDeployer.DeployDashboard(_connection.DiscoveredPid))
+                            DeviceDefinitionDeployed = true;
                         ApplySavedDashSettings();
                         _deviceManager.ReadSettings(DashSettingsReadCommands);
                         MozaLog.Info("[Moza] Dashboard detected");
@@ -2642,7 +2647,8 @@ namespace MozaPlugin
                                 _settings.LoadSlotIntoActive(currentModel);
                             else
                                 _settings.MirrorActiveToSlot(currentModel);
-                            DeployDeviceDefinitionForModel(currentModel);
+                            if (DeviceDefinitionDeployer.DeployForModel(currentModel, _connection.DiscoveredPid))
+                                DeviceDefinitionDeployed = true;
 
                             // Refresh _data knob colours from the slot we just loaded
                             // and push to hardware (W17/W18 only — KnobCount gate).
@@ -2765,7 +2771,8 @@ namespace MozaPlugin
                         _deviceManager.ReadSetting("wheel-serial-b");
                         _deviceManager.SendPithouseIdentityProbe(deviceId);
                         _deviceManager.ReadSettingsPaced(OldWheelSettingsReadCommands);
-                        DeployDeviceDefinitionForOldProto();
+                        if (DeviceDefinitionDeployer.DeployOldProtoWheel(_connection.DiscoveredPid))
+                            DeviceDefinitionDeployed = true;
                         MozaLog.Info($"[Moza] Old-protocol wheel detected on ID {deviceId}");
                         StartTelemetryIfReady();
                     }
@@ -3819,265 +3826,6 @@ namespace MozaPlugin
             }
 
             PersistSettings();
-        }
-
-        /// <summary>
-        /// Deploy a dynamically generated device definition for a new-protocol wheel.
-        /// Uses WheelModelInfo for button count (defaults for unknown models) and
-        /// deterministic GUIDs for device identity.
-        /// Called once when the wheel model name is first received from firmware.
-        /// </summary>
-        private void DeployDeviceDefinitionForModel(string modelName)
-        {
-            var prefix = WheelModelInfo.ExtractPrefix(modelName);
-            var friendlyName = WheelModelInfo.GetFriendlyName(prefix);
-            var guid = MozaDeviceConstants.ResolveWheelGuid(prefix);
-            var modelInfo = WheelModelInfo.FromModelName(modelName);
-            var deviceName = "MOZA " + friendlyName;
-
-            DeployGeneratedWheelDefinition(deviceName, guid, friendlyName, modelInfo.RpmLedCount, modelInfo.HasFlagLeds, modelInfo.ButtonLedCount, modelInfo.KnobCount);
-        }
-
-        private void DeployGeneratedWheelDefinition(string deviceName, string guid, string productName, int rpmCount, bool hasFlagLeds, int buttonCount, int knobCount)
-        {
-            try
-            {
-                var simHubDir = AppDomain.CurrentDomain.BaseDirectory;
-                var userDefsDir = Path.Combine(simHubDir, "DevicesDefinitions", "User");
-                var deviceDir = Path.Combine(userDefsDir, deviceName);
-                var deviceJsonPath = Path.Combine(deviceDir, "device.json");
-
-                int expectedTelemetryCount = rpmCount + (hasFlagLeds ? 6 : 0);
-                bool fileExists = File.Exists(deviceJsonPath);
-                bool stale = false;
-
-                if (fileExists)
-                {
-                    // Compare existing LogicalTelemetryLeds.LedCount + LogicalButtonsSection.Items
-                    // against expected. Mismatch = layout changed in a plugin update; rewrite.
-                    try
-                    {
-                        var existing = JObject.Parse(File.ReadAllText(deviceJsonPath));
-                        int existingLed = existing.SelectToken("LedsFeature.LogicalTelemetryLeds.LedCount")?.Value<int>() ?? -1;
-                        int existingButtons = (existing.SelectToken("LedsFeature.LogicalButtonsSection.Items") as JArray)?.Count ?? -1;
-                        int existingExtra = existing.SelectToken("LedsFeature.LogicalExtraSection.LedCount")?.Value<int>() ?? 0;
-                        stale = existingLed != expectedTelemetryCount || existingButtons != buttonCount || existingExtra != knobCount;
-                    }
-                    catch (Exception parseEx)
-                    {
-                        MozaLog.Warn(
-                            $"[Moza] Could not parse existing device.json for '{deviceName}', rewriting: {parseEx.Message}");
-                        stale = true;
-                    }
-
-                    if (!stale)
-                        return;
-                }
-
-                Directory.CreateDirectory(deviceDir);
-
-                // Registry-based discovery always populates DiscoveredPid when
-                // we successfully connected. Fallback only matters if the file
-                // is generated before the first connect — use 0x0006 (R9
-                // wheelbase, the most common documented PID), not the prior
-                // 0x0004 placeholder that doesn't match any known device.
-                var pid = _connection.DiscoveredPid ?? "0x0006";
-                var json = GenerateWheelDeviceJson(guid, productName, rpmCount, hasFlagLeds, buttonCount, knobCount, pid);
-                File.WriteAllText(deviceJsonPath, json);
-
-                DeviceDefinitionDeployed = true;
-                string action = stale ? "Refreshed" : "Deployed";
-                MozaLog.Debug(
-                    $"[Moza] {action} device definition: {deviceName} " +
-                    $"(guid={guid}, telemetryLeds={expectedTelemetryCount}, rpm={rpmCount}, flags={hasFlagLeds}, " +
-                    $"buttons={buttonCount}, knobs={knobCount}, pid={pid}, restart SimHub to pick up changes)");
-            }
-            catch (Exception ex)
-            {
-                MozaLog.Error($"[Moza] Error deploying device definition '{deviceName}': {ex.Message}");
-            }
-        }
-
-        private static string GenerateWheelDeviceJson(string guid, string productName, int rpmCount, bool hasFlagLeds, int buttonCount, int knobCount, string pid)
-        {
-            var physItems = new JArray();
-
-            // Telemetry LEDs: single contiguous sequence. When the wheel has flag LEDs
-            // they are 3-on-each-side of the RPM strip, so SimHub sees (rpmCount + 6)
-            // LEDs as one logical run: [flag 1..3][rpm 1..N][flag 4..6].
-            int telemetryCount = rpmCount + (hasFlagLeds ? 6 : 0);
-            physItems.Add(new JObject
-            {
-                ["SourceRole"] = 1,
-                ["SourceIndex"] = 0,
-                ["RepeatCount"] = telemetryCount,
-                ["RepeatMode"] = 1
-            });
-            for (int i = 1; i < telemetryCount; i++)
-                physItems.Add(new JObject());
-
-            // Button LEDs: buttonCount slots
-            physItems.Add(new JObject
-            {
-                ["SourceRole"] = 2,
-                ["SourceIndex"] = 0,
-                ["RepeatCount"] = buttonCount,
-                ["RepeatMode"] = 1
-            });
-            for (int i = 1; i < buttonCount; i++)
-                physItems.Add(new JObject());
-
-            // Knob indicator LEDs (Extra/encoders channel): one per rotary knob
-            if (knobCount > 0)
-            {
-                physItems.Add(new JObject
-                {
-                    ["SourceRole"] = 3,
-                    ["SourceIndex"] = 0,
-                    ["RepeatCount"] = knobCount,
-                    ["RepeatMode"] = 1
-                });
-                for (int i = 1; i < knobCount; i++)
-                    physItems.Add(new JObject());
-            }
-
-            var buttonItems = new JArray();
-            for (int i = 0; i < buttonCount; i++)
-            {
-                buttonItems.Add(new JObject
-                {
-                    ["Left"] = 20,
-                    ["Top"] = 20,
-                    ["Width"] = 40
-                });
-            }
-
-            var device = new JObject
-            {
-                ["DescriptorUniqueId"] = guid,
-                ["SchemaVersion"] = 1,
-                ["MinimumSimHubVersion"] = "9.11.8",
-                ["DeviceDescription"] = new JObject
-                {
-                    ["BrandName"] = "MOZA",
-                    ["ProductName"] = productName
-                },
-                ["LedsFeature"] = new JObject
-                {
-                    ["IsIndividualLedsSectionEnabled"] = true,
-                    ["PhysicalLedsMappings"] = new JObject { ["Items"] = physItems },
-                    ["LogicalTelemetryLeds"] = new JObject
-                    {
-                        ["LedCount"] = telemetryCount,
-                        ["Segments"] = hasFlagLeds
-                            ? new JArray(new JObject { ["Size"] = 3 })
-                            : new JArray(),
-                        ["IsEnabled"] = true
-                    },
-                    ["LogicalButtonsSection"] = new JObject
-                    {
-                        ["IsButtonEditorEnabled"] = false,
-                        ["Items"] = buttonItems,
-                        ["IsEnabled"] = true
-                    },
-                    ["LogicalExtraSection"] = knobCount > 0
-                        ? new JObject
-                        {
-                            ["LedCount"] = knobCount,
-                            ["TitleOverride"] = "Knob Indicators",
-                            ["IsEnabled"] = true
-                        }
-                        : new JObject { ["IsEnabled"] = false },
-                    ["IsEnabled"] = true
-                },
-                ["HardwareInterface"] = new JObject
-                {
-                    ["HardwareInterface"] = new JObject
-                    {
-                        ["TypeName"] = "LedsStandardHIDProtocol",
-                        ["HIDUsagePage"] = "0xFF00",
-                        ["HIDUsage"] = "0x77",
-                        ["HIDReportId"] = "0x68",
-                        ["HIDReportSize"] = 64,
-                        ["DeviceDetection"] = new JObject
-                        {
-                            ["Vid"] = "0x346E",
-                            ["Pid"] = pid
-                        }
-                    }
-                },
-                ["IsLocked"] = true
-            };
-
-            return device.ToString(Newtonsoft.Json.Formatting.Indented);
-        }
-
-        /// <summary>
-        /// Deploy the old-protocol wheel device definition.
-        /// Called once when an ES wheel is detected.
-        /// </summary>
-        private void DeployDeviceDefinitionForOldProto()
-        {
-            DeployDeviceDefinition("MOZA Old Protocol Wheel", "MozaPlugin.Devices.WheelOldProto.device.json");
-        }
-
-        private void DeployDeviceDefinition(string deviceName, string resourceName)
-        {
-            try
-            {
-                var simHubDir = AppDomain.CurrentDomain.BaseDirectory;
-                var userDefsDir = Path.Combine(simHubDir, "DevicesDefinitions", "User");
-                var deviceDir = Path.Combine(userDefsDir, deviceName);
-                var deviceJsonPath = Path.Combine(deviceDir, "device.json");
-
-                if (File.Exists(deviceJsonPath))
-                    return;
-
-                var assembly = Assembly.GetExecutingAssembly();
-                using (var stream = assembly.GetManifestResourceStream(resourceName))
-                {
-                    if (stream == null)
-                    {
-                        MozaLog.Warn($"[Moza] Embedded resource not found: {resourceName}");
-                        return;
-                    }
-
-                    Directory.CreateDirectory(deviceDir);
-
-                    // Read the template JSON and patch the PID if we discovered one
-                    string json;
-                    using (var reader = new StreamReader(stream))
-                    {
-                        json = reader.ReadToEnd();
-                    }
-
-                    var discoveredPid = _connection.DiscoveredPid;
-                    if (discoveredPid != null)
-                    {
-                        json = json.Replace("__DETECT_PID__", discoveredPid);
-                        MozaLog.Debug($"[Moza] Patched device PID to {discoveredPid} for {deviceName}");
-                    }
-                    else
-                    {
-                        // Fallback: no PID discovered (probe path under Wine
-                        // when registry discovery returned nothing). Use
-                        // 0x0006 (R9 wheelbase, the most common documented
-                        // PID) instead of the prior 0x0004 placeholder that
-                        // doesn't match any known device.
-                        json = json.Replace("__DETECT_PID__", "0x0006");
-                        MozaLog.Debug($"[Moza] No PID discovered, using fallback 0x0006 for {deviceName}");
-                    }
-
-                    File.WriteAllText(deviceJsonPath, json);
-                }
-
-                DeviceDefinitionDeployed = true;
-                MozaLog.Info($"[Moza] Deployed device definition: {deviceName} (restart SimHub to add it)");
-            }
-            catch (Exception ex)
-            {
-                MozaLog.Error($"[Moza] Error deploying device definition '{deviceName}': {ex.Message}");
-            }
         }
 
     }

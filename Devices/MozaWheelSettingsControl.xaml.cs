@@ -8,6 +8,7 @@ using System.Windows.Input;
 using System.Windows.Media;
 using System.Windows.Threading;
 using MozaPlugin.Telemetry;
+using MozaPlugin.UI;
 
 namespace MozaPlugin.Devices
 {
@@ -17,7 +18,8 @@ namespace MozaPlugin.Devices
         private MozaDeviceManager? _device;
         private MozaData? _data;
         private MozaPluginSettings? _settings;
-        private bool _suppressEvents;
+        private readonly EventSuppressor _suppressor = new EventSuppressor();
+        private bool _suppressEvents => _suppressor.Suppressed;
         private bool _swatchesBuilt;
 
         // Plugin instance we've attached DashboardSelectionChanged to. Tracked
@@ -73,13 +75,13 @@ namespace MozaPlugin.Devices
 
         public MozaWheelSettingsControl()
         {
-            _suppressEvents = true;
-            InitializeComponent();
+            using (_suppressor.Begin())
+            {
+                InitializeComponent();
 
-            if (ResolvePlugin())
-                BuildColorSwatches();
-
-            _suppressEvents = false;
+                if (ResolvePlugin())
+                    BuildColorSwatches();
+            }
 
             _refreshTimer = new DispatcherTimer { Interval = TimeSpan.FromMilliseconds(500) };
             _refreshTimer.Tick += OnRefreshTick;
@@ -582,8 +584,7 @@ namespace MozaPlugin.Devices
                 string hwVersion = _data.WheelHwVersion;
             }
 
-            _suppressEvents = true;
-            try
+            using (_suppressor.Begin())
             {
                 bool anyWheel = newWheel || oldWheel;
                 WheelNotDetectedPanel.Visibility = anyWheel ? Visibility.Collapsed : Visibility.Visible;
@@ -761,10 +762,6 @@ namespace MozaPlugin.Devices
                         SetComboSafe(EsRpmIndicatorCombo, EsIndicatorToDisplay[storedIndicator]);
                     SetComboSafe(EsRpmDisplayCombo, _data.WheelRpmDisplayMode);
                 }
-            }
-            finally
-            {
-                _suppressEvents = false;
             }
         }
 
@@ -1062,8 +1059,7 @@ namespace MozaPlugin.Devices
             if (_telemetryUIInitialized || _plugin == null) return;
             _telemetryUIInitialized = true;
 
-            _suppressEvents = true;
-            try
+            using (_suppressor.Begin())
             {
                 var s = _plugin.Settings;
                 TelemetryEnabledCheck.IsChecked = s.TelemetryEnabled;
@@ -1071,10 +1067,6 @@ namespace MozaPlugin.Devices
                 PopulateDashboardCombo();
                 UpdateTelemetryProfileInfo();
                 UpdateFolderInfo();
-            }
-            finally
-            {
-                _suppressEvents = false;
             }
         }
 
@@ -1087,8 +1079,7 @@ namespace MozaPlugin.Devices
         {
             if (_plugin == null) return;
 
-            _suppressEvents = true;
-            try
+            using (_suppressor.Begin())
             {
                 TelemetryProfileCombo.Items.Clear();
 
@@ -1131,10 +1122,6 @@ namespace MozaPlugin.Devices
                 }
                 if (TelemetryProfileCombo.SelectedIndex < 0 && TelemetryProfileCombo.Items.Count > 0)
                     TelemetryProfileCombo.SelectedIndex = 0;
-            }
-            finally
-            {
-                _suppressEvents = false;
             }
         }
 
@@ -1355,22 +1342,23 @@ namespace MozaPlugin.Devices
             _plugin.SaveSettings();
             _plugin.OnActiveDashboardChanged();
 
-            _suppressEvents = true;
-            // Drop any stale [Custom: ...] entry so the dropdown doesn't keep
-            // showing a previously-loaded mzdash filename.
-            for (int i = TelemetryProfileCombo.Items.Count - 1; i >= 0; i--)
-                if (TelemetryProfileCombo.Items[i]?.ToString()?.StartsWith("[Custom:") == true)
-                    TelemetryProfileCombo.Items.RemoveAt(i);
-            // Select "(none)".
-            for (int i = 0; i < TelemetryProfileCombo.Items.Count; i++)
+            using (_suppressor.Begin())
             {
-                if (TelemetryProfileCombo.Items[i]?.ToString() == "(none)")
+                // Drop any stale [Custom: ...] entry so the dropdown doesn't keep
+                // showing a previously-loaded mzdash filename.
+                for (int i = TelemetryProfileCombo.Items.Count - 1; i >= 0; i--)
+                    if (TelemetryProfileCombo.Items[i]?.ToString()?.StartsWith("[Custom:") == true)
+                        TelemetryProfileCombo.Items.RemoveAt(i);
+                // Select "(none)".
+                for (int i = 0; i < TelemetryProfileCombo.Items.Count; i++)
                 {
-                    TelemetryProfileCombo.SelectedIndex = i;
-                    break;
+                    if (TelemetryProfileCombo.Items[i]?.ToString() == "(none)")
+                    {
+                        TelemetryProfileCombo.SelectedIndex = i;
+                        break;
+                    }
                 }
             }
-            _suppressEvents = false;
 
             UpdateTelemetryProfileInfo();
             if (TelemetryMappingsExpander.IsExpanded) PopulateChannelMappingGrid();
@@ -1394,14 +1382,15 @@ namespace MozaPlugin.Devices
             // mid-game dash-change burst on session 0x01.
             _plugin.OnActiveDashboardChanged();
 
-            _suppressEvents = true;
-            string label = "[Custom: " + System.IO.Path.GetFileName(dlg.FileName) + "]";
-            for (int i = TelemetryProfileCombo.Items.Count - 1; i >= 0; i--)
-                if (TelemetryProfileCombo.Items[i]?.ToString()?.StartsWith("[Custom:") == true)
-                    TelemetryProfileCombo.Items.RemoveAt(i);
-            TelemetryProfileCombo.Items.Add(label);
-            TelemetryProfileCombo.SelectedIndex = TelemetryProfileCombo.Items.Count - 1;
-            _suppressEvents = false;
+            using (_suppressor.Begin())
+            {
+                string label = "[Custom: " + System.IO.Path.GetFileName(dlg.FileName) + "]";
+                for (int i = TelemetryProfileCombo.Items.Count - 1; i >= 0; i--)
+                    if (TelemetryProfileCombo.Items[i]?.ToString()?.StartsWith("[Custom:") == true)
+                        TelemetryProfileCombo.Items.RemoveAt(i);
+                TelemetryProfileCombo.Items.Add(label);
+                TelemetryProfileCombo.SelectedIndex = TelemetryProfileCombo.Items.Count - 1;
+            }
 
             UpdateTelemetryProfileInfo();
             if (TelemetryMappingsExpander.IsExpanded) PopulateChannelMappingGrid();
