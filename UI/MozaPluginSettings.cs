@@ -193,6 +193,17 @@ namespace MozaPlugin
         public Dictionary<string, string> WheelMzdashFolderByUid { get; set; }
             = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
 
+        // Per-wheel dashboard telemetry slot. Keyed by lowercase 24-char wheel MCU UID
+        // hex (same key shape as WheelMzdashFolderByUid). Each entry stores the
+        // dashboard profile selection for that physical wheel so a VGS profile
+        // does not bleed onto a displayless wheel (CS V2.1, etc.) when the user
+        // hot-swaps. Read/written ONLY after the wheel-mcu-uid response populates
+        // MozaData.WheelMcuUid — never during plugin init, never during
+        // MozaWheelDeviceExtension.ApplyWheelExtensionSettings (the wheel hasn't
+        // identified itself at those points, so any key would collapse to "").
+        public Dictionary<string, TelemetryWheelSlot> TelemetryByWheelUid { get; set; }
+            = new Dictionary<string, TelemetryWheelSlot>(StringComparer.OrdinalIgnoreCase);
+
         // Byte limit override (0 = auto from profile)
         public int TelemetryByteLimitOverride { get; set; } = 0;
 
@@ -413,6 +424,23 @@ namespace MozaPlugin
                 WheelSleepColor           = slot.WheelSleepColor;
             }
         }
+    }
+
+    /// <summary>
+    /// Per-physical-wheel dashboard-telemetry slot. Keyed by MCU UID (24-char hex)
+    /// inside <see cref="MozaPluginSettings.TelemetryByWheelUid"/>. Holds the
+    /// dashboard profile selection for one specific physical wheel; lets the user
+    /// keep a VGS configured for "DNR endurance" while leaving a CS V2.1 with no
+    /// dashboard, even when both extensions are registered in SimHub at the same
+    /// time. UID-keyed rather than model-keyed so two wheels of the same model
+    /// can carry different profiles, and so the slot is never written before the
+    /// wheel has identified itself on the serial bus.
+    /// </summary>
+    public class TelemetryWheelSlot
+    {
+        public bool TelemetryEnabled { get; set; }
+        public string TelemetryProfileName { get; set; } = "";
+        public string TelemetryMzdashPath { get; set; } = "";
     }
 
     /// <summary>

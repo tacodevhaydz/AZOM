@@ -751,6 +751,16 @@ namespace MozaPlugin.Telemetry
 
         private DashboardSwitchAutoTest? _autoTest;
 
+        /// <summary>
+        /// Raised once when the sess=0x09 retry budget exhausts and the dashboard
+        /// pipeline is parked. The plugin uses this to clear its
+        /// <c>_telemetryStartRequested</c> gate so a future
+        /// <c>StartTelemetryIfReady</c> (e.g. wheel hot-swap, user toggle) can
+        /// re-attempt cleanly. Fires after the sender has called <see cref="Stop"/>
+        /// internally.
+        /// </summary>
+        public event EventHandler? DashboardPipelineParked;
+
         public TelemetrySender(MozaSerialConnection connection)
         {
             _connection = connection;
@@ -1338,11 +1348,12 @@ namespace MozaPlugin.Telemetry
         /// display elements — symptom: switch is visual but new dash never
         /// shows test data.
         ///
-        /// kind=8 / kind=11 are replayed verbatim from
-        /// `Resources/sess02_init_kind8_pithouse.bin` (2059 B) and
-        /// `sess02_init_kind11_pithouse.bin` (2581 B), extracted from
-        /// `bridge-20260429-163951.jsonl`. CRCs already valid; do not
-        /// re-wrap. kind=2 timestamp is regenerated to current Unix time.
+        /// kind=2 timestamp is regenerated to the current Unix time. kind=8
+        /// and kind=11 are NOT emitted — see docs/protocol/sessions/
+        /// session-0x02-ff-init.md before adding them. Verbatim replay of
+        /// captured kind=8/11 bytes was tested 2026-05-13 and locked the
+        /// wheel (required power-cycle); the records carry session-bound
+        /// state and have to be regenerated per cold-start, not replayed.
         /// </summary>
         private void SendSessionInitHandshake()
         {
@@ -1355,6 +1366,10 @@ namespace MozaPlugin.Telemetry
             byte[] init7 = global::MozaPlugin.Protocol.SessionPropertyPushBuilder
                 .BuildSessionInitField7Body(slotIndex: 0u);
             SendSessionPropertyBody(init7);
+
+            // kind=8 / kind=11 deliberately not emitted — see method-level
+            // comment above and docs/protocol/sessions/session-0x02-ff-init.md
+            // for the required body-decode work before re-attempting.
 
             MozaLog.Debug(
                 $"[Moza] Sent sess=0x02 init handshake (kind=2 nonce + kind=7 slot=0); " +
@@ -3215,8 +3230,25 @@ namespace MozaPlugin.Telemetry
             {
                 MozaLog.Warn(
                     $"[Moza] sess=0x09 retry budget exhausted after {S09RetryMaxRounds} rounds " +
-                    "— wheel will not engage configJson handshake. Dashboard rendering may fail. " +
-                    "Recovery: disable+re-enable plugin.");
+                    "— wheel never engaged the configJson handshake. Parking dashboard pipeline " +
+                    "(closing sessions 0x01/0x02/0x03, transitioning to Idle) to prevent port wedge. " +
+                    "Cause is usually a wheel with no display sub-device or a wheel that refused the " +
+                    "dashboard session — common for displayless wheels that slipped past the static " +
+                    "HasDisplay gate. A wheel hot-swap or telemetry toggle will re-attempt.");
+                // Latch the rounds counter past the max so the next tick's
+                // gate check (line above) early-returns and we don't re-park.
+                // Defer Stop() to a worker thread so the rest of the current
+                // tick (TickConfigJsonStuckWatchdog, TickEmitWidgetPoll, etc.)
+                // can complete without operating on torn-down state.
+                System.Threading.ThreadPool.QueueUserWorkItem(_ =>
+                {
+                    try { Stop(); }
+                    catch (Exception ex)
+                    {
+                        MozaLog.Warn($"[Moza] sess=0x09 park Stop() raised: {ex.GetType().Name}: {ex.Message}");
+                    }
+                    try { DashboardPipelineParked?.Invoke(this, EventArgs.Empty); } catch { }
+                });
             }
         }
 

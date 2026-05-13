@@ -1,5 +1,12 @@
 # Session 0x02 FF-record kinds — protocol reference
 
+> **Canonical reference:** [`../sessions/session-0x02-ff-init.md`](../sessions/session-0x02-ff-init.md).
+> This file is investigation-era body-decoding detail used to derive the
+> canonical protocol doc; consult the canonical doc first for the
+> handshake structure, the kind=2/7/8/11 plugin status, and the
+> verified-broken shortcut of replaying captured kind=8/11 bytes
+> (locked a W17 wheel 2026-05-13).
+
 Date: 2026-05-07. Source: bridge captures from the user's own wheel hardware
 captured against a Windows PitHouse instance, located in `sim/logs/`, primarily
 `bridge-20260429-163951.jsonl` (Rally V4 + Nebula, ~344 K frames, includes
@@ -284,6 +291,18 @@ Brief observations; each warrants its own note when used:
 4. **What is the structure of kind=8 sub-format B?** Strict parser halts;
    need a careful walk to fully decode the wheel-config records.
 
-5. **Does the wheel echo kind=4 if we send the captured kind=2/7/8/11
-   bytes verbatim?** Concrete experiment that would close the loop on
-   whether content-correctness is the gate.
+5. ~~**Does the wheel echo kind=4 if we send the captured kind=2/7/8/11
+   bytes verbatim?**~~ — ANSWERED 2026-05-13. **Partial yes for the
+   first emission, then the wheel locks.** Plugin briefly shipped the
+   captured kind=8 + kind=11 bytes via `SendSessionInitHandshake` on a
+   W17 / CS Pro wheel. The first emission engaged kind=4 echoing and
+   the user successfully switched dashboards through three slot
+   selections (`slot=1 → slot=2 → slot=0`) over ~5 minutes. On the
+   third Stop+Start cycle the wheel locked into a state where it
+   stopped responding to any command and required a physical
+   power-cycle. Diag bundle:
+   `~/CS-Pro-moza-diagnostics-bundle-20260513-122621.zip`. The .bin
+   files therefore carry session-bound state we have to regenerate
+   per-cold-start rather than replay. See
+   [`../sessions/session-0x02-ff-init.md`](../sessions/session-0x02-ff-init.md)
+   for the required-work list before re-attempting emission.

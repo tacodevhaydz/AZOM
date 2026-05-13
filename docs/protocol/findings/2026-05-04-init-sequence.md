@@ -1,5 +1,15 @@
 # PitHouse cold-start init sequence + FF record kind inventory (Phase 0 deliverable)
 
+> **Canonical reference:** [`../sessions/session-0x02-ff-init.md`](../sessions/session-0x02-ff-init.md).
+> The implementation plan in §"Phase 4: WheelHandshakeOp" below was
+> partially attempted 2026-05-13 on the legacy `TelemetrySender` path
+> (not the Telemetry2 refactor) by emitting captured kind=8/11 bytes
+> verbatim. Result: the W17 wheel locked after a few restart cycles and
+> required a physical power-cycle. The .bin files contain session-bound
+> state; replaying them across sessions is a verified dead-end. Before
+> re-attempting, see the canonical doc for the required body-decode
+> work-list.
+
 This is the byte-exact reference for the new `Telemetry2/Operations/WheelHandshakeOp` (Phase 4 of the refactor plan) and `Telemetry2/Protocol/FfRecordBuilder` (Phase 3). It documents what FF records PitHouse sends at session start, in what order, with what byte content, on which session.
 
 ## Critical correction vs HANDOVER-INVESTIGATION.md

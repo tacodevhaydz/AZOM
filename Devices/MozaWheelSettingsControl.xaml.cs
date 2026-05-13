@@ -585,7 +585,10 @@ namespace MozaPlugin.Devices
                 WheelNotDetectedPanel.Visibility = anyWheel ? Visibility.Collapsed : Visibility.Visible;
 
                 var modelInfoForTabs = newWheel ? _plugin?.WheelModelInfo : null;
-                bool showTelemetry = newWheel && (_plugin?.IsDisplayDetected ?? false);
+                // Tri-state display gate: known-display wheels (HasDisplay==true) show the
+                // dashboard tab immediately on connect; known-no-display wheels (false) never
+                // show it; unknown models defer to the runtime IsDisplayDetected probe.
+                bool showTelemetry = newWheel && (_plugin?.ShouldDriveDashboard() ?? false);
                 bool showButtonsTab = newWheel && (modelInfoForTabs?.ButtonLedCount ?? 0) > 0;
                 bool showKnobsTab = newWheel && (modelInfoForTabs?.KnobCount ?? 0) > 0;
 

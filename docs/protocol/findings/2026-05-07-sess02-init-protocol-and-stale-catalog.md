@@ -1,5 +1,12 @@
 # Post-switch silence: stale-catalog tier-def + missing sess=02 init protocol
 
+> **Canonical reference:** [`../sessions/session-0x02-ff-init.md`](../sessions/session-0x02-ff-init.md)
+> covers the sess=0x02 init handshake authoritatively, including the
+> verified-broken shortcut of replaying captured kind=8/11 bytes
+> (locked a W17 wheel 2026-05-13 — required power-cycle). Body-decode
+> details supporting the canonical doc live in
+> [`2026-05-07-sess02-ff-kinds-reference.md`](2026-05-07-sess02-ff-kinds-reference.md).
+
 Date: 2026-05-07. Scope: investigation only — no code changes proposed
 without further approval.
 

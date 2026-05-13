@@ -315,6 +315,23 @@ namespace MozaPlugin
             || (_data?.DisplayMcuUid?.Length ?? 0) > 0
             || (_telemetrySender?.DisplayDetected ?? false);
 
+        /// <summary>
+        /// Whether the plugin should drive the dashboard telemetry pipeline for the
+        /// currently-detected wheel. Authoritative answer for known wheel models
+        /// (<see cref="Devices.WheelModelInfo.HasDisplay"/> is true/false); for
+        /// unknown wheels (HasDisplay==null) falls back to the runtime
+        /// <see cref="IsDisplayDetected"/> probe.
+        /// Used both to gate <see cref="StartTelemetryIfReady"/> and to control the
+        /// dashboard-telemetry UI section visibility.
+        /// </summary>
+        internal bool ShouldDriveDashboard()
+        {
+            bool? hasDisplay = WheelModelInfo?.HasDisplay;
+            if (hasDisplay == false) return false;   // known no-display: never
+            if (hasDisplay == true)  return true;    // known display: don't wait for probe
+            return IsDisplayDetected;                // unknown model: trust the probe
+        }
+
         /// <summary>Display sub-device model name (e.g. "W18 Display"), or empty.</summary>
         internal string DisplayModelName =>
             !string.IsNullOrEmpty(_data?.DisplayModelName)
@@ -513,6 +530,14 @@ namespace MozaPlugin
                 else
                 {
                     _telemetrySender = new TelemetrySender(_connection);
+                    // Reset the start-request gate when the dashboard pipeline parks
+                    // itself (sess=0x09 retry exhaust). Without this clear, the next
+                    // wheel hot-swap or user toggle would early-out in
+                    // StartTelemetryIfReady() because the gate is still latched at 1.
+                    _telemetrySender.DashboardPipelineParked += (_, __) =>
+                    {
+                        Interlocked.Exchange(ref _telemetryStartRequested, 0);
+                    };
                 }
 
                 // Initialize dashboard cache for download-on-connect.
@@ -799,6 +824,21 @@ namespace MozaPlugin
             // so each physical wheel keeps its own brightness/mode/input settings
             // across reloads (see MozaPluginSettings.PerWheelSlots).
             _settings.MirrorActiveToSlot(_data?.WheelModelName);
+            // Mirror dashboard telemetry settings into the per-UID slot so the
+            // active profile follows the physical wheel across hot-swaps. Skipped
+            // entirely if the wheel hasn't identified itself (UID empty) — we'd
+            // otherwise collapse to the "" key and bleed settings between wheels.
+            var uid = _data?.WheelMcuUid;
+            if (uid != null && uid.Length == 12 && _settings.TelemetryByWheelUid != null)
+            {
+                string uidHex = BitConverter.ToString(uid).Replace("-", "").ToLowerInvariant();
+                _settings.TelemetryByWheelUid[uidHex] = new TelemetryWheelSlot
+                {
+                    TelemetryEnabled     = _settings.TelemetryEnabled,
+                    TelemetryProfileName = _settings.TelemetryProfileName ?? "",
+                    TelemetryMzdashPath  = _settings.TelemetryMzdashPath  ?? "",
+                };
+            }
             ScheduleSave();
         }
 
@@ -1891,6 +1931,19 @@ namespace MozaPlugin
             if (!_settings.TelemetryEnabled) return;
             if (!_connection.IsConnected) return;
             if (!_newWheelDetected && !_oldWheelDetected) return;
+            // Capability gate: known displayless wheels (CS V2.1, GS V2P, etc.)
+            // never get the dashboard pipeline. For unknown models falls back to
+            // the runtime display probe; if the probe also stays silent the
+            // sess=0x09 retry-exhaust path in TelemetrySender parks the pipeline
+            // before it can wedge the port.
+            if (!ShouldDriveDashboard())
+            {
+                MozaLog.Info(
+                    $"[Moza] Wheel '{_data?.WheelModelName}' has no display " +
+                    $"(HasDisplay={WheelModelInfo?.HasDisplay?.ToString() ?? "unknown"}, " +
+                    $"probe={IsDisplayDetected}) — skipping dashboard telemetry start");
+                return;
+            }
             // Profile may be null when no .mzdash is loaded and no builtin
             // profiles are bundled. Sender starts anyway; preamble parses the
             // wheel-advertised catalog (Type02 firmware pushes it unconditionally)
@@ -2528,6 +2581,77 @@ namespace MozaPlugin
                     }
                 }
 
+                // Per-wheel dashboard telemetry slot. UID-keyed so the VGS profile
+                // doesn't follow a CS V2.1 across hot-swaps. This is the EARLIEST
+                // point where it's safe to read/write the slot — the wheel has now
+                // self-identified, so no risk of collapsing onto the "" key.
+                if (_data.WheelMcuUid.Length == 12 && _settings.TelemetryByWheelUid != null)
+                {
+                    string uidHex = BitConverter.ToString(_data.WheelMcuUid).Replace("-", "").ToLowerInvariant();
+                    bool slotChanged = false;
+                    if (_settings.TelemetryByWheelUid.TryGetValue(uidHex, out var slot) && slot != null)
+                    {
+                        // Existing slot wins over the in-memory flat fields, which
+                        // may still belong to the previously-connected wheel.
+                        MozaLog.Debug(
+                            $"[Moza] Per-wheel telemetry slot loaded for {uidHex}: " +
+                            $"enabled={slot.TelemetryEnabled}, profile='{slot.TelemetryProfileName}', mzdash='{slot.TelemetryMzdashPath}'");
+                        _settings.TelemetryEnabled     = slot.TelemetryEnabled;
+                        _settings.TelemetryProfileName = slot.TelemetryProfileName ?? "";
+                        _settings.TelemetryMzdashPath  = slot.TelemetryMzdashPath  ?? "";
+                        slotChanged = true;
+                    }
+                    else if (!string.IsNullOrEmpty(_settings.TelemetryProfileName)
+                             || !string.IsNullOrEmpty(_settings.TelemetryMzdashPath)
+                             || _settings.TelemetryEnabled)
+                    {
+                        // First-touch seeding: upgrading from a pre-UID-slot build
+                        // (or first time this wheel has been connected since the
+                        // feature shipped). Attach the current flat selection to
+                        // this wheel's UID once, then save. Future connects of a
+                        // different wheel won't inherit this selection because the
+                        // flat fields will have been overwritten by THAT wheel's
+                        // slot (or left empty if it has none).
+                        _settings.TelemetryByWheelUid[uidHex] = new TelemetryWheelSlot
+                        {
+                            TelemetryEnabled     = _settings.TelemetryEnabled,
+                            TelemetryProfileName = _settings.TelemetryProfileName ?? "",
+                            TelemetryMzdashPath  = _settings.TelemetryMzdashPath  ?? "",
+                        };
+                        MozaLog.Debug(
+                            $"[Moza] Per-wheel telemetry slot seeded for {uidHex} from flat: " +
+                            $"enabled={_settings.TelemetryEnabled}, profile='{_settings.TelemetryProfileName}', mzdash='{_settings.TelemetryMzdashPath}'");
+                        slotChanged = true;
+                    }
+
+                    // HasDisplay==false override. Forces telemetry off for known
+                    // displayless wheels regardless of what's in the slot — defends
+                    // against a slot hand-edited to enable telemetry on a wheel
+                    // that physically can't render it.
+                    if (WheelModelInfo?.HasDisplay == false && _settings.TelemetryEnabled)
+                    {
+                        MozaLog.Info(
+                            $"[Moza] Wheel '{_data.WheelModelName}' has no display (UID {uidHex}) " +
+                            $"— forcing TelemetryEnabled=false");
+                        _settings.TelemetryEnabled = false;
+                        if (_settings.TelemetryByWheelUid.TryGetValue(uidHex, out var s) && s != null && s.TelemetryEnabled)
+                        {
+                            s.TelemetryEnabled = false;
+                            slotChanged = true;
+                        }
+                    }
+
+                    if (slotChanged)
+                    {
+                        SaveSettings();
+                        try { ApplyTelemetrySettings(); }
+                        catch (Exception ex)
+                        {
+                            MozaLog.Warn($"[Moza] ApplyTelemetrySettings after UID slot load failed: {ex.Message}");
+                        }
+                    }
+                }
+
                 return;
             }
             if (commandName == "display-mcu-uid" && _data.DisplayMcuUid.Length > 0)
@@ -2599,7 +2723,13 @@ namespace MozaPlugin
                         _deviceManager.SendDisplayProbe();
                         _deviceManager.ReadSettingsPaced(NewWheelSettingsReadCommands);
                         MozaLog.Info($"[Moza] New-protocol wheel detected on ID {deviceId}");
-                        StartTelemetryIfReady();
+                        // Telemetry start is deferred until the wheel-model-name
+                        // response is processed (see the "wheel-model-name" case
+                        // below). Calling StartTelemetryIfReady() here would run
+                        // ShouldDriveDashboard() against a null WheelModelInfo and
+                        // an unanswered display probe, so the gate would skip
+                        // dashboard for every new-protocol wheel — including ones
+                        // with a display.
                     }
                     else if (deviceId != _deviceManager.WheelDeviceId)
                     {
@@ -2656,6 +2786,14 @@ namespace MozaPlugin
                             MozaProfile.UnpackColorsInto(_settings.WheelKnobPrimaryColors,    _data.WheelKnobPrimaryColors);
                             WriteKnobColors(_settings.WheelKnobBackgroundColors, _settings.WheelKnobPrimaryColors);
                             // Ring colors pushed after Group 3 is detected (via PollStatus read trigger)
+
+                            // Now that the wheel has identified itself, the
+                            // capability gate (ShouldDriveDashboard) has real
+                            // input and StartTelemetryIfReady can make the
+                            // correct keep-or-skip decision. Deferred from
+                            // the deviceId-detection site above which fires
+                            // before this response lands.
+                            StartTelemetryIfReady();
                         }
                     }
                     else
@@ -2717,7 +2855,17 @@ namespace MozaPlugin
                 // Display sub-device identity responses (wrapped via 0x43)
                 case "display-model-name":
                     if (!string.IsNullOrEmpty(_data.DisplayModelName))
+                    {
                         MozaLog.Debug($"[Moza] Display model: {_data.DisplayModelName}");
+                        // For wheels not in KnownModels (WheelModelInfo.HasDisplay==null),
+                        // the display probe response is the authoritative "wheel has a
+                        // display" signal. Trigger StartTelemetryIfReady here so the
+                        // ShouldDriveDashboard() fallback path (HasDisplay==null →
+                        // IsDisplayDetected) actually starts the pipeline once the probe
+                        // lands. No-op for known wheels — those started in the
+                        // wheel-model-name handler.
+                        StartTelemetryIfReady();
+                    }
                     break;
                 case "display-hw-version":
                     if (!string.IsNullOrEmpty(_data.DisplayHwVersion))
@@ -3771,8 +3919,20 @@ namespace MozaPlugin
 
             PersistSettings();
 
-            // Apply telemetry settings if present in this profile
-            if (extSettings.TelemetrySettingsPresent)
+            // Telemetry settings carried inside the extension blob were the
+            // historical bleed source: SimHub invokes SetSettings on EVERY
+            // registered wheel extension at startup, each one calling here
+            // before any wheel has self-identified. The first extension would
+            // push the global TelemetryProfileName into the active sender,
+            // even if the physical wheel turned out to be a different model.
+            //
+            // Gate strictly on modelMatches: only an extension that OWNS the
+            // currently-connected wheel may push live telemetry state. The
+            // init-time case (no wheel connected, activeModel empty) falls
+            // through here without touching the sender; the wheel-mcu-uid
+            // handler in DetectDevices is the authoritative entry point that
+            // loads the per-UID slot once the wheel identifies itself.
+            if (extSettings.TelemetrySettingsPresent && modelMatches)
             {
                 if (_settings.TelemetryEnabled)
                 {
