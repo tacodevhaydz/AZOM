@@ -1443,12 +1443,20 @@ namespace MozaPlugin.Devices
 
             if (!string.IsNullOrEmpty(uidHex))
             {
-                string candidate = System.IO.Path.Combine(dashesRoot, uidHex);
-                if (System.IO.Directory.Exists(candidate))
-                    picked = candidate;
+                // Match the UID-named subfolder case-insensitively. PitHouse
+                // normalizes these to lowercase, but a case-sensitive FS
+                // (Linux/Wine, case-sensitive NTFS) would still miss a
+                // mismatched case from older installs or manual copies.
+                string? match = System.IO.Directory.EnumerateDirectories(dashesRoot)
+                    .FirstOrDefault(p => string.Equals(
+                        new System.IO.DirectoryInfo(p).Name,
+                        uidHex,
+                        StringComparison.OrdinalIgnoreCase));
+                if (match != null)
+                    picked = match;
                 else
                     failReason = $"No dashboard folder for the connected wheel (UID {uidHex}).\n" +
-                                 $"Looked for:\n{candidate}\n\n" +
+                                 $"Looked under:\n{dashesRoot}\n\n" +
                                  "Open a dashboard in MOZA Pit House for this wheel first.";
             }
             else
