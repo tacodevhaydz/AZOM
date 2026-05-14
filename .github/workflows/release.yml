@@ -64,3 +64,31 @@ jobs:
         with:
           fail_on_unmatched_files: true
           files: ${{ env.ReleaseFileName }}
+
+      - name: Notify Discord
+        if: success()
+        env:
+          DISCORD_WEBHOOK_URL: ${{ secrets.DISCORD_RELEASE_WEBHOOK_URL }}
+          TAG: ${{ github.ref_name }}
+          GH_TOKEN: ${{ github.token }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          if [ -z "${DISCORD_WEBHOOK_URL:-}" ]; then
+            echo "DISCORD_RELEASE_WEBHOOK_URL not set; skipping notification."
+            exit 0
+          fi
+          release_url="https://github.com/${GITHUB_REPOSITORY}/releases/tag/${TAG}"
+          commit_url="https://github.com/${GITHUB_REPOSITORY}/commit/${GITHUB_SHA}"
+          short_sha="${GITHUB_SHA:0:7}"
+          built=$(date -u +'%Y-%m-%dT%H:%M:%SZ')
+          commit_subject=$(gh api "repos/${GITHUB_REPOSITORY}/commits/${GITHUB_SHA}" \
+            --jq '.commit.message' | head -n1)
+          description=$(printf '**Tag:** `%s`\n**Commit:** [`%s`](%s) — %s\n**Built:** %s\n[View release notes](%s)' \
+            "$TAG" "$short_sha" "$commit_url" "$commit_subject" "$built" "$release_url")
+          payload=$(jq -n \
+            --arg title "Moza SimHub Plugin — release $TAG" \
+            --arg url "$release_url" \
+            --arg desc "$description" \
+            '{embeds: [{title: $title, url: $url, description: $desc, color: 3066993}]}')
+          curl -sS -f -H "Content-Type: application/json" -X POST -d "$payload" "$DISCORD_WEBHOOK_URL"

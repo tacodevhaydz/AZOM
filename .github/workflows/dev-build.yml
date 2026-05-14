@@ -111,19 +111,58 @@ jobs:
             **Changes since ${{ steps.vars.outputs.latest_tag }}:** https://github.com/${{ github.repository }}/compare/${{ steps.vars.outputs.latest_tag }}...${{ github.sha }}
             **Pinned tag for this build:** [`dev-${{ steps.vars.outputs.short_sha }}`](https://github.com/${{ github.repository }}/releases/tag/dev-${{ steps.vars.outputs.short_sha }})
 
-      - name: Prune dev-<sha> releases older than 60 days
+      - name: Notify Discord
+        if: success()
+        env:
+          DISCORD_WEBHOOK_URL: ${{ secrets.DISCORD_WEBHOOK_URL }}
+          SHORT_SHA: ${{ steps.vars.outputs.short_sha }}
+          DEV_VERSION: ${{ steps.vars.outputs.dev_version }}
+          COMMIT_SUBJECT: ${{ steps.vars.outputs.commit_subject }}
+          BUILT: ${{ steps.vars.outputs.build_timestamp }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          if [ -z "${DISCORD_WEBHOOK_URL:-}" ]; then
+            echo "DISCORD_WEBHOOK_URL not set; skipping notification."
+            exit 0
+          fi
+          release_url="https://github.com/${GITHUB_REPOSITORY}/releases/tag/dev-${SHORT_SHA}"
+          commit_url="https://github.com/${GITHUB_REPOSITORY}/commit/${GITHUB_SHA}"
+          description=$(printf '**Commit:** [`%s`](%s) — %s\n**Built:** %s\n[Download release](%s)' \
+            "$SHORT_SHA" "$commit_url" "$COMMIT_SUBJECT" "$BUILT" "$release_url")
+          payload=$(jq -n \
+            --arg title "Moza SimHub Plugin — dev build $DEV_VERSION" \
+            --arg url "$release_url" \
+            --arg desc "$description" \
+            '{embeds: [{title: $title, url: $url, description: $desc, color: 3447003}]}')
+          curl -sS -f -H "Content-Type: application/json" -X POST -d "$payload" "$DISCORD_WEBHOOK_URL"
+
+      - name: Prune dev-<sha> releases superseded by a stable
         env:
           GH_TOKEN: ${{ github.token }}
         shell: bash
         run: |
-          cutoff=$(date -u -d '60 days ago' +%s)
+          set -euo pipefail
+          latest_stable=$(gh release list --repo "$GITHUB_REPOSITORY" --limit 500 \
+            --json tagName \
+            --jq '.[] | select(.tagName | test("^v[0-9]+\\.[0-9]+\\.[0-9]+$")) | .tagName' \
+            | sort -V | tail -n1)
+          if [ -z "$latest_stable" ]; then
+            echo "No stable release found; skipping prune."
+            exit 0
+          fi
+          latest_ver=${latest_stable#v}
+          echo "Latest stable: v$latest_ver"
           gh release list --repo "$GITHUB_REPOSITORY" --limit 500 \
-            --json tagName,createdAt \
-            --jq '.[] | select(.tagName | test("^dev-[0-9a-f]{7}$")) | "\(.tagName) \(.createdAt)"' \
-          | while read -r tag created; do
-              created_ts=$(date -u -d "$created" +%s)
-              if [ "$created_ts" -lt "$cutoff" ]; then
-                echo "Pruning $tag (created $created)"
+            --json tagName,name \
+            --jq '.[] | select(.tagName | test("^dev-[0-9a-f]{7}$")) | "\(.tagName)\t\(.name)"' \
+          | while IFS=$'\t' read -r tag name; do
+              family="${name%-dev.*}"
+              highest=$(printf '%s\n%s\n' "$family" "$latest_ver" | sort -V | tail -n1)
+              if [ "$highest" = "$latest_ver" ]; then
+                echo "Pruning $tag ($name) — superseded by v$latest_ver"
                 gh release delete "$tag" --yes --cleanup-tag --repo "$GITHUB_REPOSITORY" || true
+              else
+                echo "Keeping $tag ($name) — current cycle (>$latest_ver)"
               fi
             done
