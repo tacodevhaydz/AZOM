@@ -36,6 +36,8 @@ jobs:
       - name: Compute dev version
         id: vars
         shell: bash
+        env:
+          PUSH_BEFORE: ${{ github.event.before }}
         run: |
           short_sha="${GITHUB_SHA::7}"
           latest_tag=$(git tag --list 'v*' --sort=-v:refname | head -n1)
@@ -43,13 +45,38 @@ jobs:
           IFS=. read -r MAJ MIN PAT <<<"${latest_tag#v}"
           next="${MAJ}.${MIN}.$((PAT+1))"
           dev_version="${next}-dev.${short_sha}"
-          commit_subject=$(git log -1 --pretty=%s)
+
+          # Determine the commit range for this push. PUSH_BEFORE is the
+          # previous branch tip on push events; it's all-zeros on the first
+          # push to a new branch and empty for workflow_dispatch. A force-push
+          # leaves the previous tip unreachable, so verify before using it.
+          if [[ -z "$PUSH_BEFORE" || "$PUSH_BEFORE" =~ ^0+$ ]] \
+             || ! git rev-parse --verify "${PUSH_BEFORE}^{commit}" >/dev/null 2>&1; then
+            commit_range="${GITHUB_SHA}~1..${GITHUB_SHA}"
+            commit_count=1
+          else
+            commit_range="${PUSH_BEFORE}..${GITHUB_SHA}"
+            commit_count=$(git rev-list --count "$commit_range")
+          fi
+
+          # Markdown bullet list of commits in this push, newest first, capped
+          # to keep the Discord embed under its 4096-char description limit.
+          commit_list=$(git log "$commit_range" \
+            --max-count=15 \
+            --pretty=format:"- [\`%h\`](https://github.com/${GITHUB_REPOSITORY}/commit/%H) — %s")
+          if [ "$commit_count" -gt 15 ]; then
+            commit_list="${commit_list}"$'\n'"- … and $((commit_count - 15)) more"
+          fi
+
           {
             echo "short_sha=${short_sha}"
             echo "latest_tag=${latest_tag}"
             echo "dev_version=${dev_version}"
-            echo "commit_subject=${commit_subject}"
+            echo "commit_count=${commit_count}"
             echo "build_timestamp=$(date -u +'%Y-%m-%dT%H:%M:%SZ')"
+            echo "commit_list<<COMMIT_LIST_EOF"
+            echo "$commit_list"
+            echo "COMMIT_LIST_EOF"
           } >> "$GITHUB_OUTPUT"
 
       - name: Restore dependencies
@@ -79,8 +106,10 @@ jobs:
             ⚠️ **Pre-release — expect rough edges.** Use the latest stable release if you need reliability.
 
             **Version:** `${{ steps.vars.outputs.dev_version }}`
-            **Commit:** [`${{ steps.vars.outputs.short_sha }}`](https://github.com/${{ github.repository }}/commit/${{ github.sha }}) — ${{ steps.vars.outputs.commit_subject }}
             **Built:** ${{ steps.vars.outputs.build_timestamp }}
+            **Commits in this build (${{ steps.vars.outputs.commit_count }}):**
+            ${{ steps.vars.outputs.commit_list }}
+
             **Changes since ${{ steps.vars.outputs.latest_tag }}:** https://github.com/${{ github.repository }}/compare/${{ steps.vars.outputs.latest_tag }}...${{ github.sha }}
 
             Stable link to most recent dev build: https://github.com/${{ github.repository }}/releases/tag/dev-latest
@@ -106,8 +135,10 @@ jobs:
             Rolling pointer to newest dev build. For history, see [all dev releases](https://github.com/${{ github.repository }}/releases?q=dev-&expanded=true).
 
             **Version:** `${{ steps.vars.outputs.dev_version }}`
-            **Commit:** [`${{ steps.vars.outputs.short_sha }}`](https://github.com/${{ github.repository }}/commit/${{ github.sha }}) — ${{ steps.vars.outputs.commit_subject }}
             **Built:** ${{ steps.vars.outputs.build_timestamp }}
+            **Commits in this build (${{ steps.vars.outputs.commit_count }}):**
+            ${{ steps.vars.outputs.commit_list }}
+
             **Changes since ${{ steps.vars.outputs.latest_tag }}:** https://github.com/${{ github.repository }}/compare/${{ steps.vars.outputs.latest_tag }}...${{ github.sha }}
             **Pinned tag for this build:** [`dev-${{ steps.vars.outputs.short_sha }}`](https://github.com/${{ github.repository }}/releases/tag/dev-${{ steps.vars.outputs.short_sha }})
 
@@ -118,7 +149,8 @@ jobs:
           DISCORD_WEBHOOK_URL: ${{ secrets.DISCORD_WEBHOOK_URL }}
           SHORT_SHA: ${{ steps.vars.outputs.short_sha }}
           DEV_VERSION: ${{ steps.vars.outputs.dev_version }}
-          COMMIT_SUBJECT: ${{ steps.vars.outputs.commit_subject }}
+          COMMIT_COUNT: ${{ steps.vars.outputs.commit_count }}
+          COMMIT_LIST: ${{ steps.vars.outputs.commit_list }}
           BUILT: ${{ steps.vars.outputs.build_timestamp }}
         shell: bash
         run: |
@@ -128,7 +160,6 @@ jobs:
             exit 0
           fi
           release_url="https://github.com/${GITHUB_REPOSITORY}/releases/tag/dev-${SHORT_SHA}"
-          commit_url="https://github.com/${GITHUB_REPOSITORY}/commit/${GITHUB_SHA}"
           # Build the payload entirely inside jq so every interpolated value is
           # JSON-encoded safely. -a forces ASCII-only output so any non-ASCII
           # character (e.g. em-dash) is emitted as \uXXXX, eliminating any risk
@@ -137,22 +168,21 @@ jobs:
           # description 4096 chars).
           payload_file=$(mktemp)
           jq -an \
-            --arg dev_version "$DEV_VERSION" \
-            --arg short_sha   "$SHORT_SHA" \
-            --arg commit_url  "$commit_url" \
-            --arg subject     "$COMMIT_SUBJECT" \
-            --arg built       "$BUILT" \
-            --arg release_url "$release_url" \
+            --arg dev_version  "$DEV_VERSION" \
+            --arg commit_count "$COMMIT_COUNT" \
+            --arg commit_list  "$COMMIT_LIST" \
+            --arg built        "$BUILT" \
+            --arg release_url  "$release_url" \
             '{
               embeds: [{
                 title: (("Moza SimHub Plugin — dev build " + $dev_version)[0:250]),
                 url: $release_url,
-                description: (
-                  "**Commit:** [`" + $short_sha + "`](" + $commit_url + ") — " +
-                  ($subject[0:200]) +
-                  "\n**Built:** " + $built +
+                description: ((
+                  "**Commits in this build (" + $commit_count + "):**\n" +
+                  $commit_list +
+                  "\n\n**Built:** " + $built +
                   "\n[Download release](" + $release_url + ")"
-                ),
+                )[0:4090]),
                 color: 3447003
               }]
             }' > "$payload_file"

@@ -77,32 +77,36 @@ jobs:
         run: |
           set -euo pipefail
           release_url="https://github.com/${GITHUB_REPOSITORY}/releases/tag/${TAG}"
-          commit_url="https://github.com/${GITHUB_REPOSITORY}/commit/${GITHUB_SHA}"
-          short_sha="${GITHUB_SHA:0:7}"
-          built=$(date -u +'%Y-%m-%dT%H:%M:%SZ')
-          commit_subject=$(gh api "repos/${GITHUB_REPOSITORY}/commits/${GITHUB_SHA}" \
-            --jq '.commit.message' | head -n1)
+          download_url="https://github.com/${GITHUB_REPOSITORY}/releases/download/${TAG}/MozaPlugin_${TAG}.zip"
+          # Prefer the release body the maintainer entered when cutting the
+          # tag — that's the authoritative changelog. Fall back to the head
+          # commit's subject if no notes were provided so the notification
+          # still says *something* meaningful.
+          release_body=$(gh api "repos/${GITHUB_REPOSITORY}/releases/tags/${TAG}" \
+            --jq '.body // ""' 2>/dev/null || printf '')
+          if [ -z "$release_body" ]; then
+            release_body=$(gh api "repos/${GITHUB_REPOSITORY}/commits/${GITHUB_SHA}" \
+              --jq '.commit.message' | head -n1)
+          fi
           # Build the payload entirely inside jq so every interpolated value is
           # JSON-encoded safely. Unicode-safe slicing keeps us under Discord's
-          # embed limits (title 256 chars, description 4096 chars).
+          # embed limits (title 256 chars, description 4096 chars). The body is
+          # capped separately so the header/footer always survive truncation.
           payload=$(jq -n \
-            --arg tag         "$TAG" \
-            --arg short_sha   "$short_sha" \
-            --arg commit_url  "$commit_url" \
-            --arg subject     "$commit_subject" \
-            --arg built       "$built" \
-            --arg release_url "$release_url" \
+            --arg tag          "$TAG" \
+            --arg download_url "$download_url" \
+            --arg release_body "$release_body" \
+            --arg release_url  "$release_url" \
             '{
               embeds: [{
                 title: (("Moza SimHub Plugin — release " + $tag)[0:250]),
                 url: $release_url,
-                description: (
-                  "**Tag:** `" + $tag + "`" +
-                  "\n**Commit:** [`" + $short_sha + "`](" + $commit_url + ") — " +
-                  ($subject[0:200]) +
-                  "\n**Built:** " + $built +
-                  "\n[View release notes](" + $release_url + ")"
-                ),
+                description: ((
+                  (if ($release_body | length) > 3500
+                     then ($release_body[0:3500] + "\n…")
+                     else $release_body end) +
+                  "\n\n[Download release](" + $download_url + ")"
+                )[0:4090]),
                 color: 3066993
               }]
             }')
