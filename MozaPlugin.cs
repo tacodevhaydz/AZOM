@@ -429,9 +429,10 @@ namespace MozaPlugin
                     this.SaveCommonSettings("MozaPluginSettings", _settings);
                 }
 
-                // Schema v2 migration (2026-05-14): translate legacy UID-keyed /
-                // model-keyed storage into the profile-scoped WheelOverride layout.
-                // Runs once per install; bumps SettingsSchemaVersion to 2.
+                // Schema migration: translate legacy UID-keyed / model-keyed
+                // storage into the profile-scoped WheelOverride layout, and
+                // repair the v6 short-circuit that lost mzdash folder + dash
+                // baselines for pre-refactor upgrades. Current target = v7.
                 // Registry must be initialized first (needed for page-GUID resolution).
                 MozaDeviceConstants.InitializeRegistry();
                 if (MigrateSettingsToSchemaV2())
@@ -3119,40 +3120,60 @@ namespace MozaPlugin
         /// </summary>
         private bool MigrateSettingsToSchemaV2()
         {
-            if (_settings == null || _settings.SettingsSchemaVersion >= 6)
+            if (_settings == null || _settings.SettingsSchemaVersion >= 7)
                 return false;
 
             var store = _settings.ProfileStore;
-            var profiles = store?.Profiles?.Where(p => p != null).ToList();
-            if (profiles == null || profiles.Count == 0)
-            {
-                // No profiles yet — InitProfileSystem will create a default in a
-                // moment. Bump the version so we don't re-run; legacy fields get
-                // cleared below regardless so nothing stale persists.
-                _settings.SettingsSchemaVersion = 6;
-                ClearLegacyAfterMigration();
-                MozaLog.Debug("[Moza] Schema v6: no profiles present, marking migrated");
-                return true;
-            }
+            var profiles = store?.Profiles?.Where(p => p != null).ToList()
+                ?? new List<MozaProfile>();
 
-            // ----- v4/v5/v6: move per-overlay telemetry fields onto per-wheel-page
-            // dicts in MozaPluginSettings (shared across games, not per-game-overlay).
-            // Runs incrementally for users at v3+.
+            // ----- v4/v5/v6/v7: per-page dict seeding from flat fields. Hoisted
+            // above the empty-profiles branch so that pre-refactor users
+            // (no profiles in their JSON) still get their mzdash folder /
+            // telemetry-enabled / wheel-era values carried over from the
+            // flat _settings fields and per-UID dicts. Runs through v6
+            // (instead of just below v6) because the broken v6 short-circuit
+            // skipped these — users stuck at schema 6 need the repair pass.
+            // Each helper is idempotent (only fills missing entries / only
+            // reads flat fields that survive ClearLegacyAfterMigration).
+            // The per-overlay drain loops no-op cleanly on an empty profile list.
             bool ranV4Plus = false;
-            if (_settings.SettingsSchemaVersion < 6)
+            if (_settings.SettingsSchemaVersion < 7)
             {
                 ranV4Plus = true;
                 MigrateMzdashFolderToPerPage(profiles);
                 MigrateTelemetryEnabledToPerPage(profiles);
                 MigrateWheelEraToPerPage(profiles);
             }
+
+            if (profiles.Count == 0)
+            {
+                // No profiles yet — InitProfileSystem will create a default in a
+                // moment and seed its baselines from the flat fields via
+                // SeedProfileBaselineFromFlatFields. Bump straight to v7 so the
+                // v6→v7 repair pass below doesn't also fire on the same launch.
+                _settings.SettingsSchemaVersion = 7;
+                ClearLegacyAfterMigration();
+                MozaLog.Debug("[Moza] Schema v7: no profiles present, marking migrated (default profile will be seeded by InitProfileSystem)");
+                return true;
+            }
+
             if (_settings.SettingsSchemaVersion >= 3)
             {
-                // v3+ → v6 path: no other migration steps need to re-run. Bump and exit.
-                _settings.SettingsSchemaVersion = 6;
+                // v3+ → v7 path. The per-page dicts above are the only data-
+                // carrying step for users who already had profiles; the
+                // additional v7 repair (baseline reseed) runs unconditionally
+                // here so users stuck at the broken schema-6 short-circuit
+                // get their default profile's dash baselines repaired.
+                foreach (var profile in profiles)
+                    SeedProfileBaselineFromFlatFields(profile);
+
+                _settings.SettingsSchemaVersion = 7;
                 ClearLegacyAfterMigration();
                 if (ranV4Plus)
-                    MozaLog.Info("[Moza] Schema v6 migration: moved mzdash folder + telemetry-enable + wheel-era to per-wheel-page dicts.");
+                    MozaLog.Info("[Moza] Schema v7 migration: moved mzdash folder + telemetry-enable + wheel-era to per-wheel-page dicts; reseeded profile baselines from flat fields where sentinel.");
+                else
+                    MozaLog.Info("[Moza] Schema v7 repair: reseeded profile baselines from flat fields where sentinel.");
                 return true;
             }
 
@@ -3312,52 +3333,20 @@ namespace MozaPlugin
                 }
             }
 
-            // ----- Migrate WheelMzdashFolderByUid -> per-page-GUID dict -----
-            // Schema v4: folder lives on MozaPluginSettings.WheelMzdashFolderByPageGuid
-            // (per-wheel-page, shared across profiles), not on the per-game overlay.
-            if (_settings.WheelMzdashFolderByUid != null && _settings.WheelMzdashFolderByUid.Count > 0)
-            {
-                var firstFolder = _settings.WheelMzdashFolderByUid
-                    .Where(x => !string.IsNullOrEmpty(x.Value))
-                    .Select(x => x.Value)
-                    .FirstOrDefault();
-                if (!string.IsNullOrEmpty(firstFolder))
-                {
-                    if (singleModelGuid.HasValue)
-                        _settings.WheelMzdashFolderByPageGuid[singleModelGuid.Value] = firstFolder;
-                    folderCount = _settings.WheelMzdashFolderByUid.Count;
-                }
-            }
-
             // ----- Migrate flat fields → profile / overlay (single read pass) -----
+            // Folder migration (flat field + per-UID dict → per-page dict) has
+            // already run via the hoisted MigrateMzdashFolderToPerPage call above.
+            // Track the per-UID entry count for the log only.
+            folderCount = _settings.WheelMzdashFolderByUid?.Count ?? 0;
+
             // Profile-level (motor/FFB/handbrake/pedals/AB9 are already on the
             // profile via the pre-refactor CaptureFromCurrent path — those JSON
             // fields just deserialize directly). The new profile-level fields
             // (BaseAmbient*, Gearshift*) plus the dash baselines need to be
-            // seeded from the legacy MozaPluginSettings flat fields here.
+            // seeded from the legacy MozaPluginSettings flat fields here. Shared
+            // helper so the v7 repair pass and InitProfileSystem use the same logic.
             foreach (var profile in profiles)
-            {
-                // Dash brightness baselines: copy if the profile hasn't seen them.
-                if (profile.DashRpmBrightness     < 0) profile.DashRpmBrightness     = _settings.DashRpmBrightness;
-                if (profile.DashFlagsBrightness   < 0) profile.DashFlagsBrightness   = _settings.DashFlagsBrightness;
-                if (profile.DashDisplayBrightness < 0) profile.DashDisplayBrightness = _settings.DashDisplayBrightness;
-                if (profile.DashDisplayStandbyMin < 0) profile.DashDisplayStandbyMin = _settings.DashDisplayStandbyMin;
-                if (profile.DashRpmBlinkColors == null && _settings.DashRpmBlinkColors != null)
-                    profile.DashRpmBlinkColors = (int[])_settings.DashRpmBlinkColors.Clone();
-
-                // Base ambient (new profile fields).
-                if (profile.BaseAmbientBrightness     < 0) profile.BaseAmbientBrightness     = _settings.BaseAmbientBrightness;
-                if (profile.BaseAmbientStandbyMode    < 0) profile.BaseAmbientStandbyMode    = _settings.BaseAmbientStandbyMode;
-                if (profile.BaseAmbientIndicatorState < 0) profile.BaseAmbientIndicatorState = _settings.BaseAmbientIndicatorState;
-                if (profile.BaseAmbientSleepMode      < 0) profile.BaseAmbientSleepMode      = _settings.BaseAmbientSleepMode;
-                if (profile.BaseAmbientSleepTimeout   < 0) profile.BaseAmbientSleepTimeout   = _settings.BaseAmbientSleepTimeout;
-                if (profile.BaseAmbientStartupColor   < 0) profile.BaseAmbientStartupColor   = _settings.BaseAmbientStartupColor;
-                if (profile.BaseAmbientShutdownColor  < 0) profile.BaseAmbientShutdownColor  = _settings.BaseAmbientShutdownColor;
-
-                // Gearshift (new profile fields).
-                if (profile.GearshiftVibrateOnNeutral < 0) profile.GearshiftVibrateOnNeutral = _settings.GearshiftVibrateOnNeutral ? 1 : 0;
-                if (profile.GearshiftDebounceMs       < 0) profile.GearshiftDebounceMs       = _settings.GearshiftDebounceMs;
-            }
+                SeedProfileBaselineFromFlatFields(profile);
 
             // Per-wheel-page overlay seeding from flat Wheel*/Telemetry* fields
             // for users whose PerWheelSlots dict was empty (rare — pre-PerWheelSlots
@@ -3421,18 +3410,64 @@ namespace MozaPlugin
             }
 
             // v4/v5/v6 step: per-wheel-page dict seeding (folder + enable + era).
+            // Re-run unconditionally here — the hoisted call at the top happens
+            // BEFORE the legacy-era-encoding drain above sets
+            // `_settings.TelemetryWheelEra` from `TelemetryFirmwareEraLegacy` /
+            // `TelemetryProtocolVersion`, so the era helper needs a second pass
+            // to pick that up. Each helper is idempotent (folder/enable flat
+            // fields are already cleared, so those become no-ops).
             MigrateMzdashFolderToPerPage(profiles);
             MigrateTelemetryEnabledToPerPage(profiles);
             MigrateWheelEraToPerPage(profiles);
 
-            _settings.SettingsSchemaVersion = 6;
+            _settings.SettingsSchemaVersion = 7;
             MozaLog.Info(
-                $"[Moza] Schema v6 migration: PerWheelSlots={slotsCount}, " +
+                $"[Moza] Schema v7 migration: PerWheelSlots={slotsCount}, " +
                 $"ChannelMappings={channelMappingsCount}, TelemetryByUid={uidSlotCount}, " +
                 $"MzdashFolderByUid={folderCount} → applied across {profiles.Count} profile(s); " +
                 $"flat-field seeding done");
             ClearLegacyAfterMigration();
             return true;
+        }
+
+        /// <summary>
+        /// Seed the dash / base-ambient / gearshift baselines on a single profile
+        /// from the legacy <see cref="MozaPluginSettings"/> flat fields whenever
+        /// the profile field is still at its sentinel (-1 for ints, null for arrays).
+        /// Used by:
+        ///   - v0 → v7 migration (all profiles in the store)
+        ///   - v6 → v7 repair (all profiles, restoring brightness for users who hit
+        ///     the broken schema-6 short-circuit)
+        ///   - <see cref="InitProfileSystem"/> for a freshly-created default profile
+        ///     so its baseline reflects the user's saved settings even when no
+        ///     migration logic touched it (pre-refactor upgrades whose JSON had
+        ///     no profile entries at all).
+        /// Idempotent: only writes when the profile slot is sentinel.
+        /// </summary>
+        private void SeedProfileBaselineFromFlatFields(MozaProfile profile)
+        {
+            if (_settings == null || profile == null) return;
+
+            // Dash brightness baselines: copy if the profile hasn't seen them.
+            if (profile.DashRpmBrightness     < 0) profile.DashRpmBrightness     = _settings.DashRpmBrightness;
+            if (profile.DashFlagsBrightness   < 0) profile.DashFlagsBrightness   = _settings.DashFlagsBrightness;
+            if (profile.DashDisplayBrightness < 0) profile.DashDisplayBrightness = _settings.DashDisplayBrightness;
+            if (profile.DashDisplayStandbyMin < 0) profile.DashDisplayStandbyMin = _settings.DashDisplayStandbyMin;
+            if (profile.DashRpmBlinkColors == null && _settings.DashRpmBlinkColors != null)
+                profile.DashRpmBlinkColors = (int[])_settings.DashRpmBlinkColors.Clone();
+
+            // Base ambient.
+            if (profile.BaseAmbientBrightness     < 0) profile.BaseAmbientBrightness     = _settings.BaseAmbientBrightness;
+            if (profile.BaseAmbientStandbyMode    < 0) profile.BaseAmbientStandbyMode    = _settings.BaseAmbientStandbyMode;
+            if (profile.BaseAmbientIndicatorState < 0) profile.BaseAmbientIndicatorState = _settings.BaseAmbientIndicatorState;
+            if (profile.BaseAmbientSleepMode      < 0) profile.BaseAmbientSleepMode      = _settings.BaseAmbientSleepMode;
+            if (profile.BaseAmbientSleepTimeout   < 0) profile.BaseAmbientSleepTimeout   = _settings.BaseAmbientSleepTimeout;
+            if (profile.BaseAmbientStartupColor   < 0) profile.BaseAmbientStartupColor   = _settings.BaseAmbientStartupColor;
+            if (profile.BaseAmbientShutdownColor  < 0) profile.BaseAmbientShutdownColor  = _settings.BaseAmbientShutdownColor;
+
+            // Gearshift.
+            if (profile.GearshiftVibrateOnNeutral < 0) profile.GearshiftVibrateOnNeutral = _settings.GearshiftVibrateOnNeutral ? 1 : 0;
+            if (profile.GearshiftDebounceMs       < 0) profile.GearshiftDebounceMs       = _settings.GearshiftDebounceMs;
         }
 
         /// <summary>
@@ -3592,7 +3627,20 @@ namespace MozaPlugin
             // 1. Seed every known wheel page GUID from the flat folder if the
             //    dict doesn't have an entry yet. This gives every wheel the
             //    user's pre-refactor folder. They can later customize per-wheel.
+            //    Falls back to the first non-empty entry in the per-UID dict
+            //    (older builds stored the folder there) when the flat field
+            //    is empty. Single-wheel users keep their folder regardless
+            //    of which storage shape they had.
             string flatFolder = _settings.TelemetryMzdashFolder ?? "";
+            if (string.IsNullOrEmpty(flatFolder)
+                && _settings.WheelMzdashFolderByUid != null
+                && _settings.WheelMzdashFolderByUid.Count > 0)
+            {
+                flatFolder = _settings.WheelMzdashFolderByUid
+                    .Where(x => !string.IsNullOrEmpty(x.Value))
+                    .Select(x => x.Value)
+                    .FirstOrDefault() ?? "";
+            }
             if (!string.IsNullOrEmpty(flatFolder))
             {
                 foreach (var (prefix, _, _) in WheelModelInfo.KnownModels)
@@ -3610,7 +3658,8 @@ namespace MozaPlugin
                     && !_settings.WheelMzdashFolderByPageGuid.ContainsKey(og))
                     _settings.WheelMzdashFolderByPageGuid[og] = flatFolder;
             }
-            // Clear the flat field so it doesn't re-serialize.
+            // Clear the flat field so it doesn't re-serialize. The per-UID
+            // dict is wiped later by ClearLegacyAfterMigration.
             _settings.TelemetryMzdashFolder = "";
         }
 
@@ -4383,10 +4432,17 @@ namespace MozaPlugin
         {
             var store = _settings.ProfileStore;
 
-            // Ensure at least one default profile exists
+            // Ensure at least one default profile exists. Seed its baselines
+            // from the legacy MozaPluginSettings flat fields so pre-refactor
+            // users (whose JSON has no profile entries at all) get sane
+            // defaults — particularly DashDisplayBrightness, which would
+            // otherwise sit at the -1 sentinel and skip the brightness push
+            // in ApplyDashToHardware, leaving the wheel display dark on
+            // first launch.
             if (store.Profiles.Count == 0)
             {
                 var defaultProfile = new MozaProfile { Name = "Default" };
+                SeedProfileBaselineFromFlatFields(defaultProfile);
                 store.Profiles.Add(defaultProfile);
             }
 

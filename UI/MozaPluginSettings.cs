@@ -183,6 +183,8 @@ namespace MozaPlugin
         // Bridge-format JSONL wire trace at SimHub/Logs/moza-wire-*.jsonl.
         // Code-only toggle — not serialized so changing the default here
         // is the only way to flip it. Avoids stale persisted values.
+        // Currently ON while string-channel (sess=0x01 type=0x05) wiring is
+        // being verified; flip back to false once that work is signed off.
         [Newtonsoft.Json.JsonIgnore]
         public bool EnableWireTraceFileSink { get; set; } = false;
 
@@ -206,6 +208,15 @@ namespace MozaPlugin
         //   4 = mzdash folder moved from per-overlay to per-wheel-page (shared
         //       across profiles). Folder is a library setting tied to the wheel,
         //       not the game.
+        //   6 = (broken) initial v4/v5/v6 cutover. The empty-profiles short-circuit
+        //       in MigrateSettingsToSchemaV2 returned without seeding the per-page
+        //       mzdash-folder dict or the default profile's dash baselines, so
+        //       pre-refactor users upgrading lost their folder + got a zero-default
+        //       display brightness on first launch.
+        //   7 = repair pass for the v6 short-circuit: re-runs the per-page folder
+        //       seed from the flat field (which survives ClearLegacyAfterMigration),
+        //       and reseeds every profile's dash/ambient/gearshift baselines from
+        //       _settings flat fields when still sentinel. Idempotent.
         public int SettingsSchemaVersion { get; set; } = 0;
 
         // Per-wheel-page mzdash folder library. Keyed by SimHub page DescriptorUniqueId
