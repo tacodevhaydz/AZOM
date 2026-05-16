@@ -2,6 +2,8 @@
 
 Per-device pages with device IDs, group breakdowns, and full command tables. For frame format / checksum / wire-level rules see [`../wire/`](../wire/). For functional cross-cuts (telemetry, sessions, dashboards, LEDs) see the sibling folders under [`../`](../).
 
+For the host-side USB Vendor/Product ID inventory and how the plugin routes each PID to the right connection class, see [`usb-ids.md`](usb-ids.md).
+
 ## Protocol constants
 
 | Name | Dec | Hex | Notes |

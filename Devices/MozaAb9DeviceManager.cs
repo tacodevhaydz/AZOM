@@ -79,17 +79,21 @@ namespace MozaPlugin.Devices
 
         public MozaAb9DeviceManager(Func<bool>? disableProbeFallback = null)
         {
-            // PID filter accepts only the AB9 PID during registry-based
-            // discovery — the wheelbase's own port enumeration is filtered
-            // by its mirror predicate so neither connection can grab the
-            // other's port. When the registry returns zero MOZA devices
+            // PID filter accepts the AB9 PID and any unknown Moza PID
+            // (future-hardware fallback) during registry-based discovery.
+            // The wheelbase's filter accepts wheelbase PIDs and the same
+            // unknown set, so both connections race for unknown ports —
+            // safe because each runs its own protocol-specific probe and
+            // only one will get a matching response. The AB9 identity
+            // probe (group 0x09 dev 0x12) only accepts a 0x89 response
+            // and runs a base-disambiguation pre-check first, so it
+            // cannot mis-claim a wheelbase tty even when admitted to the
+            // candidate set. When the registry returns zero MOZA devices
             // (Wine/Proton, missing driver) the legacy serial-probe path
-            // runs as a last resort; the AB9-specific identity probe
-            // (group 0x09 dev 0x12) only accepts a 0x89 response and runs
-            // a base-disambiguation pre-check first, so it cannot mis-claim
-            // a wheelbase tty.
+            // runs as a last resort and honours the same filter. See
+            // Protocol/MozaUsbIds.cs and docs/protocol/devices/usb-ids.md.
             _connection = new MozaSerialConnection(
-                MozaUsbIds.IsAb9Pid,
+                pid => MozaUsbIds.IsAb9Pid(pid) || !MozaUsbIds.IsKnownMozaPid(pid),
                 MozaProbeTarget.Ab9,
                 disableProbeFallback);
             _connection.CaptureLabel = "ab9";

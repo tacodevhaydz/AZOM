@@ -40,11 +40,12 @@ namespace MozaPlugin.Protocol
 
         public readonly struct PortInfo
         {
-            public readonly string PortName;     // e.g. "COM5"
-            public readonly ushort Vid;          // 0x346E
-            public readonly ushort Pid;          // 0x1000
-            public readonly string FriendlyName; // "USB Serial Device (COM5)"
-            public readonly string InstanceId;   // "a&399b951f&0&0000"
+            public readonly string PortName;             // e.g. "COM5"
+            public readonly ushort Vid;                  // 0x346E
+            public readonly ushort Pid;                  // 0x1000
+            public readonly string FriendlyName;         // "USB Serial Device (COM5)"
+            public readonly string InstanceId;           // "a&399b951f&0&0000"
+            public readonly MozaDeviceCategory Category; // derived from Pid via MozaUsbIds.Categorize
 
             public PortInfo(string portName, ushort vid, ushort pid, string friendlyName, string instanceId)
             {
@@ -53,6 +54,7 @@ namespace MozaPlugin.Protocol
                 Pid = pid;
                 FriendlyName = friendlyName ?? string.Empty;
                 InstanceId = instanceId ?? string.Empty;
+                Category = MozaUsbIds.Categorize(pid);
             }
         }
 
@@ -61,6 +63,9 @@ namespace MozaPlugin.Protocol
         private IReadOnlyList<PortInfo> _cachedPorts = Array.Empty<PortInfo>();
         private string _lastSummary = "(not yet enumerated)";
         private int _hasLoggedFirstSuccess; // 0 or 1, atomic
+        // Unknown-PID first-sighting log gate. Guarded by _cacheLock so a
+        // concurrent cache refresh doesn't double-log the same PID.
+        private readonly HashSet<ushort> _loggedUnknownPids = new HashSet<ushort>();
 
         private MozaPortDiscovery() { }
 
@@ -82,11 +87,38 @@ namespace MozaPlugin.Protocol
             var ports = EnumerateFromRegistry();
             var summary = SummarizePorts(ports);
 
+            // Collect first-sighting unknown PIDs while holding the lock,
+            // then emit log lines after releasing it (MozaLog can call
+            // into SimHub on the same thread; don't run user-supplied
+            // code under our own lock).
+            List<PortInfo>? newUnknown = null;
             lock (_cacheLock)
             {
                 _cachedPorts = ports;
                 _cacheTimestamp = Stopwatch.GetTimestamp();
                 _lastSummary = summary;
+
+                for (int i = 0; i < ports.Count; i++)
+                {
+                    var p = ports[i];
+                    if (p.Category != MozaDeviceCategory.Unknown) continue;
+                    if (_loggedUnknownPids.Add(p.Pid))
+                    {
+                        (newUnknown ??= new List<PortInfo>()).Add(p);
+                    }
+                }
+            }
+
+            if (newUnknown != null)
+            {
+                for (int i = 0; i < newUnknown.Count; i++)
+                {
+                    var p = newUnknown[i];
+                    MozaLog.Info(
+                        $"[Moza] Unknown Moza PID 0x{p.Pid.ToString("X4", CultureInfo.InvariantCulture)} on " +
+                        $"{p.PortName} — not in usb-ids inventory. Will be probed with every known protocol; " +
+                        $"please report so docs/protocol/devices/usb-ids.md can be updated.");
+                }
             }
 
             // First successful enumeration logs at Info so the user sees one
@@ -257,9 +289,13 @@ namespace MozaPlugin.Protocol
             for (int i = 0; i < ports.Count; i++)
             {
                 if (i > 0) sb.Append(", ");
-                sb.Append(ports[i].PortName);
+                var p = ports[i];
+                sb.Append(p.PortName);
                 sb.Append(":0x");
-                sb.Append(ports[i].Pid.ToString("X4", CultureInfo.InvariantCulture));
+                sb.Append(p.Pid.ToString("X4", CultureInfo.InvariantCulture));
+                sb.Append('(');
+                sb.Append(MozaUsbIds.Describe(p.Pid));
+                sb.Append(')');
             }
             sb.Append(']');
             return sb.ToString();

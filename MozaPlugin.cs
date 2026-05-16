@@ -492,16 +492,20 @@ namespace MozaPlugin
                 RegisterProperties(pluginManager);
                 RegisterActions();
 
-                // Reject the AB9 shifter PID on the wheelbase pipe — both
-                // devices enumerate as VID_346E composite. The registry-based
-                // discovery in MozaPortDiscovery routes by exact PID and never
-                // mis-claims the AB9 port. The serial-probe fallback (only
-                // armed when the registry returns zero MOZA devices total)
-                // honours the same filter.
+                // Accept known wheelbase PIDs on the wheelbase pipe, plus
+                // any unknown Moza PID as a fallback probe candidate (future
+                // hardware not yet in the inventory). Known non-wheelbase
+                // categories (pedals, shifter, handbrake, hub, AB9) are
+                // excluded so the wheelbase doesn't waste base/hub probe
+                // frames on devices that ignore them. Registry-based
+                // discovery in MozaPortDiscovery routes by exact PID; the
+                // serial-probe fallback (only armed when the registry
+                // returns zero MOZA devices total) honours the same filter.
+                // See Protocol/MozaUsbIds.cs and docs/protocol/devices/usb-ids.md.
                 Func<bool> disableProbeFallback = () =>
                     _settings != null && _settings.DisableSerialProbeFallback;
                 _connection = new MozaSerialConnection(
-                    pid => !MozaUsbIds.IsAb9Pid(pid),
+                    pid => MozaUsbIds.IsWheelbasePid(pid) || !MozaUsbIds.IsKnownMozaPid(pid),
                     MozaProbeTarget.BaseAndHub,
                     disableProbeFallback);
                 if (!string.IsNullOrEmpty(_settings.LastWheelbasePort))
