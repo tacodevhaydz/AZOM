@@ -2386,6 +2386,15 @@ namespace MozaPlugin
             // and MaybeSwapProfileForCatalog synthesises a WheelCatalog profile
             // post-preamble.
 
+            // We're past the ActiveTelemetryEnabled gate, so telemetry IS
+            // enabled for this wheel. Sync the sender's per-profile flag here
+            // so it's correct even if an earlier ApplyProfile fired when the
+            // wheel GUID hadn't resolved yet (which would have left the flag
+            // stuck at false, suppressing live value frames despite test
+            // mode working). Live data path consults this flag in
+            // TickEmitValueFrames and friends.
+            t.ProfileTelemetryEnabled = true;
+
             // Already running — don't restart (avoids re-probing ports mid-session).
             if (t.FramesSent > 0) return;
 
