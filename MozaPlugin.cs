@@ -493,9 +493,12 @@ namespace MozaPlugin
                 RegisterActions();
 
                 // Accept known wheelbase PIDs on the wheelbase pipe, plus
-                // any unknown Moza PID as a fallback probe candidate (future
-                // hardware not yet in the inventory). Known non-wheelbase
-                // categories (pedals, shifter, handbrake, hub, AB9) are
+                // the Universal HUB PID (the BaseAndHub probe target is
+                // explicitly built to detect hub ports — group 0x64 dev
+                // 0x12 cmd 0x03 — and wheels like the KS Pro reach the
+                // host through the hub's CDC pipe), plus any unknown Moza
+                // PID as a fallback probe candidate (future hardware not
+                // yet in the inventory). Pedals/shifter/handbrake/AB9 are
                 // excluded so the wheelbase doesn't waste base/hub probe
                 // frames on devices that ignore them. Registry-based
                 // discovery in MozaPortDiscovery routes by exact PID; the
@@ -505,7 +508,9 @@ namespace MozaPlugin
                 Func<bool> disableProbeFallback = () =>
                     _settings != null && _settings.DisableSerialProbeFallback;
                 _connection = new MozaSerialConnection(
-                    pid => MozaUsbIds.IsWheelbasePid(pid) || !MozaUsbIds.IsKnownMozaPid(pid),
+                    pid => MozaUsbIds.IsWheelbasePid(pid)
+                           || MozaUsbIds.IsHubPid(pid)
+                           || !MozaUsbIds.IsKnownMozaPid(pid),
                     MozaProbeTarget.BaseAndHub,
                     disableProbeFallback);
                 if (!string.IsNullOrEmpty(_settings.LastWheelbasePort))
@@ -1362,6 +1367,22 @@ namespace MozaPlugin
             sender.Profile = profile;
             sender.MzdashContent = mzdashContent;
             sender.MzdashName = mzdashName;
+            // // Track the source directory so the upload bundle can find sibling
+            // // PNG widget assets at <dir>/Resource/MD5/<hex>.png. User-picked
+            // // file → dir of that file. Library-picked → folder profile's path.
+            // // Builtins from embedded resources → empty (single-file upload).
+            // string mzdashSourceDir = "";
+            // if (!string.IsNullOrEmpty(telemPath) && System.IO.File.Exists(telemPath))
+            // {
+            //     mzdashSourceDir = System.IO.Path.GetDirectoryName(telemPath) ?? "";
+            // }
+            // else if (!string.IsNullOrEmpty(telemName) && DashCache != null)
+            // {
+            //     string? folderPath = DashCache.TryGetFolderFilePath(telemName);
+            //     if (!string.IsNullOrEmpty(folderPath))
+            //         mzdashSourceDir = System.IO.Path.GetDirectoryName(folderPath!) ?? "";
+            // }
+            // sender.MzdashSourceDirectory = mzdashSourceDir;
 
 
 
