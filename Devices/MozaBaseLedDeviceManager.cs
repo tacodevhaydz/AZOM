@@ -236,16 +236,24 @@ namespace MozaPlugin.Devices
             }
         }
 
-        // Send a strip's 9 colors as two cmd-0x1A chunks: LEDs 0–4 (20 bytes),
-        // LEDs 5–8 (16 bytes — last entry's index byte is 0xFF padding so
-        // firmware doesn't interpret zero-padding as "set LED 0 black").
+        // Send a strip's 9 colors as two cmd-0x1A chunks: LEDs 0..4 (5
+        // entries = 20-byte payload, wire N=22) then LEDs 5..8 (4 entries =
+        // 16-byte payload, wire N=18). No trailing padding entry on chunk 2.
+        //
+        // Earlier revisions appended a [0xFF, 0, 0, 0] padding entry to pad
+        // chunk 2 to 20 bytes, mirroring the wheel-side trick that hides
+        // zero-pad bytes from the wheel firmware's "interpret-as-set-LED-0-
+        // black" bug. The base firmware behaves differently: with that
+        // padding entry present, bitmask=0x01 (light only LED 0) silently
+        // produced no LEDs lit; 2+ active bits worked normally. PitHouse's
+        // R25 capture (2026-05-05) sends chunk 2 at exactly N=18 with no
+        // padding, so we match that wire format precisely.
         private static void SendColorChunks(MozaPlugin plugin, Color[] strip, int stripIndex)
         {
             string command = stripIndex == 0
                 ? "base-ambient-rpm-colors-strip0"
                 : "base-ambient-rpm-colors-strip1";
 
-            // First chunk: LEDs 0..4 = 20 bytes
             var chunk1 = new byte[20];
             for (int i = 0; i < 5; i++)
             {
@@ -257,9 +265,7 @@ namespace MozaPlugin.Devices
             }
             plugin.DeviceManager.WriteArray(command, chunk1);
 
-            // Second chunk: LEDs 5..8 = 16 bytes of real data + 4 bytes
-            // padding (index byte 0xFF marks the slot as unused).
-            var chunk2 = new byte[20];
+            var chunk2 = new byte[16];
             for (int i = 0; i < 4; i++)
             {
                 int led = 5 + i;
@@ -269,7 +275,6 @@ namespace MozaPlugin.Devices
                 chunk2[o + 2] = strip[led].G;
                 chunk2[o + 3] = strip[led].B;
             }
-            chunk2[16] = 0xFF;
             plugin.DeviceManager.WriteArray(command, chunk2);
         }
 
