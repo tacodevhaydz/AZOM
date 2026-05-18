@@ -21,6 +21,7 @@
       "package_level": 2000,
       "default_value": 0,
       "compression": "uint16_t",
+      "simhub_property": "DataCorePlugin.GameData.MaxRpm",
       "is_visible": true
     },
     {
@@ -156,7 +157,8 @@
       "package_level": 30,
       "default_value": 0,
       "compression": "float",
-      "is_visible": true
+      "is_visible": true,
+      "simhub_property": "DataCorePlugin.GameData.EstimatedLapTime"
     },
     {
       "name": "LastLapTime",
@@ -547,7 +549,8 @@
       "package_level": 30,
       "default_value": 0,
       "compression": "uint8",
-      "is_visible": true
+      "is_visible": true,
+      "simhub_property": "DataCorePlugin.GameData.ECUMap"
     },
     {
       "name": "BrakeBias",
@@ -568,7 +571,8 @@
       "package_level": 30,
       "default_value": 0,
       "compression": "float",
-      "is_visible": true
+      "is_visible": true,
+      "simhub_property": "DataCorePlugin.GameData.BrakeBias"
     },
     {
       "name": "Boost",
@@ -589,7 +593,8 @@
       "package_level": 30,
       "default_value": 0,
       "compression": "percent_1",
-      "is_visible": true
+      "is_visible": true,
+      "simhub_property": "DataCorePlugin.GameData.Boost"
     },
     {
       "name": "FuelRemain",
@@ -634,7 +639,8 @@
       "package_level": 500,
       "default_value": 0,
       "compression": "uint8_t",
-      "is_visible": true
+      "is_visible": true,
+      "simhub_property": "DataCorePlugin.GameData.FuelLaps"
     },
     {
       "name": "FuelSurplusLaps",
@@ -655,7 +661,8 @@
       "package_level": 500,
       "default_value": 0,
       "compression": "uint8_t",
-      "is_visible": true
+      "is_visible": true,
+      "simhub_property": "DataCorePlugin.GameData.FuelSurplusLaps"
     },
     {
       "name": "FuelClass",
@@ -676,7 +683,8 @@
       "package_level": 2000,
       "default_value": 0,
       "compression": "uint15",
-      "is_visible": false
+      "is_visible": false,
+      "simhub_property": "DataCorePlugin.GameData.FuelConsumptionClass"
     },
     {
       "name": "EnergyRemain",
@@ -697,7 +705,8 @@
       "package_level": 2000,
       "default_value": 0,
       "compression": "percent_1",
-      "is_visible": false
+      "is_visible": false,
+      "simhub_property": "DataCorePlugin.GameData.ErsStoreEnergy"
     },
     {
       "name": "EnergyDeployed",
@@ -718,7 +727,8 @@
       "package_level": 2000,
       "default_value": 0,
       "compression": "percent_1",
-      "is_visible": false
+      "is_visible": false,
+      "simhub_property": "DataCorePlugin.GameData.ErsDeployedThisLap"
     },
     {
       "name": "EnergyHarvested",
@@ -739,7 +749,8 @@
       "package_level": 2000,
       "default_value": 0,
       "compression": "percent_1",
-      "is_visible": false
+      "is_visible": false,
+      "simhub_property": "DataCorePlugin.GameData.ErsHarvestedThisLap"
     },
     {
       "name": "Ers",
@@ -784,7 +795,8 @@
       "package_level": 30,
       "default_value": 0,
       "compression": "percent_1",
-      "is_visible": true
+      "is_visible": true,
+      "simhub_property": "DataCorePlugin.GameData.ERSPercent"
     },
     {
       "name": "ERSStored",
@@ -805,7 +817,8 @@
       "package_level": 30,
       "default_value": 0,
       "compression": "percent_1",
-      "is_visible": true
+      "is_visible": true,
+      "simhub_property": "DataCorePlugin.GameData.ERSStored"
     },
     {
       "name": "TyreTempFL",
@@ -914,7 +927,8 @@
       "package_level": 2000,
       "default_value": 0,
       "compression": "float",
-      "is_visible": true
+      "is_visible": true,
+      "simhub_property": "DataCorePlugin.GameData.TyreTempFrontLeftInner"
     },
     {
       "name": "TyreTempFRI",
@@ -935,7 +949,8 @@
       "package_level": 2000,
       "default_value": 0,
       "compression": "float",
-      "is_visible": true
+      "is_visible": true,
+      "simhub_property": "DataCorePlugin.GameData.TyreTempFrontRightInner"
     },
     {
       "name": "TyreTempRLI",
@@ -956,7 +971,8 @@
       "package_level": 2000,
       "default_value": 0,
       "compression": "float",
-      "is_visible": true
+      "is_visible": true,
+      "simhub_property": "DataCorePlugin.GameData.TyreTempRearLeftInner"
     },
     {
       "name": "TyreTempRRI",
@@ -977,7 +993,8 @@
       "package_level": 2000,
       "default_value": 0,
       "compression": "float",
-      "is_visible": true
+      "is_visible": true,
+      "simhub_property": "DataCorePlugin.GameData.TyreTempRearRightInner"
     },
     {
       "name": "TyreTempFLM",
@@ -998,7 +1015,8 @@
       "package_level": 2000,
       "default_value": 0,
       "compression": "float",
-      "is_visible": true
+      "is_visible": true,
+      "simhub_property": "DataCorePlugin.GameData.TyreTempFrontLeftMiddle"
     },
     {
       "name": "TyreTempFRM",
@@ -1019,7 +1037,8 @@
       "package_level": 2000,
       "default_value": 0,
       "compression": "float",
-      "is_visible": true
+      "is_visible": true,
+      "simhub_property": "DataCorePlugin.GameData.TyreTempFrontRightMiddle"
     },
     {
       "name": "TyreTempRLM",
@@ -1040,7 +1059,8 @@
       "package_level": 2000,
       "default_value": 0,
       "compression": "float",
-      "is_visible": true
+      "is_visible": true,
+      "simhub_property": "DataCorePlugin.GameData.TyreTempRearLeftMiddle"
     },
     {
       "name": "TyreTempFLM&F",
@@ -1145,7 +1165,8 @@
       "package_level": 2000,
       "default_value": 0,
       "compression": "float",
-      "is_visible": true
+      "is_visible": true,
+      "simhub_property": "DataCorePlugin.GameData.TyreTempRearRightMiddle"
     },
     {
       "name": "TyreTempFL&F",
@@ -1590,7 +1611,8 @@
       "package_level": 2000,
       "default_value": 0,
       "compression": "track_temp_1",
-      "is_visible": true
+      "is_visible": true,
+      "simhub_property": "DataCorePlugin.GameData.TrackTemp"
     },
     {
       "name": "AirTemp",
@@ -1611,7 +1633,8 @@
       "package_level": 2000,
       "default_value": 0,
       "compression": "track_temp_1",
-      "is_visible": true
+      "is_visible": true,
+      "simhub_property": "DataCorePlugin.GameData.AirTemp"
     },
     {
       "name": "TrackTemp&F",
@@ -1674,7 +1697,8 @@
       "package_level": 500,
       "default_value": 0,
       "compression": "track_temp_1",
-      "is_visible": true
+      "is_visible": true,
+      "simhub_property": "DataCorePlugin.GameData.FuelTemp"
     },
     {
       "name": "TyreWearFL",
@@ -1791,7 +1815,8 @@
       "package_level": 2000,
       "default_value": 0,
       "compression": "percent_1",
-      "is_visible": true
+      "is_visible": true,
+      "simhub_property": "DataCorePlugin.GameData.FrontLeftWingDamage"
     },
     {
       "name": "WingWearFR",
@@ -1812,7 +1837,8 @@
       "package_level": 2000,
       "default_value": 0,
       "compression": "percent_1",
-      "is_visible": true
+      "is_visible": true,
+      "simhub_property": "DataCorePlugin.GameData.FrontRightWingDamage"
     },
     {
       "name": "WingWearR",
@@ -1833,7 +1859,8 @@
       "package_level": 2000,
       "default_value": 0,
       "compression": "percent_1",
-      "is_visible": true
+      "is_visible": true,
+      "simhub_property": "DataCorePlugin.GameData.RearWingDamage"
     },
     {
       "name": "EngineWear",
@@ -1854,7 +1881,8 @@
       "package_level": 2000,
       "default_value": 0,
       "compression": "percent_1",
-      "is_visible": true
+      "is_visible": true,
+      "simhub_property": "DataCorePlugin.GameData.EngineDamage"
     },
     {
       "name": "GearBoxWear",
@@ -1875,7 +1903,8 @@
       "package_level": 2000,
       "default_value": 0,
       "compression": "percent_1",
-      "is_visible": true
+      "is_visible": true,
+      "simhub_property": "DataCorePlugin.GameData.GearBoxDamage"
     },
     {
       "name": "FuelCapacity",
@@ -1962,7 +1991,8 @@
       "package_level": 30,
       "default_value": 0,
       "compression": "bool",
-      "is_visible": true
+      "is_visible": true,
+      "simhub_property": "DataCorePlugin.GameData.ReverseLight"
     },
     {
       "name": "Pitlane",
@@ -2137,7 +2167,8 @@
       "package_level": 30,
       "default_value": 0,
       "compression": "bool",
-      "is_visible": true
+      "is_visible": true,
+      "simhub_property": "DataCorePlugin.GameData.RedFlag"
     },
     {
       "name": "SectorIndex",
@@ -2180,7 +2211,8 @@
       "package_level": 30,
       "default_value": 0,
       "compression": "float",
-      "is_visible": true
+      "is_visible": true,
+      "simhub_property": "DataCorePlugin.GameData.Sector1Time"
     },
     {
       "name": "Sector2Time",
@@ -2201,7 +2233,8 @@
       "package_level": 30,
       "default_value": 0,
       "compression": "float",
-      "is_visible": true
+      "is_visible": true,
+      "simhub_property": "DataCorePlugin.GameData.Sector2Time"
     },
     {
       "name": "SessionTimeLeft",
@@ -2222,7 +2255,8 @@
       "package_level": 30,
       "default_value": 0,
       "compression": "float",
-      "is_visible": true
+      "is_visible": true,
+      "simhub_property": "DataCorePlugin.GameData.SessionTimeLeft"
     },
     {
       "name": "AccX",
@@ -2243,7 +2277,8 @@
       "package_level": 30,
       "default_value": 0,
       "compression": "float",
-      "is_visible": true
+      "is_visible": true,
+      "simhub_property": "DataCorePlugin.GameData.AccelerationX"
     },
     {
       "name": "AccY",
@@ -2264,7 +2299,8 @@
       "package_level": 30,
       "default_value": 0,
       "compression": "float",
-      "is_visible": true
+      "is_visible": true,
+      "simhub_property": "DataCorePlugin.GameData.AccelerationY"
     },
     {
       "name": "AccZ",
@@ -2285,7 +2321,8 @@
       "package_level": 30,
       "default_value": 0,
       "compression": "float",
-      "is_visible": true
+      "is_visible": true,
+      "simhub_property": "DataCorePlugin.GameData.AccelerationZ"
     },
     {
       "name": "Heading",
@@ -2306,7 +2343,8 @@
       "package_level": 30,
       "default_value": 0,
       "compression": "float",
-      "is_visible": true
+      "is_visible": true,
+      "simhub_property": "DataCorePlugin.GameData.Heading"
     },
     {
       "name": "Pitch",
@@ -2327,7 +2365,8 @@
       "package_level": 30,
       "default_value": 0,
       "compression": "float",
-      "is_visible": true
+      "is_visible": true,
+      "simhub_property": "DataCorePlugin.GameData.Pitch"
     },
     {
       "name": "Roll",
@@ -2348,7 +2387,8 @@
       "package_level": 30,
       "default_value": 0,
       "compression": "float",
-      "is_visible": true
+      "is_visible": true,
+      "simhub_property": "DataCorePlugin.GameData.Roll"
     },
     {
       "name": "TyreTempFLO",
@@ -2369,7 +2409,8 @@
       "package_level": 2000,
       "default_value": 0,
       "compression": "float",
-      "is_visible": true
+      "is_visible": true,
+      "simhub_property": "DataCorePlugin.GameData.TyreTempFrontLeftOuter"
     },
     {
       "name": "TyreTempFRO",
@@ -2390,7 +2431,8 @@
       "package_level": 2000,
       "default_value": 0,
       "compression": "float",
-      "is_visible": true
+      "is_visible": true,
+      "simhub_property": "DataCorePlugin.GameData.TyreTempFrontRightOuter"
     },
     {
       "name": "TyreTempRLO",
@@ -2411,7 +2453,8 @@
       "package_level": 2000,
       "default_value": 0,
       "compression": "float",
-      "is_visible": true
+      "is_visible": true,
+      "simhub_property": "DataCorePlugin.GameData.TyreTempRearLeftOuter"
     },
     {
       "name": "TyreTempRRO",
@@ -2432,7 +2475,8 @@
       "package_level": 2000,
       "default_value": 0,
       "compression": "float",
-      "is_visible": true
+      "is_visible": true,
+      "simhub_property": "DataCorePlugin.GameData.TyreTempRearRightOuter"
     },
     {
       "name": "WaterTemperature",
@@ -2453,7 +2497,8 @@
       "package_level": 500,
       "default_value": 0,
       "compression": "float",
-      "is_visible": true
+      "is_visible": true,
+      "simhub_property": "DataCorePlugin.GameData.WaterTemp"
     },
     {
       "name": "TyrePressureFL",
@@ -2562,7 +2607,8 @@
       "package_level": 2000,
       "default_value": 0,
       "compression": "oil_pressure_1",
-      "is_visible": true
+      "is_visible": true,
+      "simhub_property": "DataCorePlugin.GameData.OilPressure"
     },
     {
       "name": "MapName",
@@ -2647,7 +2693,8 @@
       "package_level": 2000,
       "default_value": "",
       "compression": "string",
-      "is_visible": true
+      "is_visible": true,
+      "simhub_property": "DataCorePlugin.GameData.CarId"
     },
     {
       "name": "CompletedLaps",
@@ -2668,7 +2715,8 @@
       "package_level": 2000,
       "default_value": 0,
       "compression": "uint8_t",
-      "is_visible": true
+      "is_visible": true,
+      "simhub_property": "DataCorePlugin.GameData.CompletedLaps"
     },
     {
       "name": "CarCoordinates01",
@@ -2689,7 +2737,8 @@
       "package_level": 30,
       "default_value": 0,
       "compression": "float",
-      "is_visible": true
+      "is_visible": true,
+      "simhub_property": "DataCorePlugin.GameData.CarCoordinates01"
     },
     {
       "name": "CarCoordinates02",
@@ -2710,7 +2759,8 @@
       "package_level": 30,
       "default_value": 0,
       "compression": "float",
-      "is_visible": true
+      "is_visible": true,
+      "simhub_property": "DataCorePlugin.GameData.CarCoordinates02"
     },
     {
       "name": "CarCoordinates03",
@@ -2731,7 +2781,8 @@
       "package_level": 30,
       "default_value": 0,
       "compression": "float",
-      "is_visible": true
+      "is_visible": true,
+      "simhub_property": "DataCorePlugin.GameData.CarCoordinates03"
     },
     {
       "name": "DRSAvailable",
@@ -2796,7 +2847,8 @@
       "package_level": 2000,
       "default_value": 0,
       "compression": "uint8_t",
-      "is_visible": true
+      "is_visible": true,
+      "simhub_property": "DataCorePlugin.GameData.CarSettings_MaxGears"
     },
     {
       "name": "LapInvalidated",
@@ -2817,7 +2869,8 @@
       "package_level": 500,
       "default_value": 0,
       "compression": "bool",
-      "is_visible": true
+      "is_visible": true,
+      "simhub_property": "DataCorePlugin.GameData.LapInvalidated"
     },
     {
       "name": "SessionTypeName",
@@ -2838,7 +2891,8 @@
       "package_level": 2000,
       "default_value": "",
       "compression": "string",
-      "is_visible": true
+      "is_visible": true,
+      "simhub_property": "DataCorePlugin.GameData.SessionTypeName"
     },
     {
       "name": "TrackId",
@@ -2859,7 +2913,8 @@
       "package_level": 2000,
       "default_value": "",
       "compression": "string",
-      "is_visible": true
+      "is_visible": true,
+      "simhub_property": "DataCorePlugin.GameData.TrackId"
     },
     {
       "name": "SectorsCount",
@@ -2880,7 +2935,8 @@
       "package_level": 2000,
       "default_value": 0,
       "compression": "uint8_t",
-      "is_visible": true
+      "is_visible": true,
+      "simhub_property": "DataCorePlugin.GameData.SectorsCount"
     },
     {
       "name": "Flag_Black",
@@ -2923,7 +2979,8 @@
       "package_level": 2000,
       "default_value": 0,
       "compression": "uint32_t",
-      "is_visible": true
+      "is_visible": true,
+      "simhub_property": "DataCorePlugin.GameData.Spectating"
     },
     {
       "name": "EngineStarted",
@@ -2966,7 +3023,8 @@
       "package_level": 2000,
       "default_value": "",
       "compression": "string",
-      "is_visible": true
+      "is_visible": true,
+      "simhub_property": "DataCorePlugin.GameData.PlayerName"
     },
     {
       "name": "CarModel",
@@ -2987,7 +3045,8 @@
       "package_level": 2000,
       "default_value": "",
       "compression": "string",
-      "is_visible": true
+      "is_visible": true,
+      "simhub_property": "DataCorePlugin.GameData.CarModel"
     },
     {
       "name": "GlobalAccelerationG",
@@ -3008,7 +3067,8 @@
       "package_level": 30,
       "default_value": 0,
       "compression": "float",
-      "is_visible": true
+      "is_visible": true,
+      "simhub_property": "DataCorePlugin.GameData.GlobalAccelerationG"
     },
     {
       "name": "ERSMax",
@@ -3029,7 +3089,8 @@
       "package_level": 30,
       "default_value": 0,
       "compression": "float",
-      "is_visible": true
+      "is_visible": true,
+      "simhub_property": "DataCorePlugin.GameData.ERSMax"
     },
     {
       "name": "ReplayMode",
@@ -3050,7 +3111,8 @@
       "package_level": 2000,
       "default_value": "",
       "compression": "string",
-      "is_visible": true
+      "is_visible": true,
+      "simhub_property": "DataCorePlugin.GameData.ReplayMode"
     },
     {
       "name": "CarSettings_CurrentDisplayedRPMPercent",
@@ -3071,7 +3133,8 @@
       "package_level": 30,
       "default_value": 0,
       "compression": "percent_1",
-      "is_visible": true
+      "is_visible": true,
+      "simhub_property": "DataCorePlugin.GameData.CarSettings_CurrentDisplayedRPMPercent"
     },
     {
       "name": "WheelSpin",
@@ -3092,7 +3155,8 @@
       "package_level": 30,
       "default_value": 0,
       "compression": "bool",
-      "is_visible": true
+      "is_visible": true,
+      "simhub_property": "DataCorePlugin.GameData.WheelSpin"
     },
     {
       "name": "FuelAverageConsumptionLap",
@@ -3113,7 +3177,8 @@
       "package_level": 30,
       "default_value": 0,
       "compression": "float",
-      "is_visible": true
+      "is_visible": true,
+      "simhub_property": "DataCorePlugin.GameData.FuelConsumeLap"
     },
     {
       "name": "Gamename",
@@ -4607,7 +4672,8 @@
       "package_level": 500,
       "default_value": 0,
       "compression": "float_600_2",
-      "is_visible": true
+      "is_visible": true,
+      "simhub_property": "DataCorePlugin.GameData.FuelUsed"
     },
     {
       "name": "TCCut",
@@ -4628,7 +4694,8 @@
       "package_level": 30,
       "default_value": 0,
       "compression": "uint8",
-      "is_visible": true
+      "is_visible": true,
+      "simhub_property": "DataCorePlugin.GameData.TCCut"
     },
     {
       "name": "TyreType",
@@ -4649,7 +4716,8 @@
       "package_level": 500,
       "default_value": "",
       "compression": "uint8",
-      "is_visible": true
+      "is_visible": true,
+      "simhub_property": "DataCorePlugin.GameData.TyreType"
     },
     {
       "name": "EngineEnabled",
@@ -4670,7 +4738,8 @@
       "package_level": 30,
       "default_value": 0,
       "compression": "bool",
-      "is_visible": true
+      "is_visible": true,
+      "simhub_property": "DataCorePlugin.GameData.EngineEnabled"
     },
     {
       "name": "Wipers",
@@ -4691,7 +4760,8 @@
       "package_level": 30,
       "default_value": 0,
       "compression": "bool",
-      "is_visible": true
+      "is_visible": true,
+      "simhub_property": "DataCorePlugin.GameData.Wipers"
     },
     {
       "name": "RainLight",
@@ -4712,7 +4782,8 @@
       "package_level": 30,
       "default_value": 0,
       "compression": "bool",
-      "is_visible": true
+      "is_visible": true,
+      "simhub_property": "DataCorePlugin.GameData.RainLight"
     },
     {
       "name": "HighBeamLight",
@@ -4733,7 +4804,8 @@
       "package_level": 30,
       "default_value": 0,
       "compression": "bool",
-      "is_visible": true
+      "is_visible": true,
+      "simhub_property": "DataCorePlugin.GameData.HighBeamLight"
     },
     {
       "name": "LowBeamLight",
@@ -4754,7 +4826,8 @@
       "package_level": 30,
       "default_value": 0,
       "compression": "bool",
-      "is_visible": true
+      "is_visible": true,
+      "simhub_property": "DataCorePlugin.GameData.LowBeamLight"
     },
     {
       "name": "WiperClass",
@@ -4775,7 +4848,8 @@
       "package_level": 30,
       "default_value": 0,
       "compression": "uint8",
-      "is_visible": true
+      "is_visible": true,
+      "simhub_property": "DataCorePlugin.GameData.WiperClass"
     },
     {
       "name": "LeftBlinker",
@@ -4840,7 +4914,8 @@
       "package_level": 30,
       "default_value": 0,
       "compression": "bool",
-      "is_visible": true
+      "is_visible": true,
+      "simhub_property": "DataCorePlugin.GameData.HazardWarning"
     },
     {
       "name": "EngineBrake",
@@ -4861,7 +4936,8 @@
       "package_level": 30,
       "default_value": 0,
       "compression": "bool",
-      "is_visible": true
+      "is_visible": true,
+      "simhub_property": "DataCorePlugin.GameData.EngineBrake"
     },
     {
       "name": "BatteryVoltageWarning",
@@ -4882,7 +4958,8 @@
       "package_level": 30,
       "default_value": 0,
       "compression": "bool",
-      "is_visible": true
+      "is_visible": true,
+      "simhub_property": "DataCorePlugin.GameData.BatteryWarningVolt"
     },
     {
       "name": "ParkingLight",
@@ -4903,7 +4980,8 @@
       "package_level": 30,
       "default_value": 0,
       "compression": "bool",
-      "is_visible": true
+      "is_visible": true,
+      "simhub_property": "DataCorePlugin.GameData.ParkingLight"
     },
     {
       "name": "CruiseControl",
@@ -4924,7 +5002,8 @@
       "package_level": 30,
       "default_value": 0,
       "compression": "float",
-      "is_visible": true
+      "is_visible": true,
+      "simhub_property": "DataCorePlugin.GameData.CruiseControl"
     },
     {
       "name": "CruiseControlMs",
@@ -4945,7 +5024,8 @@
       "package_level": 30,
       "default_value": 0,
       "compression": "float",
-      "is_visible": true
+      "is_visible": true,
+      "simhub_property": "DataCorePlugin.GameData.CruiseControlMs"
     },
     {
       "name": "CruiseControlMph",
@@ -4966,7 +5046,8 @@
       "package_level": 30,
       "default_value": 0,
       "compression": "float",
-      "is_visible": true
+      "is_visible": true,
+      "simhub_property": "DataCorePlugin.GameData.CruiseControlMph"
     },
     {
       "name": "FrontAuxLight",
@@ -4987,7 +5068,8 @@
       "package_level": 30,
       "default_value": 0,
       "compression": "bool",
-      "is_visible": true
+      "is_visible": true,
+      "simhub_property": "DataCorePlugin.GameData.FrontAuxLight"
     },
     {
       "name": "RoofAuxLight",
@@ -5008,7 +5090,8 @@
       "package_level": 30,
       "default_value": 0,
       "compression": "bool",
-      "is_visible": true
+      "is_visible": true,
+      "simhub_property": "DataCorePlugin.GameData.RoofAuxLight"
     },
     {
       "name": "NavigationSpeedLimit",
@@ -5029,7 +5112,8 @@
       "package_level": 500,
       "default_value": 0,
       "compression": "float_600_2",
-      "is_visible": true
+      "is_visible": true,
+      "simhub_property": "DataCorePlugin.GameData.NavigationSpeedLimit"
     },
     {
       "name": "RetarderLevel",
@@ -5050,7 +5134,8 @@
       "package_level": 30,
       "default_value": 0,
       "compression": "uint8",
-      "is_visible": true
+      "is_visible": true,
+      "simhub_property": "DataCorePlugin.GameData.RetarderLevel"
     },
     {
       "name": "AirPressureWarning",
@@ -5071,7 +5156,8 @@
       "package_level": 500,
       "default_value": 0,
       "compression": "bool",
-      "is_visible": true
+      "is_visible": true,
+      "simhub_property": "DataCorePlugin.GameData.AirPressWarning"
     },
     {
       "name": "ParkingBrake",
@@ -5092,7 +5178,8 @@
       "package_level": 30,
       "default_value": 0,
       "compression": "bool",
-      "is_visible": true
+      "is_visible": true,
+      "simhub_property": "DataCorePlugin.GameData.ParkingBrake"
     },
     {
       "name": "FuelRemains",
@@ -5135,7 +5222,8 @@
       "package_level": 500,
       "default_value": 0,
       "compression": "bool",
-      "is_visible": true
+      "is_visible": true,
+      "simhub_property": "DataCorePlugin.GameData.WaterTempWarning"
     },
     {
       "name": "TimeAbsolute",
@@ -5156,7 +5244,8 @@
       "package_level": 1000,
       "default_value": 0,
       "compression": "int32_t",
-      "is_visible": true
+      "is_visible": true,
+      "simhub_property": "DataCorePlugin.GameData.TimeAbsolute"
     },
     {
       "name": "AirPressure",
@@ -5177,7 +5266,8 @@
       "package_level": 30,
       "default_value": 0,
       "compression": "float",
-      "is_visible": true
+      "is_visible": true,
+      "simhub_property": "DataCorePlugin.GameData.AirPressure"
     },
     {
       "name": "BeaconLight",
@@ -5198,7 +5288,8 @@
       "package_level": 30,
       "default_value": 0,
       "compression": "bool",
-      "is_visible": true
+      "is_visible": true,
+      "simhub_property": "DataCorePlugin.GameData.BeaconLight"
     },
     {
       "name": "FuelRange",
@@ -5219,7 +5310,8 @@
       "package_level": 500,
       "default_value": 0,
       "compression": "float",
-      "is_visible": true
+      "is_visible": true,
+      "simhub_property": "DataCorePlugin.GameData.FuelRange"
     },
     {
       "name": "AirPressureEmergency",
@@ -5240,7 +5332,8 @@
       "package_level": 30,
       "default_value": 0,
       "compression": "bool",
-      "is_visible": true
+      "is_visible": true,
+      "simhub_property": "DataCorePlugin.GameData.AirPressEmergency"
     },
     {
       "name": "JobSpeedLimitValue",
@@ -5261,7 +5354,8 @@
       "package_level": 30,
       "default_value": 0,
       "compression": "float",
-      "is_visible": true
+      "is_visible": true,
+      "simhub_property": "DataCorePlugin.GameData.JobSpeedLimitValue"
     },
     {
       "name": "Odometer",
@@ -5282,7 +5376,8 @@
       "package_level": 500,
       "default_value": 0,
       "compression": "float",
-      "is_visible": true
+      "is_visible": true,
+      "simhub_property": "DataCorePlugin.GameData.Odometer"
     },
     {
       "name": "WaterPress",
@@ -5303,7 +5398,8 @@
       "package_level": 2000,
       "default_value": 0,
       "compression": "float",
-      "is_visible": true
+      "is_visible": true,
+      "simhub_property": "DataCorePlugin.GameData.WaterPress"
     },
     {
       "name": "TyrePressureFL&B",
@@ -5408,7 +5504,8 @@
       "package_level": 30,
       "default_value": 0,
       "compression": "float",
-      "is_visible": true
+      "is_visible": true,
+      "simhub_property": "DataCorePlugin.GameData.CurrentTorque"
     },
     {
       "name": "AllTimeBest",
@@ -5429,7 +5526,8 @@
       "package_level": 500,
       "default_value": 0,
       "compression": "float",
-      "is_visible": true
+      "is_visible": true,
+      "simhub_property": "DataCorePlugin.GameData.AllTimeBest"
     },
     {
       "name": "BrakesTemperatureAvg",
@@ -5450,7 +5548,8 @@
       "package_level": 500,
       "default_value": 0,
       "compression": "brake_temp_1",
-      "is_visible": true
+      "is_visible": true,
+      "simhub_property": "DataCorePlugin.GameData.BrakesTemperatureAvg"
     },
     {
       "name": "BrakesTemperatureMax",
@@ -5471,7 +5570,8 @@
       "package_level": 500,
       "default_value": 0,
       "compression": "brake_temp_1",
-      "is_visible": true
+      "is_visible": true,
+      "simhub_property": "DataCorePlugin.GameData.BrakesTemperatureMax"
     },
     {
       "name": "BrakesTemperatureMin",
@@ -5492,7 +5592,8 @@
       "package_level": 500,
       "default_value": 0,
       "compression": "brake_temp_1",
-      "is_visible": true
+      "is_visible": true,
+      "simhub_property": "DataCorePlugin.GameData.BrakesTemperatureMin"
     },
     {
       "name": "BrakesTemperatureAvg&F",
@@ -5576,7 +5677,8 @@
       "package_level": 2000,
       "default_value": "",
       "compression": "string",
-      "is_visible": true
+      "is_visible": true,
+      "simhub_property": "DataCorePlugin.GameData.CarClass"
     },
     {
       "name": "CarDamage1",
@@ -5597,7 +5699,8 @@
       "package_level": 2000,
       "default_value": 0,
       "compression": "float",
-      "is_visible": true
+      "is_visible": true,
+      "simhub_property": "DataCorePlugin.GameData.CarDamage1"
     },
     {
       "name": "CarDamage2",
@@ -5618,7 +5721,8 @@
       "package_level": 2000,
       "default_value": 0,
       "compression": "float",
-      "is_visible": true
+      "is_visible": true,
+      "simhub_property": "DataCorePlugin.GameData.CarDamage2"
     },
     {
       "name": "CarDamage3",
@@ -5639,7 +5743,8 @@
       "package_level": 2000,
       "default_value": 0,
       "compression": "float",
-      "is_visible": true
+      "is_visible": true,
+      "simhub_property": "DataCorePlugin.GameData.CarDamage3"
     },
     {
       "name": "CarDamage4",
@@ -5660,7 +5765,8 @@
       "package_level": 2000,
       "default_value": 0,
       "compression": "float",
-      "is_visible": true
+      "is_visible": true,
+      "simhub_property": "DataCorePlugin.GameData.CarDamage4"
     },
     {
       "name": "CarDamage5",
@@ -5681,7 +5787,8 @@
       "package_level": 2000,
       "default_value": 0,
       "compression": "float",
-      "is_visible": true
+      "is_visible": true,
+      "simhub_property": "DataCorePlugin.GameData.CarDamage5"
     },
     {
       "name": "CarDamagesAvg",
@@ -5702,7 +5809,8 @@
       "package_level": 2000,
       "default_value": 0,
       "compression": "float",
-      "is_visible": true
+      "is_visible": true,
+      "simhub_property": "DataCorePlugin.GameData.CarDamagesAvg"
     },
     {
       "name": "CarDamagesMax",
@@ -5723,7 +5831,8 @@
       "package_level": 2000,
       "default_value": 0,
       "compression": "float",
-      "is_visible": true
+      "is_visible": true,
+      "simhub_property": "DataCorePlugin.GameData.CarDamagesMax"
     },
     {
       "name": "CarDamagesMin",
@@ -5744,7 +5853,8 @@
       "package_level": 2000,
       "default_value": 0,
       "compression": "float",
-      "is_visible": true
+      "is_visible": true,
+      "simhub_property": "DataCorePlugin.GameData.CarDamagesMin"
     },
     {
       "name": "EngineTorque",
@@ -5765,7 +5875,8 @@
       "package_level": 30,
       "default_value": 0,
       "compression": "float",
-      "is_visible": true
+      "is_visible": true,
+      "simhub_property": "DataCorePlugin.GameData.EngineTorque"
     },
     {
       "name": "Flag_Checkered",
@@ -5808,7 +5919,8 @@
       "package_level": 500,
       "default_value": "",
       "compression": "string",
-      "is_visible": true
+      "is_visible": true,
+      "simhub_property": "DataCorePlugin.GameData.Flag_Name"
     },
     {
       "name": "Flag_Orange",
@@ -5873,7 +5985,8 @@
       "package_level": 30,
       "default_value": 0,
       "compression": "float_600_2",
-      "is_visible": true
+      "is_visible": true,
+      "simhub_property": "DataCorePlugin.GameData.InstantConsumption_L100KM"
     },
     {
       "name": "InstantConsumption_MPG_UK",
@@ -5894,7 +6007,8 @@
       "package_level": 30,
       "default_value": 0,
       "compression": "float_600_2",
-      "is_visible": true
+      "is_visible": true,
+      "simhub_property": "DataCorePlugin.GameData.InstantConsumption_MPG_UK"
     },
     {
       "name": "InstantConsumption_MPG_US",
@@ -5915,7 +6029,8 @@
       "package_level": 30,
       "default_value": 0,
       "compression": "float_600_2",
-      "is_visible": true
+      "is_visible": true,
+      "simhub_property": "DataCorePlugin.GameData.InstantConsumption_MPG_US"
     },
     {
       "name": "IsInPitSince",
@@ -5936,7 +6051,8 @@
       "package_level": 30,
       "default_value": 0,
       "compression": "bool",
-      "is_visible": true
+      "is_visible": true,
+      "simhub_property": "DataCorePlugin.GameData.IsInPitSince"
     },
     {
       "name": "IsSessionRestart",
@@ -5957,7 +6073,8 @@
       "package_level": 30,
       "default_value": 0,
       "compression": "bool",
-      "is_visible": true
+      "is_visible": true,
+      "simhub_property": "DataCorePlugin.GameData.IsSessionRestart"
     },
     {
       "name": "LastPitStopDuration",
@@ -5978,7 +6095,8 @@
       "package_level": 500,
       "default_value": 0,
       "compression": "float",
-      "is_visible": true
+      "is_visible": true,
+      "simhub_property": "DataCorePlugin.GameData.LastPitStopDuration"
     },
     {
       "name": "LastSectorTime",
@@ -5999,7 +6117,8 @@
       "package_level": 30,
       "default_value": 0,
       "compression": "float",
-      "is_visible": true
+      "is_visible": true,
+      "simhub_property": "DataCorePlugin.GameData.LastSectorTime"
     },
     {
       "name": "MapAllowed",
@@ -6020,7 +6139,8 @@
       "package_level": 30,
       "default_value": 0,
       "compression": "bool",
-      "is_visible": true
+      "is_visible": true,
+      "simhub_property": "DataCorePlugin.GameData.MapAllowed"
     },
     {
       "name": "MaxEngineTorque",
@@ -6041,7 +6161,8 @@
       "package_level": 2000,
       "default_value": 0,
       "compression": "float",
-      "is_visible": true
+      "is_visible": true,
+      "simhub_property": "DataCorePlugin.GameData.MaxEngineTorque"
     },
     {
       "name": "MaxSpeedKmh",
@@ -6106,7 +6227,8 @@
       "package_level": 2000,
       "default_value": 0,
       "compression": "float",
-      "is_visible": true
+      "is_visible": true,
+      "simhub_property": "DataCorePlugin.GameData.MaxTurbo"
     },
     {
       "name": "OrientationPitchAcceleration",
@@ -6127,7 +6249,8 @@
       "package_level": 30,
       "default_value": 0,
       "compression": "float_600_2",
-      "is_visible": true
+      "is_visible": true,
+      "simhub_property": "DataCorePlugin.GameData.OrientationPitchAcceleration"
     },
     {
       "name": "OrientationRollAcceleration",
@@ -6148,7 +6271,8 @@
       "package_level": 30,
       "default_value": 0,
       "compression": "float_600_2",
-      "is_visible": true
+      "is_visible": true,
+      "simhub_property": "DataCorePlugin.GameData.OrientationRollAcceleration"
     },
     {
       "name": "OrientationYawAcceleration",
@@ -6169,7 +6293,8 @@
       "package_level": 30,
       "default_value": 0,
       "compression": "float_600_2",
-      "is_visible": true
+      "is_visible": true,
+      "simhub_property": "DataCorePlugin.GameData.OrientationYawAcceleration"
     },
     {
       "name": "OrientationYawVelocity",
@@ -6190,7 +6315,8 @@
       "package_level": 30,
       "default_value": 0,
       "compression": "float_600_2",
-      "is_visible": true
+      "is_visible": true,
+      "simhub_property": "DataCorePlugin.GameData.OrientationYawVelocity"
     },
     {
       "name": "PacketTime",
@@ -6211,7 +6337,8 @@
       "package_level": 500,
       "default_value": "",
       "compression": "string",
-      "is_visible": true
+      "is_visible": true,
+      "simhub_property": "DataCorePlugin.GameData.PacketTime"
     },
     {
       "name": "PlayerClassOpponentsCount",
@@ -6232,7 +6359,8 @@
       "package_level": 30,
       "default_value": 0,
       "compression": "uint8_t",
-      "is_visible": true
+      "is_visible": true,
+      "simhub_property": "DataCorePlugin.GameData.PlayerClassOpponentsCount"
     },
     {
       "name": "PushToPassActive",
@@ -6253,7 +6381,8 @@
       "package_level": 30,
       "default_value": 0,
       "compression": "bool",
-      "is_visible": true
+      "is_visible": true,
+      "simhub_property": "DataCorePlugin.GameData.PushToPassActive"
     },
     {
       "name": "Sector1BestTime",
@@ -6274,7 +6403,8 @@
       "package_level": 30,
       "default_value": 0,
       "compression": "float",
-      "is_visible": true
+      "is_visible": true,
+      "simhub_property": "DataCorePlugin.GameData.Sector1BestTime"
     },
     {
       "name": "Sector1LastLapTime",
@@ -6295,7 +6425,8 @@
       "package_level": 500,
       "default_value": 0,
       "compression": "float",
-      "is_visible": true
+      "is_visible": true,
+      "simhub_property": "DataCorePlugin.GameData.Sector1LastLapTime"
     },
     {
       "name": "Sector2BestTime",
@@ -6316,7 +6447,8 @@
       "package_level": 30,
       "default_value": 0,
       "compression": "float",
-      "is_visible": true
+      "is_visible": true,
+      "simhub_property": "DataCorePlugin.GameData.Sector2BestTime"
     },
     {
       "name": "Sector2LastLapTime",
@@ -6337,7 +6469,8 @@
       "package_level": 500,
       "default_value": 0,
       "compression": "float",
-      "is_visible": true
+      "is_visible": true,
+      "simhub_property": "DataCorePlugin.GameData.Sector2LastLapTime"
     },
     {
       "name": "Sector3BestTime",
@@ -6358,7 +6491,8 @@
       "package_level": 30,
       "default_value": 0,
       "compression": "float",
-      "is_visible": true
+      "is_visible": true,
+      "simhub_property": "DataCorePlugin.GameData.Sector3BestTime"
     },
     {
       "name": "Sector3LastLapTime",
@@ -6379,7 +6513,8 @@
       "package_level": 500,
       "default_value": 0,
       "compression": "float",
-      "is_visible": true
+      "is_visible": true,
+      "simhub_property": "DataCorePlugin.GameData.Sector3LastLapTime"
     },
     {
       "name": "SessionOdo",
@@ -6400,7 +6535,8 @@
       "package_level": 30,
       "default_value": 0,
       "compression": "float",
-      "is_visible": true
+      "is_visible": true,
+      "simhub_property": "DataCorePlugin.GameData.SessionOdo"
     },
     {
       "name": "SessionOdo&M",
@@ -6442,7 +6578,8 @@
       "package_level": 30,
       "default_value": 0,
       "compression": "float",
-      "is_visible": true
+      "is_visible": true,
+      "simhub_property": "DataCorePlugin.GameData.StintOdo"
     },
     {
       "name": "StintOdo&M",
@@ -6484,7 +6621,8 @@
       "package_level": 500,
       "default_value": "",
       "compression": "string",
-      "is_visible": true
+      "is_visible": true,
+      "simhub_property": "DataCorePlugin.GameData.TrackCode"
     },
     {
       "name": "TrackConfig",
@@ -6505,7 +6643,8 @@
       "package_level": 2000,
       "default_value": "",
       "compression": "string",
-      "is_visible": true
+      "is_visible": true,
+      "simhub_property": "DataCorePlugin.GameData.TrackConfig"
     },
     {
       "name": "TrackPositionMeters",
@@ -6526,7 +6665,8 @@
       "package_level": 30,
       "default_value": 0,
       "compression": "float",
-      "is_visible": true
+      "is_visible": true,
+      "simhub_property": "DataCorePlugin.GameData.TrackPositionMeters"
     },
     {
       "name": "TurboPercent",
@@ -6547,7 +6687,8 @@
       "package_level": 30,
       "default_value": 0,
       "compression": "percent_1",
-      "is_visible": true
+      "is_visible": true,
+      "simhub_property": "DataCorePlugin.GameData.TurboPercent"
     },
     {
       "name": "TyreDirtFrontLeft",
@@ -6568,7 +6709,8 @@
       "package_level": 2000,
       "default_value": 0,
       "compression": "float",
-      "is_visible": true
+      "is_visible": true,
+      "simhub_property": "DataCorePlugin.GameData.TyreDirtFrontLeft"
     },
     {
       "name": "TyreDirtFrontRight",
@@ -6589,7 +6731,8 @@
       "package_level": 2000,
       "default_value": 0,
       "compression": "float",
-      "is_visible": true
+      "is_visible": true,
+      "simhub_property": "DataCorePlugin.GameData.TyreDirtFrontRight"
     },
     {
       "name": "TyreDirtRearLeft",
@@ -6610,7 +6753,8 @@
       "package_level": 2000,
       "default_value": 0,
       "compression": "float",
-      "is_visible": true
+      "is_visible": true,
+      "simhub_property": "DataCorePlugin.GameData.TyreDirtRearLeft"
     },
     {
       "name": "TyreDirtRearRight",
@@ -6631,7 +6775,8 @@
       "package_level": 2000,
       "default_value": 0,
       "compression": "float",
-      "is_visible": true
+      "is_visible": true,
+      "simhub_property": "DataCorePlugin.GameData.TyreDirtRearRight"
     },
     {
       "name": "TyresDirtyLevelAvg",
@@ -6652,7 +6797,8 @@
       "package_level": 2000,
       "default_value": 0,
       "compression": "float",
-      "is_visible": true
+      "is_visible": true,
+      "simhub_property": "DataCorePlugin.GameData.TyresDirtyLevelAvg"
     },
     {
       "name": "TyresDirtyLevelMax",
@@ -6673,7 +6819,8 @@
       "package_level": 2000,
       "default_value": 0,
       "compression": "float",
-      "is_visible": true
+      "is_visible": true,
+      "simhub_property": "DataCorePlugin.GameData.TyresDirtyLevelMax"
     },
     {
       "name": "TyresDirtyLevelMin",
@@ -6694,7 +6841,8 @@
       "package_level": 2000,
       "default_value": 0,
       "compression": "float",
-      "is_visible": true
+      "is_visible": true,
+      "simhub_property": "DataCorePlugin.GameData.TyresDirtyLevelMin"
     },
     {
       "name": "TyresTemperatureAvg",
@@ -6715,7 +6863,8 @@
       "package_level": 2000,
       "default_value": 0,
       "compression": "float",
-      "is_visible": true
+      "is_visible": true,
+      "simhub_property": "DataCorePlugin.GameData.TyresTemperatureAvg"
     },
     {
       "name": "TyresTemperatureMax",
@@ -6736,7 +6885,8 @@
       "package_level": 2000,
       "default_value": 0,
       "compression": "float",
-      "is_visible": true
+      "is_visible": true,
+      "simhub_property": "DataCorePlugin.GameData.TyresTemperatureMax"
     },
     {
       "name": "TyresTemperatureMin",
@@ -6757,7 +6907,8 @@
       "package_level": 2000,
       "default_value": 0,
       "compression": "float",
-      "is_visible": true
+      "is_visible": true,
+      "simhub_property": "DataCorePlugin.GameData.TyresTemperatureMin"
     },
     {
       "name": "TyresTemperatureAvg&F",
@@ -6841,7 +6992,8 @@
       "package_level": 2000,
       "default_value": 0,
       "compression": "float",
-      "is_visible": true
+      "is_visible": true,
+      "simhub_property": "DataCorePlugin.GameData.TyresWearAvg"
     },
     {
       "name": "TyresWearMax",
@@ -6862,7 +7014,8 @@
       "package_level": 2000,
       "default_value": 0,
       "compression": "float",
-      "is_visible": true
+      "is_visible": true,
+      "simhub_property": "DataCorePlugin.GameData.TyresWearMax"
     },
     {
       "name": "TyresWearMin",
@@ -6883,7 +7036,8 @@
       "package_level": 2000,
       "default_value": 0,
       "compression": "float",
-      "is_visible": true
+      "is_visible": true,
+      "simhub_property": "DataCorePlugin.GameData.TyresWearMin"
     },
     {
       "name": "TyrePressureFL&kpa",
@@ -6988,7 +7142,8 @@
       "package_level": 500,
       "default_value": 0,
       "compression": "float",
-      "is_visible": true
+      "is_visible": true,
+      "simhub_property": "DataCorePlugin.GameData.LastSectorTimeAnyLap"
     },
     {
       "name": "BrakeLockupFrontLeft",
@@ -7009,7 +7164,8 @@
       "package_level": 500,
       "default_value": 0,
       "compression": "bool",
-      "is_visible": true
+      "is_visible": true,
+      "simhub_property": "DataCorePlugin.GameData.BrakeLockupFrontLeft"
     },
     {
       "name": "BrakeLockupFrontRight",
@@ -7030,7 +7186,8 @@
       "package_level": 500,
       "default_value": 0,
       "compression": "bool",
-      "is_visible": true
+      "is_visible": true,
+      "simhub_property": "DataCorePlugin.GameData.BrakeLockupFrontRight"
     },
     {
       "name": "BrakeLockupRearLeft",
@@ -7051,7 +7208,8 @@
       "package_level": 500,
       "default_value": 0,
       "compression": "bool",
-      "is_visible": true
+      "is_visible": true,
+      "simhub_property": "DataCorePlugin.GameData.BrakeLockupRearLeft"
     },
     {
       "name": "BrakeLockupRearRight",
@@ -7072,7 +7230,8 @@
       "package_level": 500,
       "default_value": 0,
       "compression": "bool",
-      "is_visible": true
+      "is_visible": true,
+      "simhub_property": "DataCorePlugin.GameData.BrakeLockupRearRight"
     },
     {
       "name": "DestinationCity",
@@ -7093,7 +7252,8 @@
       "package_level": 2000,
       "default_value": "",
       "compression": "string",
-      "is_visible": true
+      "is_visible": true,
+      "simhub_property": "DataCorePlugin.GameData.DestinationCity"
     },
     {
       "name": "NextRestStop",
@@ -7114,7 +7274,8 @@
       "package_level": 30,
       "default_value": 0,
       "compression": "int32_t",
-      "is_visible": true
+      "is_visible": true,
+      "simhub_property": "DataCorePlugin.GameData.NextRestStop"
     },
     {
       "name": "CargoDamage",
@@ -7135,7 +7296,8 @@
       "package_level": 30,
       "default_value": 0,
       "compression": "float",
-      "is_visible": true
+      "is_visible": true,
+      "simhub_property": "DataCorePlugin.GameData.CargoDamage"
     },
     {
       "name": "InCome",
@@ -7156,7 +7318,8 @@
       "package_level": 30,
       "default_value": 0,
       "compression": "int32_t",
-      "is_visible": true
+      "is_visible": true,
+      "simhub_property": "DataCorePlugin.GameData.InCome"
     },
     {
       "name": "RadarIndex0",
@@ -8521,7 +8684,8 @@
       "package_level": 500,
       "default_value": 0,
       "compression": "float",
-      "is_visible": true
+      "is_visible": true,
+      "simhub_property": "DataCorePlugin.GameData.FrontARB"
     },
     {
       "name": "RearARB",
@@ -8542,7 +8706,8 @@
       "package_level": 500,
       "default_value": 0,
       "compression": "float",
-      "is_visible": true
+      "is_visible": true,
+      "simhub_property": "DataCorePlugin.GameData.RearARB"
     },
     {
       "name": "ThrottleShaping",
@@ -8563,7 +8728,8 @@
       "package_level": 500,
       "default_value": 0,
       "compression": "float",
-      "is_visible": true
+      "is_visible": true,
+      "simhub_property": "DataCorePlugin.GameData.ThrottleShaping"
     },
     {
       "name": "SteeringWheelAngle",
@@ -8584,7 +8750,8 @@
       "package_level": 30,
       "default_value": 0,
       "compression": "float",
-      "is_visible": true
+      "is_visible": true,
+      "simhub_property": "DataCorePlugin.GameData.SteeringWheelAngle"
     },
     {
       "name": "SpotterCarLeft",
@@ -8605,7 +8772,8 @@
       "package_level": 30,
       "default_value": 0,
       "compression": "bool",
-      "is_visible": true
+      "is_visible": true,
+      "simhub_property": "DataCorePlugin.GameData.SpotterCarLeft"
     },
     {
       "name": "SpotterCarLeftAngle",
@@ -8626,7 +8794,8 @@
       "package_level": 30,
       "default_value": 0,
       "compression": "float",
-      "is_visible": true
+      "is_visible": true,
+      "simhub_property": "DataCorePlugin.GameData.SpotterCarLeftAngle"
     },
     {
       "name": "SpotterCarLeftDistance",
@@ -8647,7 +8816,8 @@
       "package_level": 30,
       "default_value": 0,
       "compression": "float",
-      "is_visible": true
+      "is_visible": true,
+      "simhub_property": "DataCorePlugin.GameData.SpotterCarLeftDistance"
     },
     {
       "name": "SpotterCarRight",
@@ -8668,7 +8838,8 @@
       "package_level": 30,
       "default_value": 0,
       "compression": "bool",
-      "is_visible": true
+      "is_visible": true,
+      "simhub_property": "DataCorePlugin.GameData.SpotterCarRight"
     },
     {
       "name": "SpotterCarRightAngle",
@@ -8689,7 +8860,8 @@
       "package_level": 30,
       "default_value": 0,
       "compression": "float",
-      "is_visible": true
+      "is_visible": true,
+      "simhub_property": "DataCorePlugin.GameData.SpotterCarRightAngle"
     },
     {
       "name": "SpotterCarRightDistance",
@@ -8710,7 +8882,8 @@
       "package_level": 30,
       "default_value": 0,
       "compression": "float",
-      "is_visible": true
+      "is_visible": true,
+      "simhub_property": "DataCorePlugin.GameData.SpotterCarRightDistance"
     },
     {
       "name": "TC_B",
@@ -8731,7 +8904,8 @@
       "package_level": 30,
       "default_value": 0,
       "compression": "float",
-      "is_visible": true
+      "is_visible": true,
+      "simhub_property": "DataCorePlugin.GameData.TC_B"
     },
     {
       "name": "ABSMaxLevel",
@@ -8752,7 +8926,8 @@
       "package_level": 500,
       "default_value": 0,
       "compression": "uint8",
-      "is_visible": true
+      "is_visible": true,
+      "simhub_property": "DataCorePlugin.GameData.ABSMaxLevel"
     },
     {
       "name": "TCMaxLevel",
@@ -8773,7 +8948,8 @@
       "package_level": 500,
       "default_value": 0,
       "compression": "uint8",
-      "is_visible": true
+      "is_visible": true,
+      "simhub_property": "DataCorePlugin.GameData.TCMaxLevel"
     },
     {
       "name": "TCCutMax",
@@ -8794,7 +8970,8 @@
       "package_level": 500,
       "default_value": 0,
       "compression": "uint8",
-      "is_visible": true
+      "is_visible": true,
+      "simhub_property": "DataCorePlugin.GameData.TCCutMax"
     },
     {
       "name": "TCSlipMax",
@@ -8815,7 +8992,8 @@
       "package_level": 500,
       "default_value": 0,
       "compression": "uint8",
-      "is_visible": true
+      "is_visible": true,
+      "simhub_property": "DataCorePlugin.GameData.TCSlipMax"
     },
     {
       "name": "SoC",
@@ -8836,7 +9014,8 @@
       "package_level": 30,
       "default_value": 0,
       "compression": "float",
-      "is_visible": true
+      "is_visible": true,
+      "simhub_property": "DataCorePlugin.GameData.SoC"
     },
     {
       "name": "EVMode",
@@ -8857,7 +9036,8 @@
       "package_level": 30,
       "default_value": 0,
       "compression": "uint8",
-      "is_visible": true
+      "is_visible": true,
+      "simhub_property": "DataCorePlugin.GameData.EVMode"
     },
     {
       "name": "Regen",
@@ -8878,7 +9058,8 @@
       "package_level": 30,
       "default_value": 0,
       "compression": "float",
-      "is_visible": true
+      "is_visible": true,
+      "simhub_property": "DataCorePlugin.GameData.Regen"
     },
     {
       "name": "VirtualEnergy",
@@ -8899,7 +9080,8 @@
       "package_level": 30,
       "default_value": 0,
       "compression": "float",
-      "is_visible": true
+      "is_visible": true,
+      "simhub_property": "DataCorePlugin.GameData.VirtualEnergy"
     },
     {
       "name": "FrontARBMax",
@@ -8920,7 +9102,8 @@
       "package_level": 500,
       "default_value": 0,
       "compression": "uint8",
-      "is_visible": true
+      "is_visible": true,
+      "simhub_property": "DataCorePlugin.GameData.FrontARBMax"
     },
     {
       "name": "RearARBMax",
@@ -8941,7 +9124,8 @@
       "package_level": 500,
       "default_value": 0,
       "compression": "uint8",
-      "is_visible": true
+      "is_visible": true,
+      "simhub_property": "DataCorePlugin.GameData.RearARBMax"
     },
     {
       "name": "LiftAndCoastProgress",
@@ -8962,7 +9146,8 @@
       "package_level": 30,
       "default_value": 0,
       "compression": "uint8",
-      "is_visible": true
+      "is_visible": true,
+      "simhub_property": "DataCorePlugin.GameData.LiftAndCoastProgress"
     },
     {
       "name": "TimeGapCarAhead",
@@ -8983,7 +9168,8 @@
       "package_level": 30,
       "default_value": 0,
       "compression": "float",
-      "is_visible": true
+      "is_visible": true,
+      "simhub_property": "DataCorePlugin.GameData.TimeGapCarAhead"
     },
     {
       "name": "TimeGapCarBehind",
@@ -9004,7 +9190,8 @@
       "package_level": 30,
       "default_value": 0,
       "compression": "float",
-      "is_visible": true
+      "is_visible": true,
+      "simhub_property": "DataCorePlugin.GameData.TimeGapCarBehind"
     },
     {
       "name": "TimeGapPlaceAhead",
@@ -9025,7 +9212,8 @@
       "package_level": 30,
       "default_value": 0,
       "compression": "float",
-      "is_visible": true
+      "is_visible": true,
+      "simhub_property": "DataCorePlugin.GameData.TimeGapPlaceAhead"
     },
     {
       "name": "TimeGapPlaceBehind",
@@ -9046,7 +9234,8 @@
       "package_level": 30,
       "default_value": 0,
       "compression": "float",
-      "is_visible": true
+      "is_visible": true,
+      "simhub_property": "DataCorePlugin.GameData.TimeGapPlaceBehind"
     },
     {
       "name": "TrackLimitsSteps",
@@ -9067,7 +9256,8 @@
       "package_level": 30,
       "default_value": 0,
       "compression": "uint8",
-      "is_visible": true
+      "is_visible": true,
+      "simhub_property": "DataCorePlugin.GameData.TrackLimitsSteps"
     },
     {
       "name": "EngineMapMax",
@@ -9088,7 +9278,8 @@
       "package_level": 500,
       "default_value": 0,
       "compression": "uint8",
-      "is_visible": true
+      "is_visible": true,
+      "simhub_property": "DataCorePlugin.GameData.EngineMapMax"
     },
     {
       "name": "Migration",
@@ -9109,7 +9300,8 @@
       "package_level": 30,
       "default_value": 0,
       "compression": "uint8",
-      "is_visible": true
+      "is_visible": true,
+      "simhub_property": "DataCorePlugin.GameData.Migration"
     },
     {
       "name": "MigrationMax",
@@ -9130,7 +9322,8 @@
       "package_level": 500,
       "default_value": 0,
       "compression": "uint8",
-      "is_visible": true
+      "is_visible": true,
+      "simhub_property": "DataCorePlugin.GameData.MigrationMax"
     },
     {
       "name": "VehicleTag1",
@@ -9151,7 +9344,8 @@
       "package_level": 500,
       "default_value": "",
       "compression": "string",
-      "is_visible": true
+      "is_visible": true,
+      "simhub_property": "DataCorePlugin.GameData.VehicleTag1"
     },
     {
       "name": "VehicleTag2",
@@ -9172,7 +9366,8 @@
       "package_level": 500,
       "default_value": "",
       "compression": "string",
-      "is_visible": true
+      "is_visible": true,
+      "simhub_property": "DataCorePlugin.GameData.VehicleTag2"
     },
     {
       "name": "VehicleTag3",
@@ -9193,7 +9388,8 @@
       "package_level": 500,
       "default_value": "",
       "compression": "string",
-      "is_visible": true
+      "is_visible": true,
+      "simhub_property": "DataCorePlugin.GameData.VehicleTag3"
     },
     {
       "name": "BatteryPercent",
@@ -9214,7 +9410,8 @@
       "package_level": 30,
       "default_value": 0,
       "compression": "float",
-      "is_visible": true
+      "is_visible": true,
+      "simhub_property": "DataCorePlugin.GameData.BatteryPercent"
     },
     {
       "name": "TyreOptimalTempFrontLeft",
@@ -9235,7 +9432,8 @@
       "package_level": 30,
       "default_value": 0,
       "compression": "float",
-      "is_visible": true
+      "is_visible": true,
+      "simhub_property": "DataCorePlugin.GameData.TyreOptimalTempFrontLeft"
     },
     {
       "name": "TyreOptimalTempFrontRight",
@@ -9256,7 +9454,8 @@
       "package_level": 30,
       "default_value": 0,
       "compression": "float",
-      "is_visible": true
+      "is_visible": true,
+      "simhub_property": "DataCorePlugin.GameData.TyreOptimalTempFrontRight"
     },
     {
       "name": "TyreOptimalTempRearLeft",
@@ -9277,7 +9476,8 @@
       "package_level": 30,
       "default_value": 0,
       "compression": "float",
-      "is_visible": true
+      "is_visible": true,
+      "simhub_property": "DataCorePlugin.GameData.TyreOptimalTempRearLeft"
     },
     {
       "name": "TyreOptimalTempRearRight",
@@ -9298,7 +9498,8 @@
       "package_level": 500,
       "default_value": 0,
       "compression": "float",
-      "is_visible": true
+      "is_visible": true,
+      "simhub_property": "DataCorePlugin.GameData.TyreOptimalTempRearRight"
     },
     {
       "name": "TyreCompoundIndexFrontLeft",
@@ -9319,7 +9520,8 @@
       "package_level": 500,
       "default_value": 0,
       "compression": "uint8",
-      "is_visible": true
+      "is_visible": true,
+      "simhub_property": "DataCorePlugin.GameData.TyreCompoundIndexFrontLeft"
     },
     {
       "name": "TyreCompoundIndexFrontRight",
@@ -9340,7 +9542,8 @@
       "package_level": 500,
       "default_value": 0,
       "compression": "uint8",
-      "is_visible": true
+      "is_visible": true,
+      "simhub_property": "DataCorePlugin.GameData.TyreCompoundIndexFrontRight"
     },
     {
       "name": "TyreCompoundIndexRearLeft",
@@ -9361,7 +9564,8 @@
       "package_level": 500,
       "default_value": 0,
       "compression": "uint8",
-      "is_visible": true
+      "is_visible": true,
+      "simhub_property": "DataCorePlugin.GameData.TyreCompoundIndexRearLeft"
     },
     {
       "name": "TyreCompoundIndexRearRight",
@@ -9382,7 +9586,8 @@
       "package_level": 500,
       "default_value": 0,
       "compression": "uint8",
-      "is_visible": true
+      "is_visible": true,
+      "simhub_property": "DataCorePlugin.GameData.TyreCompoundIndexRearRight"
     },
     {
       "name": "TyreCompoundTypeFrontLeft",
@@ -9403,7 +9608,8 @@
       "package_level": 500,
       "default_value": "",
       "compression": "string",
-      "is_visible": true
+      "is_visible": true,
+      "simhub_property": "DataCorePlugin.GameData.TyreCompoundTypeFrontLeft"
     },
     {
       "name": "TyreCompoundTypeFrontRight",
@@ -9424,7 +9630,8 @@
       "package_level": 500,
       "default_value": "",
       "compression": "string",
-      "is_visible": true
+      "is_visible": true,
+      "simhub_property": "DataCorePlugin.GameData.TyreCompoundTypeFrontRight"
     },
     {
       "name": "TyreCompoundTypeRearLeft",
@@ -9445,7 +9652,8 @@
       "package_level": 500,
       "default_value": "",
       "compression": "string",
-      "is_visible": true
+      "is_visible": true,
+      "simhub_property": "DataCorePlugin.GameData.TyreCompoundTypeRearLeft"
     },
     {
       "name": "TyreCompoundTypeRearRight",
@@ -9466,7 +9674,8 @@
       "package_level": 500,
       "default_value": "",
       "compression": "string",
-      "is_visible": true
+      "is_visible": true,
+      "simhub_property": "DataCorePlugin.GameData.TyreCompoundTypeRearRight"
     },
     {
       "name": "TimeOfDay",
@@ -9487,7 +9696,8 @@
       "package_level": 30,
       "default_value": 0,
       "compression": "float",
-      "is_visible": true
+      "is_visible": true,
+      "simhub_property": "DataCorePlugin.GameData.TimeOfDay"
     },
     {
       "name": "TrackLimitsStepsPerPenalty",
@@ -9508,7 +9718,8 @@
       "package_level": 30,
       "default_value": 0,
       "compression": "uint8",
-      "is_visible": true
+      "is_visible": true,
+      "simhub_property": "DataCorePlugin.GameData.TrackLimitsStepsPerPenalty"
     },
     {
       "name": "TrackLimitsStepsPerPoint",
@@ -9529,7 +9740,8 @@
       "package_level": 30,
       "default_value": 0,
       "compression": "uint8",
-      "is_visible": true
+      "is_visible": true,
+      "simhub_property": "DataCorePlugin.GameData.TrackLimitsStepsPerPoint"
     },
     {
       "name": "TrackGripLevel",
@@ -9550,7 +9762,8 @@
       "package_level": 30,
       "default_value": 0,
       "compression": "uint8",
-      "is_visible": true
+      "is_visible": true,
+      "simhub_property": "DataCorePlugin.GameData.TrackGripLevel"
     },
     {
       "name": "IsFixedSetup",
@@ -9571,7 +9784,8 @@
       "package_level": 30,
       "default_value": 0,
       "compression": "bool",
-      "is_visible": true
+      "is_visible": true,
+      "simhub_property": "DataCorePlugin.GameData.IsFixedSetup"
     },
     {
       "name": "CloudCoverage",
@@ -9592,7 +9806,8 @@
       "package_level": 30,
       "default_value": 0,
       "compression": "uint8",
-      "is_visible": true
+      "is_visible": true,
+      "simhub_property": "DataCorePlugin.GameData.CloudCoverage"
     },
     {
       "name": "AttackMode",
@@ -9613,7 +9828,8 @@
       "package_level": 30,
       "default_value": 0,
       "compression": "uint16_t",
-      "is_visible": true
+      "is_visible": true,
+      "simhub_property": "DataCorePlugin.GameData.AttackMode"
     },
     {
       "name": "VehicleFilename",
@@ -9634,7 +9850,8 @@
       "package_level": 2000,
       "default_value": "",
       "compression": "string",
-      "is_visible": true
+      "is_visible": true,
+      "simhub_property": "DataCorePlugin.GameData.VehicleFilename"
     }
   ]
 }
