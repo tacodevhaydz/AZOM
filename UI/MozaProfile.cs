@@ -1,4 +1,5 @@
 using System;
+using System.Collections.Generic;
 using System.Windows.Controls;
 using MozaPlugin.Devices;
 using Newtonsoft.Json;
@@ -6,6 +7,120 @@ using SimHub.Plugins.ProfilesCommon;
 
 namespace MozaPlugin
 {
+    /// <summary>
+    /// Per-wheel-page overlay layered on top of a <see cref="MozaProfile"/>'s
+    /// baseline. Stored on <see cref="MozaProfile.WheelOverridesByPageGuid"/>,
+    /// keyed by the SimHub device-extension's <c>DescriptorUniqueId</c> GUID
+    /// (which is what SimHub uses to identify the per-page settings blob).
+    ///
+    /// Every scalar uses -1 (or null for arrays / strings) to mean "no
+    /// override — fall through to the profile baseline". This lets a user
+    /// keep e.g. brightness 100 in the GS V2P overlay while another wheel
+    /// uses the profile's lower baseline.
+    /// </summary>
+    public sealed class WheelOverride
+    {
+        // Captures legacy JSON keys that no longer exist on the class (e.g.
+        // pre-schema-v5 TelemetryEnabled, pre-schema-v4 TelemetryMzdashFolder).
+        // Migration reads these values into the new schema and clears the dict.
+        [Newtonsoft.Json.JsonExtensionData(WriteData = false)]
+        internal Dictionary<string, Newtonsoft.Json.Linq.JToken>? LegacyJsonFields;
+
+        // LED / mode
+        public int WheelTelemetryMode { get; set; } = -1;
+        public int WheelIdleEffect { get; set; } = -1;
+        public int WheelButtonsIdleEffect { get; set; } = -1;
+        public int WheelKnobIdleEffect { get; set; } = -1;
+        public int WheelKnobLedMode { get; set; } = -1;
+        public int WheelButtonsLedMode { get; set; } = -1;
+        public int WheelTelemetryIdleSpeedMs { get; set; } = -1;
+        public int WheelButtonsIdleSpeedMs { get; set; } = -1;
+        public int WheelKnobIdleSpeedMs { get; set; } = -1;
+        // NOTE: WheelSleep* (mode / timeout / speed / color) moved to
+        // MozaPluginSettings.WheelSleepByPageGuid in schema v8 — sleep is a
+        // firmware preference, not a per-game-per-wheel decision. Legacy
+        // values get drained via LegacyJsonFields during migration.
+
+        // Brightness (-1 = use profile baseline)
+        public int WheelRpmBrightness { get; set; } = -1;
+        public int WheelButtonsBrightness { get; set; } = -1;
+        public int WheelFlagsBrightness { get; set; } = -1;
+        public int WheelESRpmBrightness { get; set; } = -1;
+
+        // ES wheel
+        public int WheelRpmIndicatorMode { get; set; } = -1;
+        public int WheelRpmDisplayMode { get; set; } = -1;
+
+        // Inputs (newer FW silently drops readback — overlay is the source of truth)
+        public int WheelPaddlesMode { get; set; } = -1;
+        public int WheelClutchPoint { get; set; } = -1;
+        public int WheelKnobMode { get; set; } = -1;
+        public int WheelStickMode { get; set; } = -1;
+
+        // Colors (packed)
+        public int[]? WheelRpmColors { get; set; }
+        public int[]? WheelRpmBlinkColors { get; set; }
+        public int[]? WheelButtonColors { get; set; }
+        public bool[]? WheelButtonDefaultDuringTelemetry { get; set; }
+        public int[]? WheelFlagColors { get; set; }
+        public int[]? WheelIdleColor { get; set; }
+        public int[]? WheelESRpmColors { get; set; }
+        public int[]? WheelKnobBackgroundColors { get; set; }
+        public int[]? WheelKnobPrimaryColors { get; set; }
+        public int[]? WheelKnobRingColors { get; set; }
+        public int WheelKnobRingBrightness { get; set; } = -1;
+
+        // Telemetry — per-game dashboard selection (per-wheel-page-per-game).
+        public string? TelemetryProfileName { get; set; }
+        public string? TelemetryMzdashPath { get; set; }
+        // NOTE: TelemetryEnabled / TelemetryMzdashFolder / TelemetryWheelEra
+        // moved to MozaPluginSettings dicts (per-wheel-page, shared across
+        // games) — schema v4/v5/v6.
+
+        public WheelOverride Clone()
+        {
+            return new WheelOverride
+            {
+                WheelTelemetryMode = WheelTelemetryMode,
+                WheelIdleEffect = WheelIdleEffect,
+                WheelButtonsIdleEffect = WheelButtonsIdleEffect,
+                WheelKnobIdleEffect = WheelKnobIdleEffect,
+                WheelKnobLedMode = WheelKnobLedMode,
+                WheelButtonsLedMode = WheelButtonsLedMode,
+                WheelTelemetryIdleSpeedMs = WheelTelemetryIdleSpeedMs,
+                WheelButtonsIdleSpeedMs = WheelButtonsIdleSpeedMs,
+                WheelKnobIdleSpeedMs = WheelKnobIdleSpeedMs,
+                WheelRpmBrightness = WheelRpmBrightness,
+                WheelButtonsBrightness = WheelButtonsBrightness,
+                WheelFlagsBrightness = WheelFlagsBrightness,
+                WheelESRpmBrightness = WheelESRpmBrightness,
+                WheelRpmIndicatorMode = WheelRpmIndicatorMode,
+                WheelRpmDisplayMode = WheelRpmDisplayMode,
+                WheelPaddlesMode = WheelPaddlesMode,
+                WheelClutchPoint = WheelClutchPoint,
+                WheelKnobMode = WheelKnobMode,
+                WheelStickMode = WheelStickMode,
+                WheelRpmColors = WheelRpmColors != null ? (int[])WheelRpmColors.Clone() : null,
+                WheelRpmBlinkColors = WheelRpmBlinkColors != null ? (int[])WheelRpmBlinkColors.Clone() : null,
+                WheelButtonColors = WheelButtonColors != null ? (int[])WheelButtonColors.Clone() : null,
+                WheelButtonDefaultDuringTelemetry = WheelButtonDefaultDuringTelemetry != null
+                    ? (bool[])WheelButtonDefaultDuringTelemetry.Clone() : null,
+                WheelFlagColors = WheelFlagColors != null ? (int[])WheelFlagColors.Clone() : null,
+                WheelIdleColor = WheelIdleColor != null ? (int[])WheelIdleColor.Clone() : null,
+                WheelESRpmColors = WheelESRpmColors != null ? (int[])WheelESRpmColors.Clone() : null,
+                WheelKnobBackgroundColors = WheelKnobBackgroundColors != null
+                    ? (int[])WheelKnobBackgroundColors.Clone() : null,
+                WheelKnobPrimaryColors = WheelKnobPrimaryColors != null
+                    ? (int[])WheelKnobPrimaryColors.Clone() : null,
+                WheelKnobRingColors = WheelKnobRingColors != null
+                    ? (int[])WheelKnobRingColors.Clone() : null,
+                WheelKnobRingBrightness = WheelKnobRingBrightness,
+                TelemetryProfileName = TelemetryProfileName,
+                TelemetryMzdashPath = TelemetryMzdashPath,
+            };
+        }
+    }
+
     /// <summary>
     /// Persisted AB9 active shifter configuration. All slider values are 0..100
     /// (matching the on-wire single-byte payload range). Stored per-profile so a
@@ -20,6 +135,20 @@ namespace MozaPlugin
         public byte NaturalFriction { get; set; }     = 50;
         public byte MaxTorqueLimit { get; set; }      = 50;
 
+        // Host-rendered engine vibration. Intensity (0..100 %) gates the
+        // 0x0A 0x05 stream's slot ID (0 = silent slot 0x0000). Frequency is
+        // the literal target Hz (0..300) of the oscillator the AB9 firmware
+        // runs from the streamed period field. Neither value is pushed as a
+        // stored device setting — they modulate the SimHub plugin's host-side
+        // stream generator only.
+        public byte EngineVibrationIntensity { get; set; } = 0;
+        public ushort EngineVibrationFrequency { get; set; } = 100;
+
+        // Firmware-driven gear-shift vibration. One-shot 0x20/dev 0x12/cmd 0x0A 0x01
+        // push when the user moves this slider; AB9 firmware then fires the rumble
+        // pattern autonomously on every HID-detected gear engagement.
+        public byte GearShiftVibrationIntensity { get; set; } = 0;
+
         public Ab9Settings Clone()
         {
             return new Ab9Settings
@@ -30,6 +159,9 @@ namespace MozaPlugin
                 NaturalDamping = NaturalDamping,
                 NaturalFriction = NaturalFriction,
                 MaxTorqueLimit = MaxTorqueLimit,
+                EngineVibrationIntensity = EngineVibrationIntensity,
+                EngineVibrationFrequency = EngineVibrationFrequency,
+                GearShiftVibrationIntensity = GearShiftVibrationIntensity,
             };
         }
     }
@@ -44,6 +176,14 @@ namespace MozaPlugin
     {
         [JsonIgnore]
         public override Control ProfileContentControl => null!;
+
+        // Captures pre-schema-v8 JSON keys that no longer exist on this class
+        // (e.g. WheelSleepMode / WheelSleepTimeoutMin / WheelSleepSpeedMs /
+        // WheelSleepColor — moved to MozaPluginSettings.WheelSleepByPageGuid).
+        // Migration reads these into the per-wheel-page dict and clears the
+        // capture, so subsequent saves don't re-emit them.
+        [JsonExtensionData(WriteData = false)]
+        internal Dictionary<string, Newtonsoft.Json.Linq.JToken>? LegacyJsonFields;
 
         // ===== Base/Motor settings (raw device values from MozaData) =====
         public int Limit { get; set; } = -1;               // raw = degrees / 2
@@ -81,10 +221,9 @@ namespace MozaPlugin
         public int WheelTelemetryIdleSpeedMs { get; set; } = -1;
         public int WheelButtonsIdleSpeedMs { get; set; } = -1;
         public int WheelKnobIdleSpeedMs { get; set; } = -1;
-        public int WheelSleepMode { get; set; } = -1;
-        public int WheelSleepTimeoutMin { get; set; } = -1;
-        public int WheelSleepSpeedMs { get; set; } = -1;
-        public int[]? WheelSleepColor { get; set; }
+        // NOTE: WheelSleep* (mode / timeout / speed / color) moved to
+        // MozaPluginSettings.WheelSleepByPageGuid in schema v8 — see the
+        // baseline-shared LegacyJsonFields capture above.
         public int WheelRpmBrightness { get; set; } = -1;
         public int WheelButtonsBrightness { get; set; } = -1;
         public int WheelFlagsBrightness { get; set; } = -1;
@@ -163,6 +302,42 @@ namespace MozaPlugin
         // time; re-applied by ApplyProfile() so each SimHub game gets its own dashboard.
         public string? TelemetryDashboardKey { get; set; }
 
+        // ===== Wheel-page overlays =====
+        // Per-wheel-page deltas on top of the profile baseline. Keyed by the
+        // SimHub device-extension's DescriptorUniqueId GUID. See
+        // <see cref="WheelOverride"/> for the full field set.
+        public Dictionary<Guid, WheelOverride> WheelOverridesByPageGuid { get; set; }
+            = new Dictionary<Guid, WheelOverride>();
+
+        // ===== Telemetry channel mappings (profile × wheel-page × dashboard × channel) =====
+        // Outer key  = wheel page DescriptorUniqueId GUID
+        // Middle key = dashboard identity (see MozaPlugin.GetActiveDashboardKeyCandidates)
+        // Inner key  = channel URL (e.g. "v1/gameData/Rpm")
+        // Value      = SimHub property path (empty = use Telemetry.json default)
+        //
+        // Profile-scoped so each game gets its own mapping set; wheel-scoped because
+        // dashboards available on a VGS aren't available on a CS V2.1.
+        public Dictionary<Guid, Dictionary<string, Dictionary<string, string>>> TelemetryChannelMappings { get; set; }
+            = new Dictionary<Guid, Dictionary<string, Dictionary<string, string>>>();
+
+        // ===== Wheelbase ambient LED (per-profile) =====
+        // Moved out of MozaPluginSettings 2026-05-14 so each game can pick its own
+        // ambient palette. -1 sentinel = "leave the persisted base value alone".
+        public int BaseAmbientBrightness { get; set; } = -1;
+        public int BaseAmbientStandbyMode { get; set; } = -1;
+        public int BaseAmbientIndicatorState { get; set; } = -1;
+        public int BaseAmbientSleepMode { get; set; } = -1;
+        public int BaseAmbientSleepTimeout { get; set; } = -1;
+        public int BaseAmbientStartupColor { get; set; } = -1;   // packed RGB
+        public int BaseAmbientShutdownColor { get; set; } = -1;  // packed RGB
+
+        // ===== Gearshift event tuning (per-profile) =====
+        // Plugin-side gearshift event coalescing. Moved out of MozaPluginSettings
+        // 2026-05-14 since users want per-game tuning (H-pattern vs paddles).
+        // -1 = unset (fall back to plugin default: VibrateOnNeutral=0, DebounceMs=500).
+        public int GearshiftVibrateOnNeutral { get; set; } = -1;  // 0/1
+        public int GearshiftDebounceMs { get; set; } = -1;
+
         // ===== ProfileBase abstract implementation =====
 
         public override void CopyProfilePropertiesFrom(MozaProfile p)
@@ -190,10 +365,8 @@ namespace MozaPlugin
             WheelTelemetryIdleSpeedMs = p.WheelTelemetryIdleSpeedMs;
             WheelButtonsIdleSpeedMs = p.WheelButtonsIdleSpeedMs;
             WheelKnobIdleSpeedMs = p.WheelKnobIdleSpeedMs;
-            WheelSleepMode = p.WheelSleepMode;
-            WheelSleepTimeoutMin = p.WheelSleepTimeoutMin;
-            WheelSleepSpeedMs = p.WheelSleepSpeedMs;
-            WheelSleepColor = p.WheelSleepColor;
+            // WheelSleep* now lives on MozaPluginSettings.WheelSleepByPageGuid
+            // (per-wheel, shared across profiles) — not copied here.
             WheelRpmBrightness = p.WheelRpmBrightness; WheelButtonsBrightness = p.WheelButtonsBrightness;
             WheelFlagsBrightness = p.WheelFlagsBrightness;
 
@@ -246,6 +419,44 @@ namespace MozaPlugin
             Ab9 = p.Ab9?.Clone();
 
             TelemetryDashboardKey = p.TelemetryDashboardKey;
+
+            // Wheel-page overlays (deep clone)
+            WheelOverridesByPageGuid = new Dictionary<Guid, WheelOverride>();
+            if (p.WheelOverridesByPageGuid != null)
+            {
+                foreach (var kvp in p.WheelOverridesByPageGuid)
+                    if (kvp.Value != null) WheelOverridesByPageGuid[kvp.Key] = kvp.Value.Clone();
+            }
+
+            // Telemetry channel mappings (deep clone)
+            TelemetryChannelMappings = new Dictionary<Guid, Dictionary<string, Dictionary<string, string>>>();
+            if (p.TelemetryChannelMappings != null)
+            {
+                foreach (var kvp in p.TelemetryChannelMappings)
+                {
+                    if (kvp.Value == null) continue;
+                    var middle = new Dictionary<string, Dictionary<string, string>>(StringComparer.OrdinalIgnoreCase);
+                    foreach (var dash in kvp.Value)
+                    {
+                        if (dash.Value == null) continue;
+                        middle[dash.Key] = new Dictionary<string, string>(dash.Value, StringComparer.OrdinalIgnoreCase);
+                    }
+                    TelemetryChannelMappings[kvp.Key] = middle;
+                }
+            }
+
+            // Base ambient
+            BaseAmbientBrightness = p.BaseAmbientBrightness;
+            BaseAmbientStandbyMode = p.BaseAmbientStandbyMode;
+            BaseAmbientIndicatorState = p.BaseAmbientIndicatorState;
+            BaseAmbientSleepMode = p.BaseAmbientSleepMode;
+            BaseAmbientSleepTimeout = p.BaseAmbientSleepTimeout;
+            BaseAmbientStartupColor = p.BaseAmbientStartupColor;
+            BaseAmbientShutdownColor = p.BaseAmbientShutdownColor;
+
+            // Gearshift
+            GearshiftVibrateOnNeutral = p.GearshiftVibrateOnNeutral;
+            GearshiftDebounceMs = p.GearshiftDebounceMs;
         }
 
         // ===== Capture current state =====
@@ -279,35 +490,6 @@ namespace MozaPlugin
             GameInertia = data.GameInertia; GameSpring = data.GameSpring;
             WorkMode = data.WorkMode;
 
-            // Wheel LED (from settings, since these use -1 sentinel)
-            WheelTelemetryMode = settings.WheelTelemetryMode;
-            WheelIdleEffect = settings.WheelIdleEffect;
-            WheelButtonsIdleEffect = settings.WheelButtonsIdleEffect;
-            WheelKnobIdleEffect = settings.WheelKnobIdleEffect;
-            WheelKnobLedMode = settings.WheelKnobLedMode;
-            WheelButtonsLedMode = settings.WheelButtonsLedMode;
-            WheelTelemetryIdleSpeedMs = settings.WheelTelemetryIdleSpeedMs;
-            WheelButtonsIdleSpeedMs = settings.WheelButtonsIdleSpeedMs;
-            WheelKnobIdleSpeedMs = settings.WheelKnobIdleSpeedMs;
-            WheelSleepMode = settings.WheelSleepMode;
-            WheelSleepTimeoutMin = settings.WheelSleepTimeoutMin;
-            WheelSleepSpeedMs = settings.WheelSleepSpeedMs;
-            WheelSleepColor = settings.WheelSleepColor;
-            WheelRpmBrightness = settings.WheelRpmBrightness;
-            WheelButtonsBrightness = settings.WheelButtonsBrightness;
-            WheelFlagsBrightness = settings.WheelFlagsBrightness;
-
-            // ES wheel
-            WheelRpmIndicatorMode = settings.WheelRpmIndicatorMode;
-            WheelRpmDisplayMode = settings.WheelRpmDisplayMode;
-            WheelESRpmBrightness = settings.WheelESRpmBrightness;
-
-            // Dashboard
-            DashRpmBrightness = settings.DashRpmBrightness;
-            DashFlagsBrightness = settings.DashFlagsBrightness;
-            DashDisplayBrightness = settings.DashDisplayBrightness;
-            DashDisplayStandbyMin = settings.DashDisplayStandbyMin;
-
             // FFB Equalizer
             Equalizer1 = data.Equalizer1; Equalizer2 = data.Equalizer2; Equalizer3 = data.Equalizer3;
             Equalizer4 = data.Equalizer4; Equalizer5 = data.Equalizer5; Equalizer6 = data.Equalizer6;
@@ -329,21 +511,12 @@ namespace MozaPlugin
             PedalsBrakeCurve = (int[])data.PedalsBrakeCurve.Clone();
             PedalsClutchCurve = (int[])data.PedalsClutchCurve.Clone();
 
-            // Colors
-            WheelRpmColors = PackColors(data.WheelRpmColors);
-            WheelRpmBlinkColors = PackColors(data.WheelRpmBlinkColors);
-            WheelButtonColors = PackColors(data.WheelButtonColors);
-            WheelButtonDefaultDuringTelemetry = (bool[])data.WheelButtonDefaultDuringTelemetry.Clone();
-            WheelFlagColors = PackColors(data.WheelFlagColors);
-            WheelIdleColor = new[] { PackColor(data.WheelIdleColor) };
-            WheelESRpmColors = PackColors(data.WheelESRpmColors);
-            WheelKnobBackgroundColors = PackColors(data.WheelKnobBackgroundColors);
-            WheelKnobPrimaryColors = PackColors(data.WheelKnobPrimaryColors);
-            WheelKnobRingColors = PackColors(data.KnobRingColors);
-            WheelKnobRingBrightness = data.KnobRingBrightness;
-            DashRpmColors = PackColors(data.DashRpmColors);
-            DashRpmBlinkColors = PackColors(data.DashRpmBlinkColors);
-            DashFlagColors = PackColors(data.DashFlagColors);
+            // NOTE: wheel-LED / ES-wheel / Dash / Base-ambient / Gearshift / AB9
+            // fields are NOT captured here. They are written directly to the
+            // profile (or wheel-page overlay) by their UI handlers — re-capturing
+            // them from stale flat fields would corrupt the persisted state.
+            // Wheel colors / blink colors / knob colors live in WheelOverride;
+            // dash colors / dash blink live on the profile via the dash UI handler.
         }
 
         // ===== Color packing helpers =====

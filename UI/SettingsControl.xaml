@@ -216,6 +216,16 @@
                             <Slider x:Name="GearshiftVibrationSlider" Style="{StaticResource SettingSlider}" Minimum="0" Maximum="5" TickFrequency="1" SmallChange="1" LargeChange="1" IsSnapToTickEnabled="True" ValueChanged="GearshiftVibrationSlider_ValueChanged"/>
                             <TextBlock x:Name="GearshiftVibrationValue" Style="{StaticResource SliderValue}" Text="0"/>
                         </StackPanel>
+                        <StackPanel Orientation="Horizontal" Margin="0,4">
+                            <TextBlock Text="Vibrate on Neutral" Style="{StaticResource SliderLabel}"/>
+                            <CheckBox x:Name="GearshiftVibrateOnNeutralCheck" VerticalAlignment="Center"
+                                      Checked="GearshiftVibrateOnNeutralCheck_Changed" Unchecked="GearshiftVibrateOnNeutralCheck_Changed"/>
+                        </StackPanel>
+                        <StackPanel Orientation="Horizontal" Margin="0,4">
+                            <TextBlock Text="Shift Debounce" Style="{StaticResource SliderLabel}"/>
+                            <Slider x:Name="GearshiftDebounceSlider" Style="{StaticResource SettingSlider}" Minimum="0" Maximum="1000" TickFrequency="50" SmallChange="50" LargeChange="50" IsSnapToTickEnabled="True" ValueChanged="GearshiftDebounceSlider_ValueChanged"/>
+                            <TextBlock x:Name="GearshiftDebounceValue" Style="{StaticResource SliderValue}" Text="500 ms"/>
+                        </StackPanel>
 
                         <TextBlock Text="Protection" Style="{StaticResource SectionHeader}"/>
                         <StackPanel Orientation="Horizontal" Margin="0,8">
@@ -765,8 +775,24 @@
                             <TextBlock x:Name="Ab9MaxTorqueValue" Style="{StaticResource SliderValue}" Text="50"/>
                         </StackPanel>
 
-                        <TextBlock TextWrapping="Wrap" Foreground="Gray" FontSize="11" Margin="0,12,0,0"
-                                   Text="Settings are written to the AB9 over its dedicated USB pipe and stored in the device. Slider drags are debounced; the final value is written when the drag ends."/>
+                        <TextBlock Text="Engine Vibration" Style="{StaticResource SectionHeader}"/>
+                        <StackPanel Orientation="Horizontal" Margin="0,4">
+                            <TextBlock Text="Intensity" Style="{StaticResource SliderLabel}"/>
+                            <Slider x:Name="Ab9EngineVibIntensitySlider" Style="{StaticResource SettingSlider}" Minimum="0" Maximum="100" TickFrequency="1" ValueChanged="Ab9EngineVibIntensitySlider_ValueChanged"/>
+                            <TextBlock x:Name="Ab9EngineVibIntensityValue" Style="{StaticResource SliderValue}" Text="0"/>
+                        </StackPanel>
+                        <StackPanel Orientation="Horizontal" Margin="0,4">
+                            <TextBlock Text="Frequency" Style="{StaticResource SliderLabel}"/>
+                            <Slider x:Name="Ab9EngineVibFreqSlider" Style="{StaticResource SettingSlider}" Minimum="0" Maximum="300" TickFrequency="10" ValueChanged="Ab9EngineVibFreqSlider_ValueChanged"/>
+                            <TextBlock x:Name="Ab9EngineVibFreqValue" Style="{StaticResource SliderValue}" Text="100 Hz"/>
+                        </StackPanel>
+
+                        <TextBlock Text="Gear Shift" Style="{StaticResource SectionHeader}"/>
+                        <StackPanel Orientation="Horizontal" Margin="0,4">
+                            <TextBlock Text="Vibration Intensity" Style="{StaticResource SliderLabel}"/>
+                            <Slider x:Name="Ab9GearShiftVibSlider" Style="{StaticResource SettingSlider}" Minimum="0" Maximum="100" TickFrequency="1" ValueChanged="Ab9GearShiftVibSlider_ValueChanged"/>
+                            <TextBlock x:Name="Ab9GearShiftVibValue" Style="{StaticResource SliderValue}" Text="0"/>
+                        </StackPanel>
 
                     </StackPanel>
                 </ScrollViewer>
@@ -841,13 +867,21 @@
                         <TextBlock Text="Always send the LED bitmask with color updates, even if unchanged. Causes extra traffic so do not use unless required."
                                    Foreground="Gray" FontSize="11" Margin="0,4,0,0" TextWrapping="Wrap"/>
 
-                        <TextBlock Text="AB9 Shifter" Style="{StaticResource SectionHeader}"/>
+                        <TextBlock Text="USB Detection" Style="{StaticResource SectionHeader}"/>
                         <StackPanel Orientation="Horizontal" Margin="0,8">
-                            <TextBlock Text="Enable AB9 shifter detection" Style="{StaticResource SliderLabel}"/>
-                            <CheckBox x:Name="EnableAb9Check" VerticalAlignment="Center"
-                                      Checked="EnableAb9Check_Changed" Unchecked="EnableAb9Check_Changed"/>
+                            <TextBlock Text="Disable serial-probe fallback (advanced)" Style="{StaticResource SliderLabel}"/>
+                            <CheckBox x:Name="DisableSerialProbeFallbackCheck" VerticalAlignment="Center"
+                                      Checked="DisableSerialProbeFallbackCheck_Changed" Unchecked="DisableSerialProbeFallbackCheck_Changed"/>
                         </StackPanel>
-                        <TextBlock Text="Enable only if you have an AB9 shifter."
+                        <TextBlock Text="Default behaviour: Moza devices are discovered via Windows USB enumeration. If that returns nothing (Wine/Proton without USB enumeration, driver missing) the plugin falls back to writing a Moza protocol probe to every COM port. Check this to forbid the probe entirely — guarantees no Moza writes to non-Moza serial devices, but Moza hardware won't be found on systems where the registry path is unavailable."
+                                   Foreground="Gray" FontSize="11" Margin="0,4,0,0" TextWrapping="Wrap"/>
+
+                        <StackPanel Orientation="Horizontal" Margin="0,8">
+                            <TextBlock Text="Disable AB9 active-shifter detection" Style="{StaticResource SliderLabel}"/>
+                            <CheckBox x:Name="DisableAb9DetectionCheck" VerticalAlignment="Center"
+                                      Checked="DisableAb9DetectionCheck_Changed" Unchecked="DisableAb9DetectionCheck_Changed"/>
+                        </StackPanel>
+                        <TextBlock Text="Skip the AB9 reconnect probe. Auto-skipped already whenever the MOZA USB registry path returns empty (Wine/Proton), because the COM-port sweep that runs in that mode can lock up SimHub. Check this to skip the probe explicitly on any system. The wheelbase probe fallback is unaffected."
                                    Foreground="Gray" FontSize="11" Margin="0,4,0,0" TextWrapping="Wrap"/>
 
                         <TextBlock Text="Dashboard Telemetry" Style="{StaticResource SectionHeader}"/>
@@ -879,16 +913,6 @@
                         <TextBlock TextWrapping="Wrap" Foreground="Gray" FontSize="11" Margin="0,2,0,8"
                                    Text="Auto detects the wheel's firmware era from its handshake (catalog push and identity) and picks the matching wire protocol. Override only if telemetry stays broken — pick the era that matches your wheel hardware. Telemetry restarts automatically on change."/>
 
-                        <!-- Hidden for now: v2 telemetry pipeline not ready for general use
-                        <CheckBox x:Name="UseNewTelemetryPipelineCheck"
-                                  Content="Use greenfield Telemetry2 pipeline (experimental)"
-                                  Margin="0,8,0,4"
-                                  Checked="UseNewTelemetryPipeline_Changed"
-                                  Unchecked="UseNewTelemetryPipeline_Changed"/>
-                        <TextBlock TextWrapping="Wrap" Foreground="Gray" FontSize="11" Margin="0,0,0,8"
-                                   Text="Switch to the new layered telemetry pipeline (Telemetry2). Restart SimHub or toggle telemetry off/on to apply. Disable if you hit issues; the old pipeline stays the default until live verification clears."/>
-                        -->
-
                         <TextBlock Text="Reset" Style="{StaticResource SectionHeader}"/>
                         <StackPanel Orientation="Horizontal" Margin="0,8">
                             <Button x:Name="ClearAllSettingsButton" Content="Clear All Settings &amp; Profiles"
@@ -919,6 +943,119 @@
                         <StackPanel x:Name="ExtLedGroup3Panel" Visibility="Collapsed" Margin="0,4"/>
                         <StackPanel x:Name="ExtLedGroup4Panel" Visibility="Collapsed" Margin="0,4"/>
                         <StackPanel x:Name="ExtLedFlagsPanel" Visibility="Collapsed" Margin="0,4"/>
+                    </StackPanel>
+                </ScrollViewer>
+            </TabItem>
+
+            <TabItem Header="Upload">
+                <ScrollViewer VerticalScrollBarVisibility="Auto">
+                    <StackPanel Margin="10,5">
+
+                        <!-- Work-in-progress banner: dashboard upload isn't functional yet
+                             on current firmware. Wheel never opens the file-transfer ack
+                             channel (sess=0x04) in response to our connect handshake, so
+                             the type=0x01 ready ack never arrives and the upload times out.
+                             Investigation tools live in tools/causal-diff-sess04,
+                             tools/pre-sess04-traffic-inventory, tools/grp0e-register-scan.
+                             Banner stays until upload completes end-to-end on at least one
+                             wheel + firmware combo. -->
+                        <Border Background="#3D2E00" BorderBrush="#FFB300" BorderThickness="2"
+                                CornerRadius="3" Padding="12,10" Margin="0,0,0,12">
+                            <StackPanel>
+                                <TextBlock FontSize="16" FontWeight="Bold" Foreground="#FFD54F"
+                                           Text="⚠  Not working yet"/>
+                                <TextBlock TextWrapping="Wrap" Foreground="#FFE082" FontSize="11" Margin="0,4,0,0"
+                                           Text="Dashboard upload is in development and does NOT currently push files to the wheel. The UI here builds the upload bundle and starts the handshake, but the wheel doesn't engage the file-transfer state machine on our connect sequence, so the upload times out without writing anything. Nothing here is destructive — the button is safe to click, it just won't apply your dashboard. Use PitHouse for real uploads in the meantime."/>
+                            </StackPanel>
+                        </Border>
+
+                        <TextBlock Text="Dashboard Upload" Style="{StaticResource SectionHeader}"/>
+                        <TextBlock TextWrapping="Wrap" Foreground="Gray" FontSize="11" Margin="0,0,0,8"
+                                   Text="Push a .mzdash file to the connected wheel. Pick a local file or choose from the dashboard library (wheel-cached + folder + builtin), then click Upload now. Status reflects the latest wheel ack sub-msg (type=0x01 progress / type=0x11 complete) — bytes_written should rise toward total_size and end equal on a clean upload."/>
+
+                        <!-- Source: file picker -->
+                        <TextBlock Text="Source" FontWeight="SemiBold" Margin="0,0,0,4"/>
+                        <StackPanel Orientation="Horizontal" Margin="0,0,0,4">
+                            <RadioButton x:Name="UploadSourceFileRadio" Content="Local .mzdash file"
+                                         GroupName="UploadSource" IsChecked="True"
+                                         Margin="0,0,16,0" VerticalAlignment="Center"
+                                         Click="UploadSourceRadio_Click"/>
+                            <RadioButton x:Name="UploadSourceLibraryRadio" Content="Dashboard library"
+                                         GroupName="UploadSource"
+                                         VerticalAlignment="Center"
+                                         Click="UploadSourceRadio_Click"/>
+                        </StackPanel>
+
+                        <StackPanel x:Name="UploadFilePanel" Orientation="Horizontal" Margin="0,0,0,6">
+                            <Button Content="Pick .mzdash…" Padding="6,2" Margin="0,0,8,0"
+                                    Click="UploadPickFile_Click"/>
+                            <TextBlock x:Name="UploadPickedFileText" VerticalAlignment="Center"
+                                       Foreground="Gray" FontSize="11"
+                                       Text="(no file selected)" TextTrimming="CharacterEllipsis"
+                                       MaxWidth="500"/>
+                        </StackPanel>
+
+                        <StackPanel x:Name="UploadLibraryPanel" Orientation="Horizontal" Margin="0,0,0,6"
+                                    Visibility="Collapsed">
+                            <TextBlock Text="Dashboard:" VerticalAlignment="Center" Width="100"/>
+                            <ComboBox x:Name="UploadLibraryCombo" Width="280" Margin="0,0,8,0"
+                                      SelectionChanged="UploadLibraryCombo_SelectionChanged"/>
+                            <Button Content="Refresh list" Padding="6,2"
+                                    Click="UploadLibraryRefresh_Click"/>
+                        </StackPanel>
+
+                        <!-- Action + status -->
+                        <Separator Margin="0,8,0,8"/>
+
+                        <StackPanel Orientation="Horizontal" Margin="0,0,0,8">
+                            <Button x:Name="UploadNowButton" Content="Upload now" Padding="10,3"
+                                    MinWidth="120" Click="UploadNow_Click"/>
+                            <TextBlock x:Name="UploadStatusText" VerticalAlignment="Center"
+                                       Foreground="Gray" FontSize="11" Margin="12,0,0,0"
+                                       Text="idle"/>
+                        </StackPanel>
+
+                        <Grid Margin="0,0,0,4">
+                            <Grid.ColumnDefinitions>
+                                <ColumnDefinition Width="160"/>
+                                <ColumnDefinition Width="*"/>
+                            </Grid.ColumnDefinitions>
+                            <Grid.RowDefinitions>
+                                <RowDefinition Height="Auto"/>
+                                <RowDefinition Height="Auto"/>
+                                <RowDefinition Height="Auto"/>
+                                <RowDefinition Height="Auto"/>
+                                <RowDefinition Height="Auto"/>
+                                <RowDefinition Height="Auto"/>
+                            </Grid.RowDefinitions>
+
+                            <TextBlock Grid.Row="0" Grid.Column="0" Text="Dashboard name:" Foreground="Gray" FontSize="11" Margin="0,2"/>
+                            <TextBlock Grid.Row="0" Grid.Column="1" x:Name="UploadInfoNameText"
+                                       FontFamily="Consolas" FontSize="11" Margin="0,2" Text="—"/>
+
+                            <TextBlock Grid.Row="1" Grid.Column="0" Text="Raw size:" Foreground="Gray" FontSize="11" Margin="0,2"/>
+                            <TextBlock Grid.Row="1" Grid.Column="1" x:Name="UploadInfoRawSizeText"
+                                       FontFamily="Consolas" FontSize="11" Margin="0,2" Text="—"/>
+
+                            <TextBlock Grid.Row="2" Grid.Column="0" Text="MD5:" Foreground="Gray" FontSize="11" Margin="0,2"/>
+                            <TextBlock Grid.Row="2" Grid.Column="1" x:Name="UploadInfoMd5Text"
+                                       FontFamily="Consolas" FontSize="11" Margin="0,2" Text="—"/>
+
+                            <TextBlock Grid.Row="3" Grid.Column="0" Text="In flight:" Foreground="Gray" FontSize="11" Margin="0,2"/>
+                            <TextBlock Grid.Row="3" Grid.Column="1" x:Name="UploadInfoInFlightText"
+                                       FontFamily="Consolas" FontSize="11" Margin="0,2" Text="—"/>
+
+                            <TextBlock Grid.Row="4" Grid.Column="0" Text="Last ack bytes_written / total:" Foreground="Gray" FontSize="11" Margin="0,2"/>
+                            <TextBlock Grid.Row="4" Grid.Column="1" x:Name="UploadInfoProgressText"
+                                       FontFamily="Consolas" FontSize="11" Margin="0,2" Text="—"/>
+
+                            <TextBlock Grid.Row="5" Grid.Column="0" Text="Last ack status byte:" Foreground="Gray" FontSize="11" Margin="0,2"/>
+                            <TextBlock Grid.Row="5" Grid.Column="1" x:Name="UploadInfoStatusByteText"
+                                       FontFamily="Consolas" FontSize="11" Margin="0,2" Text="—"/>
+                        </Grid>
+
+                        <TextBlock TextWrapping="Wrap" Foreground="Gray" FontSize="11" Margin="0,12,0,0"
+                                   Text="Note: Uploads require the wheel to be connected and a management session negotiated. PNG resources referenced by widgets are not yet bundled — single-file mzdash uploads only (Gap 2 of the upload protocol implementation plan)."/>
                     </StackPanel>
                 </ScrollViewer>
             </TabItem>
@@ -1003,6 +1140,13 @@
                         <!-- Plugin info -->
                         <TextBlock Text="Plugin" FontWeight="SemiBold" Margin="0,0,0,6"/>
                         <TextBlock x:Name="DiagPluginBox" FontFamily="Consolas" FontSize="11"
+                                   TextWrapping="Wrap" Text="—" Margin="0,0,0,10"/>
+
+                        <Separator Margin="0,4,0,8"/>
+
+                        <!-- USB detection (registry-based discovery) -->
+                        <TextBlock Text="USB detection" FontWeight="SemiBold" Margin="0,0,0,6"/>
+                        <TextBlock x:Name="DiagUsbDetectionBox" FontFamily="Consolas" FontSize="11"
                                    TextWrapping="Wrap" Text="—" Margin="0,0,0,10"/>
 
                         <Separator Margin="0,4,0,8"/>

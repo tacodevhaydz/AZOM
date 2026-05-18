@@ -1,6 +1,7 @@
 using System;
 using System.Collections.Generic;
 using MozaPlugin.Telemetry;
+using MozaPlugin.Telemetry.Era;
 
 namespace MozaPlugin
 {
@@ -80,6 +81,17 @@ namespace MozaPlugin
         public int DashDisplayBrightness { get; set; } = 100;
         public int DashDisplayStandbyMin { get; set; } = 5;
 
+        // Wheelbase ambient LED settings (R21/R25/R27 family — 18 LEDs / 2 strips).
+        // Defaults match observed R25 capture (rainbow mode, brightness 100,
+        // startup/shutdown #66B8FF). See docs/protocol/leds/base-ambient-0x20-0x22.md.
+        public int BaseAmbientBrightness { get; set; } = 100;       // 0..255 wire range; UI exposes 0..100 mapped
+        public int BaseAmbientStandbyMode { get; set; } = 4;        // 4 = rainbow
+        public int BaseAmbientIndicatorState { get; set; } = 1;     // on
+        public int BaseAmbientSleepMode { get; set; } = 1;          // enabled
+        public int BaseAmbientSleepTimeout { get; set; } = 15;
+        public int BaseAmbientStartupColor { get; set; } = 0x66B8FF;
+        public int BaseAmbientShutdownColor { get; set; } = 0x66B8FF;
+
         // Blink colors (write-only, can't be polled — persisted here)
         // Packed as R<<16 | G<<8 | B, null = defaults not yet customized
         public int[]? WheelRpmBlinkColors { get; set; }
@@ -104,14 +116,34 @@ namespace MozaPlugin
         public string LastWheelbasePort { get; set; } = "";
         public string LastAb9Port { get; set; } = "";
 
-        // AB9 shifter detection toggle. When false, plugin never probes / opens
-        // the AB9 port — defense for users with base-only setups where the
-        // AB9 manager would otherwise try to grab a COM port that may collide
-        // with the wheelbase under Wine. Off by default — most users don't
-        // have an AB9; AB9 owners flip this on once. Existing users with AB9
-        // hardware will need to enable it after upgrade (Newtonsoft fills
-        // missing JSON keys from the C# initializer = false).
-        public bool EnableAb9 { get; set; } = false;
+        // Hard opt-out of the serial-probe fallback. Default behaviour
+        // (false) is registry-first: if the registry-based MOZA USB
+        // discovery returns matching ports, those are used and no probe
+        // ever runs; if the registry returns zero MOZA devices total
+        // (Wine/Proton without USB enumeration, driver not loaded),
+        // the plugin falls back to writing a Moza protocol probe frame
+        // to every COM port on the system as a last resort. Setting
+        // this to true forbids the probe entirely — useful for the
+        // rare user who wants to guarantee no Moza writes ever reach
+        // a non-Moza serial peripheral. The previous ScanUnknownSerialPorts
+        // (and earlier EnableAb9) on-disk keys are silently ignored.
+        public bool DisableSerialProbeFallback { get; set; } = false;
+
+        // Skip AB9 active-shifter detection entirely. Explicit user opt-out
+        // that wins regardless of discovery mode. When false (default), AB9
+        // probing is *also* auto-suppressed at runtime whenever MOZA's
+        // registry-based USB enumeration returns empty — that's the signal
+        // that the system has no working Windows registry path (Wine/Proton),
+        // where the AB9 probe would otherwise sweep every COM symlink every
+        // 5 seconds and has been observed to lock up SimHub. So in practice:
+        //   - Windows w/ working registry, no AB9: probe runs in microseconds.
+        //   - Windows w/ working registry, AB9 present: detected normally.
+        //   - Wine/Linux (registry empty): probe auto-skipped.
+        //   - User explicitly true: probe skipped on any system.
+        // The AB9 manager instance is still constructed so existing null-safe
+        // call sites and the dormant engine-vib worker stay valid; only the
+        // connect/probe is suppressed.
+        public bool DisableAb9Detection { get; set; } = false;
 
         // Whether to automatically apply profile settings on launch
         public bool AutoApplyProfileOnLaunch { get; set; } = true;
@@ -133,6 +165,15 @@ namespace MozaPlugin
         // value hasn't changed. Fixes wheels that don't pick up new colors without a bitmask write.
         public bool AlwaysResendBitmask { get; set; } = false;
 
+        // Gearshift event tuning (plugin-side; the firmware-stored intensity
+        // is `base-gearshift-vibration`). VibrateOnNeutral default is false so
+        // H-pattern shifters bump on engagement only — the prior gear → "N"
+        // transition is dis-engagement and gets suppressed. Flip to true to
+        // also fire on transitions into neutral. DebounceMs coalesces rapid
+        // ratcheting (paddle bursts); 500 ms = ~2 shifts/sec ceiling.
+        public bool GearshiftVibrateOnNeutral { get; set; } = false;
+        public int GearshiftDebounceMs { get; set; } = 500;
+
         // One-shot flag: arm capture from the Diagnostics tab so it's already running when
         // the plugin re-initializes (catches early connect/handshake traffic that the user
         // can't normally arm in time). Cleared on Init the moment capture is started, so
@@ -142,11 +183,28 @@ namespace MozaPlugin
         // Bridge-format JSONL wire trace at SimHub/Logs/moza-wire-*.jsonl.
         // Code-only toggle — not serialized so changing the default here
         // is the only way to flip it. Avoids stale persisted values.
+        // Currently ON while string-channel (sess=0x01 type=0x05) wiring is
+        // being verified; flip back to false once that work is signed off.
         [Newtonsoft.Json.JsonIgnore]
         public bool EnableWireTraceFileSink { get; set; } = false;
 
         [Newtonsoft.Json.JsonIgnore]
         public bool EnableAutoTestOnConnect { get; set; } = false;
+
+        // Hot dashboard re-negotiation — when true, SwitchToProfile emits FF
+        // kind=4 and re-emits tier-def on the still-open sess=0x01/0x02 instead
+        // of doing a Stop+11s-sleep+Start cycle. Matches PitHouse behaviour
+        // verified 2026-05-17 in sim/logs/bridge-20260517-* captures: sessions
+        // 0x01/0x02/0x03 stay open across switches, tier-def re-emitted without
+        // preamble. JSON-ignored so the default here is the only switch —
+        // avoids stale persisted values during prototype work.
+        //
+        // PROTOTYPE: defaulted to TRUE for the 2026-05-17 hot-reneg validation
+        // build. Flip to false (or revert this commit) to restore the existing
+        // Stop+Start behaviour. Default will be re-evaluated once captures
+        // confirm the hot path is stable.
+        [Newtonsoft.Json.JsonIgnore]
+        public bool EnableHotRenegotiation { get; set; } = true;
 
         /// <summary>
         /// Persisted slot the auto-test most recently switched TO. On next
@@ -158,6 +216,58 @@ namespace MozaPlugin
 
         // ===== Profile system (SimHub native) =====
         public MozaProfileStore ProfileStore { get; set; } = new MozaProfileStore();
+
+        // Persisted schema-migration marker.
+        //   2 = first cutover: legacy per-UID slots → profile.WheelOverridesByPageGuid.
+        //   3 = full clean cutover (telemetry settings moved to overlay).
+        //   4 = mzdash folder moved from per-overlay to per-wheel-page (shared
+        //       across profiles). Folder is a library setting tied to the wheel,
+        //       not the game.
+        //   6 = (broken) initial v4/v5/v6 cutover. The empty-profiles short-circuit
+        //       in MigrateSettingsToSchemaV2 returned without seeding the per-page
+        //       mzdash-folder dict or the default profile's dash baselines, so
+        //       pre-refactor users upgrading lost their folder + got a zero-default
+        //       display brightness on first launch.
+        //   7 = repair pass for the v6 short-circuit: re-runs the per-page folder
+        //       seed from the flat field (which survives ClearLegacyAfterMigration),
+        //       and reseeds every profile's dash/ambient/gearshift baselines from
+        //       _settings flat fields when still sentinel. Idempotent.
+        //   8 = wheel sleep-light settings (mode/timeout/speed/color) moved off
+        //       the per-game-per-wheel overlay onto WheelSleepByPageGuid (one
+        //       record per wheel, shared across profiles). Sleep behavior is a
+        //       firmware preference, not a per-game decision. Migration drains
+        //       from WheelOverride.WheelSleep* (now captured via LegacyJsonFields),
+        //       MozaProfile.WheelSleep* baseline (now captured via JsonExtensionData
+        //       on MozaProfile), and the _settings.WheelSleep* flat fields.
+        public int SettingsSchemaVersion { get; set; } = 0;
+
+        // Per-wheel-page mzdash folder library. Keyed by SimHub page DescriptorUniqueId
+        // GUID. Shared across all profiles — every game using the same wheel sees
+        // the same folder. Set per-wheel-page, not per-game, so the user maintains
+        // one folder per physical wheel.
+        public Dictionary<Guid, string> WheelMzdashFolderByPageGuid { get; set; }
+            = new Dictionary<Guid, string>();
+
+        // Per-wheel-page "is telemetry on for this wheel". Keyed by SimHub page GUID,
+        // shared across profiles. Whether telemetry runs for a wheel is a wheel-level
+        // decision; the per-game decision (which dashboard, which mzdash) stays on
+        // the profile's WheelOverride.
+        public Dictionary<Guid, bool> WheelTelemetryEnabledByPageGuid { get; set; }
+            = new Dictionary<Guid, bool>();
+
+        // Per-wheel-page firmware-era pick. Keyed by SimHub page GUID, stored as int
+        // (cast from MozaWheelEra). Firmware era is a property of the wheel/firmware,
+        // not the game — making it per-(game × wheel) would just force the user to
+        // re-pick the same era for every profile.
+        public Dictionary<Guid, int> WheelTelemetryEraByPageGuid { get; set; }
+            = new Dictionary<Guid, int>();
+
+        // Per-wheel-page sleep-light settings (firmware preference, not per-game).
+        // Schema v8 moved these off WheelOverride / MozaProfile baseline. Each
+        // entry holds mode / timeout (minutes) / speed (ms) / packed RGB color.
+        // Absence = wheel keeps its currently-stored value.
+        public Dictionary<Guid, WheelSleepSettings> WheelSleepByPageGuid { get; set; }
+            = new Dictionary<Guid, WheelSleepSettings>();
 
         // ===== Dashboard Telemetry =====
         public bool TelemetryEnabled { get; set; } = false;
@@ -173,12 +283,20 @@ namespace MozaPlugin
         // folder acts as fallback library when cache misses.
         public string TelemetryMzdashFolder { get; set; } = "";
 
-        // Per-wheel mzdash folder mapping. Key = lowercase 24-char wheel MCU UID hex
-        // (DetectDevices captures it on handshake). Value = absolute folder path.
-        // Populated by the Auto-detect button so swapping wheels can switch the active
-        // TelemetryMzdashFolder back to the right `_dashes/<uid>/` automatically.
+        // LEGACY (pre-2026-05-14 refactor): per-UID mzdash folder. Migration
+        // moves entries into the wheel-page overlay's TelemetryMzdashFolder.
+        [Newtonsoft.Json.JsonProperty(NullValueHandling = Newtonsoft.Json.NullValueHandling.Ignore,
+            DefaultValueHandling = Newtonsoft.Json.DefaultValueHandling.Ignore)]
         public Dictionary<string, string> WheelMzdashFolderByUid { get; set; }
             = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
+
+        // LEGACY (pre-2026-05-14 refactor): per-UID telemetry slot. Migration
+        // moves entries into the wheel-page overlay's TelemetryEnabled /
+        // TelemetryProfileName / TelemetryMzdashPath.
+        [Newtonsoft.Json.JsonProperty(NullValueHandling = Newtonsoft.Json.NullValueHandling.Ignore,
+            DefaultValueHandling = Newtonsoft.Json.DefaultValueHandling.Ignore)]
+        public Dictionary<string, TelemetryWheelSlot> TelemetryByWheelUid { get; set; }
+            = new Dictionary<string, TelemetryWheelSlot>(StringComparer.OrdinalIgnoreCase);
 
         // Byte limit override (0 = auto from profile)
         public int TelemetryByteLimitOverride { get; set; } = 0;
@@ -216,13 +334,6 @@ namespace MozaPlugin
         public MozaWheelEra TelemetryWheelEra { get; set; }
             = MozaWheelEra.Auto;
 
-        // Greenfield telemetry pipeline toggle (Phase 5 of the refactor).
-        // false → existing Telemetry/TelemetrySender path.
-        // true (default for Phase 7 live testing) → new Telemetry2/MozaTelemetryHost path.
-        // Byte-diff verified against PitHouse captures for tier-def emission and structurally
-        // fixes the dashboard-switch bug. Flip to false here when reverting to old pipeline.
-        public bool UseNewTelemetryPipeline { get; set; } = false;
-
         // Telemetry send rate in Hz
         public int TelemetrySendRateHz { get; set; } = 20;
 
@@ -249,6 +360,8 @@ namespace MozaPlugin
         //   Inner key:  Channel URL (e.g. "v1/gameData/Rpm").
         //   Value:      SimHub property path (e.g. "DataCorePlugin.GameData.Rpms").
         //               Empty/missing = use Telemetry.json default.
+        [Newtonsoft.Json.JsonProperty(NullValueHandling = Newtonsoft.Json.NullValueHandling.Ignore,
+            DefaultValueHandling = Newtonsoft.Json.DefaultValueHandling.Ignore)]
         public Dictionary<string, Dictionary<string, Dictionary<string, string>>> TelemetryChannelMappingsByWheel { get; set; }
             = new Dictionary<string, Dictionary<string, Dictionary<string, string>>>(StringComparer.OrdinalIgnoreCase);
 
@@ -289,117 +402,58 @@ namespace MozaPlugin
             return true;
         }
 
-        // Per-wheel-model setting slots. Keyed by wheel model name (from data.WheelModelName).
-        // The flat Wheel* properties above represent the CURRENTLY-ACTIVE wheel; on save we
-        // mirror them into the slot for the active model, and on wheel-model-detected we load
-        // the slot back into the flat properties. This keeps each physical wheel model's
-        // brightness/mode/input settings isolated when multiple SimHub device extensions exist.
+        // LEGACY (pre-2026-05-14 refactor): per-wheel-model slot dict.
+        // Migration translates entries into profile.WheelOverridesByPageGuid
+        // and clears this dict; new code never reads or writes it. Kept on
+        // the type only so the one-shot migration can deserialize legacy JSON.
+        [Newtonsoft.Json.JsonProperty(NullValueHandling = Newtonsoft.Json.NullValueHandling.Ignore,
+            DefaultValueHandling = Newtonsoft.Json.DefaultValueHandling.Ignore)]
         public Dictionary<string, PerWheelSlot> PerWheelSlots { get; set; }
             = new Dictionary<string, PerWheelSlot>(StringComparer.OrdinalIgnoreCase);
+    }
 
-        // Guards every read/write on PerWheelSlots. Serial-reader thread
-        // detects a wheel and calls LoadSlotIntoActive while the UI thread
-        // can be calling MirrorActiveToSlot from SaveSettings — Dictionary<>
-        // is not safe for concurrent writers and corrupts buckets.
-        // Newtonsoft serialization touches the dictionary outside these
-        // helpers; SimHub serializes from the UI thread on shutdown so the
-        // window with the serial reader is small but not zero.
-        private readonly object _slotsLock = new object();
+    /// <summary>
+    /// Per-wheel-page sleep-light bundle stored on
+    /// <see cref="MozaPluginSettings.WheelSleepByPageGuid"/>. Wraps the
+    /// four wheel sleep-light fields into one dict-value so the JSON shape
+    /// stays compact and adding a future field doesn't require a new dict.
+    /// All fields use -1 (or null for the color array) as the "not set"
+    /// sentinel, matching <see cref="WheelOverride"/> convention.
+    /// </summary>
+    public sealed class WheelSleepSettings
+    {
+        public int Mode { get; set; } = -1;          // cmd 0x20 mode enum
+        public int TimeoutMin { get; set; } = -1;    // cmd 0x21 BE u16 minutes
+        public int SpeedMs { get; set; } = -1;       // cmd 0x22 BE u16 ms
+        public int[]? Color { get; set; }            // packed R<<16|G<<8|B (single)
 
-        /// <summary>Get the slot for a model, creating one on first access.</summary>
-        public PerWheelSlot GetOrCreateSlot(string? modelName)
+        public WheelSleepSettings Clone()
         {
-            if (string.IsNullOrEmpty(modelName)) return new PerWheelSlot();
-            lock (_slotsLock)
+            return new WheelSleepSettings
             {
-                if (!PerWheelSlots.TryGetValue(modelName!, out var slot))
-                {
-                    slot = new PerWheelSlot();
-                    PerWheelSlots[modelName!] = slot;
-                }
-                return slot;
-            }
+                Mode = Mode,
+                TimeoutMin = TimeoutMin,
+                SpeedMs = SpeedMs,
+                Color = Color != null ? (int[])Color.Clone() : null,
+            };
         }
+    }
 
-        /// <summary>Copy the flat Wheel* fields into the slot for <paramref name="modelName"/>.</summary>
-        public void MirrorActiveToSlot(string? modelName)
-        {
-            if (string.IsNullOrEmpty(modelName)) return;
-            lock (_slotsLock)
-            {
-                if (!PerWheelSlots.TryGetValue(modelName!, out var slot))
-                {
-                    slot = new PerWheelSlot();
-                    PerWheelSlots[modelName!] = slot;
-                }
-                slot.WheelTelemetryMode     = WheelTelemetryMode;
-                slot.WheelIdleEffect        = WheelIdleEffect;
-                slot.WheelButtonsIdleEffect = WheelButtonsIdleEffect;
-                slot.WheelKnobIdleEffect    = WheelKnobIdleEffect;
-                slot.WheelPaddlesMode       = WheelPaddlesMode;
-                slot.WheelClutchPoint       = WheelClutchPoint;
-                slot.WheelKnobMode          = WheelKnobMode;
-                slot.WheelStickMode         = WheelStickMode;
-                slot.WheelRpmIndicatorMode  = WheelRpmIndicatorMode;
-                slot.WheelRpmDisplayMode    = WheelRpmDisplayMode;
-                slot.WheelRpmBrightness     = WheelRpmBrightness;
-                slot.WheelButtonsBrightness = WheelButtonsBrightness;
-                slot.WheelFlagsBrightness   = WheelFlagsBrightness;
-                slot.WheelESRpmBrightness   = WheelESRpmBrightness;
-                slot.WheelRpmBlinkColors    = WheelRpmBlinkColors;
-                slot.WheelKnobBackgroundColors = WheelKnobBackgroundColors;
-                slot.WheelKnobPrimaryColors    = WheelKnobPrimaryColors;
-                slot.WheelKnobRingColors       = WheelKnobRingColors;
-                slot.WheelKnobRingBrightness   = WheelKnobRingBrightness;
-                slot.WheelKnobLedMode          = WheelKnobLedMode;
-                slot.WheelButtonsLedMode       = WheelButtonsLedMode;
-                slot.WheelTelemetryIdleSpeedMs = WheelTelemetryIdleSpeedMs;
-                slot.WheelButtonsIdleSpeedMs   = WheelButtonsIdleSpeedMs;
-                slot.WheelKnobIdleSpeedMs      = WheelKnobIdleSpeedMs;
-                slot.WheelSleepMode            = WheelSleepMode;
-                slot.WheelSleepTimeoutMin      = WheelSleepTimeoutMin;
-                slot.WheelSleepSpeedMs         = WheelSleepSpeedMs;
-                slot.WheelSleepColor           = WheelSleepColor;
-            }
-        }
-
-        /// <summary>Copy the slot for <paramref name="modelName"/> into the flat Wheel* fields.</summary>
-        public void LoadSlotIntoActive(string? modelName)
-        {
-            if (string.IsNullOrEmpty(modelName)) return;
-            lock (_slotsLock)
-            {
-                if (!PerWheelSlots.TryGetValue(modelName!, out var slot)) return;
-                WheelTelemetryMode     = slot.WheelTelemetryMode;
-                WheelIdleEffect        = slot.WheelIdleEffect;
-                WheelButtonsIdleEffect = slot.WheelButtonsIdleEffect;
-                WheelKnobIdleEffect    = slot.WheelKnobIdleEffect;
-                WheelPaddlesMode       = slot.WheelPaddlesMode;
-                WheelClutchPoint       = slot.WheelClutchPoint;
-                WheelKnobMode          = slot.WheelKnobMode;
-                WheelStickMode         = slot.WheelStickMode;
-                WheelRpmIndicatorMode  = slot.WheelRpmIndicatorMode;
-                WheelRpmDisplayMode    = slot.WheelRpmDisplayMode;
-                WheelRpmBrightness     = slot.WheelRpmBrightness;
-                WheelButtonsBrightness = slot.WheelButtonsBrightness;
-                WheelFlagsBrightness   = slot.WheelFlagsBrightness;
-                WheelESRpmBrightness   = slot.WheelESRpmBrightness;
-                WheelRpmBlinkColors    = slot.WheelRpmBlinkColors;
-                WheelKnobBackgroundColors = slot.WheelKnobBackgroundColors;
-                WheelKnobPrimaryColors    = slot.WheelKnobPrimaryColors;
-                WheelKnobRingColors       = slot.WheelKnobRingColors;
-                WheelKnobRingBrightness   = slot.WheelKnobRingBrightness;
-                WheelKnobLedMode          = slot.WheelKnobLedMode;
-                WheelButtonsLedMode       = slot.WheelButtonsLedMode;
-                WheelTelemetryIdleSpeedMs = slot.WheelTelemetryIdleSpeedMs;
-                WheelButtonsIdleSpeedMs   = slot.WheelButtonsIdleSpeedMs;
-                WheelKnobIdleSpeedMs      = slot.WheelKnobIdleSpeedMs;
-                WheelSleepMode            = slot.WheelSleepMode;
-                WheelSleepTimeoutMin      = slot.WheelSleepTimeoutMin;
-                WheelSleepSpeedMs         = slot.WheelSleepSpeedMs;
-                WheelSleepColor           = slot.WheelSleepColor;
-            }
-        }
+    /// <summary>
+    /// Per-physical-wheel dashboard-telemetry slot. Keyed by MCU UID (24-char hex)
+    /// inside <see cref="MozaPluginSettings.TelemetryByWheelUid"/>. Holds the
+    /// dashboard profile selection for one specific physical wheel; lets the user
+    /// keep a VGS configured for "DNR endurance" while leaving a CS V2.1 with no
+    /// dashboard, even when both extensions are registered in SimHub at the same
+    /// time. UID-keyed rather than model-keyed so two wheels of the same model
+    /// can carry different profiles, and so the slot is never written before the
+    /// wheel has identified itself on the serial bus.
+    /// </summary>
+    public class TelemetryWheelSlot
+    {
+        public bool TelemetryEnabled { get; set; }
+        public string TelemetryProfileName { get; set; } = "";
+        public string TelemetryMzdashPath { get; set; } = "";
     }
 
     /// <summary>

@@ -64,3 +64,76 @@ jobs:
         with:
           fail_on_unmatched_files: true
           files: ${{ env.ReleaseFileName }}
+
+      - name: Notify Discord
+        if: success()
+        continue-on-error: true
+        env:
+          DISCORD_RELEASE_WEBHOOK_URL: ${{ secrets.DISCORD_RELEASE_WEBHOOK_URL }}
+          DISCORD_DEV_WEBHOOK_URL: ${{ secrets.DISCORD_WEBHOOK_URL }}
+          TAG: ${{ github.ref_name }}
+          GH_TOKEN: ${{ github.token }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          release_url="https://github.com/${GITHUB_REPOSITORY}/releases/tag/${TAG}"
+          download_url="https://github.com/${GITHUB_REPOSITORY}/releases/download/${TAG}/MozaPlugin_${TAG}.zip"
+          # Prefer the release body the maintainer entered when cutting the
+          # tag — that's the authoritative changelog. Fall back to the head
+          # commit's subject if no notes were provided so the notification
+          # still says *something* meaningful.
+          release_body=$(gh api "repos/${GITHUB_REPOSITORY}/releases/tags/${TAG}" \
+            --jq '.body // ""' 2>/dev/null || printf '')
+          if [ -z "$release_body" ]; then
+            release_body=$(gh api "repos/${GITHUB_REPOSITORY}/commits/${GITHUB_SHA}" \
+              --jq '.commit.message' | head -n1)
+          fi
+          # Build the payload entirely inside jq so every interpolated value is
+          # JSON-encoded safely. Unicode-safe slicing keeps us under Discord's
+          # embed limits (title 256 chars, description 4096 chars). The body is
+          # capped separately so the header/footer always survive truncation.
+          payload=$(jq -n \
+            --arg tag          "$TAG" \
+            --arg download_url "$download_url" \
+            --arg release_body "$release_body" \
+            --arg release_url  "$release_url" \
+            '{
+              embeds: [{
+                title: (("Moza SimHub Plugin — release " + $tag)[0:250]),
+                url: $release_url,
+                description: ((
+                  (if ($release_body | length) > 3500
+                     then ($release_body[0:3500] + "\n…")
+                     else $release_body end) +
+                  "\n\n[Download release](" + $download_url + ")"
+                )[0:4090]),
+                color: 3066993
+              }]
+            }')
+
+          post_discord() {
+            local name="$1" url="$2"
+            if [ -z "$url" ]; then
+              echo "$name: webhook not set, skipping."
+              return 0
+            fi
+            local response_file http_code
+            response_file=$(mktemp)
+            http_code=$(curl -sS -o "$response_file" -w '%{http_code}' \
+              -H "Content-Type: application/json" \
+              -X POST -d "$payload" "$url") || http_code="000"
+            if [[ "$http_code" =~ ^2[0-9][0-9]$ ]]; then
+              echo "$name: notification sent (HTTP $http_code)."
+            else
+              echo "::warning::$name: notification failed (HTTP $http_code)"
+              echo "Payload:"
+              echo "$payload"
+              echo "Response body:"
+              cat "$response_file" || true
+              echo
+            fi
+            rm -f "$response_file"
+          }
+
+          post_discord "release channel" "${DISCORD_RELEASE_WEBHOOK_URL:-}"
+          post_discord "dev channel"     "${DISCORD_DEV_WEBHOOK_URL:-}"

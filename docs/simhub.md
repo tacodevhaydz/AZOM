@@ -649,16 +649,28 @@ After injection, SimHub's LEDs tab shows "Connected" and the full effects config
 
 **`LedModuleSettings.Display()` internals:**
 ```csharp
+bool exclusive = IndividualLEDsMode == IndividualLEDsMode.Exclusive && RawDriver != null;
 DeviceDriver.Display(
-    () => OverrideResult(LedsDriver?.GetResult(100.0) ?? new Color[0]),
-    () => OverrideResult(ButtonsDriver?.GetResult(100.0) ?? new Color[0]),
-    () => OverrideResult(EncodersDriver?.GetResult(100.0) ?? new Color[0]),
+    () => OverrideResult(exclusive ? new Color[0] : (LedsDriver?.GetResult(100.0) ?? new Color[0])),
+    () => OverrideResult(!exclusive ? (ButtonsDriver?.GetResult(100.0) ?? new Color[0])
+                                    : (UseButtonsDefaultColors ? ButtonsColorManager?.DefaultColors : null) ?? new Color[0]),
+    () => OverrideResult(!exclusive ? (EncodersDriver?.GetResult(100.0) ?? new Color[0])
+                                    : (UseButtonsDefaultColors ? EncodersColorManager?.DefaultColors : null) ?? new Color[0]),
     () => OverrideResult(MatrixDriver?.GetResult(...) ?? new Color[0]),
-    () => OverrideResult(RawDriver?.GetResult(100.0) ?? new Color[0]),
+    () => OverrideResult(IndividualLEDsMode == IndividualLEDsMode.Disabled
+                            ? new Color[0]
+                            : (RawDriver?.GetResult(100.0, Color.Transparent) ?? new Color[0])),
     rpmBrightness: GetEffectiveLedsBrightness(),
     buttonsBrightness: GetEffectiveButtonsBrightness(),
     ...);
 ```
+
+**`IndividualLEDsMode`** (enum in `SimHub.Plugins.OutputPlugins.GraphicalDash.LedModules`):
+- `Disabled` — no individual-LED overrides. `rawState` callback returns `Color[0]`.
+- `Combined` — both logical drivers (`LedsDriver`/`ButtonsDriver`/`EncodersDriver`) and `RawDriver` run. `rawState` returns the individual overrides; logical channels return their normal output. The device manager merges raw over logical.
+- `Exclusive` ("Individual LEDs only" in the SimHub UI) — **only** `RawDriver` runs. SimHub forcibly passes `Color[0]` to the `leds` callback regardless of what `LedsDriver` would produce. The `buttons` and `encoders` callbacks return `ButtonsColorManager.DefaultColors` / `EncodersColorManager.DefaultColors` if `UseButtonsDefaultColors` is true, otherwise `Color[0]`. Only `rawState` carries effect output.
+
+**Practical consequence for `ILedDeviceManager.Display()` implementations:** Do not early-return when `ledColors.Length == 0` or `encoderColors.Length == 0` before applying rawState. In Exclusive mode the logical channel is empty by design; the raw overrides must be merged first (typically by extending the empty channel array up to the device's physical LED count), then the per-channel processing fires off the merged array. If the raw merge is gated behind a non-empty check on the logical channel, individual-only effects silently never reach the hardware.
 
 ### Device Definition Locations
 

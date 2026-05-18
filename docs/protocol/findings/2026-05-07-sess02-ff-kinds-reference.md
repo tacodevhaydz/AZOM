@@ -1,5 +1,12 @@
 # Session 0x02 FF-record kinds — protocol reference
 
+> **Canonical reference:** [`../sessions/session-0x02-ff-init.md`](../sessions/session-0x02-ff-init.md).
+> This file is investigation-era body-decoding detail used to derive the
+> canonical protocol doc; consult the canonical doc first for the
+> handshake structure, the kind=2/7/8/11 plugin status, and the
+> verified-broken shortcut of replaying captured kind=8/11 bytes
+> (locked a W17 wheel 2026-05-13).
+
 Date: 2026-05-07. Source: bridge captures from the user's own wheel hardware
 captured against a Windows PitHouse instance, located in `sim/logs/`, primarily
 `bridge-20260429-163951.jsonl` (Rally V4 + Nebula, ~344 K frames, includes
@@ -156,37 +163,94 @@ Wire-format outer wrapper:
 [kind=8:u32 LE][uncompressed_size:u32 BE][zlib_stream]
 ```
 
-Decompressed payload is a list of records using TWO sub-formats:
+Decompressed payload is a uniform sequence of records. Each record has
+the **same header** and **same trailer envelope**; the trailer carries
+a TLV-style value whose layout is determined by the `type` field:
 
-### Sub-format A — RpmAbsolute / RpmPercent slot definitions (first 20 records)
-
-Each record:
 ```
-[id:u16 BE]            sequential 2, 3, 4, ...
-[name_len:u32 BE]      length in bytes of the UTF-16-BE name (no NUL)
-[name:UTF-16-BE]       channel name
-00 00 00 00 01         5-byte separator (constant)
+record = [id:u16 BE] [name_len:u32 BE] [UTF-16BE name (name_len bytes)] [TLV trailer]
+
+TLV trailer = [type:u32 BE] [reserved:u8] [value: type-determined layout]
 ```
 
-Example records: `RpmAbsolute1`, `RpmAbsolute10`, `RpmAbsolute2`, …,
-`RpmPercent9`. Names sort alphabetically (hence the `1`, `10`, `2`
-ordering). These appear to be **dashboard data slots** the wheel uses
-to bind RPM-related widgets.
+The decoding rule for each `type`:
 
-### Sub-format B — wheel internal property names (record 21 onwards)
+| `type` | Value size | Value semantics |
+|--------|------------|------------------|
+| **0**  | 0 bytes | End-marker only (reserved byte is always `0x01`). Used by the "channel slot" records (RpmAbsolute1..10, RpmPercent1..10). Total trailer = 5 bytes. |
+| **2**  | 4 bytes | `u32 BE` integer — enum / index / bool state. E.g. `buttonGroupStandbyModeV2 = 1`, `paddleStatusMode = 0`. Total trailer = 9 bytes. |
+| **4**  | 8 bytes | `u64 BE` integer — countable / millisecond / 0–100 setting. E.g. `activePaddleNum = 4`, `buttonGroupBrightness = 80`, `buttonGroupStandbyBreathInterval = 3000` (ms). Total trailer = 13 bytes. |
+| **6**  | 8 bytes | `u64 BE` reinterpretable as **`double BE`** (IEEE 754) — float-valued setting. E.g. `equalizerGain1 = 90.0`, `naturalInertia = 400.0`, `naturalFriction = 15.0`, `naturalDamper = 42.0`, `naturalInertiaEnabled = 1.0`. Total trailer = 13 bytes. |
+| **10** | 4 + N bytes: `[strlen:u32 BE] [UTF-16BE string]` | Locale / textual value. Only observed so far on `__location → "en_US"`. Total trailer = 9 + strlen bytes. |
+| **9**  | Nested preset block (variable) | Complex sub-record (introduces UTF-16LE-encoded inner channel/preset names with their own header). Outer envelope is `type=9 + 4-byte zero + …`; **inner block layout not fully decoded** — see [`2026-05-15-sess02-kind8-tlv-and-preset-block.md`](2026-05-15-sess02-kind8-tlv-and-preset-block.md) for the partial decode and the verification gap. |
 
-Sub-format B records have a different shape with embedded sub-fields and
-localized strings (`__location` → `en_US`, etc.). Names observed:
-`activePaddleNum`, `aidedSpringControl`, `baseMotorType`,
-`bondingPiont` (sic), `buttonGroupBrightness`,
+The "sub-format A" / "sub-format B" labels in earlier revisions of this
+document referred to records using `type=0` (sub-format A) vs records
+using `type ∈ {2,4,6,9,10}` (sub-format B). Both share the same
+header + trailer envelope; only the trailer's `type` byte differs.
+
+### Worked examples
+
+`buttonGroupBrightness` (id=22, value=80):
+
+```
+00 16                                — id u16 BE = 22
+00 00 00 2a                          — name_len u32 BE = 42 (= 21 chars × 2)
+[42 bytes UTF-16BE "buttonGroupBrightness"]
+00 00 00 04                          — trailer type u32 BE = 4
+00                                   — reserved
+00 00 00 00 00 00 00 50              — value u64 BE = 80
+```
+
+`equalizerGain1` (id=112, value=90.0):
+
+```
+00 70                                — id u16 BE = 112
+00 00 00 1c                          — name_len u32 BE = 28 (= 14 chars × 2)
+[28 bytes UTF-16BE "equalizerGain1"]
+00 00 00 06                          — trailer type u32 BE = 6
+00                                   — reserved
+40 56 80 00 00 00 00 00              — value as double BE = 90.0
+```
+
+`__location` (id=0, value="en_US"):
+
+```
+00 00                                — id u16 BE = 0
+00 00 00 14                          — name_len u32 BE = 20 (= 10 chars × 2)
+[20 bytes UTF-16BE "__location"]
+00 00 00 0a                          — trailer type u32 BE = 10
+00                                   — reserved
+00 00 00 0a                          — strlen u32 BE = 10
+00 65 00 6e 00 5f 00 55 00 53        — UTF-16BE "en_US"
+```
+
+### Channel-slot records (`type=0`, first 20 records)
+
+The records with `type=0` trailers are the **dashboard data slots** —
+`RpmAbsolute1`, `RpmAbsolute10`, `RpmAbsolute2`, …, `RpmPercent9` (20
+total, ids 2–21). Names sort alphabetically (hence the `1`, `10`, `2`
+ordering). These appear to be the slots the wheel binds RPM-related
+widgets to.
+
+### Property records (`type ∈ {2, 4, 6, 10}`)
+
+After the channel slots, records describe wheel-internal configuration
+property names: `activePaddleNum`, `aidedSpringControl`, `baseMotorType`,
+`bondingPiont` (firmware-side typo for "Point"), `buttonGroupBrightness`,
 `buttonGroupStandbyBreathInterval`, …, `temperatureControlStrategy`,
 `steeringWheelInertiaRatio`. These are wheel-config / settings property
-names, not telemetry channels.
+names, not telemetry channels. The trailer carries the current setting
+value (integer or float).
 
-Sub-format B's record boundary structure has not been fully decoded yet;
-strict parsing halts at offset 684 with separator `00 00 00 0a 00`
-instead of `00 00 00 00 01` — see `tools/bridge-decode-ff-init` for the
-heuristic walker that gets through it. **TODO**: fully decode sub-format B.
+### Preset records (`type=9`)
+
+A subset of property names like `preset/__keyboardInfo` use `type=9`
+trailers that introduce nested preset/config blocks. The nested block
+includes embedded **UTF-16LE** (note: little-endian, unlike everything
+else in kind=8) channel/preset names with their own length prefixes.
+The outer `type=9` envelope is known; the inner layout has not been
+fully decoded — see [`2026-05-15-sess02-kind8-tlv-and-preset-block.md`](2026-05-15-sess02-kind8-tlv-and-preset-block.md).
 
 ### Important: NOT a copy of `Data/Telemetry.json`
 
@@ -284,6 +348,18 @@ Brief observations; each warrants its own note when used:
 4. **What is the structure of kind=8 sub-format B?** Strict parser halts;
    need a careful walk to fully decode the wheel-config records.
 
-5. **Does the wheel echo kind=4 if we send the captured kind=2/7/8/11
-   bytes verbatim?** Concrete experiment that would close the loop on
-   whether content-correctness is the gate.
+5. ~~**Does the wheel echo kind=4 if we send the captured kind=2/7/8/11
+   bytes verbatim?**~~ — ANSWERED 2026-05-13. **Partial yes for the
+   first emission, then the wheel locks.** Plugin briefly shipped the
+   captured kind=8 + kind=11 bytes via `SendSessionInitHandshake` on a
+   W17 / CS Pro wheel. The first emission engaged kind=4 echoing and
+   the user successfully switched dashboards through three slot
+   selections (`slot=1 → slot=2 → slot=0`) over ~5 minutes. On the
+   third Stop+Start cycle the wheel locked into a state where it
+   stopped responding to any command and required a physical
+   power-cycle. Diag bundle:
+   `~/CS-Pro-moza-diagnostics-bundle-20260513-122621.zip`. The .bin
+   files therefore carry session-bound state we have to regenerate
+   per-cold-start rather than replay. See
+   [`../sessions/session-0x02-ff-init.md`](../sessions/session-0x02-ff-init.md)
+   for the required-work list before re-attempting emission.

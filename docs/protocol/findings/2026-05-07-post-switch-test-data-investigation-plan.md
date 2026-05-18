@@ -295,7 +295,7 @@ is right; flagged here so they can be opened in the same plan:
     setup (`_tierDefBlindFrames`)
   - tick loop (lines 2820–2916) — value-frame emission, mute gate,
     TestMode vs game gating
-- `Telemetry/TelemetryFrameBuilder.cs:157` — `BuildTestFrame`, profile
+- `Telemetry/Frames/TelemetryFrameBuilder.cs:157` — `BuildTestFrame`, profile
   binding
 - `Telemetry/SessionRetransmitter.cs` — what exactly the 12-round blind
   retx loop does
@@ -303,9 +303,6 @@ is right; flagged here so they can be opened in the same plan:
   lambda passed in
 - `Protocol/SessionPropertyPushBuilder` — body format for FF kind=4 (and
   whether kinds 2/7/8/11 already have helpers we are not using)
-- `Telemetry2/MozaTelemetryHost.cs:1443-1456,1581` — the v2 host has its
-  own sess=0x02 reception path; double-check whether the v1 sender
-  consumes b2h sess=02 at all
 
 ## Decision points the user needs to weigh in on
 

@@ -133,6 +133,14 @@ strip cover all 9 LEDs:
 
 Colors are only re-sent when the palette changes — not every frame.
 
+> **Do not pad chunk 2 to 20 bytes.** The wheel-LED command (`0x19`) needs
+> a `[0xFF, 0, 0, 0]` trailing entry to keep the chunk a multiple of 20 so
+> that zero-pad bytes are not interpreted as "set LED 0 black". The base
+> firmware processes chunk 2 differently: padding it to N=22 with an
+> `0xFF`-indexed entry silently breaks `bitmask=0x01` (only the first
+> LED lit) — 2+ active bits keep working, but a single first LED produces
+> nothing. Match PitHouse exactly: chunk 2 = N=18, 4 entries, no padding.
+
 **Observed RPM color gradient:**
 
 | RPM region | Color | Hex |

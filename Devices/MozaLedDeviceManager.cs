@@ -26,6 +26,7 @@ namespace MozaPlugin.Devices
             Array.Empty<Color>(), Array.Empty<Color>(), 1.0, 1.0, 1.0, 1.0);
         private double _lastBrightness = -1;
         private double _lastButtonsBrightness = -1;
+        private double _lastEncodersBrightness = -1;
 
         private Color[]? _lastKnobs;
 
@@ -103,6 +104,7 @@ namespace MozaPlugin.Devices
                 _lastKnobBitmask = -1;
                 _lastBrightness = -1;
                 _lastButtonsBrightness = -1;
+                _lastEncodersBrightness = -1;
                 _lastKnobSendTime = DateTime.MinValue;
                 _lastKnobActivityTime = DateTime.MinValue;
                 _ledsAwake = false;
@@ -184,9 +186,6 @@ namespace MozaPlugin.Devices
                     ledColors, buttonColors, encoderColors, matrixColors, rawColors,
                     rpmBrightness, buttonsBrightness, encodersBrightness, matrixBrightness);
 
-                if (ledColors.Length == 0)
-                    return;
-
                 var plugin = MozaPlugin.Instance;
                 if (plugin == null || !plugin.Data.IsConnected)
                     return;
@@ -199,7 +198,16 @@ namespace MozaPlugin.Devices
 
                 // Merge SimHub Individual-LED overrides (rawState channel) over the
                 // per-segment logical channels. Physical order per device.json:
-                // [telemetry 0..telemetryPhys-1][button 0..buttonPhys-1].
+                // [telemetry 0..telemetryPhys-1][button 0..buttonPhys-1][knob 0..knobCount-1].
+                //
+                // Must run BEFORE the per-channel length checks below: in SimHub's
+                // "Individual LEDs Exclusive" mode the logical leds/buttons/encoders
+                // callbacks return Color[0], and only rawState carries effect output
+                // (see LedModuleSettings.Display: `exclusive ? new Color[0] : ...`).
+                // ApplyOverrides extends a short/empty dst up to `length` when any
+                // raw slot in its window is non-transparent, so an empty channel
+                // becomes a populated one and the per-channel processing below fires
+                // off the merged array.
                 var modelInfo = plugin.WheelModelInfo;
                 if (rawColors.Length > 0)
                 {
@@ -211,7 +219,20 @@ namespace MozaPlugin.Devices
                     int buttonPhys = modelInfo?.ButtonLedCount ?? buttonColors.Length;
                     ledColors = ApplyOverrides(ledColors, rawColors, 0, telemetryPhys);
                     buttonColors = ApplyOverrides(buttonColors, rawColors, telemetryPhys, buttonPhys);
+                    if (modelInfo != null && modelInfo.KnobCount > 0)
+                    {
+                        int knobPhysOffset = telemetryPhys + modelInfo.ButtonLedCount;
+                        encoderColors = ApplyOverrides(encoderColors, rawColors, knobPhysOffset, modelInfo.KnobCount);
+                    }
                 }
+
+                // After the rawState merge: if every channel is still empty there's
+                // nothing to send this frame. Each per-channel block below has its
+                // own length gate too, but this avoids walking through brightness /
+                // keepalive paths when SimHub is genuinely idle (game not running,
+                // no individual LEDs configured).
+                if (ledColors.Length == 0 && buttonColors.Length == 0 && encoderColors.Length == 0)
+                    return;
 
                 // ES wheel wake-up: flash all LEDs on then off to enter telemetry mode
                 if (!_ledsAwake && isOldWheel)
@@ -380,7 +401,14 @@ namespace MozaPlugin.Devices
                 // SimHub feeds knob colors via the Extra/encoders channel (SourceRole 3).
                 // Only send knob frames when at least one knob has color — sending the
                 // window mask with all-black active wakes up the knob LED controller.
-                if (isNewWheel && encoderColors.Length > 0 && modelInfo != null && modelInfo.KnobCount > 0)
+                //
+                // The `encoderColors.Length > 0` gate is intentionally checked AFTER
+                // the rawState merge above (which extends encoderColors up to
+                // KnobCount when any raw slot in the knob window is non-transparent),
+                // so SimHub's "Individual LEDs Exclusive" mode — which passes Color[0]
+                // on the encoders callback — still drives knob LEDs through the
+                // merged array.
+                if (isNewWheel && modelInfo != null && modelInfo.KnobCount > 0 && encoderColors.Length > 0)
                 {
                     int knobCount = modelInfo.KnobCount;
                     Color[] knobColors;
@@ -392,15 +420,6 @@ namespace MozaPlugin.Devices
                     else
                     {
                         knobColors = encoderColors;
-                    }
-
-                    // Apply rawState overrides for knob region
-                    // Physical layout: [telemetry][buttons][knobs]
-                    if (rawColors.Length > 0)
-                    {
-                        int knobPhysOffset = (modelInfo.RpmLedCount + (modelInfo.HasFlagLeds ? MozaDeviceConstants.FlagLedCount : 0))
-                                           + modelInfo.ButtonLedCount;
-                        knobColors = ApplyOverrides(knobColors, rawColors, knobPhysOffset, knobCount);
                     }
 
                     int count = Math.Min(knobColors.Length, knobCount);
@@ -466,6 +485,16 @@ namespace MozaPlugin.Devices
                 {
                     _lastButtonsBrightness = buttonsBrightness;
                     plugin.DeviceManager.WriteSetting("wheel-buttons-brightness", (int)(buttonsBrightness * 100));
+                    anySent = true;
+                }
+
+                // Knob ring brightness: SimHub's per-LED-type "encoders" brightness slider
+                // drives the same wheel-knob-brightness setting that the device-page slider
+                // writes. Only wheels with knob ring LEDs (CS Pro / KS Pro) accept this.
+                if (isNewWheel && modelInfo?.KnobRingLeds != null && encodersBrightness != _lastEncodersBrightness)
+                {
+                    _lastEncodersBrightness = encodersBrightness;
+                    plugin.DeviceManager.WriteSetting("wheel-knob-brightness", (int)(encodersBrightness * 100));
                     anySent = true;
                 }
 

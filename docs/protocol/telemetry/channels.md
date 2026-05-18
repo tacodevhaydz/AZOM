@@ -51,6 +51,41 @@ Master reference for all compression types.
 | 5000.0 | Temperature offset (raw = temp×10 + 5000) |
 | 65535.0 | Max raw for 16-bit UFloat/BrakeTemp |
 
+### SimHub property → encoder input
+
+Each `Telemetry.json` channel may declare a SimHub property as its value source plus an optional pre-encoder scale:
+
+| JSON field | Type | Effect |
+|------------|------|--------|
+| `simhub_property` | string | Full SimHub property path (e.g. `DataCorePlugin.GameData.SpeedMph`). Resolved live via the SimHub `IDataPlugin` snapshot. Empty/absent → falls back to `simhub_field` (a hardcoded `SimHubField` enum entry in `Telemetry/Dashboard/DashboardProfile.cs`, covering the ~17 always-on channels). |
+| `simhub_scale` | number | Multiplier applied to the SimHub value before it enters the encoder. Default `1.0`. Read at `Telemetry/Dashboard/DashboardProfileStore.cs` (`sector["simhub_scale"]`). |
+| `simhub_field` | enum name | Fallback when no `simhub_property` is set. Case-insensitive match against `SimHubField`. `Zero` if unset — channel sends a constant 0 in game mode. |
+
+**The full pipeline:**
+
+```
+simhub_value × simhub_scale  →  encoder(compression)  →  raw bits
+```
+
+**Field-name pitfall:** the JSON key is `simhub_scale`, NOT `simhub_property_scale`. The C# property is named `SimHubPropertyScale`, which suggests the latter — and editors using auto-completion may produce a silently-ignored field. The deserialiser only reads `simhub_scale`.
+
+#### Required scale by (SimHub-side range, target compression)
+
+The scale must bridge the SimHub property's range to the encoder's expected input range. Get this wrong and the bar fills 1% of its travel; the wheel renders without complaint, the bug is invisible without a side-by-side comparison.
+
+| SimHub property returns | Target compression | Encoder expects input | Required `simhub_scale` |
+|-------------------------|--------------------|-----------------------|-------------------------|
+| 0–1 fraction (`Throttle`, `Brake`, `Clutch`, `TrackPositionPercent`) | `float_001` | 0–1 | `1.0` (or absent) |
+| 0–1 fraction | `percent_1` | 0–100 | `100` |
+| 0–100 percent (`FuelPercent`, `TyreWearFrontLeft`, `ERSPercent`) | `percent_1` | 0–100 | `1.0` (or absent) |
+| 0–100 percent | `float_001` | 0–1 | `0.01` |
+
+SimHub-side ranges should be verified per-property against `libs/SimHub/GameReaderCommon.dll` (the `<PropertyName>k__BackingField` strings list every exposed property). The convention is consistent across games for the well-known properties listed above, though game-specific properties on `PluginManager.GameData.NewData` may use their own ranges.
+
+#### Test-mode override range
+
+`Telemetry/TestMode/TestSignalOverrides.cs` hardcodes test sweeps per channel. The sweep range must match the **encoder's expected input** range (column 3 above), not the SimHub-side range — `simhub_scale` is **not** applied in the test-frame path (`TelemetryFrameBuilder.BuildTestFrame`). A `percent_1` channel needs `TestSignal.Sweep(0, 100, …)`; a `float_001` channel needs `Sweep(0, 1, …)`.
+
 ### Channel ordering
 
 Channels first grouped by `package_level` (30 → base frame, 500 → base+1, 2000 → base+2). See [`tiers.md`](tiers.md) for the full tier-concept reference (cadence, flag-byte mapping, profile build flow). Within each frame packed **alphabetically by URL suffix** (part after `v1/gameData/`). Iterated sorted by URL, packed sequentially into bit stream starting at bit 0.

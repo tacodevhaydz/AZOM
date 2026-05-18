@@ -1,6 +1,6 @@
-# PitHouse tier-def byte-exact reference (Phase 0 deliverable)
+# PitHouse tier-def byte-exact reference
 
-This is the test-fixture seed for the new `Telemetry2/Protocol/TierDefBuilder` byte-diff verification (Phase 6 of the refactor plan). It establishes the byte-exact "what PitHouse emits" reference per captured session, so the new builder can be written to match.
+Byte-exact "what PitHouse emits" reference per captured session — used as the source of truth when verifying that tier-def emission matches the wheel's expectations.
 
 It supersedes (in scope of byte-exactness) the earlier semantic analysis in `2026-05-03-pithouse-tierdef-reference.md`. The semantic facts established there still hold — this document provides the byte-level reference that the semantic rules predict.
 
@@ -178,9 +178,9 @@ The "what triggers section-2 emission" open question is still partially open —
 
 The "cumulative redeclaration on retransmit" open question doesn't matter for the new builder — chunks are content-identical retransmits via the blind-retransmit policy, and the canonical-stream view we use for byte-diff testing already deduplicates them.
 
-## Test-fixture rows for Phase 6 byte-diff verification
+## Test-fixture rows for byte-diff verification
 
-Each row below seeds one byte-diff test in `MozaPlugin.Tests/Telemetry2/Protocol/TierDefBuilderTests.cs`. The "expected bytes" column references the byte range in the canonical stream of the named capture file.
+Each row below identifies a byte-diff reference scenario. The "expected bytes" column references the byte range in the canonical stream of the named capture file.
 
 | # | Capture | Emission | Bytes (offset..end) | Scenario |
 |--:|---------|---------:|:--------------------:|:---------|
@@ -200,6 +200,6 @@ Phase-6 tests will: (a) parse the byte range from the per-capture markdown refer
 ## Open items deferred to later phases
 
 - **Compression-code coverage**: the captures show codes `0x00, 0x02, 0x04, 0x07, 0x0d, 0x0e, 0x0f, 0x11, 0x13, 0x16` in tier-def channel records. The new `CompressionTable` must support all of these. Bit widths observed: 1, 5, 8, 10, 12, 14, 16, 32. A few codes (`0x10` tyre_pressure_1, `0x11` tyre_temp_1) are flagged in `HANDOVER-DASHSWITCH.md` as "broken on Type02 — use float (0x07) instead"; the captures use `0x16` (12-bit) and `0x11` (14-bit) for tyre channels, which contradicts the handover note. This needs a separate decode against value frames in Phase 4 to reconcile.
-- **Channel idx → URL mapping**: tier-def emission requires the wheel's `b2h` catalog to map mzdash channel URLs to numeric indices. The catalog parser already exists (`Telemetry/DashboardProfileStore.cs:54`); it must be tested against fresh `b2h` data from these captures.
+- **Channel idx → URL mapping**: tier-def emission requires the wheel's `b2h` catalog to map mzdash channel URLs to numeric indices. The catalog parser already exists (`Telemetry/Dashboard/DashboardProfileStore.cs:54`); it must be tested against fresh `b2h` data from these captures.
 - **Section-2 emission trigger timing**: confirmed not byte-relevant; defer until live testing in Phase 7.
 - **`tag=04` URL records**: not present in any V2 capture, only V0. V0 path captures need their own byte-exact reference doc when the V0 builder is implemented (Phase 3 also covers V0).
