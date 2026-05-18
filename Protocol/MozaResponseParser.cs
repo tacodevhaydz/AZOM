@@ -98,14 +98,24 @@ namespace MozaPlugin.Protocol
                 group = 100;
             }
 
-            // Device-ID–based hint: responses from the base/main device
-            // (0x12) must not match "wheel"-typed commands. Without this,
-            // identity-probe groups (2/4/5/6/9/17) that lack a group-range
-            // hint let base responses collide with wheel commands — e.g.
-            // the base STM32 UID overwrites the wheel UID depending on
-            // arrival order, breaking auto-detect folder lookup.
+            // Device-ID–based hint: responses from the main MCU
+            // (dev 0x12) get tagged "main" so they match the main-* and
+            // base-ambient-* commands that legitimately target that
+            // device. This also blocks "wheel"-typed identity-probe
+            // collisions (groups 2/4/5/6/9/17, no group-range hint) that
+            // used to let the base STM32 UID overwrite the wheel UID
+            // depending on arrival order, breaking auto-detect folder
+            // lookup. Earlier this tag was "base", which preserved the
+            // wheel-collision block by side effect but excluded every
+            // main-* and base-ambient-* response — the "MOZA Wheel Base"
+            // device never went active on R21/R25/R27 because the
+            // base-ambient-brightness probe response (0xA2 / 0x21 /
+            // 1F FF NN) landed in the Unmatched bucket. "base" was also
+            // mis-named: base FFB commands target dev 0x13 (DeviceBase),
+            // not 0x12. ab9 stays isolated by busHint; hub stays
+            // isolated by the group hint above.
             if (deviceHint == null && deviceId == MozaProtocol.DeviceMain)
-                deviceHint = "base";
+                deviceHint = "main";
 
             // Explicit bus override — AB9 main and wheelbase main both use
             // dev id 0x12, so the above auto-derivation tags AB9 frames as
