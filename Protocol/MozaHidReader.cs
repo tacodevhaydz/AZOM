@@ -9,12 +9,7 @@ using HidSharp.Reports.Input;
 
 namespace MozaPlugin.Protocol
 {
-    /// <summary>
-    /// Reads physical input positions from Moza HID devices (VID 0x346E).
-    /// The base reports steering/throttle/brake/clutch; the handbrake is a
-    /// separate HID device. Each device with tracked usages gets its own
-    /// receiver thread.
-    /// </summary>
+    /// <summary>Reads physical input positions from Moza HID devices (VID 0x346E).</summary>
     internal sealed class MozaHidReader : IDisposable
     {
         // HID usage IDs (page << 16 | usage)
@@ -46,12 +41,7 @@ namespace MozaPlugin.Protocol
         private volatile bool _stop;
         private long _hidParseErrorCount;
 
-        // Tracks every HidStream that ReadDevice has currently open so Dispose can
-        // forcibly close them. Without this, a device that goes silent leaves the
-        // HidSharp internal reader blocked in stream.Read indefinitely; closing
-        // the stream from outside makes those reads throw and lets ReadDevice
-        // observe `_stop` and exit. Per-thread `finally` removes the stream
-        // before disposing locally, so steady-state size matches active devices.
+        // Live HidStreams so Dispose can force-close silent devices' blocked reads.
         private readonly object _streamsLock = new object();
         private readonly List<HidStream> _liveStreams = new List<HidStream>();
 

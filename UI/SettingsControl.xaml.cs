@@ -11,6 +11,7 @@ using MozaPlugin.Telemetry;
 using MozaPlugin.Telemetry.Dashboard;
 using MozaPlugin.Telemetry.Era;
 using MozaPlugin.UI;
+using static MozaPlugin.UI.UiHelpers;
 using SerialTrafficCapture = MozaPlugin.Diagnostics.SerialTrafficCapture;
 
 namespace MozaPlugin
@@ -809,37 +810,12 @@ namespace MozaPlugin
 
         // ===== Helpers =====
 
-        private void SetSliderPercent(Slider slider, TextBlock label, double value, double min, double max)
-        {
-            slider.Value = Clamp(value, min, max);
-            label.Text = $"{value:F0}%";
-        }
-
-        private static void SetComboSafe(ComboBox combo, int index)
-        {
-            if (index >= 0 && index < combo.Items.Count)
-                combo.SelectedIndex = index;
-        }
+        // SetSliderPercent, SetSliderRaw, SetComboSafe, Clamp moved to UI/UiHelpers.
 
         private double ConvertTemp(int raw)
         {
             double celsius = raw / 100.0;
             return _data.UseFahrenheit ? celsius * 9.0 / 5.0 + 32.0 : celsius;
-        }
-
-        private static double Clamp(double value, double min, double max)
-        {
-            if (value < min) return min;
-            if (value > max) return max;
-            return value;
-        }
-
-        // ===== Helpers (new) =====
-
-        private void SetSliderRaw(Slider slider, TextBlock label, int value, int min, int max, string suffix)
-        {
-            slider.Value = Clamp(value, min, max);
-            label.Text = $"{value}{suffix}";
         }
 
         // ===== Generic slider-handler helpers =====
@@ -1286,355 +1262,20 @@ namespace MozaPlugin
         private void RefreshDiagnosticsTab()
         {
             if (DiagWheelIdentityBox == null) return;
-            DiagPluginBox.Text = BuildPluginInfoText();
+            DiagPluginBox.Text = DiagnosticsTextBuilder.BuildPluginInfo();
             if (DiagUsbDetectionBox != null)
-                DiagUsbDetectionBox.Text = BuildUsbDetectionText();
-            DiagWheelIdentityBox.Text = BuildWheelIdentityText();
-            DiagDisplayIdentityBox.Text = BuildDisplayIdentityText();
-            DiagDashboardStateBox.Text = BuildDashboardStateText();
-            DiagTileServerBox.Text = BuildTileServerText();
-            DiagSessionBox.Text = BuildSessionStateText();
+                DiagUsbDetectionBox.Text = DiagnosticsTextBuilder.BuildUsbDetection(_plugin);
+            DiagWheelIdentityBox.Text = DiagnosticsTextBuilder.BuildWheelIdentity(_data);
+            DiagDisplayIdentityBox.Text = DiagnosticsTextBuilder.BuildDisplayIdentity(_data);
+            DiagDashboardStateBox.Text = DiagnosticsTextBuilder.BuildDashboardState(_plugin);
+            DiagTileServerBox.Text = DiagnosticsTextBuilder.BuildTileServer(_plugin);
+            DiagSessionBox.Text = DiagnosticsTextBuilder.BuildSessionState(_plugin);
             if (DiagWheelCatalogBox != null)
-                DiagWheelCatalogBox.Text = BuildWheelCatalogText();
+                DiagWheelCatalogBox.Text = DiagnosticsTextBuilder.BuildWheelCatalog(_plugin);
             if (DiagSubscriptionBox != null)
-                DiagSubscriptionBox.Text = BuildSubscriptionText();
+                DiagSubscriptionBox.Text = DiagnosticsTextBuilder.BuildSubscription(_plugin);
             if (DiagSubscriptionResponseBox != null)
-                DiagSubscriptionResponseBox.Text = BuildSubscriptionResponseText();
-        }
-
-        private string BuildPluginInfoText()
-        {
-            var sb = new System.Text.StringBuilder();
-            sb.Append($"Version:        {GetPluginVersion()}");
-            return sb.ToString();
-        }
-
-        private string BuildUsbDetectionText()
-        {
-            var sb = new System.Text.StringBuilder();
-
-            var ports = global::MozaPlugin.Protocol.MozaPortDiscovery.Instance.Enumerate();
-            string fallbackState;
-            if (_plugin.Settings.DisableSerialProbeFallback)
-                fallbackState = "DISABLED";
-            else if (ports.Count > 0)
-                fallbackState = "armed (probes only unclassified COM ports)";
-            else
-                fallbackState = "armed (active — registry empty)";
-            sb.AppendLine($"Source:         Registry  (probe fallback: {fallbackState})");
-
-            if (ports.Count == 0)
-            {
-                sb.AppendLine("Discovered:     (no MOZA devices in registry)");
-            }
-            else
-            {
-                sb.AppendLine($"Discovered:     {ports.Count} device(s)");
-                for (int i = 0; i < ports.Count; i++)
-                {
-                    var p = ports[i];
-                    sb.AppendLine($"  {p.PortName,-6} VID 0x{p.Vid:X4}  PID 0x{p.Pid:X4}  {p.FriendlyName}");
-                }
-            }
-
-            // Per-connection assignment lines so the user can see which physical
-            // port the wheelbase pipe and the AB9 pipe (if any) are bound to.
-            string wheelbasePort = _plugin.Connection?.LastPortName ?? "";
-            sb.Append("Assignments:    Wheelbase ");
-            sb.Append(string.IsNullOrEmpty(wheelbasePort) ? "(disconnected)" : "→ " + wheelbasePort);
-            string ab9Port = _plugin.Ab9Manager?.Connection?.LastPortName ?? "";
-            sb.Append("  |  AB9 ");
-            sb.Append(string.IsNullOrEmpty(ab9Port) ? "(disconnected)" : "→ " + ab9Port);
-            sb.AppendLine();
-            return sb.ToString();
-        }
-
-        private string BuildWheelIdentityText()
-        {
-            var d = _data;
-            var sb = new System.Text.StringBuilder();
-            sb.AppendLine($"Model:          {Blank(d.WheelModelName)}");
-            sb.AppendLine($"FW (sw):        {Blank(d.WheelSwVersion)}");
-            sb.AppendLine($"HW version:     {Blank(d.WheelHwVersion)}");
-            sb.AppendLine($"HW sub:         {Blank(d.WheelHwSubVersion)}");
-            sb.AppendLine($"Serial:         {Redact(d.WheelSerialNumber)}");
-            sb.AppendLine($"Sub-devices:    {d.WheelSubDeviceCount}");
-            sb.AppendLine($"Device presence:0x{d.WheelDevicePresence:X2}");
-            sb.AppendLine($"Device type:    {Hex(d.WheelDeviceType)}");
-            sb.AppendLine($"Capabilities:   {Hex(d.WheelCapabilities)}");
-            sb.AppendLine($"MCU UID:        {RedactBytes(d.WheelMcuUid)}");
-            sb.Append    ($"Identity-11:    {Hex(d.WheelIdentity11)}");
-            return sb.ToString();
-        }
-
-        private string BuildDisplayIdentityText()
-        {
-            var d = _data;
-            if (string.IsNullOrEmpty(d.DisplayModelName) && d.DisplayMcuUid.Length == 0)
-                return "(display sub-device not probed or not present)";
-            var sb = new System.Text.StringBuilder();
-            sb.AppendLine($"Model:          {Blank(d.DisplayModelName)}");
-            sb.AppendLine($"FW (sw):        {Blank(d.DisplaySwVersion)}");
-            sb.AppendLine($"HW version:     {Blank(d.DisplayHwVersion)}");
-            sb.AppendLine($"Serial:         {Redact(d.DisplaySerialNumber)}");
-            sb.AppendLine($"Sub-devices:    {d.DisplaySubDeviceCount}");
-            sb.AppendLine($"Device presence:0x{d.DisplayDevicePresence:X2}");
-            sb.AppendLine($"Device type:    {Hex(d.DisplayDeviceType)}");
-            sb.AppendLine($"Capabilities:   {Hex(d.DisplayCapabilities)}");
-            sb.AppendLine($"MCU UID:        {RedactBytes(d.DisplayMcuUid)}");
-            sb.Append    ($"Identity-11:    {Hex(d.DisplayIdentity11)}");
-            return sb.ToString();
-        }
-
-        private string BuildDashboardStateText()
-        {
-            var ts = _plugin.TelemetrySender;
-            var state = _plugin.WheelStateForDiagnostics;
-            if (state == null) return "(no configJson state received yet)";
-            var sb = new System.Text.StringBuilder();
-            sb.AppendLine($"TitleId:        {state.TitleId}");
-            sb.AppendLine($"displayVersion: {state.DisplayVersion}");
-            sb.AppendLine($"resetVersion:   {state.ResetVersion}");
-            sb.AppendLine($"sortTag:        {state.SortTag}");
-            sb.AppendLine($"rootDirPath:    {Blank(state.RootDirPath)}");
-            sb.AppendLine($"rootPath:       {Blank(state.RootPath)}");
-            sb.AppendLine($"configJsonList ({state.ConfigJsonList.Count}): {JoinList(state.ConfigJsonList)}");
-            sb.AppendLine($"imageRefMap:    {state.ImageRefMap.Count} entries");
-            sb.AppendLine($"fontRefMap:     {state.FontRefMap.Count} entries");
-            sb.AppendLine($"imagePath:      {state.ImagePath.Count} entries");
-            sb.AppendLine($"captured at:    {state.CapturedAt:HH:mm:ss}");
-            sb.AppendLine(Build28xRawLine());
-            sb.AppendLine();
-            sb.AppendLine($"-- Enabled dashboards ({state.EnabledDashboards.Count}) --");
-            foreach (var d in state.EnabledDashboards)
-            {
-                sb.AppendLine($"  • {d.Title} / dirName={d.DirName} / id={TruncateId(d.Id)}");
-                if (!string.IsNullOrEmpty(d.LastModified))
-                    sb.AppendLine($"      lastModified: {d.LastModified}");
-                if (d.IdealDeviceInfos.Count > 0)
-                {
-                    foreach (var info in d.IdealDeviceInfos)
-                        sb.AppendLine($"      device: id={info.DeviceId} hw={info.HardwareVersion} product={info.ProductType}");
-                }
-            }
-            sb.Append($"-- Disabled dashboards ({state.DisabledDashboards.Count}) --");
-            foreach (var d in state.DisabledDashboards)
-                sb.Append($"\n  • {d.Title} / {d.DirName}");
-            return sb.ToString();
-        }
-
-        /// <summary>
-        /// Render the wheel's most recent 28:00 / 28:01 reply bytes raw,
-        /// with age in milliseconds. Semantics not decoded — captured for
-        /// offline correlation against game state. See plan
-        /// /home/rorth/.claude/plans/drifting-moseying-cook.md Phase 0.
-        /// </summary>
-        private string Build28xRawLine()
-        {
-            var d = _plugin.Data;
-            if (d == null) return "wheel 28:xx raw: (no data)";
-            string b00 = d.Last28x00ByteValid
-                ? $"0x{d.Last28x00Byte5:X2}" : "(none)";
-            string b01 = d.Last28x01BytesValid
-                ? $"0x{d.Last28x01Byte4:X2} 0x{d.Last28x01Byte5:X2}"
-                : "(none)";
-            string age;
-            if (d.Last28xReplyTickMs == 0)
-                age = "never";
-            else
-            {
-                int dt = unchecked(Environment.TickCount - d.Last28xReplyTickMs);
-                age = dt < 0 ? "?" : $"{dt} ms";
-            }
-            return $"wheel 28:xx raw: 28:00=[{b00}]  28:01=[{b01}]  age={age}";
-        }
-
-        private string BuildTileServerText()
-        {
-            var tile = _plugin.TileServerStateForDiagnostics;
-            if (tile == null)
-                return "(no inbound tile-server blob received — plugin PUSHES empty state on 0x03; wheel doesn't push back in current captures)";
-            var sb = new System.Text.StringBuilder();
-            sb.AppendLine($"root:          {Blank(tile.Root)}");
-            sb.AppendLine($"version:       {tile.Version}");
-            sb.AppendLine($"any populated: {tile.AnyPopulated}");
-            foreach (var kv in tile.Games)
-            {
-                var g = kv.Value;
-                sb.Append($"\n[{kv.Key}] populated={g.Populated} map_version={g.MapVersion} " +
-                          $"tile_size={g.TileSize} layers={g.LayersCount} name={Blank(g.Name)}");
-            }
-            return sb.ToString();
-        }
-
-        private string BuildSessionStateText()
-        {
-            var ts = _plugin.TelemetrySender;
-            if (ts == null && !_plugin.TelemetryEnabledForDiagnostics)
-                return "(telemetry not running)";
-            var sb = new System.Text.StringBuilder();
-            sb.AppendLine($"Enabled:            {_plugin.TelemetryEnabledForDiagnostics}");
-            sb.AppendLine($"FramesSent:         {_plugin.FramesSentForDiagnostics}");
-            var budget = _plugin.SerialBudgetForDiagnostics;
-            var errs = _plugin.SerialWireErrorsForDiagnostics;
-            int budgetTargetBytes = global::MozaPlugin.Protocol.WriteBudget.TargetBytesPerWindow;
-            sb.AppendLine(
-                $"Bandwidth:          out={budget.BytesLastSec,5} B/s ({budget.PercentBudget,3}% of {budgetTargetBytes}B target, peak={budget.PeakBurstBytes})");
-            sb.AppendLine(
-                $"WireErrors:         drops={errs.FramesDropped} cksumFail={errs.ChecksumFailures} resync={errs.FrameStartScanResyncs}");
-            sb.AppendLine($"DisplayDetected:    {(ts?.DisplayDetected ?? _plugin.IsDisplayDetected)}");
-            sb.AppendLine($"DisplayModelName:   {Blank(ts?.DisplayModelName ?? _plugin.DisplayModelName)}");
-            sb.AppendLine($"WheelEra:           {_plugin.ActiveTelemetryWheelEra}");
-            if (ts != null)
-            {
-                var p = ts.Policy;
-                sb.AppendLine($"PolicyEra:          {p.Era}{(p.IsAuto ? " (auto)" : "")}");
-                sb.AppendLine($"TierDefSession:     {p.TierDefSession}");
-                sb.AppendLine($"Encoding:           {p.Encoding}");
-                sb.AppendLine($"PreambleEverySend:  {p.SendV2PreambleEverySend}");
-                sb.AppendLine($"BlindRetransmit:    {p.BlindRetransmitTierDef}");
-                sb.AppendLine($"UploadWireFormat:   {p.UploadWireFormat}");
-                sb.AppendLine($"FlagByte:           0x{ts.FlagByte:X2}");
-                sb.AppendLine($"UploadDashboard:    {ts.UploadDashboard}");
-                sb.Append    ($"Profile:            {ts.Profile?.Name ?? "(none)"}");
-            }
-
-            // Per-session chunk counters
-            var counts = _plugin.SessionCountsForDiagnostics;
-            if (counts != null && counts.Count > 0)
-            {
-                sb.AppendLine();
-                sb.AppendLine();
-                sb.AppendLine("Session traffic (in/out chunks):");
-                var keys = new System.Collections.Generic.List<byte>(counts.Keys);
-                keys.Sort();
-                foreach (var k in keys)
-                {
-                    var v = counts[k];
-                    sb.AppendLine($"  0x{k:X2}:  in={v.In,-5} out={v.Out}");
-                }
-            }
-            return sb.ToString();
-        }
-
-        private string BuildWheelCatalogText()
-        {
-            var sb = new System.Text.StringBuilder();
-
-            // Parser internals — top-of-section so the cause of an empty catalog
-            // is visible at a glance. Buffer>0 + count=0 = chunks fed but no URL
-            // records found (wrong session? wrong record format?). CrcRejects>0
-            // + count=0 = chunks reaching us but failing CRC. ActivityMs<0 = no
-            // chunks ever delivered to parser.
-            var pd = _plugin.CatalogParserDiagnostics;
-            string activity = pd.LastActivityMsAgo < 0
-                ? "never"
-                : $"{pd.LastActivityMsAgo} ms ago";
-            sb.AppendLine(
-                $"Parser: buf={pd.BufferBytes}B (last parsed {pd.LastParsedBufferBytes}B) " +
-                $"crcRejects={pd.CrcRejects} lastActivity={activity}");
-
-            var catalog = _plugin.WheelChannelCatalogForDiagnostics;
-            if (catalog != null && catalog.Count > 0)
-            {
-                sb.AppendLine($"{catalog.Count} channels advertised by wheel:");
-                for (int i = 0; i < catalog.Count; i++)
-                {
-                    string url = catalog[i] ?? "";
-                    sb.AppendLine($"  [{i + 1,2}]  {url}");
-                }
-                return sb.ToString().TrimEnd();
-            }
-
-            // Fallback: derive the catalog from the active subscription's
-            // channel list. The subscription was built with the wheel's
-            // catalog at emit time, so its URLs reflect the mapping we sent —
-            // robust against the catalog parser losing its in-memory state
-            // mid-session for any reason.
-            //
-            // The subscription's diag.Channels uses a SEQUENTIAL idx (1..N
-            // across all tiers/buckets) rather than the wheel-catalog idx,
-            // so a single URL appears multiple times when the host duplicates
-            // channels across page-broadcast buckets (Grids = 4 buckets ×
-            // 20 channels = 80 entries). Dedup by URL preserving first-seen
-            // order so the listed catalog matches the wheel-side count.
-            var sub = _plugin.SubscriptionForDiagnostics;
-            if (sub != null && sub.Channels != null && sub.Channels.Count > 0)
-            {
-                var seen = new System.Collections.Generic.HashSet<string>(StringComparer.OrdinalIgnoreCase);
-                var ordered = new System.Collections.Generic.List<string>();
-                foreach (var ch in sub.Channels)
-                {
-                    if (string.IsNullOrEmpty(ch.Url)) continue;
-                    if (seen.Add(ch.Url)) ordered.Add(ch.Url);
-                }
-                if (ordered.Count > 0)
-                {
-                    sb.AppendLine($"{ordered.Count} channels (from last subscription — catalog parser empty):");
-                    for (int i = 0; i < ordered.Count; i++)
-                        sb.AppendLine($"  [{i + 1,2}]  {ordered[i]}");
-                    return sb.ToString().TrimEnd();
-                }
-            }
-
-            return "(no channel catalog received from wheel yet)";
-        }
-
-        private string BuildSubscriptionText()
-        {
-            var sub = _plugin.SubscriptionForDiagnostics;
-            if (sub == null) return "(no subscription sent yet)";
-            var sb = new System.Text.StringBuilder();
-            sb.AppendLine($"Sent on session {sub.SessionByte} format={sub.Format}  at {sub.CapturedAt:HH:mm:ss}");
-            if (sub.PreambleBytes.Length > 0)
-                sb.AppendLine($"Preamble ({sub.PreambleBytes.Length}B): {BitConverter.ToString(sub.PreambleBytes).Replace('-', ' ')}");
-            sb.AppendLine($"Body ({sub.BodyBytes.Length}B): {BitConverter.ToString(sub.BodyBytes).Replace('-', ' ')}");
-            if (sub.Channels.Count > 0)
-            {
-                sb.AppendLine();
-                sb.AppendLine($"Channels ({sub.Channels.Count}):");
-                foreach (var ch in sub.Channels)
-                    sb.AppendLine($"  idx={ch.Idx,2}  comp=0x{ch.Comp:X2}  width={ch.Width,3}  {ch.Url}");
-            }
-            return sb.ToString().TrimEnd();
-        }
-
-        private string BuildSubscriptionResponseText()
-        {
-            var chunks = _plugin.SubscriptionResponseForDiagnostics;
-            if (chunks == null || chunks.Count == 0)
-                return "(no inbound chunks captured on session 0x02 in 5s window after subscription)";
-            var sb = new System.Text.StringBuilder();
-            sb.AppendLine($"{chunks.Count} chunks captured on session 0x02 after most-recent subscription:");
-            int total = 0;
-            for (int i = 0; i < chunks.Count; i++)
-            {
-                var c = chunks[i];
-                total += c.Length;
-                int show = System.Math.Min(c.Length, 80);
-                string hex = BitConverter.ToString(c, 0, show).Replace('-', ' ');
-                string ellip = c.Length > show ? " …" : "";
-                sb.AppendLine($"  [{i,2}] {c.Length,3}B: {hex}{ellip}");
-            }
-            sb.AppendLine();
-            sb.AppendLine($"Concat ({total}B): {BuildConcatHex(chunks, 200)}");
-            return sb.ToString().TrimEnd();
-        }
-
-        private static string BuildConcatHex(System.Collections.Generic.IReadOnlyList<byte[]> chunks, int max)
-        {
-            var sb = new System.Text.StringBuilder();
-            int n = 0;
-            foreach (var c in chunks)
-            {
-                foreach (var b in c)
-                {
-                    if (n++ >= max) { sb.Append(" …"); return sb.ToString(); }
-                    sb.Append(b.ToString("X2"));
-                    sb.Append(' ');
-                }
-            }
-            return sb.ToString().TrimEnd();
+                DiagSubscriptionResponseBox.Text = DiagnosticsTextBuilder.BuildSubscriptionResponse(_plugin);
         }
 
         private void DiagCopyAll_Click(object sender, System.Windows.RoutedEventArgs e)
@@ -1650,7 +1291,7 @@ namespace MozaPlugin
             sb.AppendLine(DiagPluginBox.Text);
             sb.AppendLine();
             sb.AppendLine("=== USB detection ===");
-            sb.AppendLine(BuildUsbDetectionText());
+            sb.AppendLine(DiagnosticsTextBuilder.BuildUsbDetection(_plugin));
             sb.AppendLine();
             sb.AppendLine("=== Wheel identity ===");
             sb.AppendLine(DiagWheelIdentityBox.Text);
@@ -1668,13 +1309,13 @@ namespace MozaPlugin
             sb.AppendLine(DiagSessionBox.Text);
             sb.AppendLine();
             sb.AppendLine("=== Wheel channel catalog ===");
-            sb.AppendLine(BuildWheelCatalogText());
+            sb.AppendLine(DiagnosticsTextBuilder.BuildWheelCatalog(_plugin));
             sb.AppendLine();
             sb.AppendLine("=== Last subscription sent ===");
-            sb.AppendLine(BuildSubscriptionText());
+            sb.AppendLine(DiagnosticsTextBuilder.BuildSubscription(_plugin));
             sb.AppendLine();
             sb.AppendLine("=== Wheel response on 0x02 (post-subscription window) ===");
-            sb.AppendLine(BuildSubscriptionResponseText());
+            sb.AppendLine(DiagnosticsTextBuilder.BuildSubscriptionResponse(_plugin));
             return sb.ToString();
         }
 
@@ -1735,7 +1376,7 @@ namespace MozaPlugin
             if (SerialTrafficCapture.Instance.Enabled) return;
 
             var stamp = DateTime.Now.ToString("yyyyMMdd-HHmmss");
-            var modelSlug = BuildWheelModelFilenameSlug(_data?.WheelModelName);
+            var modelSlug = DiagnosticsBundleWriter.BuildWheelModelFilenameSlug(_data?.WheelModelName);
             var prefix = string.IsNullOrEmpty(modelSlug) ? "" : modelSlug + "-";
             var dlg = new Microsoft.Win32.SaveFileDialog
             {
@@ -1749,7 +1390,8 @@ namespace MozaPlugin
 
             try
             {
-                BuildAndWriteBundle(dlg.FileName);
+                var captureText = _serialCaptureRendered ?? "(no capture buffer — click Start, exercise the device, then Stop)\n";
+                DiagnosticsBundleWriter.Write(dlg.FileName, BuildDiagnosticsDump(), captureText, _serialCaptureSnapshot);
                 SerialCaptureStatusText.Text = $"exported to {dlg.FileName}";
             }
             catch (Exception ex)
@@ -1764,122 +1406,12 @@ namespace MozaPlugin
             }
         }
 
-        private void BuildAndWriteBundle(string zipPath)
-        {
-            var captureText = _serialCaptureRendered ?? "(no capture buffer — click Start, exercise the device, then Stop)\n";
-            var diagText = BuildDiagnosticsDump();
-
-            // [Moza] log lines come straight from MozaLog's in-process ring
-            // buffer — every plugin call site goes through that wrapper, so
-            // the snapshot is guaranteed current without depending on
-            // SimHub's rolling-file flush cadence or path layout.
-            var logText = MozaLog.Snapshot();
-            var logEntryCount = MozaLog.Count;
-
-            // Header gives the receiver a quick idea of what the bundle contains
-            // and when it was produced — saves a hunt through the files when a
-            // user e-mails just the zip with no description.
-            var manifest = new System.Text.StringBuilder();
-            manifest.AppendLine("MOZA Control diagnostics bundle");
-            manifest.AppendLine($"Created (local):     {DateTime.Now:yyyy-MM-dd HH:mm:ss zzz}");
-            manifest.AppendLine($"Plugin version:      {GetPluginVersion()}");
-            manifest.AppendLine($"OS:                  {Environment.OSVersion}");
-            manifest.AppendLine($"CLR:                 {Environment.Version}");
-            manifest.AppendLine();
-            manifest.AppendLine("Files:");
-            manifest.AppendLine("  serial-capture.txt   – TX/RX frames captured between Start/Stop (timestamps in local time)");
-            manifest.AppendLine("  diagnostics.txt      – snapshot of the Diagnostics tab text");
-            manifest.AppendLine($"  moza-log.txt         – [Moza] log lines from MozaLog ring buffer ({logEntryCount} entries)");
-            manifest.AppendLine();
-            manifest.AppendLine("Capture summary:");
-            if (_serialCaptureSnapshot != null)
-            {
-                manifest.AppendLine($"  Started (UTC):     {SerialTrafficCapture.Instance.StartedAtUtc:yyyy-MM-dd HH:mm:ss}");
-                manifest.AppendLine($"  Frames:            {_serialCaptureSnapshot.Count}");
-            }
-            else
-            {
-                manifest.AppendLine("  (no capture buffer was active when this bundle was produced)");
-            }
-
-            // Write to a sibling .tmp first then atomic-rename on success so a
-            // disk-full / permission failure mid-write doesn't leave a partial
-            // zip at the user-visible path. Bug-report uploads have ended up
-            // truncated this way before.
-            string tmpPath = zipPath + ".tmp";
-            try
-            {
-                using (var fs = new System.IO.FileStream(tmpPath, System.IO.FileMode.Create, System.IO.FileAccess.Write))
-                using (var zip = new System.IO.Compression.ZipArchive(fs, System.IO.Compression.ZipArchiveMode.Create))
-                {
-                    WriteZipEntry(zip, "manifest.txt", manifest.ToString());
-                    WriteZipEntry(zip, "serial-capture.txt", captureText);
-                    WriteZipEntry(zip, "diagnostics.txt", diagText);
-                    WriteZipEntry(zip, "moza-log.txt", logText);
-                }
-                if (System.IO.File.Exists(zipPath)) System.IO.File.Delete(zipPath);
-                System.IO.File.Move(tmpPath, zipPath);
-            }
-            catch
-            {
-                try { if (System.IO.File.Exists(tmpPath)) System.IO.File.Delete(tmpPath); } catch { }
-                throw;
-            }
-        }
-
-        private static void WriteZipEntry(System.IO.Compression.ZipArchive zip, string name, string content)
-        {
-            var entry = zip.CreateEntry(name, System.IO.Compression.CompressionLevel.Optimal);
-            using (var s = entry.Open())
-            using (var w = new System.IO.StreamWriter(s, new System.Text.UTF8Encoding(false)))
-                w.Write(content);
-        }
-
         // Build a filesystem-safe slug from the active wheel's firmware model name
         // for use as a filename prefix on diagnostics bundles. Prefers the curated
         // friendly name (e.g. "CS Pro" for firmware "W17"); falls back to the raw
         // prefix for unknown wheels. Returns "" when no model is known yet so the
         // caller can omit the prefix entirely rather than emit a leading dash.
-        private static string BuildWheelModelFilenameSlug(string? modelName)
-        {
-            if (string.IsNullOrWhiteSpace(modelName)) return "";
-            var friendly = WheelModelInfo.GetFriendlyName(WheelModelInfo.ExtractPrefix(modelName!));
-            if (string.IsNullOrWhiteSpace(friendly)) return "";
-
-            var sb = new System.Text.StringBuilder(friendly.Length);
-            foreach (var ch in friendly)
-            {
-                if (ch == ' ') sb.Append('-');
-                else if (char.IsLetterOrDigit(ch) || ch == '-' || ch == '_' || ch == '.') sb.Append(ch);
-                // anything else (path separators, punctuation, control chars) is dropped
-            }
-            return sb.ToString().Trim('-');
-        }
-
-        private static string GetPluginVersion()
-        {
-            // AssemblyInformationalVersion carries the full semver string set by
-            // CI via /p:Version=<x.y.z-dev.sha>, including the pre-release tag.
-            // AssemblyVersion is a System.Version (numeric only) and silently
-            // drops any -suffix, so we prefer informational here. SDK may append
-            // "+<git-sha>" via SourceRevisionId — strip it for display.
-            try
-            {
-                var asm = System.Reflection.Assembly.GetExecutingAssembly();
-                var info = (System.Reflection.AssemblyInformationalVersionAttribute?)Attribute
-                    .GetCustomAttribute(asm, typeof(System.Reflection.AssemblyInformationalVersionAttribute));
-                var s = info?.InformationalVersion;
-                if (!string.IsNullOrEmpty(s))
-                {
-                    int plus = s!.IndexOf('+');
-                    return plus >= 0 ? s.Substring(0, plus) : s;
-                }
-                return asm.GetName().Version?.ToString() ?? "unknown";
-            }
-            catch { return "unknown"; }
-        }
-
-
+        
         // ===== Experimental LED diagnostics (groups 2/3/4 + Meter flags) =====
 
         private class DiagLedCfg
@@ -2309,7 +1841,7 @@ namespace MozaPlugin
             if (_suppressEvents) return;
             if (UploadLibraryCombo?.SelectedItem is not string name || string.IsNullOrEmpty(name))
                 return;
-            byte[]? bytes = ResolveLibraryDashboardBytes(name);
+            byte[]? bytes = DashboardLibraryResolver.ResolveBytes(_plugin.DashCache, _plugin.DashProfileStore, name);
             if (bytes == null)
             {
                 _uploadPickedContent = null;
@@ -2326,47 +1858,9 @@ namespace MozaPlugin
             // Library/folder entries: try to resolve the source dir from
             // DashCache so widget PNG assets can be looked up. Builtins from
             // embedded resources have no dir → single-file upload.
-            _uploadPickedSourceDirectory = ResolveLibraryDashboardDirectory(name);
+            _uploadPickedSourceDirectory = DashboardLibraryResolver.ResolveDirectory(_plugin.DashCache, name);
             if (UploadStatusText != null && UploadStatusText.Text.StartsWith("Cannot resolve"))
                 UploadStatusText.Text = "idle";
-        }
-
-        /// <summary>
-        /// Resolve the on-disk directory for a library-picked dashboard so the
-        /// upload bundle can find sibling PNG widget assets at
-        /// <c>&lt;dir&gt;/Resource/MD5/&lt;hex&gt;.png</c>. Returns empty when
-        /// the dashboard came from the wheel cache or an embedded builtin
-        /// (no source directory) — the upload then ships single-file.
-        /// </summary>
-        private string ResolveLibraryDashboardDirectory(string name)
-        {
-            if (_plugin.DashCache == null) return "";
-            string? filePath = _plugin.DashCache.TryGetFolderFilePath(name);
-            if (string.IsNullOrEmpty(filePath)) return "";
-            return System.IO.Path.GetDirectoryName(filePath) ?? "";
-        }
-
-        private byte[]? ResolveLibraryDashboardBytes(string name)
-        {
-            if (_plugin.DashCache != null)
-            {
-                var bytes = _plugin.DashCache.TryGetRawContent(name);
-                if (bytes != null) return bytes;
-            }
-            // Builtins: read from the embedded resource (mirrors
-            // MozaPlugin.ApplyTelemetrySettings' builtin fallback).
-            foreach (var p in _plugin.DashProfileStore.BuiltinProfiles)
-            {
-                if (!string.Equals(p.Name, name, StringComparison.OrdinalIgnoreCase)) continue;
-                string resourceName = $"MozaPlugin.Data.Dashes.{p.Name.Replace(" ", "_")}.mzdash";
-                var assembly = System.Reflection.Assembly.GetExecutingAssembly();
-                using var stream = assembly.GetManifestResourceStream(resourceName);
-                if (stream == null) return null;
-                using var ms = new System.IO.MemoryStream();
-                stream.CopyTo(ms);
-                return ms.ToArray();
-            }
-            return null;
         }
 
         private void UploadNow_Click(object sender, RoutedEventArgs e)
@@ -2718,14 +2212,5 @@ namespace MozaPlugin
             _plugin.SaveSettings();
         }
 
-        private static string Blank(string s) => string.IsNullOrEmpty(s) ? "—" : s;
-        private static string Redact(string s) => MozaLog.RedactId(s);
-        private static string RedactBytes(byte[] b) => MozaLog.RedactBytesHex(b);
-        private static string Hex(byte[] b) => b == null || b.Length == 0 ? "—" : BitConverter.ToString(b);
-        private static string HexRaw(byte[] b) => b == null || b.Length == 0 ? "—" : BitConverter.ToString(b).Replace("-", "");
-        private static string JoinList(System.Collections.Generic.IReadOnlyList<string> l)
-            => l == null || l.Count == 0 ? "(empty)" : string.Join(", ", l);
-        private static string TruncateId(string id)
-            => string.IsNullOrEmpty(id) ? "—" : (id.Length > 40 ? id.Substring(0, 40) + "…" : id);
     }
 }

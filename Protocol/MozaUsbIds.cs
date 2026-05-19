@@ -5,17 +5,9 @@ using System.Globalization;
 namespace MozaPlugin.Protocol
 {
     /// <summary>
-    /// Functional category for a MOZA USB Product ID. Drives which plugin
-    /// connection class (if any) is allowed to claim the port, and lets the
-    /// wheelbase pipe stop sending base/hub probe frames at pedals,
-    /// shifters, handbrakes and hubs that simply ignore them.
-    /// <para>
-    /// <c>Unknown</c> is deliberately the zero value so PIDs not present in
-    /// <see cref="MozaUsbIds"/> fall into it without explicit registration.
-    /// Both the wheelbase and AB9 connections accept <c>Unknown</c> PIDs as
-    /// fallback probe candidates — see the filter lambdas in
-    /// <c>MozaPlugin.cs</c> and <c>Devices/MozaAb9DeviceManager.cs</c>.
-    /// </para>
+    /// MOZA PID category — gates which connection class may claim the port.
+    /// <c>Unknown</c> (zero) is the fallback for unregistered PIDs (both
+    /// wheelbase + AB9 connections accept it as a probe candidate).
     /// </summary>
     public enum MozaDeviceCategory
     {
@@ -29,17 +21,8 @@ namespace MozaPlugin.Protocol
     }
 
     /// <summary>
-    /// MOZA Racing USB Product IDs under VID 0x346E. Canonical inventory
-    /// page: <c>docs/protocol/devices/usb-ids.md</c>. Discovered via the
-    /// registry in <see cref="MozaPortDiscovery"/>; lets the plugin pick
-    /// the right COM port when multiple MOZA composite devices are
-    /// attached (e.g. wheelbase + AB9 shifter + pedals + handbrake on the
-    /// same USB bus).
-    ///
-    /// PIDs are reported by <c>MozaSerialConnection.FormatPid</c> as
-    /// <c>"0x"</c> + 4-hex-digit uppercase, so all string-based helpers
-    /// accept that canonical form (case-insensitive); the ushort overloads
-    /// avoid the parse round-trip on hot paths.
+    /// MOZA Racing USB Product IDs (VID 0x346E). Canonical inventory:
+    /// <c>docs/protocol/devices/usb-ids.md</c>. PID strings = "0x" + 4 hex upper.
     /// </summary>
     public static class MozaUsbIds
     {

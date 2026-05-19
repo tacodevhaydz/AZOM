@@ -19,14 +19,8 @@ namespace MozaPlugin.Protocol
     public class MozaResponseParser
     {
         /// <summary>
-        /// Returns null for unrecognized messages, false for filtered noise.
-        ///
-        /// <paramref name="busHint"/> overrides the auto-derived device hint. Provide
-        /// "ab9" when parsing a frame received on the AB9's serial connection — the
-        /// AB9 main and wheelbase main share the same numeric dev id (0x12), so
-        /// without an explicit bus hint the parser will mis-route AB9 responses
-        /// against base-* commands and filter out the ab9-* commands that should
-        /// have matched.
+        /// Parse a response (null = unrecognized). <paramref name="busHint"/>="ab9" overrides
+        /// the auto-derived device hint to resolve the dev 0x12 collision with wheelbase main.
         /// </summary>
         public static ParsedResponse? Parse(byte[] data, string? busHint = null)
         {
@@ -47,21 +41,14 @@ namespace MozaPlugin.Protocol
             if (responseGroup == 0x0E)
                 return null;
 
-            // Filter SerialStream control frames (group 0xC3 = response to 0x43 +
-            // payload starts with `7C 00` or `FC 00`). These are session-management
-            // chunks (data / session-open-ack / fc:00 ack) handled by
-            // TelemetrySender.OnMessageDuringPreamble, not command responses.
-            // Logging them as "Unmatched" was noise.
+            // Filter SerialStream control frames (0xC3 + 7C/FC + 00) — session-mgmt
+            // chunks handled by TelemetrySender, not command responses.
             if (responseGroup == 0xC3 && payload.Length >= 2 &&
                 (payload[0] == 0x7C || payload[0] == 0xFC) && payload[1] == 0x00)
                 return null;
 
-            // Wrapped Display sub-device identity responses arrive as 0xC3/0x71
-            // with an inner response group byte. Unwrap and re-dispatch as if
-            // it were a top-level response, but tag with "display-" prefix so
-            // MozaData.UpdateFromArray can route them to Display fields without
-            // overwriting the base wheel identity. Covers response groups:
-            //   0x89/0x84/0x85/0x86/0x82/0x87/0x88/0x8F/0x90/0x91
+            // Wrapped Display sub-device identity (0xC3/0x71 + inner response group).
+            // Unwrap + tag with "display-" prefix so it doesn't overwrite wheel identity.
             if (responseGroup == 0xC3 && payload.Length >= 1 &&
                 IsDisplayIdentityResponseGroup(payload[0]))
             {
@@ -98,30 +85,13 @@ namespace MozaPlugin.Protocol
                 group = 100;
             }
 
-            // Device-ID–based hint: responses from the main MCU
-            // (dev 0x12) get tagged "main" so they match the main-* and
-            // base-ambient-* commands that legitimately target that
-            // device. This also blocks "wheel"-typed identity-probe
-            // collisions (groups 2/4/5/6/9/17, no group-range hint) that
-            // used to let the base STM32 UID overwrite the wheel UID
-            // depending on arrival order, breaking auto-detect folder
-            // lookup. Earlier this tag was "base", which preserved the
-            // wheel-collision block by side effect but excluded every
-            // main-* and base-ambient-* response — the "MOZA Wheel Base"
-            // device never went active on R21/R25/R27 because the
-            // base-ambient-brightness probe response (0xA2 / 0x21 /
-            // 1F FF NN) landed in the Unmatched bucket. "base" was also
-            // mis-named: base FFB commands target dev 0x13 (DeviceBase),
-            // not 0x12. ab9 stays isolated by busHint; hub stays
-            // isolated by the group hint above.
+            // dev 0x12 → "main" so main-* and base-ambient-* match. Blocks the
+            // wheel-collision on identity probes (groups 2/4/5/6/9/17). ab9 stays
+            // isolated via busHint, hub via the group hint above.
             if (deviceHint == null && deviceId == MozaProtocol.DeviceMain)
                 deviceHint = "main";
 
-            // Explicit bus override — AB9 main and wheelbase main both use
-            // dev id 0x12, so the above auto-derivation tags AB9 frames as
-            // "base". When the caller knows the frame came in on the AB9
-            // serial connection, force the hint to "ab9" so the parser
-            // matches against ab9-* commands instead of base-* ones.
+            // Explicit bus override (AB9 connection passes "ab9" to dodge dev 0x12 collision).
             if (busHint != null)
                 deviceHint = busHint;
 

@@ -1,0 +1,654 @@
+using System;
+using System.Collections.Generic;
+using System.IO;
+using System.Reflection;
+using System.Threading;
+using MozaPlugin.Devices;
+using MozaPlugin.Protocol;
+using MozaPlugin.Telemetry.Dashboard;
+using MozaPlugin.Telemetry.Era;
+using MozaPlugin.Telemetry.Frames;
+
+namespace MozaPlugin.Telemetry
+{
+    /// <summary>
+    /// Dashboard-binding pipeline: telemetry settings push, kind=4 emission for
+    /// profile-driven switches, wheel-initiated switch handling, lifecycle gating.
+    /// </summary>
+    internal sealed class DashboardBindingCoordinator
+    {
+        private readonly MozaPlugin _plugin;
+        private readonly MozaData _data;
+        private readonly MozaSerialConnection _connection;
+        private readonly DeviceDetectionState _detectionState;
+
+        // Profile-driven dashboard apply may defer until the wheel catalog arrives;
+        // PollStatus retries via TickPendingDashboardRetry until this clears or times out.
+        private string? _pendingProfileDashboardKey;
+        private long _pendingProfileDashboardKeyDeadlineTicks;
+        private static readonly TimeSpan PendingProfileKeyTimeout = TimeSpan.FromMinutes(5);
+
+        // Per-plugin-instance memo: avoid re-emitting kind=4 for an already-applied
+        // key. Cleared on plugin reload and on ResetWheelDetection.
+        private string? _lastAppliedDashboardKey;
+
+        // Throttle for "deferring (key=X): reason" log lines; only re-log on change.
+        private string? _lastApplyDeferReason;
+
+        public DashboardBindingCoordinator(
+            MozaPlugin plugin,
+            MozaData data,
+            MozaSerialConnection connection,
+            DeviceDetectionState detectionState)
+        {
+            _plugin = plugin;
+            _data = data;
+            _connection = connection;
+            _detectionState = detectionState;
+        }
+
+        public bool IsPendingDashboardApply => _pendingProfileDashboardKey != null;
+
+        public void SetPendingDashboardKey(string key)
+        {
+            _pendingProfileDashboardKey = key;
+            _pendingProfileDashboardKeyDeadlineTicks = DateTime.UtcNow.Add(PendingProfileKeyTimeout).Ticks;
+        }
+
+        public void ClearPendingDashboardKey() => _pendingProfileDashboardKey = null;
+
+        public void ClearLastAppliedDashboardKey() => _lastAppliedDashboardKey = null;
+
+        /// <summary>Apply telemetry settings from the active wheel overlay to the TelemetrySender.</summary>
+        public void ApplyTelemetrySettings()
+        {
+            var sender = _plugin.TelemetrySender;
+            if (sender == null) return;
+
+            // Source from the current wheel's overlay (single source of truth).
+            // When no wheel is identified yet, ActiveTelemetry* return defaults
+            // → era Auto, paths empty, no profile loaded. The sender stays idle
+            // until wheel-model-name resolves the page GUID.
+            string telemPath = _plugin.ActiveTelemetryMzdashPath;
+            string telemName = _plugin.ActiveTelemetryProfileName;
+            MozaWheelEra era = _plugin.ActiveTelemetryWheelEra;
+
+            sender.Policy = EraPolicy.For(era);
+            // Upload/download UI is hidden while feature is in development;
+            // force both off regardless of saved settings.
+            sender.UploadDashboard = false;
+            sender.SetDownloadEnabled(false);
+            if (_plugin.Settings.EnableAutoTestOnConnect)
+                sender.EnableAutoTest(_plugin);
+
+            // Resolve active multi-stream profile and raw mzdash content.
+            // Precedence: custom file → cached by name → builtin embedded → null (sender synthesises from catalog).
+            MultiStreamProfile? profile = null;
+            byte[]? mzdashContent = null;
+            string mzdashName = "";
+
+            if (!string.IsNullOrEmpty(telemPath) && File.Exists(telemPath))
+            {
+                profile = _plugin.DashProfileStore.ParseMzdash(telemPath);
+                mzdashContent = File.ReadAllBytes(telemPath);
+                mzdashName = Path.GetFileNameWithoutExtension(telemPath);
+            }
+            else if (!string.IsNullOrEmpty(telemName))
+            {
+                if (_plugin.DashCache != null)
+                {
+                    profile = _plugin.DashCache.TryGetByName(telemName);
+                    if (profile != null)
+                    {
+                        mzdashName = profile.Name;
+                        mzdashContent = _plugin.DashCache.TryGetRawContent(telemName);
+                        MozaLog.Debug($"[Moza] ApplyTelemetrySettings: found '{telemName}' in cache as '{mzdashName}'");
+                    }
+                    else
+                    {
+                        MozaLog.Debug($"[Moza] ApplyTelemetrySettings: '{telemName}' NOT found in cache (folder={_plugin.DashCache.FolderProfileCount} wheel={_plugin.DashCache.WheelCacheCount})");
+                    }
+                }
+
+                if (profile == null)
+                {
+                    var builtins = _plugin.DashProfileStore.BuiltinProfiles;
+                    if (builtins.Count > 0)
+                    {
+                        profile = FindProfile(builtins, telemName);
+                        if (profile != null && mzdashContent == null)
+                        {
+                            mzdashName = profile.Name;
+                            string resourceName = $"MozaPlugin.Data.Dashes.{profile.Name.Replace(" ", "_")}.mzdash";
+                            var assembly = Assembly.GetExecutingAssembly();
+                            using var stream = assembly.GetManifestResourceStream(resourceName);
+                            if (stream != null)
+                            {
+                                using var ms = new MemoryStream();
+                                stream.CopyTo(ms);
+                                mzdashContent = ms.ToArray();
+                            }
+                        }
+                    }
+                }
+            }
+            // else: catalog-only mode — profile stays null; sender synthesises post-preamble.
+
+            // Apply user channel mappings for the selected dashboard (active profile × current wheel page).
+            var channelMap = _plugin.GetActiveChannelMappings();
+            if (profile != null && channelMap != null)
+            {
+                foreach (var dashKey in _plugin.GetActiveDashboardKeyCandidates())
+                {
+                    if (channelMap.TryGetValue(dashKey, out var overrides) && overrides != null)
+                    {
+                        DashboardProfileStore.ApplyUserMappings(profile, overrides);
+                        break;
+                    }
+                }
+            }
+
+            sender.PropertyResolver = _plugin.PropertyResolver.ResolveAsDouble;
+            sender.PropertyStringResolver = _plugin.PropertyResolver.ResolveAsString;
+            int tierCount = profile?.Tiers?.Count ?? 0;
+            int chCount = 0;
+            if (profile != null)
+                foreach (var t in profile.Tiers) chCount += t.Channels.Count;
+            MozaLog.Debug(
+                $"[Moza] ApplyTelemetrySettings: setting profile=" +
+                $"{profile?.Name ?? "null"} tiers={tierCount} channels={chCount} " +
+                $"mzdash={mzdashName} settingName={telemName}");
+            sender.Profile = profile;
+            sender.MzdashContent = mzdashContent;
+            sender.MzdashName = mzdashName;
+
+            // Source directory: needed so the upload bundle finds sibling PNG widget
+            // assets at <dir>/Resource/MD5/<hex>.png. User-picked file → its dir;
+            // library-picked → folder profile path; builtins → empty (single-file).
+            string mzdashSourceDir = "";
+            if (!string.IsNullOrEmpty(telemPath) && File.Exists(telemPath))
+            {
+                mzdashSourceDir = Path.GetDirectoryName(telemPath) ?? "";
+            }
+            else if (!string.IsNullOrEmpty(telemName) && _plugin.DashCache != null)
+            {
+                string? folderPath = _plugin.DashCache.TryGetFolderFilePath(telemName);
+                if (!string.IsNullOrEmpty(folderPath))
+                    mzdashSourceDir = Path.GetDirectoryName(folderPath!) ?? "";
+            }
+            sender.MzdashSourceDirectory = mzdashSourceDir;
+
+            // Advertise dashboard library to the wheel on session 0x09.
+            // Cache (from wheel download) wins on overlap with builtins.
+            var libraryNames = new List<string>();
+            if (_plugin.DashCache != null)
+            {
+                foreach (var name in _plugin.DashCache.CachedNames)
+                    libraryNames.Add(name);
+            }
+            foreach (var p in _plugin.DashProfileStore.BuiltinProfiles)
+            {
+                if (!libraryNames.Contains(p.Name))
+                    libraryNames.Add(p.Name);
+            }
+            if (!string.IsNullOrEmpty(mzdashName) && !libraryNames.Contains(mzdashName))
+                libraryNames.Add(mzdashName);
+            sender.CanonicalDashboardList = libraryNames;
+        }
+
+        private static MultiStreamProfile? FindProfile(
+            IReadOnlyList<MultiStreamProfile> profiles, string name)
+        {
+            foreach (var p in profiles)
+                if (string.Equals(p.Name, name, StringComparison.OrdinalIgnoreCase))
+                    return p;
+            return null;
+        }
+
+        /// <summary>
+        /// Restart the telemetry session with current settings. Used when protocol
+        /// version, flag byte mode, or other send options change in the UI.
+        /// </summary>
+        public void RestartTelemetry()
+        {
+            var t = _plugin.TelemetrySender;
+            if (t == null) return;
+            Interlocked.Exchange(ref _plugin._telemetryStartRequested, 0);
+            ApplyTelemetrySettings();
+            if (!_plugin.ActiveTelemetryEnabled) return;
+            // Bypass StartTelemetryIfReady's FramesSent>0 guard which rejects restarts
+            // when the sender is running. StartInner's first action is Stop() — true cold-start.
+            if (Interlocked.CompareExchange(ref _plugin._telemetryStartRequested, 1, 0) != 0) return;
+            MozaLog.Info("[Moza] Restarting telemetry sender (full cold-start)");
+            ThreadPool.QueueUserWorkItem(_ => t.Start());
+        }
+
+        /// <summary>
+        /// Apply <see cref="MozaProfile.TelemetryDashboardKey"/>: resolve to a slot,
+        /// route through OnDashboardSwitched to emit FF kind=4. Returns false to
+        /// defer (PollStatus retries).
+        /// </summary>
+        public bool ApplyTelemetryDashboardFromProfile(MozaProfile profile)
+        {
+            if (profile == null) return true;
+            string? key = profile.TelemetryDashboardKey;
+            if (string.IsNullOrEmpty(key)) return true;
+
+            // Per-plugin-instance no-op: kind=4 already emitted for this key.
+            if (_lastAppliedDashboardKey != null
+                && string.Equals(_lastAppliedDashboardKey, key, StringComparison.OrdinalIgnoreCase))
+            {
+                MozaLog.Debug("[Moza] ApplyTelemetryDashboardFromProfile: already applied " +
+                              key + " in this plugin instance — no-op");
+                return true;
+            }
+
+            // Channel-readiness gate: kind=4 before preamble reaches Active is dropped
+            // silently; defer during post-emit cooldown too.
+            var sender = _plugin.TelemetrySender;
+            var state = _plugin.WheelStateForDiagnostics;
+            if (sender == null || !sender.IsActive || sender.IsInSilenceCooldown)
+            {
+                string reason = $"sender={(sender == null ? "null" : (sender.IsActive ? "Active" : "not-Active"))} " +
+                                $"cooldown={sender?.IsInSilenceCooldown}";
+                if (reason != _lastApplyDeferReason)
+                {
+                    MozaLog.Debug($"[Moza] ApplyTelemetryDashboardFromProfile deferring (key={key}): {reason}");
+                    _lastApplyDeferReason = reason;
+                }
+                return false;
+            }
+            if (state == null || state.ConfigJsonList == null || state.ConfigJsonList.Count == 0)
+            {
+                string reason = $"state={(state == null ? "null" : $"listCount={state.ConfigJsonList?.Count ?? -1}")}";
+                if (reason != _lastApplyDeferReason)
+                {
+                    MozaLog.Debug($"[Moza] ApplyTelemetryDashboardFromProfile deferring (key={key}): wheel state not yet available — {reason}");
+                    _lastApplyDeferReason = reason;
+                }
+                return false;
+            }
+            _lastApplyDeferReason = null;
+
+            // Resolve target dashboard name + branch-specific side data.
+            string targetName;
+            string mzdashPath = "";
+            string sourceTag;
+
+            if (key!.StartsWith("wheel:", StringComparison.OrdinalIgnoreCase))
+            {
+                string id = key.Substring("wheel:".Length);
+                WheelDashboardEntry? match = null;
+                if (state.EnabledDashboards != null)
+                {
+                    foreach (var entry in state.EnabledDashboards)
+                    {
+                        if (entry != null && string.Equals(entry.Id, id, StringComparison.OrdinalIgnoreCase))
+                        {
+                            match = entry;
+                            break;
+                        }
+                    }
+                }
+                if (match == null)
+                {
+                    MozaLog.Info("[Moza] Profile dashboard key not found in current wheel catalog (id=" +
+                                 id + "); leaving current selection");
+                    return true;
+                }
+                targetName = match.Title;
+                sourceTag = $"wheel:{id} ('{match.Title}')";
+            }
+            else if (key.StartsWith("file:", StringComparison.OrdinalIgnoreCase))
+            {
+                // file:<filename>:<sha1-first-8> — filename → local mzdash + bare name for slot lookup.
+                string remainder = key.Substring("file:".Length);
+                int colon = remainder.LastIndexOf(':');
+                string filename = colon > 0 ? remainder.Substring(0, colon) : remainder;
+                string baseName = Path.GetFileNameWithoutExtension(filename);
+                string? path = _plugin.DashCache?.TryGetFolderFilePath(baseName);
+                bool localOk = !string.IsNullOrEmpty(path) && File.Exists(path);
+                targetName = baseName;
+                mzdashPath = localOk ? path! : "";
+                sourceTag = $"file:{filename}" + (localOk ? $" (local: '{path}')" : " (local file missing)");
+            }
+            else if (key.StartsWith("builtin:", StringComparison.OrdinalIgnoreCase))
+            {
+                targetName = key.Substring("builtin:".Length);
+                sourceTag = $"builtin:{targetName}";
+            }
+            else
+            {
+                MozaLog.Warn("[Moza] Unknown TelemetryDashboardKey prefix: " + key);
+                return true;
+            }
+
+            if (string.IsNullOrEmpty(targetName))
+            {
+                MozaLog.Warn("[Moza] ApplyTelemetryDashboardFromProfile: empty target name for key " + key);
+                return true;
+            }
+
+            // Slot lookup in the wheel's ConfigJsonList (slot = index, alphabetical library order).
+            // Match by name uniformly across all three key kinds.
+            int slot = -1;
+            for (int i = 0; i < state.ConfigJsonList.Count; i++)
+            {
+                var name = state.ConfigJsonList[i];
+                if (string.IsNullOrEmpty(name)) continue;
+                if (string.Equals(name, targetName, StringComparison.OrdinalIgnoreCase))
+                {
+                    slot = i;
+                    break;
+                }
+            }
+
+            if (slot >= 0)
+            {
+                // Skip kind=4 if wheel already on target (or we just emitted for it),
+                // unless the catalog re-sync probe fired (forces Stop+Start to re-advertise).
+                bool wheelOnTargetSlot = sender.WheelReportedSlot == slot;
+                bool weEmittedThisSlot = sender.LastEmittedKind4Slot == slot;
+                if (wheelOnTargetSlot || weEmittedThisSlot)
+                {
+                    string bindEvidence = wheelOnTargetSlot
+                        ? "wheel-reported slot"
+                        : "prior host kind=4";
+                    if (sender.HasCatalogResyncProbeFired)
+                    {
+                        MozaLog.Info($"[Moza] Profile dashboard '{targetName}' (slot {slot}) bound ({bindEvidence}) but probe fired this instance (source: {sourceTag}); re-triggering switch to refresh binding");
+                        _plugin.ActiveTelemetryProfileName = targetName;
+                        _plugin.ActiveTelemetryMzdashPath = mzdashPath;
+                        _plugin.PersistSettings();
+                        OnDashboardSwitched((uint)slot);
+                        _plugin.RaiseDashboardSelectionChangedInternal();
+                        _lastAppliedDashboardKey = key;
+                        return true;
+                    }
+                    MozaLog.Info($"[Moza] Profile dashboard '{targetName}' (slot {slot}) already bound ({bindEvidence}, no probe this instance, source: {sourceTag}); no wire action needed");
+                    _plugin.ActiveTelemetryProfileName = targetName;
+                    _plugin.ActiveTelemetryMzdashPath = mzdashPath;
+                    _plugin.PersistSettings();
+                    ApplyTelemetrySettings();
+                    _plugin.RaiseDashboardSelectionChangedInternal();
+                    _lastAppliedDashboardKey = key;
+                    return true;
+                }
+                MozaLog.Info($"[Moza] Applying profile dashboard '{targetName}' via wheel slot {slot} (source: {sourceTag})");
+                _plugin.ActiveTelemetryProfileName = targetName;
+                _plugin.ActiveTelemetryMzdashPath = mzdashPath;
+                _plugin.PersistSettings();
+                OnDashboardSwitched((uint)slot);
+                _plugin.RaiseDashboardSelectionChangedInternal();
+                _lastAppliedDashboardKey = key;
+                return true;
+            }
+
+            // No matching wheel slot: fall back per branch.
+            //   - wheel: not in ConfigJsonList → stop retrying.
+            //   - file: local file exists → slotless restart; wheel keeps current binding.
+            //   - file: local file missing AND no slot → leave current selection.
+            //   - builtin: slotless OnActiveDashboardChanged restarts against the named builtin.
+            if (key.StartsWith("wheel:", StringComparison.OrdinalIgnoreCase))
+            {
+                MozaLog.Info("[Moza] Profile dashboard '" + targetName +
+                             "' missing from configJsonList; leaving current selection");
+                return true;
+            }
+
+            if (key.StartsWith("file:", StringComparison.OrdinalIgnoreCase))
+            {
+                if (string.IsNullOrEmpty(mzdashPath))
+                {
+                    MozaLog.Info("[Moza] Profile dashboard file not resolvable and not in wheel catalog (" +
+                                 targetName + "); leaving current selection");
+                    return true;
+                }
+                MozaLog.Info("[Moza] Applying profile dashboard (no wheel slot, local file): " + mzdashPath);
+                _plugin.ActiveTelemetryMzdashPath = mzdashPath;
+                _plugin.ActiveTelemetryProfileName = "";
+                _plugin.PersistSettings();
+                OnDashboardSwitched();
+                _plugin.RaiseDashboardSelectionChangedInternal();
+                _lastAppliedDashboardKey = key;
+                return true;
+            }
+
+            // builtin: fallback.
+            MozaLog.Info("[Moza] Applying profile dashboard (builtin, no wheel slot): " + targetName);
+            _plugin.ActiveTelemetryProfileName = targetName;
+            _plugin.ActiveTelemetryMzdashPath = "";
+            _plugin.PersistSettings();
+            OnActiveDashboardChanged();
+            _plugin.RaiseDashboardSelectionChangedInternal();
+            _lastAppliedDashboardKey = key;
+            return true;
+        }
+
+        public void OnActiveDashboardChanged()
+        {
+            // Manual action wins: abandon any pending profile-driven switch.
+            _pendingProfileDashboardKey = null;
+
+            var sender = _plugin.TelemetrySender;
+            if (sender != null && sender.Enabled)
+            {
+                MozaLog.Debug("[Moza] OnActiveDashboardChanged: scheduling Stop+Start pipeline cycle");
+                // Builtin-profile fallback path. Re-stage settings and cycle pipeline.
+                // Silence gate inside StartInner enforces the ~11s sess=0x09 wait.
+                ApplyTelemetrySettings();
+                sender.RestartForSwitch();
+            }
+        }
+
+        /// <summary>Slot-aware dashboard switch: emits FF kind=4, awaits echo, then Stop+Start.</summary>
+        public void OnDashboardSwitched(uint slot)
+        {
+            _pendingProfileDashboardKey = null;
+
+            var sender = _plugin.TelemetrySender;
+            if (sender != null && sender.Enabled)
+            {
+                MozaLog.Debug(
+                    $"[Moza] OnDashboardSwitched(slot={slot}): scheduling switch + Stop+Start pipeline cycle");
+                // Stage profile + mzdash content first so post-Start cold-start
+                // builds tier-def from the right channels.
+                ApplyTelemetrySettings();
+                // SwitchToProfile emits FF kind=4 then runs Stop+Start; profile
+                // already staged so pass null to keep current.
+                sender.SwitchToProfile(slot, null);
+            }
+        }
+
+        /// <summary>
+        /// Slot-less dashboard switch entry point. Used by file-mode and
+        /// builtin-fallback paths where ConfigJsonList doesn't expose a slot — no
+        /// FF kind=4; sender cycles Stop+Start so the new profile takes effect.
+        /// </summary>
+        public void OnDashboardSwitched()
+        {
+            _pendingProfileDashboardKey = null;
+
+            var sender = _plugin.TelemetrySender;
+            if (sender != null && sender.Enabled)
+            {
+                MozaLog.Debug("[Moza] OnDashboardSwitched: scheduling Stop+Start pipeline cycle (no slot)");
+                ApplyTelemetrySettings();
+                sender.RestartForSwitch();
+            }
+        }
+
+        /// <summary>
+        /// Handler for <see cref="TelemetrySender.DashboardPipelineParked"/>.
+        /// Resets the telemetry-start gate so a subsequent hot-swap / user toggle
+        /// can re-attempt starting.
+        /// </summary>
+        public void OnDashboardPipelineParked(object? sender, EventArgs e)
+        {
+            Interlocked.Exchange(ref _plugin._telemetryStartRequested, 0);
+        }
+
+        /// <summary>
+        /// Handler for <see cref="TelemetrySender.WheelInitiatedSwitch"/>: stages the
+        /// matching profile on the sender. Does NOT persist — wheel-side nav is transient.
+        /// </summary>
+        public void OnWheelInitiatedSwitch(int slot)
+        {
+            try
+            {
+                var sender = _plugin.TelemetrySender;
+                if (sender == null || !sender.Enabled) return;
+
+                var state = _plugin.WheelStateForDiagnostics;
+                if (state == null || state.ConfigJsonList == null
+                    || slot < 0 || slot >= state.ConfigJsonList.Count)
+                {
+                    MozaLog.Warn(
+                        $"[Moza] WheelInitiatedSwitch slot={slot}: cannot resolve dashboard name " +
+                        $"(state={(state == null ? "null" : "ok")}, " +
+                        $"listCount={state?.ConfigJsonList?.Count ?? -1}). " +
+                        $"Tier-def burst will use stale profile.");
+                    return;
+                }
+
+                string newName = state.ConfigJsonList[slot];
+                if (string.IsNullOrEmpty(newName))
+                {
+                    MozaLog.Warn($"[Moza] WheelInitiatedSwitch slot={slot}: configJsonList entry is empty");
+                    return;
+                }
+
+                // Resolve to a MultiStreamProfile and stage it on the sender.
+                // NO writes to persisted settings — the saved profile preference
+                // (TelemetryDashboardKey) is the user's intent; wheel-side
+                // navigation must not clobber it.
+                var resolved = _plugin.ResolveDashboardProfileByName(newName);
+                if (resolved == null)
+                {
+                    MozaLog.Warn(
+                        $"[Moza] WheelInitiatedSwitch slot={slot} ('{newName}'): " +
+                        $"profile not found in cache or builtins. Tier-def will use stale profile.");
+                    return;
+                }
+
+                MozaLog.Info(
+                    $"[Moza] WheelInitiatedSwitch slot={slot} ('{newName}'): " +
+                    $"staging resolved profile on sender (saved profile preference unchanged)");
+                sender.Profile = resolved;
+
+                // UI dropdown reads sender.WheelReportedSlot directly when building
+                // the selection (not ActiveTelemetryProfileName), so the dropdown
+                // reflects the wheel's actual current dash without touching the
+                // persisted preference.
+                _plugin.RaiseDashboardSelectionChangedInternal();
+            }
+            catch (Exception ex)
+            {
+                MozaLog.Warn($"[Moza] OnWheelInitiatedSwitch handler error: {ex.Message}");
+            }
+        }
+
+        public void SetTelemetryEnabled(bool enabled)
+        {
+            _plugin.ActiveTelemetryEnabled = enabled;
+            _plugin.SaveSettings();
+            if (enabled)
+            {
+                ApplyTelemetrySettings();
+                StartTelemetryIfReady();
+            }
+            else
+            {
+                _plugin.TelemetrySender?.Stop();
+                // Reset guards so re-enable can start a fresh session — otherwise
+                // FramesSent>0 and _telemetryStartRequested==1 cause StartTelemetryIfReady
+                // to bail on re-enable.
+                Interlocked.Exchange(ref _plugin._telemetryStartRequested, 0);
+            }
+        }
+
+        /// <summary>Start the telemetry sender when preconditions are met. Dispatched off the read thread.</summary>
+        public void StartTelemetryIfReady()
+        {
+            var t = _plugin.TelemetrySender;
+            if (t == null) return;
+            if (!_plugin.ActiveTelemetryEnabled) return;
+            if (!_connection.IsConnected) return;
+            if (!_detectionState.NewWheelDetected && !_detectionState.OldWheelDetected) return;
+            // Capability gate: known displayless wheels never get the dashboard
+            // pipeline; unknown models fall back to the runtime probe.
+            if (!_plugin.ShouldDriveDashboard())
+            {
+                MozaLog.Info(
+                    $"[Moza] Wheel '{_data?.WheelModelName}' has no display " +
+                    $"(HasDisplay={_plugin.WheelModelInfo?.HasDisplay?.ToString() ?? "unknown"}, " +
+                    $"probe={_plugin.IsDisplayDetected}) — skipping dashboard telemetry start");
+                return;
+            }
+
+            // We're past ActiveTelemetryEnabled, so telemetry IS enabled for this
+            // wheel. Sync the sender's per-profile flag here so it's correct even
+            // when an earlier ApplyProfile fired before the wheel GUID resolved.
+            t.ProfileTelemetryEnabled = true;
+
+            // Already running — don't restart.
+            if (t.FramesSent > 0) return;
+
+            // Prevent duplicate dispatch.
+            if (Interlocked.CompareExchange(ref _plugin._telemetryStartRequested, 1, 0) != 0) return;
+
+            MozaLog.Info("[Moza] Wheel detected and telemetry enabled — starting telemetry sender");
+            // Top-level catch: ThreadPool callback exceptions on .NET Framework 4.8
+            // can take down the SimHub host process.
+            ThreadPool.QueueUserWorkItem(_ =>
+            {
+                try { t.Start(); }
+                catch (ObjectDisposedException) { /* plugin disposed mid-start */ }
+                catch (Exception ex)
+                {
+                    MozaLog.Warn($"[Moza] Telemetry start failed: {ex.GetType().Name}: {ex.Message}");
+                }
+            });
+        }
+
+        /// <summary>
+        /// PollStatus tick hook: retry a deferred profile-driven dashboard switch
+        /// once the wheel catalog arrives. Stops retrying after
+        /// <see cref="PendingProfileKeyTimeout"/>.
+        /// </summary>
+        public void TickPendingDashboardRetry()
+        {
+            if (_pendingProfileDashboardKey == null) return;
+
+            if (DateTime.UtcNow.Ticks > _pendingProfileDashboardKeyDeadlineTicks)
+            {
+                MozaLog.Info("[Moza] Pending profile dashboard apply timed out (key=" +
+                             _pendingProfileDashboardKey + "); giving up");
+                _pendingProfileDashboardKey = null;
+                return;
+            }
+
+            var profile = _plugin.Settings.ProfileStore?.CurrentProfile;
+            if (profile != null &&
+                string.Equals(profile.TelemetryDashboardKey, _pendingProfileDashboardKey, StringComparison.OrdinalIgnoreCase))
+            {
+                try
+                {
+                    if (ApplyTelemetryDashboardFromProfile(profile))
+                        _pendingProfileDashboardKey = null;
+                }
+                catch (Exception ex)
+                {
+                    MozaLog.Warn("[Moza] Pending dashboard apply retry threw: " + ex.Message);
+                    _pendingProfileDashboardKey = null;
+                }
+            }
+            else
+            {
+                // Profile changed under us — drop the stale pending key.
+                MozaLog.Debug($"[Moza] Pending profile dashboard apply abandoned — profile/key mismatch (pending={_pendingProfileDashboardKey}, current={(profile == null ? "null" : profile.TelemetryDashboardKey ?? "(empty)")})");
+                _pendingProfileDashboardKey = null;
+            }
+        }
+    }
+}

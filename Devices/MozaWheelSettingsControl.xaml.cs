@@ -7,9 +7,12 @@ using System.Windows.Controls;
 using System.Windows.Input;
 using System.Windows.Media;
 using System.Windows.Threading;
+using MozaPlugin.Devices.WheelUi;
 using MozaPlugin.Telemetry;
 using MozaPlugin.Telemetry.Dashboard;
 using MozaPlugin.UI;
+using static MozaPlugin.UI.UiHelpers;
+using static MozaPlugin.Devices.WheelUi.WheelUiHelpers;
 
 namespace MozaPlugin.Devices
 {
@@ -32,17 +35,8 @@ namespace MozaPlugin.Devices
 
         private readonly DispatcherTimer _refreshTimer;
 
-        // Debounce timer for the wheel-integrated display brightness slider.
-        // Slider drags fire one ValueChanged per integer step; firing
-        // SendDashDisplayBrightness on each fills the session-0x02 retransmit
-        // queue with up to 100 chunks, every one of which retransmits for ~20s
-        // until acked. On a wheel that doesn't ack (e.g. CSP-on-hub
-        // engagement issue) the queue clogs the wire and stale values keep
-        // firing — including any momentary pass through brightness=0 — so
-        // the display stays blanked. We only commit (and persist) the
-        // brightness once the slider has been still for the debounce
-        // interval. _propertyPushLastSeqs in TelemetrySender additionally
-        // supersedes any in-flight retransmit when a new value lands.
+        // Debounce: commit display brightness only after the slider settles,
+        // so rapid drags don't flood the sess=0x02 retransmit queue.
         private DispatcherTimer? _displayBrightnessDebounce;
         private static readonly TimeSpan DisplayBrightnessDebounce = TimeSpan.FromMilliseconds(500);
 
@@ -132,12 +126,7 @@ namespace MozaPlugin.Devices
                 return;
             }
 
-            // Always re-populate. The previous version short-circuited when
-            // _telemetryUIInitialized was still false, but the event can arrive
-            // 20+ seconds after plugin reload via the PollStatus deferred-apply
-            // path — well after the first RefreshWheel tick. We can't rely on
-            // InitTelemetryUI's later read picking up the latest value because
-            // it's already run with the disk-loaded (pre-apply) settings.
+            // Always re-populate: event can arrive long after the first RefreshWheel tick.
             MozaLog.Debug(
                 $"[Moza] UI: DashboardSelectionChanged handler — selected='{_plugin.ActiveTelemetryProfileName}'");
             PopulateDashboardCombo();
@@ -152,12 +141,7 @@ namespace MozaPlugin.Devices
             _data = _plugin.Data;
             _settings = _plugin.Settings;
 
-            // Subscribe (or re-subscribe) to dashboard-selection events whenever
-            // the resolved plugin instance changes. Plugin Instance is published
-            // at the END of Init(), so OnLoaded can race with plugin reload and
-            // see Instance == null on first call. The 500ms RefreshTimer keeps
-            // calling ResolvePlugin, so this self-heals once Instance is set,
-            // and detaches stale subscriptions from a reloaded plugin.
+            // Re-subscribe to dashboard events when plugin instance changes (Refresh tick self-heals on reload).
             if (!ReferenceEquals(_dashEventSubscribedPlugin, _plugin))
             {
                 if (_dashEventSubscribedPlugin != null)
@@ -337,14 +321,6 @@ namespace MozaPlugin.Devices
             }
         }
 
-        private static FrameworkElement WrapInCell(Border swatch)
-        {
-            var cell = new Grid { Width = 60, HorizontalAlignment = HorizontalAlignment.Center };
-            swatch.HorizontalAlignment = HorizontalAlignment.Center;
-            cell.Children.Add(swatch);
-            return cell;
-        }
-
         private Border CreateKnobSwatch(string commandName, int idx, byte[][] colorSource, bool isBackground)
         {
             var border = new Border
@@ -408,12 +384,7 @@ namespace MozaPlugin.Devices
                 _data.KnobRingColors[ledIdx][1] = g;
                 _data.KnobRingColors[ledIdx][2] = b;
             }
-            // Read each ring LED back so the per-LED swatches in the UI reflect
-            // the wheel's actual state rather than only the colour we asked for.
-            // The reads come back asynchronously; MozaData.UpdateFromArray writes
-            // _data.KnobRingColors[], and the next RefreshWheel tick repaints the
-            // swatches from that array. ReadSettingsPaced spaces the reads so the
-            // wheel's RX queue doesn't flood.
+            // Read each ring LED back so swatches reflect wheel ground-truth.
             var readCmds = new string[count];
             for (int i = 0; i < count; i++)
                 readCmds[i] = $"wheel-knob-bg-color{startIdx + i + 1}";
@@ -775,41 +746,9 @@ namespace MozaPlugin.Devices
         // timer touches ~30 swatches per tick — without the cache that's 60
         // SolidColorBrush allocations/sec doing nothing useful since most colors
         // don't change between ticks.
-        private static readonly System.Collections.Generic.Dictionary<int, SolidColorBrush> s_brushCache
-            = new System.Collections.Generic.Dictionary<int, SolidColorBrush>();
+        // s_brushCache moved to WheelUi/WheelUiHelpers.
 
-        private static SolidColorBrush GetCachedBrush(byte r, byte g, byte b)
-        {
-            int key = (r << 16) | (g << 8) | b;
-            if (s_brushCache.TryGetValue(key, out var brush)) return brush;
-            brush = new SolidColorBrush(Color.FromRgb(r, g, b));
-            brush.Freeze();
-            s_brushCache[key] = brush;
-            return brush;
-        }
-
-        private static void UpdateSwatches(Border[] swatches, byte[][] colors, int count)
-        {
-            for (int i = 0; i < count && i < swatches.Length; i++)
-            {
-                if (swatches[i] == null) continue;
-                var c = colors[i];
-                swatches[i].Background = GetCachedBrush(c[0], c[1], c[2]);
-            }
-        }
-
-        private static void SetComboSafe(ComboBox combo, int index)
-        {
-            if (index >= 0 && index < combo.Items.Count)
-                combo.SelectedIndex = index;
-        }
-
-        private static double Clamp(double value, double min, double max)
-        {
-            if (value < min) return min;
-            if (value > max) return max;
-            return value;
-        }
+        // SetComboSafe, Clamp moved to UI/UiHelpers.
 
         // ===== New wheel handlers =====
 
@@ -859,16 +798,7 @@ namespace MozaPlugin.Devices
         // Per-effect idle speed (cmd 0x1E [group] [effect_id] [BE u16 ms]).
         // The slider value is paired with the currently-selected idle effect at
         // write time; the wire payload is `[effect_id, ms_msb, ms_lsb]`.
-        private static byte[] BuildIdleSpeedPayload(int effectId, int ms)
-        {
-            ms = System.Math.Max(0, System.Math.Min(0xFFFF, ms));
-            return new byte[] {
-                (byte)(effectId & 0xFF),
-                (byte)((ms >> 8) & 0xFF),
-                (byte)(ms & 0xFF),
-            };
-        }
-
+        
         private void WheelIdleSpeedSlider_ValueChanged(object sender, RoutedPropertyChangedEventArgs<double> e)
         {
             if (_suppressEvents || _plugin == null) return;
@@ -1097,13 +1027,7 @@ namespace MozaPlugin.Devices
                                 _plugin.ActiveTelemetryMzdashPath) + "]");
                 }
 
-                // Select what the wheel is ACTUALLY on (ground truth),
-                // falling back to the saved profile preference when the
-                // wheel hasn't reported a slot yet. Wheel-side knob
-                // switches don't update ActiveTelemetryProfileName (they
-                // mustn't clobber the profile's saved preference) so
-                // reading the saved name here would show stale info
-                // whenever the user has switched dashes via the wheel.
+                // Show wheel-reported slot (ground truth); fall back to saved profile name.
                 string? selectedName = null;
                 var sender = _plugin.TelemetrySender;
                 if (sender != null && state != null && state.ConfigJsonList != null
@@ -1156,28 +1080,16 @@ namespace MozaPlugin.Devices
             bool testMode = active?.TestMode ?? false;
             int framesSent = _plugin.FramesSentForDiagnostics;
 
-            // Sync the checkbox to the overlay each tick so a game/profile switch
-            // (which swaps the active overlay) automatically updates the visible
-            // state. Without this, the checkbox is "frozen" at whatever value
-            // InitTelemetryUI captured on first display.
+            // Sync checkbox to overlay each tick so game/profile switches reflect immediately.
             if (TelemetryEnabledCheck.IsChecked != enabled)
             {
                 using (_suppressor.Begin())
                     TelemetryEnabledCheck.IsChecked = enabled;
             }
 
-            // Sender readiness for user-initiated switching. Must satisfy:
-            //   - Sender exists and is in TelemetryState.Active (preamble done).
-            //   - Not in the post-kind=4 silence cooldown.
-            //   - No pending profile-driven apply still in flight — during a
-            //     game switch the apply may go through multiple short transient
-            //     states (preamble done → tier-def emit → probe kind=4 →
-            //     cooldown → RestartForSwitch Stop+Start → preamble again),
-            //     and we don't want the combo to flicker locked/unlocked
-            //     between those phases. IsPendingDashboardApply stays true
-            //     until ApplyTelemetryDashboardFromProfile returns true (with
-            //     or without a wire emit), at which point the transient is
-            //     over.
+            // Sender ready for user switching: Active + not in cooldown + no pending apply.
+            // IsPendingDashboardApply stays true across the full switch transient so the
+            // combo doesn't flicker.
             bool inCooldown = active?.IsInSilenceCooldown ?? false;
             bool pendingApply = _plugin?.IsPendingDashboardApply ?? false;
             bool senderReady = active != null && active.IsActive && !inCooldown && !pendingApply;
@@ -1234,17 +1146,8 @@ namespace MozaPlugin.Devices
             WheelDisplayBrightnessValue.Text = $"{val}";
             _data!.DashDisplayBrightness = val;
             _plugin.UpdateActiveProfile(p => p.DashDisplayBrightness = val);
-            // Defer the wire write + persist until the slider has been still
-            // for DisplayBrightnessDebounce. A drag fires ValueChanged per
-            // integer step (~30 events for a full sweep); pushing each value
-            // floods the session-0x02 retransmit queue with intermediate
-            // chunks, including any momentary 0 the user passes through —
-            // and that 0 keeps retransmitting alongside the final value
-            // until the queue ages out, leaving the display blanked. The
-            // timer resets on every ValueChanged so only the final
-            // resting value is committed; 500 ms is long enough to skip a
-            // fast drag, short enough to feel instant when the user
-            // releases.
+            // Defer wire write + persist until slider settles — avoids flooding
+            // the sess=0x02 retransmit queue with intermediate values.
             if (_displayBrightnessDebounce == null)
             {
                 _displayBrightnessDebounce = new DispatcherTimer { Interval = DisplayBrightnessDebounce };
@@ -1260,12 +1163,7 @@ namespace MozaPlugin.Devices
             if (_plugin == null || _data == null) return;
             int val = _data.DashDisplayBrightness;
             if (val < 0) val = 0; else if (val > 100) val = 100;
-            // allowZero: true — this is the deliberate user-intent path.
-            // Every other call site of SendDashDisplayBrightness (settings
-            // load, profile apply, dash-extension apply) leaves the default
-            // false so a stray 0 there is suppressed, but a slider dragged
-            // to 0 and held is honoured (display turns off as the user
-            // requested).
+            // allowZero: true — slider-to-zero is deliberate user intent; other call sites suppress 0.
             _plugin.TelemetrySender?.SendDashDisplayBrightness(val, allowZero: true);
             _plugin.SaveSettings();
         }
@@ -1329,17 +1227,9 @@ namespace MozaPlugin.Devices
             if (active != null && state != null && state.ConfigJsonList.Count > 0
                 && idx >= 0 && idx < state.ConfigJsonList.Count)
             {
-                // Save the new profile name. OnDashboardSwitched(slot) calls
-                // ApplyTelemetrySettings + SwitchToProfile, which (a) honours
-                // the EnableHotRenegotiation feature flag, and (b) emits the
-                // FF kind=4 from a single place so future refactors can keep
-                // the kind=4-then-tier-def ordering intact.
-                //
-                // Previous code did `SendDashboardSwitch + OnDashboardSwitched()`
-                // (the slotless variant), which bypassed SwitchToProfile and
-                // unconditionally hit RestartForSwitch — even when the hot
-                // path was enabled. See sim/logs/moza-wire-20260517-091917
-                // for the wire-trace evidence.
+                // OnDashboardSwitched(slot) routes through SwitchToProfile so the
+                // EnableHotRenegotiation feature flag is honoured and FF kind=4 is
+                // emitted from a single place.
                 _plugin.ActiveTelemetryProfileName = selected;
                 _plugin.ActiveTelemetryMzdashPath = "";
                 _plugin.SaveSettings();
@@ -1456,9 +1346,6 @@ namespace MozaPlugin.Devices
                 UpdateFolderInfo();
             }
         }
-
-        private static string UidToHex(byte[] uid)
-            => uid == null ? "" : BitConverter.ToString(uid).Replace("-", "").ToLowerInvariant();
 
         private void TelemetryAutoDetect_Click(object sender, RoutedEventArgs e)
         {
@@ -1626,34 +1513,7 @@ namespace MozaPlugin.Devices
             }
         }
 
-        private static string FormatPropertyValue(object? value)
-        {
-            if (value == null) return "(null)";
-            switch (value)
-            {
-                case bool b: return b ? "true" : "false";
-                case double d: return (!double.IsNaN(d) && !double.IsInfinity(d)) ? d.ToString("0.###") : d.ToString();
-                case float f: return (!float.IsNaN(f) && !float.IsInfinity(f)) ? f.ToString("0.###") : f.ToString();
-                case int i: return i.ToString();
-                case long l: return l.ToString();
-                case uint ui: return ui.ToString();
-                case ushort us: return us.ToString();
-                case short sh: return sh.ToString();
-                case byte by: return by.ToString();
-                case TimeSpan ts: return ts.ToString(@"mm\:ss\.fff");
-                case string s: return s.Length > 32 ? s.Substring(0, 32) + "…" : s;
-                default:
-                    var str = value.ToString() ?? "";
-                    return str.Length > 32 ? str.Substring(0, 32) + "…" : str;
-            }
-        }
-
-        // WPF's editable ComboBox SelectAlls its inner TextBox the moment the
-        // dropdown opens. With auto-open driven by our filter that means every
-        // 3rd keystroke selects the user's whole search query — and the next
-        // keystroke replaces it. Reset the selection to caret-at-end on open so
-        // the user keeps typing into their existing text. Deferred via Background
-        // dispatcher so the override runs AFTER ComboBox's internal SelectAll.
+        // Reset SelectAll to caret-at-end on dropdown open so filter-typing isn't clobbered.
         private void TelemetryPropCombo_DropDownOpened(object sender, EventArgs e)
         {
             if (sender is not ComboBox cb) return;
@@ -1710,261 +1570,27 @@ namespace MozaPlugin.Devices
                 foreach (var r in oldRows) r.PropertyChanged -= OnMappingRowPropertyChanged;
             }
 
-            // Snapshot the SimHub property name list once per populate so all rows
-            // share the same backing list (avoids N copies of a 500-entry list).
-            var props = _plugin.GetAllSimHubPropertyNames();
-
-            var profile = _plugin.TelemetrySender?.Profile;
-            if (profile == null || profile.Tiers.Count == 0)
+            var result = ChannelMappingRowFactory.Build(_plugin);
+            if (result.Rows == null)
             {
-                // No mzdash loaded: fall back to whatever channel URLs the
-                // wheel has advertised in its catalog. Lets the user see /
-                // edit mappings even without uploading a profile.
-                var catalog = _plugin.WheelChannelCatalogForDiagnostics;
-                if (catalog == null || catalog.Count == 0)
-                {
-                    TelemetryChannelGrid.ItemsSource = null;
-                    TelemetryMappingStatus.Text =
-                        "(no dashboard loaded and wheel has not advertised a channel catalog)";
-                    return;
-                }
-                var catalogRows = new List<ChannelMappingRow>();
-                int idx = 1;
-                foreach (var url in catalog.OrderBy(u => u, StringComparer.OrdinalIgnoreCase))
-                {
-                    if (string.IsNullOrEmpty(url)) { idx++; continue; }
-                    // AllProperties MUST be set before SimHubProperty so the
-                    // setter's filter step sees the full list. Object initializers
-                    // assign in source order, so list AllProperties first.
-                    catalogRows.Add(new ChannelMappingRow
-                    {
-                        AllProperties = props,
-                        Name = url,
-                        Url = url,
-                        PackageLevel = 0,
-                        Compression = "uint32_t",
-                        SimHubProperty = "",
-                    });
-                    idx++;
-                }
-                TelemetryChannelGrid.ItemsSource = catalogRows;
-                // Now that initial-state filter passes have run with dropdown
-                // auto-open suppressed, allow further user-typed input to open
-                // the dropdown. Also subscribe for auto-save on every edit.
-                foreach (var r in catalogRows)
-                {
-                    r.AllowDropdownOpen = true;
-                    r.PropertyChanged += OnMappingRowPropertyChanged;
-                }
-                TelemetryMappingStatus.Text =
-                    $"(no dashboard loaded — showing {catalogRows.Count} wheel-advertised channels)";
+                TelemetryChannelGrid.ItemsSource = null;
+                if (!string.IsNullOrEmpty(result.StatusText))
+                    TelemetryMappingStatus.Text = result.StatusText;
                 return;
             }
 
-            // Per-widget tier-def emits one tier per dashboard widget, so a
-            // dashboard with 12 widgets binding 6 unique URLs surfaces 12
-            // tier×channel pairs. The mapping grid is keyed by URL → SimHub
-            // property, so collapse duplicates by URL (first occurrence wins).
-            var seen = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
-            var rows = new List<ChannelMappingRow>();
-            foreach (var tier in profile.Tiers.OrderBy(t => t.PackageLevel))
-            {
-                foreach (var ch in tier.Channels.OrderBy(c => c.Url, StringComparer.OrdinalIgnoreCase))
-                {
-                    if (DashboardProfileStore.IsInternalChannel(ch.SimHubProperty)) continue;
-                    if (!seen.Add(ch.Url)) continue;
-
-                    // AllProperties MUST be set before SimHubProperty so the
-                    // setter's filter step sees the full list. Object initializers
-                    // assign in source order, so list AllProperties first.
-                    rows.Add(new ChannelMappingRow
-                    {
-                        AllProperties = props,
-                        Name = ch.Name,
-                        Url = ch.Url,
-                        PackageLevel = ch.PackageLevel,
-                        Compression = ch.Compression,
-                        SimHubProperty = ch.SimHubProperty ?? "",
-                    });
-                }
-            }
-            // String channels live on profile.StringChannels (sess=0x01 type=0x05
-            // out-of-band transport), not on Tiers — they need a separate pass
-            // to surface in the mapping grid so users can override the URL →
-            // SimHub property defaults from StringChannelDefaults.
-            foreach (var ch in profile.StringChannels
-                         .OrderBy(c => c.Url, StringComparer.OrdinalIgnoreCase))
-            {
-                if (DashboardProfileStore.IsInternalChannel(ch.SimHubProperty)) continue;
-                if (!seen.Add(ch.Url)) continue;
-                rows.Add(new ChannelMappingRow
-                {
-                    AllProperties = props,
-                    Name = ch.Name,
-                    Url = ch.Url,
-                    PackageLevel = ch.PackageLevel,
-                    Compression = ch.Compression,           // "string"
-                    SimHubProperty = ch.SimHubProperty ?? "",
-                });
-            }
-            TelemetryChannelGrid.ItemsSource = rows;
+            TelemetryChannelGrid.ItemsSource = result.Rows;
             // Now that initial-state filter passes have run with dropdown auto-open
             // suppressed, allow further user-typed input to open the dropdown.
             // Also subscribe for auto-save on every edit.
-            foreach (var r in rows)
+            foreach (var r in result.Rows)
             {
                 r.AllowDropdownOpen = true;
                 r.PropertyChanged += OnMappingRowPropertyChanged;
             }
+            if (!string.IsNullOrEmpty(result.StatusText))
+                TelemetryMappingStatus.Text = result.StatusText;
         }
 
-        private sealed class ChannelMappingRow : INotifyPropertyChanged
-        {
-            // Min characters before the filter activates. Below this we keep the
-            // dropdown empty (and the help text reminds the user to type more) —
-            // SimHub's full property list can be 1500+ entries, so filtering on
-            // 1-2 chars renders too many items for the ComboBox to virtualize
-            // smoothly.
-            private const int MinSearchChars = 3;
-            // Cap filtered results — protects the dropdown from a substring like
-            // "data" matching half the universe. The user narrows further by
-            // adding chars; if 200 isn't enough they can paste the full path.
-            private const int MaxFilteredResults = 200;
-
-            public string Name { get; set; } = "";
-            public string Url { get; set; } = "";
-            public int PackageLevel { get; set; }
-            public string Compression { get; set; } = "";
-
-            private string _simHubProperty = "";
-            public string SimHubProperty
-            {
-                get => _simHubProperty;
-                set
-                {
-                    var v = (value ?? "").Trim();
-                    if (_simHubProperty == v) return;
-                    _simHubProperty = v;
-                    PropertyChanged?.Invoke(this, new PropertyChangedEventArgs(nameof(SimHubProperty)));
-                    // Clear the live value so the next refresh repopulates from
-                    // the new path, and the user doesn't see a stale value
-                    // matched against an unrelated property name.
-                    CurrentValueText = "";
-                    UpdateFilteredProperties();
-                }
-            }
-
-            /// <summary>
-            /// Master snapshot of every SimHub property name (set once by the populator
-            /// from <see cref="MozaPlugin.GetAllSimHubPropertyNames"/>). The ComboBox
-            /// dropdown does NOT bind to this directly — it would render thousands
-            /// of rows on every open. Instead we filter into <see cref="FilteredProperties"/>
-            /// on each keystroke.
-            /// </summary>
-            public IReadOnlyList<string> AllProperties { get; set; } = KnownSimHubProperties.Paths;
-
-            private IReadOnlyList<string> _filteredProperties = Array.Empty<string>();
-            /// <summary>
-            /// Live, filtered subset of <see cref="AllProperties"/>. Bound to the
-            /// ComboBox.ItemsSource. Replaced wholesale (immutable-list swap) on each
-            /// keystroke so the ComboBox doesn't see a Clear+Add cycle while the user
-            /// is mid-click on a dropdown item — that race lost the SelectedItem
-            /// reference and made selections silently fail. Populated by
-            /// <see cref="UpdateFilteredProperties"/>: empty until the user types
-            /// <see cref="MinSearchChars"/>+ characters, then case-insensitive
-            /// substring match against AllProperties (capped at
-            /// <see cref="MaxFilteredResults"/>).
-            /// </summary>
-            public IReadOnlyList<string> FilteredProperties
-            {
-                get => _filteredProperties;
-                private set
-                {
-                    _filteredProperties = value ?? Array.Empty<string>();
-                    PropertyChanged?.Invoke(this, new PropertyChangedEventArgs(nameof(FilteredProperties)));
-                }
-            }
-
-            private bool _isDropDownOpen;
-            /// <summary>
-            /// TwoWay-bound to ComboBox.IsDropDownOpen. Auto-opened by the filter
-            /// step on user input when there are matches; closed when the typed
-            /// text is an exact property name (the user picked / typed in full).
-            /// </summary>
-            public bool IsDropDownOpen
-            {
-                get => _isDropDownOpen;
-                set
-                {
-                    if (_isDropDownOpen == value) return;
-                    _isDropDownOpen = value;
-                    PropertyChanged?.Invoke(this, new PropertyChangedEventArgs(nameof(IsDropDownOpen)));
-                }
-            }
-
-            /// <summary>
-            /// Gate that suppresses auto-open during the initial populate (when
-            /// SimHubProperty is set to an existing override and we don't want
-            /// the dropdown to pop open on every row). Set true by the populator
-            /// after the row is wired into the grid.
-            /// </summary>
-            public bool AllowDropdownOpen { get; set; }
-
-            private string _currentValueText = "";
-            public string CurrentValueText
-            {
-                get => _currentValueText;
-                set
-                {
-                    if (_currentValueText == value) return;
-                    _currentValueText = value ?? "";
-                    PropertyChanged?.Invoke(this, new PropertyChangedEventArgs(nameof(CurrentValueText)));
-                }
-            }
-
-            private void UpdateFilteredProperties()
-            {
-                string query = _simHubProperty;
-                if (string.IsNullOrEmpty(query) || query.Length < MinSearchChars)
-                {
-                    FilteredProperties = Array.Empty<string>();
-                    if (AllowDropdownOpen) IsDropDownOpen = false;
-                    return;
-                }
-
-                // Build a fresh list off-bind, then swap. Atomic from the binding's
-                // perspective — the previous list reference is still alive while
-                // any in-flight click on a dropdown item finishes committing.
-                var seen = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
-                var list = new List<string>(MaxFilteredResults);
-                bool exactMatchSeen = false;
-                var src = AllProperties;
-                if (src != null)
-                {
-                    for (int i = 0; i < src.Count; i++)
-                    {
-                        var p = src[i];
-                        if (string.IsNullOrEmpty(p)) continue;
-                        if (p.IndexOf(query, StringComparison.OrdinalIgnoreCase) < 0) continue;
-                        if (!seen.Add(p)) continue; // dedupe defence-in-depth (source is already unique)
-                        list.Add(p);
-                        if (string.Equals(p, query, StringComparison.OrdinalIgnoreCase))
-                            exactMatchSeen = true;
-                        if (list.Count >= MaxFilteredResults) break;
-                    }
-                }
-
-                FilteredProperties = list;
-
-                // If the typed text is exactly a property name (user picked from
-                // the dropdown or typed the full path), close — no point keeping
-                // the dropdown open. Otherwise auto-open while filter has hits so
-                // the user can see the narrowing list as they type.
-                if (!AllowDropdownOpen) return;
-                IsDropDownOpen = !exactMatchSeen && list.Count > 0;
-            }
-
-            public event PropertyChangedEventHandler? PropertyChanged;
-        }
     }
 }

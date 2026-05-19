@@ -5,22 +5,8 @@ using System.Threading;
 namespace MozaPlugin.Protocol
 {
     /// <summary>
-    /// Retry-with-backoff helper for one-shot commands that expect a named
-    /// response back from the wheel. Without this, dropped probe frames are
-    /// silently lost (e.g. <c>SendDisplayProbe</c> fires 11 frames in a burst
-    /// — if any drop on the wire we never notice). With it, each frame is
-    /// re-emitted with exponential backoff until the wheel acknowledges by
-    /// producing the matching named response, or the attempt budget is
-    /// exhausted.
-    ///
-    /// The expected-name string must match what <see cref="MozaResponseParser"/>
-    /// produces — the caller wires <see cref="NoteResponse"/> from its response
-    /// dispatch path, and every successful match drops the corresponding
-    /// pending entry so retries stop immediately.
-    ///
-    /// This class is thread-safe. Send happens from caller thread; retry tick
-    /// runs on the telemetry tick thread; NoteResponse runs on the read
-    /// thread. All three lock the same map.
+    /// Retry-with-backoff for one-shot commands awaiting a named response.
+    /// Caller wires NoteResponse from the parser; thread-safe across send / retry / read.
     /// </summary>
     public sealed class PendingResponseTracker
     {
@@ -37,10 +23,7 @@ namespace MozaPlugin.Protocol
 
         private readonly Dictionary<string, Entry> _pending = new();
         private readonly object _lock = new object();
-        // Mirrors _pending.Count under the lock, but read lock-free so the
-        // hot-path (NoteResponse fires on every parsed wheel response, ~50–
-        // 200 Hz) can early-out without touching the lock when nothing is
-        // pending. Writers always update under the lock.
+        // Lock-free count mirror; NoteResponse early-outs when idle (~50-200 Hz path).
         private volatile int _pendingCount;
 
         public int PendingCount => _pendingCount;
@@ -51,17 +34,7 @@ namespace MozaPlugin.Protocol
         public int TimeoutCount => Interlocked.CompareExchange(ref _timeoutCount, 0, 0);
         private int _timeoutCount;
 
-        /// <summary>
-        /// Track an outbound frame that expects a named response. The caller
-        /// must have already enqueued the frame via the connection (typically
-        /// <c>conn.Send(frame)</c>) — this method only registers the
-        /// expected-response watch, it does not enqueue.
-        ///
-        /// If a previous entry exists with the same <paramref name="expectedName"/>,
-        /// it's replaced — the most recent send wins. The wheel only needs to
-        /// produce one matching response to clear all pending entries with
-        /// that name.
-        /// </summary>
+        /// <summary>Track an outbound frame awaiting a named response (caller has already Send'd).</summary>
         public void Track(string expectedName, byte[] frame, int[] backoffMs, int maxAttempts)
         {
             if (string.IsNullOrEmpty(expectedName) || frame == null || backoffMs == null) return;

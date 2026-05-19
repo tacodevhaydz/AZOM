@@ -12,18 +12,10 @@ using Microsoft.Win32;
 namespace MozaPlugin.Protocol
 {
     /// <summary>
-    /// Process-wide MOZA USB serial port discovery via the Windows registry.
-    /// Reads the standard <c>usbser.sys</c> layout
-    /// <c>HKLM\SYSTEM\CurrentControlSet\Enum\USB\VID_346E&amp;PID_xxxx&amp;MI_00\&lt;instance&gt;\Device Parameters\PortName</c>
-    /// and cross-references each result against <see cref="SerialPort.GetPortNames"/>
-    /// so registry "ghost" entries (records left behind from a prior USB-port
-    /// attachment) are filtered out.
-    ///
-    /// Replaces the prior WMI reflection path that failed silently in SimHub's
-    /// plugin AppDomain — see <c>docs/DEVELOPMENT.md</c> for context. The serial
-    /// probe fallback in <see cref="MozaSerialConnection"/> still exists but is
-    /// gated behind the user-visible <c>ScanUnknownSerialPorts</c> setting; this
-    /// class is the always-on primary discovery path on Windows.
+    /// Process-wide MOZA port discovery via the Windows registry (usbser.sys layout),
+    /// cross-referenced against <see cref="SerialPort.GetPortNames"/> to drop ghost
+    /// entries. Replaces the prior WMI reflection path; serial-probe fallback in
+    /// <see cref="MozaSerialConnection"/> kicks in only when the registry is empty.
     /// </summary>
     public sealed class MozaPortDiscovery
     {
@@ -69,12 +61,7 @@ namespace MozaPlugin.Protocol
 
         private MozaPortDiscovery() { }
 
-        /// <summary>
-        /// Return the current set of MOZA CDC ACM ports visible via the
-        /// registry. Cached for <see cref="CacheTtlTicks"/>; concurrent callers
-        /// past the TTL may each walk the registry once — the result is
-        /// idempotent so the redundant work is harmless.
-        /// </summary>
+        /// <summary>Enumerate MOZA CDC ACM ports (cached for <see cref="CacheTtlTicks"/>).</summary>
         public IReadOnlyList<PortInfo> Enumerate()
         {
             lock (_cacheLock)

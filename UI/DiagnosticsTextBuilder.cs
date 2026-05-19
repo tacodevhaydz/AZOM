@@ -1,0 +1,353 @@
+using System;
+using System.Collections.Generic;
+using System.Reflection;
+using System.Text;
+using MozaPlugin.Protocol;
+
+namespace MozaPlugin.UI
+{
+    /// <summary>Pure-function text builders for the Diagnostics tab panels.</summary>
+    internal static class DiagnosticsTextBuilder
+    {
+        // ── Field formatters ────────────────────────────────────────────
+
+        public static string Blank(string s) => string.IsNullOrEmpty(s) ? "—" : s;
+        public static string Redact(string s) => MozaLog.RedactId(s);
+        public static string RedactBytes(byte[] b) => MozaLog.RedactBytesHex(b);
+        public static string Hex(byte[] b) => b == null || b.Length == 0 ? "—" : BitConverter.ToString(b);
+        public static string HexRaw(byte[] b) => b == null || b.Length == 0 ? "—" : BitConverter.ToString(b).Replace("-", "");
+        public static string JoinList(IReadOnlyList<string> l)
+            => l == null || l.Count == 0 ? "(empty)" : string.Join(", ", l);
+        public static string TruncateId(string id)
+            => string.IsNullOrEmpty(id) ? "—" : (id.Length > 40 ? id.Substring(0, 40) + "…" : id);
+
+        /// <summary>Plugin assembly version (AssemblyInformationalVersion, +sha stripped).</summary>
+        public static string GetPluginVersion()
+        {
+            try
+            {
+                var asm = Assembly.GetExecutingAssembly();
+                var info = (AssemblyInformationalVersionAttribute?)Attribute
+                    .GetCustomAttribute(asm, typeof(AssemblyInformationalVersionAttribute));
+                var s = info?.InformationalVersion;
+                if (!string.IsNullOrEmpty(s))
+                {
+                    int plus = s!.IndexOf('+');
+                    return plus >= 0 ? s.Substring(0, plus) : s;
+                }
+                return asm.GetName().Version?.ToString() ?? "unknown";
+            }
+            catch { return "unknown"; }
+        }
+
+        // ── Per-panel builders ──────────────────────────────────────────
+
+        public static string BuildPluginInfo() => $"Version:        {GetPluginVersion()}";
+
+        public static string BuildUsbDetection(MozaPlugin plugin)
+        {
+            var sb = new StringBuilder();
+            var ports = MozaPortDiscovery.Instance.Enumerate();
+            string fallbackState;
+            if (plugin.Settings.DisableSerialProbeFallback)
+                fallbackState = "DISABLED";
+            else if (ports.Count > 0)
+                fallbackState = "armed (probes only unclassified COM ports)";
+            else
+                fallbackState = "armed (active — registry empty)";
+            sb.AppendLine($"Source:         Registry  (probe fallback: {fallbackState})");
+
+            if (ports.Count == 0)
+            {
+                sb.AppendLine("Discovered:     (no MOZA devices in registry)");
+            }
+            else
+            {
+                sb.AppendLine($"Discovered:     {ports.Count} device(s)");
+                for (int i = 0; i < ports.Count; i++)
+                {
+                    var p = ports[i];
+                    sb.AppendLine($"  {p.PortName,-6} VID 0x{p.Vid:X4}  PID 0x{p.Pid:X4}  {p.FriendlyName}");
+                }
+            }
+
+            string wheelbasePort = plugin.Connection?.LastPortName ?? "";
+            sb.Append("Assignments:    Wheelbase ");
+            sb.Append(string.IsNullOrEmpty(wheelbasePort) ? "(disconnected)" : "→ " + wheelbasePort);
+            string ab9Port = plugin.Ab9Manager?.Connection?.LastPortName ?? "";
+            sb.Append("  |  AB9 ");
+            sb.Append(string.IsNullOrEmpty(ab9Port) ? "(disconnected)" : "→ " + ab9Port);
+            sb.AppendLine();
+            return sb.ToString();
+        }
+
+        public static string BuildWheelIdentity(MozaData d)
+        {
+            var sb = new StringBuilder();
+            sb.AppendLine($"Model:          {Blank(d.WheelModelName)}");
+            sb.AppendLine($"FW (sw):        {Blank(d.WheelSwVersion)}");
+            sb.AppendLine($"HW version:     {Blank(d.WheelHwVersion)}");
+            sb.AppendLine($"HW sub:         {Blank(d.WheelHwSubVersion)}");
+            sb.AppendLine($"Serial:         {Redact(d.WheelSerialNumber)}");
+            sb.AppendLine($"Sub-devices:    {d.WheelSubDeviceCount}");
+            sb.AppendLine($"Device presence:0x{d.WheelDevicePresence:X2}");
+            sb.AppendLine($"Device type:    {Hex(d.WheelDeviceType)}");
+            sb.AppendLine($"Capabilities:   {Hex(d.WheelCapabilities)}");
+            sb.AppendLine($"MCU UID:        {RedactBytes(d.WheelMcuUid)}");
+            sb.Append    ($"Identity-11:    {Hex(d.WheelIdentity11)}");
+            return sb.ToString();
+        }
+
+        public static string BuildDisplayIdentity(MozaData d)
+        {
+            if (string.IsNullOrEmpty(d.DisplayModelName) && d.DisplayMcuUid.Length == 0)
+                return "(display sub-device not probed or not present)";
+            var sb = new StringBuilder();
+            sb.AppendLine($"Model:          {Blank(d.DisplayModelName)}");
+            sb.AppendLine($"FW (sw):        {Blank(d.DisplaySwVersion)}");
+            sb.AppendLine($"HW version:     {Blank(d.DisplayHwVersion)}");
+            sb.AppendLine($"Serial:         {Redact(d.DisplaySerialNumber)}");
+            sb.AppendLine($"Sub-devices:    {d.DisplaySubDeviceCount}");
+            sb.AppendLine($"Device presence:0x{d.DisplayDevicePresence:X2}");
+            sb.AppendLine($"Device type:    {Hex(d.DisplayDeviceType)}");
+            sb.AppendLine($"Capabilities:   {Hex(d.DisplayCapabilities)}");
+            sb.AppendLine($"MCU UID:        {RedactBytes(d.DisplayMcuUid)}");
+            sb.Append    ($"Identity-11:    {Hex(d.DisplayIdentity11)}");
+            return sb.ToString();
+        }
+
+        public static string BuildDashboardState(MozaPlugin plugin)
+        {
+            var state = plugin.WheelStateForDiagnostics;
+            if (state == null) return "(no configJson state received yet)";
+            var sb = new StringBuilder();
+            sb.AppendLine($"TitleId:        {state.TitleId}");
+            sb.AppendLine($"displayVersion: {state.DisplayVersion}");
+            sb.AppendLine($"resetVersion:   {state.ResetVersion}");
+            sb.AppendLine($"sortTag:        {state.SortTag}");
+            sb.AppendLine($"rootDirPath:    {Blank(state.RootDirPath)}");
+            sb.AppendLine($"rootPath:       {Blank(state.RootPath)}");
+            sb.AppendLine($"configJsonList ({state.ConfigJsonList.Count}): {JoinList(state.ConfigJsonList)}");
+            sb.AppendLine($"imageRefMap:    {state.ImageRefMap.Count} entries");
+            sb.AppendLine($"fontRefMap:     {state.FontRefMap.Count} entries");
+            sb.AppendLine($"imagePath:      {state.ImagePath.Count} entries");
+            sb.AppendLine($"captured at:    {state.CapturedAt:HH:mm:ss}");
+            sb.AppendLine(Build28xRawLine(plugin));
+            sb.AppendLine();
+            sb.AppendLine($"-- Enabled dashboards ({state.EnabledDashboards.Count}) --");
+            foreach (var d in state.EnabledDashboards)
+            {
+                sb.AppendLine($"  • {d.Title} / dirName={d.DirName} / id={TruncateId(d.Id)}");
+                if (!string.IsNullOrEmpty(d.LastModified))
+                    sb.AppendLine($"      lastModified: {d.LastModified}");
+                if (d.IdealDeviceInfos.Count > 0)
+                {
+                    foreach (var info in d.IdealDeviceInfos)
+                        sb.AppendLine($"      device: id={info.DeviceId} hw={info.HardwareVersion} product={info.ProductType}");
+                }
+            }
+            sb.Append($"-- Disabled dashboards ({state.DisabledDashboards.Count}) --");
+            foreach (var d in state.DisabledDashboards)
+                sb.Append($"\n  • {d.Title} / {d.DirName}");
+            return sb.ToString();
+        }
+
+        /// <summary>
+        /// Wheel's most-recent 28:00 / 28:01 reply bytes raw, with age in ms.
+        /// Semantics not decoded — captured for offline correlation.
+        /// </summary>
+        public static string Build28xRawLine(MozaPlugin plugin)
+        {
+            var d = plugin.Data;
+            if (d == null) return "wheel 28:xx raw: (no data)";
+            string b00 = d.Last28x00ByteValid
+                ? $"0x{d.Last28x00Byte5:X2}" : "(none)";
+            string b01 = d.Last28x01BytesValid
+                ? $"0x{d.Last28x01Byte4:X2} 0x{d.Last28x01Byte5:X2}"
+                : "(none)";
+            string age;
+            if (d.Last28xReplyTickMs == 0)
+                age = "never";
+            else
+            {
+                int dt = unchecked(Environment.TickCount - d.Last28xReplyTickMs);
+                age = dt < 0 ? "?" : $"{dt} ms";
+            }
+            return $"wheel 28:xx raw: 28:00=[{b00}]  28:01=[{b01}]  age={age}";
+        }
+
+        public static string BuildTileServer(MozaPlugin plugin)
+        {
+            var tile = plugin.TileServerStateForDiagnostics;
+            if (tile == null)
+                return "(no inbound tile-server blob received — plugin PUSHES empty state on 0x03; wheel doesn't push back in current captures)";
+            var sb = new StringBuilder();
+            sb.AppendLine($"root:          {Blank(tile.Root)}");
+            sb.AppendLine($"version:       {tile.Version}");
+            sb.AppendLine($"any populated: {tile.AnyPopulated}");
+            foreach (var kv in tile.Games)
+            {
+                var g = kv.Value;
+                sb.Append($"\n[{kv.Key}] populated={g.Populated} map_version={g.MapVersion} " +
+                          $"tile_size={g.TileSize} layers={g.LayersCount} name={Blank(g.Name)}");
+            }
+            return sb.ToString();
+        }
+
+        public static string BuildSessionState(MozaPlugin plugin)
+        {
+            var ts = plugin.TelemetrySender;
+            if (ts == null && !plugin.TelemetryEnabledForDiagnostics)
+                return "(telemetry not running)";
+            var sb = new StringBuilder();
+            sb.AppendLine($"Enabled:            {plugin.TelemetryEnabledForDiagnostics}");
+            sb.AppendLine($"FramesSent:         {plugin.FramesSentForDiagnostics}");
+            var budget = plugin.SerialBudgetForDiagnostics;
+            var errs = plugin.SerialWireErrorsForDiagnostics;
+            int budgetTargetBytes = WriteBudget.TargetBytesPerWindow;
+            sb.AppendLine(
+                $"Bandwidth:          out={budget.BytesLastSec,5} B/s ({budget.PercentBudget,3}% of {budgetTargetBytes}B target, peak={budget.PeakBurstBytes})");
+            sb.AppendLine(
+                $"WireErrors:         drops={errs.FramesDropped} cksumFail={errs.ChecksumFailures} resync={errs.FrameStartScanResyncs}");
+            sb.AppendLine($"DisplayDetected:    {(ts?.DisplayDetected ?? plugin.IsDisplayDetected)}");
+            sb.AppendLine($"DisplayModelName:   {Blank(ts?.DisplayModelName ?? plugin.DisplayModelName)}");
+            sb.AppendLine($"WheelEra:           {plugin.ActiveTelemetryWheelEra}");
+            if (ts != null)
+            {
+                var p = ts.Policy;
+                sb.AppendLine($"PolicyEra:          {p.Era}{(p.IsAuto ? " (auto)" : "")}");
+                sb.AppendLine($"TierDefSession:     {p.TierDefSession}");
+                sb.AppendLine($"Encoding:           {p.Encoding}");
+                sb.AppendLine($"PreambleEverySend:  {p.SendV2PreambleEverySend}");
+                sb.AppendLine($"BlindRetransmit:    {p.BlindRetransmitTierDef}");
+                sb.AppendLine($"UploadWireFormat:   {p.UploadWireFormat}");
+                sb.AppendLine($"FlagByte:           0x{ts.FlagByte:X2}");
+                sb.AppendLine($"UploadDashboard:    {ts.UploadDashboard}");
+                sb.Append    ($"Profile:            {ts.Profile?.Name ?? "(none)"}");
+            }
+
+            var counts = plugin.SessionCountsForDiagnostics;
+            if (counts != null && counts.Count > 0)
+            {
+                sb.AppendLine();
+                sb.AppendLine();
+                sb.AppendLine("Session traffic (in/out chunks):");
+                var keys = new List<byte>(counts.Keys);
+                keys.Sort();
+                foreach (var k in keys)
+                {
+                    var v = counts[k];
+                    sb.AppendLine($"  0x{k:X2}:  in={v.In,-5} out={v.Out}");
+                }
+            }
+            return sb.ToString();
+        }
+
+        public static string BuildWheelCatalog(MozaPlugin plugin)
+        {
+            var sb = new StringBuilder();
+            var pd = plugin.CatalogParserDiagnostics;
+            string activity = pd.LastActivityMsAgo < 0
+                ? "never"
+                : $"{pd.LastActivityMsAgo} ms ago";
+            sb.AppendLine(
+                $"Parser: buf={pd.BufferBytes}B (last parsed {pd.LastParsedBufferBytes}B) " +
+                $"crcRejects={pd.CrcRejects} lastActivity={activity}");
+
+            var catalog = plugin.WheelChannelCatalogForDiagnostics;
+            if (catalog != null && catalog.Count > 0)
+            {
+                sb.AppendLine($"{catalog.Count} channels advertised by wheel:");
+                for (int i = 0; i < catalog.Count; i++)
+                {
+                    string url = catalog[i] ?? "";
+                    sb.AppendLine($"  [{i + 1,2}]  {url}");
+                }
+                return sb.ToString().TrimEnd();
+            }
+
+            // Fallback: derive from active subscription. The subscription was
+            // built with the wheel's catalog, so URLs reflect what we sent.
+            // Diag.Channels uses sequential idx (1..N across tiers/buckets) —
+            // a URL appears multiple times when channels duplicate across
+            // page-broadcast buckets. Dedup by URL preserving first-seen.
+            var sub = plugin.SubscriptionForDiagnostics;
+            if (sub != null && sub.Channels != null && sub.Channels.Count > 0)
+            {
+                var seen = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+                var ordered = new List<string>();
+                foreach (var ch in sub.Channels)
+                {
+                    if (string.IsNullOrEmpty(ch.Url)) continue;
+                    if (seen.Add(ch.Url)) ordered.Add(ch.Url);
+                }
+                if (ordered.Count > 0)
+                {
+                    sb.AppendLine($"{ordered.Count} channels (from last subscription — catalog parser empty):");
+                    for (int i = 0; i < ordered.Count; i++)
+                        sb.AppendLine($"  [{i + 1,2}]  {ordered[i]}");
+                    return sb.ToString().TrimEnd();
+                }
+            }
+
+            return "(no channel catalog received from wheel yet)";
+        }
+
+        public static string BuildSubscription(MozaPlugin plugin)
+        {
+            var sub = plugin.SubscriptionForDiagnostics;
+            if (sub == null) return "(no subscription sent yet)";
+            var sb = new StringBuilder();
+            sb.AppendLine($"Sent on session {sub.SessionByte} format={sub.Format}  at {sub.CapturedAt:HH:mm:ss}");
+            if (sub.PreambleBytes.Length > 0)
+                sb.AppendLine($"Preamble ({sub.PreambleBytes.Length}B): {BitConverter.ToString(sub.PreambleBytes).Replace('-', ' ')}");
+            sb.AppendLine($"Body ({sub.BodyBytes.Length}B): {BitConverter.ToString(sub.BodyBytes).Replace('-', ' ')}");
+            if (sub.Channels.Count > 0)
+            {
+                sb.AppendLine();
+                sb.AppendLine($"Channels ({sub.Channels.Count}):");
+                foreach (var ch in sub.Channels)
+                    sb.AppendLine($"  idx={ch.Idx,2}  comp=0x{ch.Comp:X2}  width={ch.Width,3}  {ch.Url}");
+            }
+            return sb.ToString().TrimEnd();
+        }
+
+        public static string BuildSubscriptionResponse(MozaPlugin plugin)
+        {
+            var chunks = plugin.SubscriptionResponseForDiagnostics;
+            if (chunks == null || chunks.Count == 0)
+                return "(no inbound chunks captured on session 0x02 in 5s window after subscription)";
+            var sb = new StringBuilder();
+            sb.AppendLine($"{chunks.Count} chunks captured on session 0x02 after most-recent subscription:");
+            int total = 0;
+            for (int i = 0; i < chunks.Count; i++)
+            {
+                var c = chunks[i];
+                total += c.Length;
+                int show = Math.Min(c.Length, 80);
+                string hex = BitConverter.ToString(c, 0, show).Replace('-', ' ');
+                string ellip = c.Length > show ? " …" : "";
+                sb.AppendLine($"  [{i,2}] {c.Length,3}B: {hex}{ellip}");
+            }
+            sb.AppendLine();
+            sb.AppendLine($"Concat ({total}B): {BuildConcatHex(chunks, 200)}");
+            return sb.ToString().TrimEnd();
+        }
+
+        public static string BuildConcatHex(IReadOnlyList<byte[]> chunks, int max)
+        {
+            var sb = new StringBuilder();
+            int n = 0;
+            foreach (var c in chunks)
+            {
+                foreach (var b in c)
+                {
+                    if (n++ >= max) { sb.Append(" …"); return sb.ToString(); }
+                    sb.Append(b.ToString("X2"));
+                    sb.Append(' ');
+                }
+            }
+            return sb.ToString().TrimEnd();
+        }
+    }
+}
