@@ -783,7 +783,7 @@
                         </StackPanel>
                         <StackPanel Orientation="Horizontal" Margin="0,4">
                             <TextBlock Text="Frequency" Style="{StaticResource SliderLabel}"/>
-                            <Slider x:Name="Ab9EngineVibFreqSlider" Style="{StaticResource SettingSlider}" Minimum="0" Maximum="300" TickFrequency="10" ValueChanged="Ab9EngineVibFreqSlider_ValueChanged"/>
+                            <Slider x:Name="Ab9EngineVibFreqSlider" Style="{StaticResource SettingSlider}" Minimum="0" Maximum="200" TickFrequency="10" ValueChanged="Ab9EngineVibFreqSlider_ValueChanged"/>
                             <TextBlock x:Name="Ab9EngineVibFreqValue" Style="{StaticResource SliderValue}" Text="100 Hz"/>
                         </StackPanel>
 

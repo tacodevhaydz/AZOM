@@ -128,12 +128,14 @@ namespace MozaPlugin
         public byte NaturalFriction { get; set; }     = 50;
         public byte MaxTorqueLimit { get; set; }      = 50;
 
-        // Host-rendered engine vibration. Intensity (0..100 %) gates the
-        // 0x0A 0x05 stream's slot ID (0 = silent slot 0x0000). Frequency is
-        // the literal target Hz (0..300) of the oscillator the AB9 firmware
-        // runs from the streamed period field. Neither value is pushed as a
-        // stored device setting — they modulate the SimHub plugin's host-side
-        // stream generator only.
+        // Host-rendered engine vibration. Intensity (0..100 %) drives a
+        // Bresenham duty cycle of the 0x0A 0x05 stream's slot ID between
+        // 0x1996 (effective) and 0x0000 (silent placeholder) so the slider
+        // feels progressively scaled; it also linearly scales the 0x0B 0x02/03
+        // engine-pulse-pair amp16. Frequency is the literal target Hz (0..200)
+        // of the oscillator the AB9 firmware runs from the streamed period
+        // field. Neither value is pushed as a stored device setting — they
+        // modulate the SimHub plugin's host-side stream generator only.
         public byte EngineVibrationIntensity { get; set; } = 0;
         public ushort EngineVibrationFrequency { get; set; } = 100;
 

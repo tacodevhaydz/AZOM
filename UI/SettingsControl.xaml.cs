@@ -1847,13 +1847,13 @@ namespace MozaPlugin
             _plugin.SaveSettings();
         }
 
-        // Engine Vibration frequency slider — literal target Hz (0..300) of
+        // Engine Vibration frequency slider — literal target Hz (0..200) of
         // the AB9 oscillator. Host-rendered, no device-side write; the worker
         // thread picks up the new value on its next tick.
         private void Ab9EngineVibFreqSlider_ValueChanged(object s, RoutedPropertyChangedEventArgs<double> e)
         {
             if (_suppressEvents) return;
-            ushort v = (ushort)Math.Max(0, Math.Min(300, (int)Math.Round(e.NewValue)));
+            ushort v = (ushort)Math.Max(0, Math.Min(200, (int)Math.Round(e.NewValue)));
             Ab9EngineVibFreqValue.Text = v + " Hz";
             GetOrCreateAb9Profile().EngineVibrationFrequency = v;
             _plugin.SaveSettings();

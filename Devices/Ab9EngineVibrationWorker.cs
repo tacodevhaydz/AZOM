@@ -22,8 +22,10 @@ namespace MozaPlugin.Devices
         private const int EnginePulsePairBaseTicks = 62;
         private const int RpmTrackBaseTicks = 80;
         private const int LowRatePairBaseTicks = 260;
-        private const int SparseTriggerBaseTicks = 920;
         private const double IdleRpm = 800.0;
+        // Engine-vib frequency slider cap (matches the UI slider's Maximum).
+        // Older saved profiles may still carry larger values; clamp at use time.
+        private const double MaxFreqHz = 200.0;
 
         private readonly MozaAb9DeviceManager _ab9;
         private readonly DeviceDetectionState _detectionState;
@@ -38,6 +40,12 @@ namespace MozaPlugin.Devices
         private int _tickCount;
         private ushort _pulsePhase;
         private short _lowRatePhase;
+        // Bresenham accumulator (0..99) for slot-ID duty-cycle on the 0x0A 0x05
+        // stream. Each active tick adds `intensity`; when it crosses 100 we
+        // emit the effective slot (0x1996) and roll the accumulator. Yields N
+        // active frames per 100, distributed as evenly as possible so we don't
+        // get burst-then-silent envelopes that would feel pulsy at low N.
+        private int _slotDutyAccum;
 
         public Ab9EngineVibrationWorker(
             MozaAb9DeviceManager ab9Manager,
@@ -112,15 +120,44 @@ namespace MozaPlugin.Devices
             if (ab9 == null) return;
 
             int intensity = ab9.EngineVibrationIntensity;
+            if (intensity < 0) intensity = 0;
+            if (intensity > 100) intensity = 100;
             double freqHz = ab9.EngineVibrationFrequency;
+            // UI caps freq at 200 Hz; clamp here so older saved profiles with
+            // larger values still respect the cap.
+            if (freqHz > MaxFreqHz) freqHz = MaxFreqHz;
             double rpm = BitConverter.Int64BitsToDouble(Interlocked.Read(ref _latestRpmBits));
             bool gameOn = _latestGameRunning;
 
-            bool active = gameOn && intensity > 0 && rpm > 100.0 && freqHz > 0.0;
+            bool streamActive = gameOn && intensity > 0 && rpm > 100.0 && freqHz > 0.0;
+
+            // Slot-ID duty cycle. PitHouse modulates engine-vib intensity by
+            // adding/removing slot IDs in parallel — we approximate with a
+            // Bresenham duty cycle between slot 0x1996 (effective) and slot
+            // 0x0000 (silent placeholder per docs/protocol/devices/ab9-shifter.md).
+            // The 91 Hz tick rate means at 50 % intensity the slot alternates
+            // every frame, mechanically averaging to half effective amplitude;
+            // at low intensity it stays mostly 0x0000 with sparse 0x1996 frames.
+            // This gives the slider a perceptibly progressive feel instead of
+            // the previous binary on/off behaviour.
+            bool slotActive = false;
+            if (streamActive)
+            {
+                _slotDutyAccum += intensity;
+                if (_slotDutyAccum >= 100)
+                {
+                    _slotDutyAccum -= 100;
+                    slotActive = true;
+                }
+            }
+            else
+            {
+                _slotDutyAccum = 0;
+            }
 
             // 0x0A 0x05 engine-vibration refresh — every tick.
             uint period;
-            if (active)
+            if (streamActive)
             {
                 double p = K / (rpm * freqHz);
                 if (p < MozaAb9DeviceManager.MinPeriodTicks) p = MozaAb9DeviceManager.MinPeriodTicks;
@@ -132,17 +169,17 @@ namespace MozaPlugin.Devices
                 // Stable midpoint when silent so the frame payload stays well-formed.
                 period = 0x100000;
             }
-            _ab9.SendEngineVibrationStream(active, period);
+            _ab9.SendEngineVibrationStream(slotActive, period);
 
-            if (active != _active)
+            if (streamActive != _active)
             {
-                _active = active;
-                MozaLog.Debug($"[Moza/AB9] engine-vib {(active ? "active" : "silent")} "
-                              + $"(rpm={rpm:F0} freq={freqHz:F1}Hz period={period})");
+                _active = streamActive;
+                MozaLog.Debug($"[Moza/AB9] engine-vib {(streamActive ? "active" : "silent")} "
+                              + $"(rpm={rpm:F0} freq={freqHz:F1}Hz period={period} int={intensity})");
             }
 
-            // Sub-streams gated on `active` — silent keepalive only otherwise.
-            if (!active)
+            // Sub-streams gated on `streamActive` — silent keepalive only otherwise.
+            if (!streamActive)
             {
                 _tickCount++;
                 return;
@@ -155,7 +192,10 @@ namespace MozaPlugin.Devices
             if (tick % KeepalivePairBaseTicks == 0)
                 _ab9.SendKeepalivePair();
 
-            // 0x0B 0x02/03 engine-pulse pair — RPM-scaled rate.
+            // 0x0B 0x02/03 engine-pulse pair — RPM-scaled rate. The pair's
+            // amp16 (offset 19-20 of the wire frame) scales linearly with
+            // `intensity`, which combined with the slot-ID duty cycle above
+            // gives a clean progressive response across the 0..100 slider range.
             int pulseInterval = Math.Max(2, (int)(EnginePulsePairBaseTicks / rpmFactor));
             if (tick % pulseInterval == 0)
             {
@@ -177,9 +217,13 @@ namespace MozaPlugin.Devices
                 _ab9.SendLowRatePair(_lowRatePhase);
             }
 
-            // 0x0D 0x01 sparse trigger.
-            if (tick % SparseTriggerBaseTicks == 0)
-                _ab9.SendTrigger(MozaAb9DeviceManager.Ab9Trigger.Sparse);
+            // 0x0D 0x01 sparse trigger is intentionally NOT emitted. PitHouse
+            // fires it in event-driven bursts (capture analysis: median delta
+            // 0.83 s, max 1295 s, 156/241 deltas < 1 s) — not on a fixed timer.
+            // Our previous 920-tick periodic emission produced a phantom
+            // gear-shift-like vibration every ~10 s. The trigger's purpose
+            // remains unresolved (see docs/protocol/devices/ab9-shifter.md);
+            // the Ab9Trigger.Sparse enum is kept for future event-driven use.
         }
     }
 }
