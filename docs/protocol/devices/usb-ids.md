@@ -21,6 +21,7 @@ expected to stay in sync.
 | `0x0004` | Wheelbase   | R5                            | confirmed   |
 | `0x0005` | Wheelbase   | R3                            | unconfirmed |
 | `0x0006` | Wheelbase   | R12, R12v2                    | confirmed   |
+| `0x0008` | MBooster    | mBooster Pedals               | confirmed   |
 | `0x001E` | Shifter     | HGP                           | unconfirmed |
 | `0x001F` | Handbrake   | HBP                           | unconfirmed |
 | `0x0020` | Hub         | Universal HUB                 | confirmed   |
@@ -41,6 +42,7 @@ CDC device.
 |-------------|---------------------------------------------------------------------------|-----------------------------------------------------------------------|
 | `Wheelbase` | [`MozaSerialConnection`](../../../Protocol/MozaSerialConnection.cs) wired in [`MozaPlugin.cs`](../../../MozaPlugin.cs) | `MozaProbeTarget.BaseAndHub` — base probe (group `0x2B`) + hub probe (group `0x64`) |
 | `Ab9`       | [`MozaAb9DeviceManager`](../../../Devices/MozaAb9DeviceManager.cs)        | `MozaProbeTarget.Ab9` — identity probe (group `0x09` dev `0x12`, accepts `0x89` response) |
+| `MBooster`  | [`MBoosterDeviceController`](../../../Devices/MBoosterDeviceController.cs) (multi-device under [`MozaMBoosterRegistry`](../../../Devices/MozaMBoosterRegistry.cs)) | `MozaProbeTarget.MBooster` — registry-only by design; mBooster has no application handshake (see [`mbooster.md`](mbooster.md)) so probe fallback is a no-op |
 | `Pedals`    | *(none — plugin currently does not open pedals over the CDC pipe)*        | *(none — wheelbase filter skips this category)*                       |
 | `Shifter`   | *(none yet — placeholder for HGP/sequential CDC traffic)*                 | *(none)*                                                              |
 | `Handbrake` | *(none yet — placeholder for HBP CDC traffic)*                            | *(none)*                                                              |
