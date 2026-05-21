@@ -44,25 +44,26 @@ namespace MozaPlugin.Telemetry.Watchdog
         // Engagement signal = wheel acked sess=0x01 (`fc:00 01`) OR pushed
         // any 7c:00 01 data chunk; either is sufficient.
         //
-        // Grace is set wide (10 s): healthy wheels on this firmware push
+        // Grace is set wide (20 s): healthy wheels on this firmware push
         // first sess=0x01 chunk ~4 s after Active (verified W17 capture
         // 2026-05-20 17:55: Active at 17:55:05.015, first sess=0x01
         // inbound at 17:55:09.039). The CS-Pro pathology is total silence
-        // for the full 14 s window — the first re-arm round at 10 s
-        // lands inside that silence, and subsequent rounds push session
-        // state through once the wheel finally accepts session-control
-        // frames. 10 s gives normal start-up plenty of headroom without
-        // false-triggering re-arm that would clobber an in-flight
-        // hot-switch burst (observed: 3 s grace fired at 17:55:08.528
-        // mid-burst, re-arm's ApplySubscription stomped the burst's
-        // session state).
+        // for the full 14 s window after the first host frame — at 10 s
+        // grace the re-arm landed inside that silence and its
+        // close+open+ApplySubscription frequently stomped the wheel's
+        // in-flight engagement just as it woke (user report 2026-05-20:
+        // "doesn't connect with display after start with update, often
+        // takes another simhub restart"). 20 s pushes the first re-arm
+        // safely past the wheel's wake-up window so we only re-emit when
+        // the wheel has genuinely failed to engage on its own. Slower
+        // (>20 s) hardware falls into the re-arm path as before.
         private long _session01EngagedUtcTicks;
         private int _s01ReArmRounds;
         private int _s01ReArmLastTickCount;
         private static readonly int[] S01ReArmBackoffMs =
             { 5_000, 7_000, 10_000, 15_000, 20_000 };
         private const int S01ReArmMaxRounds = 5;
-        private const int S01InitialGraceMs = 10_000;
+        private const int S01InitialGraceMs = 20_000;
 
         // ── configJson gap / stuck-state ──────────────────────────────────
         private int _configJsonGapCount;

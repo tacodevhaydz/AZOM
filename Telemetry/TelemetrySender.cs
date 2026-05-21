@@ -1708,6 +1708,55 @@ namespace MozaPlugin.Telemetry
             if (_state == TelemetryState.Idle || !_connection.IsConnected) return;
             byte telemetryPort = TryOpenSession(TelemSession, OpenAckTimeoutMs);
 
+            // Slow-bring-up hardware (CS-Pro on Universal Hub): wheel takes
+            // 12-15 s to first ack a session-control frame after device-lock.
+            // If both opens stayed silent within the 500 ms budget, block here
+            // for the engagement signal before letting the rest of cold-start
+            // (hub enum, session 0x09 prime, tier-def emission, etc.) blast
+            // state into a wheel that hasn't woken yet. Health wheels never
+            // hit this branch; for CS-Pro the wheel eventually fc:00-acks
+            // sess=0x02 (~14 s on the 0.9.3-dev capture) and we proceed from
+            // a known-awake state. Pairs with SessionWatchdogManager's 20 s
+            // sess=0x01 grace — the watchdog catches the rarer case where the
+            // wheel acks something but never engages sess=0x01 specifically.
+            if (mgmtPort == 0 && telemetryPort == 0 && _connection.IsConnected)
+            {
+                const int ExtendedAckWaitMs = 20_000;
+                MozaLog.Info(
+                    $"[Moza] Both sess=0x{MgmtSession:X2}/0x{TelemSession:X2} opens silent within " +
+                    $"{OpenAckTimeoutMs}ms — waiting up to {ExtendedAckWaitMs}ms for slow-bring-up " +
+                    "wheel (CS-Pro on Universal Hub takes ~14 s)");
+                bool gotLateAck;
+                try { _ackReceived.Reset(); }
+                catch (ObjectDisposedException) { return; }
+                try { gotLateAck = _ackReceived.Wait(ExtendedAckWaitMs); }
+                catch (ObjectDisposedException) { return; }
+                if (_state == TelemetryState.Idle || !_connection.IsConnected) return;
+                if (gotLateAck)
+                {
+                    byte ackedSession = _lastAckedSession;
+                    MozaLog.Info(
+                        $"[Moza] Late ack on sess=0x{ackedSession:X2} after extended wait " +
+                        "— wheel is alive, proceeding with cold-start");
+                    if (ackedSession == MgmtSession) mgmtPort = MgmtSession;
+                    else if (ackedSession == TelemSession) telemetryPort = TelemSession;
+                    // Retry the still-unacked side with a 1 s budget — wheel
+                    // should ack promptly now that it's awake. CS-Pro famously
+                    // never acks sess=0x01, so the mgmt retry will time out
+                    // and we fall through to the MgmtSession default below.
+                    if (mgmtPort == 0 && _connection.IsConnected)
+                        mgmtPort = TryOpenSession(MgmtSession, 1_000);
+                    if (telemetryPort == 0 && _connection.IsConnected)
+                        telemetryPort = TryOpenSession(TelemSession, 1_000);
+                }
+                else
+                {
+                    MozaLog.Warn(
+                        $"[Moza] No ack within {ExtendedAckWaitMs}ms extended wait — " +
+                        "proceeding with defaults; session watchdog will retry post-Active");
+                }
+            }
+
             _mgmtPort = mgmtPort;
 
             // Session-open frames use seq=port. Data chunks must start
