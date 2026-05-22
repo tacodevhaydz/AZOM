@@ -15,6 +15,17 @@
     <Description>Process-name impersonation stub for the MOZA SDK emulation feature. Sits idle until killed by its Win32 JobObject when SimHub exits.</Description>
     <Product>MOZA Pit House</Product>
     <Copyright>Copyright 2026</Copyright>
+    <!-- Matches real PitHouse 1.3.8.34 so MOZA_SDK.dll's installMozaSDK
+         env-check (sub_1800d9e90 in iRacing's customized build) reads
+         a FileVersion >= the hardcoded minimum "1.3.1.19" via
+         GetFileVersionInfoA + VerQueryValueA("\StringFileInfo\xxxxyyyy\FileVersion")
+         from whichever path is in HKCU\Software\MOZA\PitHouse\path
+         when CoapStubManager has redirected it to this stub. Below the
+         minimum and Moza_Initialize returns error 6 before any CoAP is
+         opened, so no third-party SDK consumer can talk to us. -->
+    <FileVersion>1.3.8.34</FileVersion>
+    <AssemblyVersion>1.3.8.34</AssemblyVersion>
+    <InformationalVersion>1.3.8.34</InformationalVersion>
     <!-- Force Platform=x86 so csproj-only builds emit to bin\x86\<Config>\
          matching the path sln-driven Release|x86 builds use. -->
     <Platform Condition="'$(Platform)' == '' or '$(Platform)' == 'AnyCPU'">x86</Platform>

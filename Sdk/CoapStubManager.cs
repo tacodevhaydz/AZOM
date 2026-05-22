@@ -6,6 +6,7 @@ using System.Runtime.InteropServices;
 using System.Security.Cryptography;
 using System.Text;
 using System.Threading;
+using Microsoft.Win32;
 
 namespace MozaPlugin.Sdk
 {
@@ -62,6 +63,11 @@ namespace MozaPlugin.Sdk
         private string _status = "Stopped";
         private string? _lastError;
         private bool _disposed;
+        // True between successful ApplyRegistryRedirect and matching restore.
+        // Gates RestoreRegistryRedirect so we don't touch the registry on
+        // Stop()/Dispose() paths where Start() never reached the redirect
+        // step (e.g., CreateProcess failed).
+        private bool _redirectApplied;
 
         /// <summary>True while the spawned process is alive.</summary>
         public bool IsRunning
@@ -108,6 +114,25 @@ namespace MozaPlugin.Sdk
             Path.Combine(
                 Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
                 "SimHub", "MozaPlugin", "CoapStub", StubExeFileName);
+
+        // Registry coordinates the MOZA SDK reads to locate PitHouse.
+        // (See iRacing's moza_sdk.dll sub_1800d8d00 — RegOpenKeyExA on
+        //  HKCU, "Software\MOZA\PitHouse" then RegQueryValueExA on "path".)
+        // The same subkey/value name is read by the public 1.0.1.8 SDK build.
+        private const string MozaRegSubKey = @"Software\MOZA\PitHouse";
+        private const string MozaRegValueName = "path";
+
+        // Persisted snapshot of the user's original "path" value, written
+        // just before we overwrite it. Lives next to the extracted stub so
+        // a single Recycle-Bin sweep of the CoapStub folder cleans up
+        // everything we own. Stored as raw UTF-8 path text; an empty file
+        // means "no value existed → restore by deleting the value." File
+        // existence is the authoritative signal that a redirect is active
+        // and must be undone, even across a SimHub crash.
+        private static string RegistryBackupPath =>
+            Path.Combine(
+                Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
+                "SimHub", "MozaPlugin", "CoapStub", "registry-backup.path");
 
         /// <summary>
         /// Extract the embedded stub (if missing or stale) and spawn it under
@@ -267,6 +292,24 @@ namespace MozaPlugin.Sdk
                         _status = $"Running (PID {p.Id})";
                         _lastError = null;
                         MozaLog.Info($"[Moza] CoAP stub started (PID {p.Id}, exe '{exePath}').");
+
+                        // Redirect HKCU\Software\MOZA\PitHouse\path to our
+                        // stub so the SDK's env check reads the FileVersion
+                        // resource we embed (1.3.8.34, ≥ the hardcoded
+                        // minimum 1.3.1.19). Without this, the SDK's
+                        // version check reads whatever exe was previously
+                        // registered — works today on installs with real
+                        // PitHouse on disk, breaks for users without it.
+                        //
+                        // Done AFTER the process is confirmed running so
+                        // any consumer that races a registry read with the
+                        // env check's Toolhelp32 process scan sees a
+                        // consistent (stub path, stub process) pair.
+                        // ApplyRegistryRedirect swallows its own errors and
+                        // logs — the stub stays useful for the process-name
+                        // check even if we can't write the registry.
+                        if (ApplyRegistryRedirect(exePath))
+                            _redirectApplied = true;
                     }
                     catch
                     {
@@ -410,6 +453,19 @@ namespace MozaPlugin.Sdk
         // Must hold _gate.
         private void CleanupProcessLocked()
         {
+            // Restore the registry FIRST, while the stub is still alive.
+            // That ordering means any SDK consumer that races a registry
+            // read against the shutdown sees a coherent (real path, real
+            // process exits) sequence — never (stub path, no process).
+            // Restore reads the backup file we wrote in ApplyRegistryRedirect;
+            // both halves are gated by the same _redirectApplied flag.
+            if (_redirectApplied)
+            {
+                try { RestoreRegistryRedirect(); }
+                catch (Exception ex) { MozaLog.Warn($"[Moza] Registry restore raised in cleanup: {ex.GetType().Name}: {ex.Message}"); }
+                _redirectApplied = false;
+            }
+
             if (_process != null)
             {
                 try
@@ -436,6 +492,145 @@ namespace MozaPlugin.Sdk
                 try { _jobHandle.Dispose(); } catch { }
                 _jobHandle = null;
             }
+        }
+
+        // ─────────────────────────────────────────────────────────────
+        // Registry redirect — HKCU\Software\MOZA\PitHouse\path
+        // ─────────────────────────────────────────────────────────────
+
+        /// <summary>
+        /// Snapshot the user's current registry value (if any) to a
+        /// crash-safe backup file, then overwrite the value with
+        /// <paramref name="stubExePath"/>. Returns true if the redirect is
+        /// active and a matching <see cref="RestoreRegistryRedirect"/>
+        /// must run on shutdown; false if we couldn't write the registry
+        /// and left the user's state untouched.
+        ///
+        /// Crash semantics: if a backup file already exists from a prior
+        /// (crashed) session, it is NOT overwritten — that earlier file
+        /// is the truth about the user's *real* original value. The
+        /// current registry contents are treated as untrusted in that
+        /// case (they may be a stale stub path) and simply replaced.
+        /// </summary>
+        private static bool ApplyRegistryRedirect(string stubExePath)
+        {
+            if (!RuntimeInformation.IsOSPlatform(OSPlatform.Windows))
+            {
+                MozaLog.Info("[Moza] Registry redirect skipped: host is not Windows.");
+                return false;
+            }
+
+            var backupPath = RegistryBackupPath;
+
+            // Take the snapshot ONLY when no prior backup exists — otherwise
+            // the snapshot below would capture our own previous-session stub
+            // path and we'd "restore" to that on Stop, never reaching the
+            // user's true original.
+            if (!File.Exists(backupPath))
+            {
+                string? original = null;
+                try
+                {
+                    using var key = Registry.CurrentUser.OpenSubKey(MozaRegSubKey, writable: false);
+                    if (key != null && key.GetValue(MozaRegValueName) is string s)
+                        original = s;
+                }
+                catch (Exception ex)
+                {
+                    MozaLog.Warn($"[Moza] Reading HKCU\\{MozaRegSubKey}\\{MozaRegValueName} for backup failed: {ex.GetType().Name}: {ex.Message}; treating as absent.");
+                }
+
+                try
+                {
+                    Directory.CreateDirectory(Path.GetDirectoryName(backupPath)!);
+                    File.WriteAllText(backupPath, original ?? string.Empty, new UTF8Encoding(encoderShouldEmitUTF8Identifier: false));
+                }
+                catch (Exception ex)
+                {
+                    // Without a durable backup we can't promise to restore
+                    // on shutdown — refuse the redirect rather than leave
+                    // the user's registry permanently pointed at the stub.
+                    MozaLog.Error($"[Moza] Could not persist registry backup to '{backupPath}': {ex.GetType().Name}: {ex.Message}; refusing to redirect.");
+                    return false;
+                }
+            }
+            else
+            {
+                MozaLog.Info($"[Moza] Reusing existing registry backup '{backupPath}' (prior session did not clean up).");
+            }
+
+            try
+            {
+                using var key = Registry.CurrentUser.CreateSubKey(MozaRegSubKey, writable: true)
+                    ?? throw new InvalidOperationException("CreateSubKey returned null");
+                key.SetValue(MozaRegValueName, stubExePath, RegistryValueKind.String);
+                MozaLog.Info($"[Moza] HKCU\\{MozaRegSubKey}\\{MozaRegValueName} redirected to stub '{stubExePath}'.");
+                return true;
+            }
+            catch (Exception ex)
+            {
+                MozaLog.Error($"[Moza] Registry redirect write failed: {ex.GetType().Name}: {ex.Message}. Backup file kept; restore on Stop will undo any partial state.");
+                return false;
+            }
+        }
+
+        /// <summary>
+        /// Restore the registry value captured by the most recent
+        /// <see cref="ApplyRegistryRedirect"/>. Empty backup file means
+        /// "no value existed" — restore is then a delete. Backup file is
+        /// removed on success; on failure it is kept so the next Start
+        /// can retry the restore before snapshotting fresh state.
+        /// </summary>
+        private static void RestoreRegistryRedirect()
+        {
+            if (!RuntimeInformation.IsOSPlatform(OSPlatform.Windows))
+                return;
+
+            var backupPath = RegistryBackupPath;
+            if (!File.Exists(backupPath))
+                return; // Nothing to restore — either never redirected or already restored.
+
+            string original;
+            try
+            {
+                original = File.ReadAllText(backupPath, new UTF8Encoding(encoderShouldEmitUTF8Identifier: false));
+            }
+            catch (Exception ex)
+            {
+                MozaLog.Warn($"[Moza] Reading registry backup '{backupPath}' failed: {ex.GetType().Name}: {ex.Message}; leaving registry untouched.");
+                return;
+            }
+
+            try
+            {
+                if (string.IsNullOrEmpty(original))
+                {
+                    using var key = Registry.CurrentUser.OpenSubKey(MozaRegSubKey, writable: true);
+                    if (key != null)
+                    {
+                        // throwOnMissingValue=false: someone else may have
+                        // already deleted it between our write and now.
+                        try { key.DeleteValue(MozaRegValueName, throwOnMissingValue: false); }
+                        catch (Exception ex) { MozaLog.Debug($"[Moza] DeleteValue ignored: {ex.Message}"); }
+                    }
+                    MozaLog.Info($"[Moza] HKCU\\{MozaRegSubKey}\\{MozaRegValueName} restored (deleted — original had no value).");
+                }
+                else
+                {
+                    using var key = Registry.CurrentUser.CreateSubKey(MozaRegSubKey, writable: true)
+                        ?? throw new InvalidOperationException("CreateSubKey returned null");
+                    key.SetValue(MozaRegValueName, original, RegistryValueKind.String);
+                    MozaLog.Info($"[Moza] HKCU\\{MozaRegSubKey}\\{MozaRegValueName} restored to original '{original}'.");
+                }
+            }
+            catch (Exception ex)
+            {
+                MozaLog.Error($"[Moza] Registry restore write failed: {ex.GetType().Name}: {ex.Message}. Backup file kept for next attempt.");
+                return; // Don't delete backup — preserve for retry.
+            }
+
+            try { File.Delete(backupPath); }
+            catch (Exception ex) { MozaLog.Warn($"[Moza] Could not delete registry backup '{backupPath}' after restore: {ex.GetType().Name}: {ex.Message}."); }
         }
 
         // ─────────────────────────────────────────────────────────────
