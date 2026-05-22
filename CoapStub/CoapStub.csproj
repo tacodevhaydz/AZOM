@@ -5,7 +5,7 @@
     <PlatformTarget>x86</PlatformTarget>
     <OutputType>Exe</OutputType>
     <AssemblyName>MOZA Pit House</AssemblyName>
-    <RootNamespace>MozaPlugin.PitHouseStub</RootNamespace>
+    <RootNamespace>MozaPlugin.CoapStub</RootNamespace>
     <LangVersion>latest</LangVersion>
     <Nullable>enable</Nullable>
     <UseWindowsForms>false</UseWindowsForms>

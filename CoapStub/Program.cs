@@ -4,17 +4,18 @@ using System.IO;
 using System.Text;
 using System.Threading;
 
-namespace MozaPlugin.PitHouseStub
+namespace MozaPlugin.CoapStub
 {
     /// <summary>
-    /// PitHouse name-impersonation stub. Phase 1 diagnostic build: in addition
-    /// to staying alive forever, captures every byte the vendor SDK writes to
-    /// our stdin and logs it to <c>%LOCALAPPDATA%\SimHub\MozaPlugin\PitHouseStub\
-    /// stub-trace-&lt;pid&gt;-&lt;launchstamp&gt;.log</c>. Output-only — the stub
-    /// writes nothing to stdout/stderr yet (deliberately, so we can observe the
-    /// vendor's request without our reply mutating the conversation). Heartbeat
-    /// lines fire every 2s so we can see whether the SDK kills the process and
-    /// when.
+    /// Idle stub that runs as <c>MOZA Pit House.exe</c> so process-name probes
+    /// from the vendor CoAP SDK find the expected name. Phase 1 diagnostic
+    /// build: in addition to staying alive forever, captures every byte the
+    /// vendor SDK writes to our stdin and logs it to
+    /// <c>%LOCALAPPDATA%\SimHub\MozaPlugin\CoapStub\stub-trace-&lt;pid&gt;-&lt;launchstamp&gt;.log</c>.
+    /// Output-only — the stub writes nothing to stdout/stderr yet (deliberately,
+    /// so we can observe the vendor's request without our reply mutating the
+    /// conversation). Heartbeat lines fire every 2s so we can see whether the
+    /// SDK kills the process and when.
     /// </summary>
     internal static class Program
     {
@@ -105,7 +106,7 @@ namespace MozaPlugin.PitHouseStub
         {
             string dir = Path.Combine(
                 Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
-                "SimHub", "MozaPlugin", "PitHouseStub");
+                "SimHub", "MozaPlugin", "CoapStub");
             Directory.CreateDirectory(dir);
             int pid = Process.GetCurrentProcess().Id;
             long stamp = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds();
@@ -115,7 +116,7 @@ namespace MozaPlugin.PitHouseStub
 
         private static void LogHeader(string[] args)
         {
-            Trace($"=== PitHouseStub diagnostic build ===");
+            Trace($"=== CoapStub diagnostic build ===");
             Trace($"PID={Process.GetCurrentProcess().Id}");
             Trace($"Parent={GetParentInfo()}");
             Trace($"Exe={Process.GetCurrentProcess().MainModule?.FileName ?? "<unknown>"}");

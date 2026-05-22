@@ -19,8 +19,8 @@ namespace MozaPlugin.Sdk
     /// Lifecycle:
     /// <list type="number">
     /// <item><see cref="Start"/> extracts the embedded resource
-    /// <c>MozaPlugin.Sdk.PitHouseStub.exe</c> to
-    /// <c>%LOCALAPPDATA%\SimHub\MozaPlugin\PitHouseStub\MOZA Pit House.exe</c>,
+    /// <c>MozaPlugin.Sdk.CoapStub.exe</c> to
+    /// <c>%LOCALAPPDATA%\SimHub\MozaPlugin\CoapStub\MOZA Pit House.exe</c>,
     /// creates a Win32 JobObject with
     /// <c>JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE</c>, spawns the stub with the
     /// thread created suspended, assigns the process to the job, then
@@ -36,13 +36,13 @@ namespace MozaPlugin.Sdk
     /// instance. Stream 7 wires it into <see cref="MozaPlugin"/>.Init/End;
     /// until then nothing in the plugin constructs one.
     /// </summary>
-    public sealed class PitHouseStubManager : IDisposable
+    public sealed class CoapStubManager : IDisposable
     {
         // Logical resource name embedded by MozaPlugin.csproj — see the
-        // <EmbeddedResource Include="..\PitHouseStub\..."> item there.
+        // <EmbeddedResource Include="..\CoapStub\..."> item there.
         // Must match exactly; mismatched names fail silently in
         // GetManifestResourceStream so the constant lives here in one place.
-        public const string EmbeddedResourceName = "MozaPlugin.Sdk.PitHouseStub.exe";
+        public const string EmbeddedResourceName = "MozaPlugin.Sdk.CoapStub.exe";
 
         // On-disk name must match the vendor binary so process-name
         // impersonation works for callers that look up "MOZA Pit House" by
@@ -107,7 +107,7 @@ namespace MozaPlugin.Sdk
         public static string StubExePath =>
             Path.Combine(
                 Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
-                "SimHub", "MozaPlugin", "PitHouseStub", StubExeFileName);
+                "SimHub", "MozaPlugin", "CoapStub", StubExeFileName);
 
         /// <summary>
         /// Extract the embedded stub (if missing or stale) and spawn it under
@@ -120,7 +120,7 @@ namespace MozaPlugin.Sdk
             {
                 if (_disposed)
                 {
-                    MozaLog.Warn("[Moza] PitHouseStubManager.Start called after Dispose; ignored.");
+                    MozaLog.Warn("[Moza] CoapStubManager.Start called after Dispose; ignored.");
                     return;
                 }
 
@@ -130,7 +130,7 @@ namespace MozaPlugin.Sdk
                     {
                         if (!_process.HasExited)
                         {
-                            MozaLog.Warn($"[Moza] PitHouse stub already running (PID {_process.Id}); Start() ignored.");
+                            MozaLog.Warn($"[Moza] CoAP stub already running (PID {_process.Id}); Start() ignored.");
                             return;
                         }
                     }
@@ -151,7 +151,7 @@ namespace MozaPlugin.Sdk
                         // so the UI doesn't show a misleading "Stopped".
                         _status = "Disabled (non-Windows host)";
                         _lastError = null;
-                        MozaLog.Info("[Moza] PitHouseStubManager.Start skipped: host is not Windows.");
+                        MozaLog.Info("[Moza] CoapStubManager.Start skipped: host is not Windows.");
                         return;
                     }
 
@@ -266,7 +266,7 @@ namespace MozaPlugin.Sdk
                         _jobHandle = jobHandle;
                         _status = $"Running (PID {p.Id})";
                         _lastError = null;
-                        MozaLog.Info($"[Moza] PitHouse stub started (PID {p.Id}, exe '{exePath}').");
+                        MozaLog.Info($"[Moza] CoAP stub started (PID {p.Id}, exe '{exePath}').");
                     }
                     catch
                     {
@@ -280,7 +280,7 @@ namespace MozaPlugin.Sdk
                 {
                     _lastError = ex.Message;
                     _status = "Failed to start";
-                    MozaLog.Error($"[Moza] PitHouse stub start failed: {ex}");
+                    MozaLog.Error($"[Moza] CoAP stub start failed: {ex}");
                     CleanupProcessLocked();
                 }
             }
@@ -307,7 +307,7 @@ namespace MozaPlugin.Sdk
 
                 _status = "Stopped";
                 if (pid.HasValue)
-                    MozaLog.Info($"[Moza] PitHouse stub stopped (was PID {pid.Value}).");
+                    MozaLog.Info($"[Moza] CoAP stub stopped (was PID {pid.Value}).");
             }
         }
 
@@ -337,7 +337,7 @@ namespace MozaPlugin.Sdk
                     _status = code == 0
                         ? "Stopped (exit 0)"
                         : $"Crashed (exit {code})";
-                    MozaLog.Warn($"[Moza] PitHouse stub exited unexpectedly with code {code}.");
+                    MozaLog.Warn($"[Moza] CoAP stub exited unexpectedly with code {code}.");
                 }
             }
         }
@@ -357,11 +357,11 @@ namespace MozaPlugin.Sdk
             var dir = Path.GetDirectoryName(StubExePath)!;
             Directory.CreateDirectory(dir);
 
-            var asm = typeof(PitHouseStubManager).Assembly;
+            var asm = typeof(CoapStubManager).Assembly;
             using var stream = asm.GetManifestResourceStream(EmbeddedResourceName)
                 ?? throw new InvalidOperationException(
                     $"Embedded resource '{EmbeddedResourceName}' not found in {asm.GetName().Name}. " +
-                    "Verify MozaPlugin.csproj embeds the PitHouseStub output.");
+                    "Verify MozaPlugin.csproj embeds the CoapStub output.");
 
             // Read the resource into memory once — net48 streams over a
             // resource section are short and this lets us hash and write in
