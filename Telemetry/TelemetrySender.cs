@@ -190,6 +190,14 @@ namespace MozaPlugin.Telemetry
         private const int CatalogGrowthQuietMs = 400;
         private const int CatalogGrowthMinDelta = 1;
 
+        // Catalog-only profile synthesis: track the catalog generation we last
+        // synthesised against so dashboard switches (wheel emits new catalog,
+        // bumps END marker) cause re-synthesis instead of holding the old
+        // tiers. State only meaningful when _profile.Name == CatalogProfileName.
+        internal const string CatalogProfileName = "WheelCatalog";
+        private uint _catalogEndMarkerAtSynthesis;
+        private int _catalogCountAtSynthesis;
+
         // CRC32 reject counters for catalog (sess=0x01/FlagByte) and tile-server
         // (sess=0x03/0x0b) chunks. Surfaced via diagnostics for link-quality.
         private int _catalogCrcRejects;
@@ -2083,12 +2091,105 @@ namespace MozaPlugin.Telemetry
 
         private void MaybeSwapProfileForCatalog(bool force = false)
         {
-            // Disabled — plugin uses bundled mzdash exclusively.
-            // Wheel-catalog-driven profile synthesis dropped channels post-
-            // switch (incomplete back-ref catalog) and clobbered the
-            // user-selected profile. mzdash-only path is simpler and the
-            // active path the user has decided to support.
-            return;
+            // Fallback path: synthesise a profile from the wheel-advertised
+            // channel catalog when no mzdash-derived profile is loaded.
+            // Existing mzdash flow (Profile != null after ApplyTelemetrySettings)
+            // takes precedence — this hook does nothing when the user has a
+            // local mzdash folder configured. For users with no folder
+            // configured, this lets telemetry flow from whatever the wheel
+            // declared in its tag=0x04 catalog on b2h sess=0x01.
+            //
+            // The earlier disable (clobbered user-selected profile, dropped
+            // channels post-switch on incomplete back-ref catalog) doesn't
+            // apply: (a) we only synthesise when _profile is null, so a
+            // user-selected mzdash profile is never replaced; (b) we gate
+            // on LastWheelEndMarker != 0 so the wheel has committed to a
+            // tier-def generation before we build — back-ref-only catalogs
+            // (END marker still 0) defer until the wheel emits full URLs.
+            bool currentIsSynthesised =
+                _profile != null && _profile.Name == CatalogProfileName;
+
+            // User-loaded mzdash profile: never replace.
+            if (_profile != null && _profile.Tiers.Count > 0 && !currentIsSynthesised)
+                return;
+
+            // Prefer LiveCatalog (the wheel's currently-loaded dashboard's
+            // idxs only, with stale prior-dash slots blanked) so dashboard
+            // switches produce a profile sized to the new dash. Fall back
+            // to Catalog on cold start before the first END-marker commit.
+            var catalog = _catalogParser.LiveCatalog ?? _catalogParser.Catalog;
+            if (catalog == null || catalog.Count == 0)
+                return;
+
+            if (_catalogParser.LastWheelEndMarker == 0)
+                return;
+
+            // Re-synthesis trigger: catalog count grew OR wheel committed a new
+            // tier-def generation (END marker bumped — happens on dashboard
+            // switch). Skip when neither moved.
+            if (currentIsSynthesised
+                && _catalogCountAtSynthesis == catalog.Count
+                && _catalogEndMarkerAtSynthesis == _catalogParser.LastWheelEndMarker
+                && !force)
+                return;
+
+            var store = MozaPlugin.Instance?.DashProfileStore;
+            if (store == null)
+                return;
+
+            MultiStreamProfile synthesised;
+            try
+            {
+                synthesised = store.BuildProfileFromCatalog(catalog, CatalogProfileName);
+            }
+            catch (Exception ex)
+            {
+                MozaLog.Warn($"[Moza] Catalog-only profile synthesis failed: {ex.GetType().Name}: {ex.Message}");
+                return;
+            }
+
+            if (synthesised?.Tiers == null || synthesised.Tiers.Count == 0)
+                return;
+
+            // Apply user channel overrides (same selector the binding
+            // coordinator uses for the mzdash path). DashboardBindingCoordinator
+            // skipped this branch when profile was null at apply time, so the
+            // synthesised path owns it. Resolved per active dashboard key
+            // candidate (wheel:<id> > file:<name>:<sha> > builtin:<name>).
+            var plugin = MozaPlugin.Instance;
+            int mappedCount = 0;
+            if (plugin != null)
+            {
+                var channelMap = plugin.GetActiveChannelMappings();
+                if (channelMap != null)
+                {
+                    foreach (var dashKey in plugin.GetActiveDashboardKeyCandidates())
+                    {
+                        if (channelMap.TryGetValue(dashKey, out var overrides) && overrides != null)
+                        {
+                            DashboardProfileStore.ApplyUserMappings(synthesised, overrides);
+                            mappedCount = overrides.Count;
+                            break;
+                        }
+                    }
+                }
+            }
+
+            int chCount = 0;
+            foreach (var t in synthesised.Tiers) chCount += t.Channels.Count;
+            MozaLog.Info(
+                $"[Moza] Synthesised catalog-only profile: {chCount}ch in {synthesised.Tiers.Count}t " +
+                $"+ {synthesised.StringChannels.Count} strings (catalog={catalog.Count}, " +
+                $"endMarker={_catalogParser.LastWheelEndMarker}, userMappings={mappedCount})");
+
+            _catalogEndMarkerAtSynthesis = _catalogParser.LastWheelEndMarker;
+            _catalogCountAtSynthesis = catalog.Count;
+
+            // Going through the Profile setter so multi-broadcast expansion
+            // and _tiers allocation match the mzdash path exactly. The setter
+            // preserves Name, so subsequent calls can detect the synthesised
+            // profile by Profile.Name == CatalogProfileName.
+            Profile = synthesised;
         }
 
         /// <summary>
@@ -2339,6 +2440,18 @@ namespace MozaPlugin.Telemetry
                 // Steady-state (Active).
                 TickAbsorbCatalogIfChanged();
                 _autoTest?.Tick(_baseTickMs);
+
+                // Catalog-only mode upkeep: when the user has no mzdash folder
+                // configured, ApplyTelemetrySettings may have just wiped the
+                // synthesised profile (passes profile=null because the file
+                // it would have loaded doesn't exist). Re-synthesise from the
+                // wheel-advertised catalog here so value-frame emission
+                // doesn't stall after game/profile/dashboard switches. The
+                // method early-returns when a real mzdash profile is loaded
+                // and is a no-op when catalog state hasn't moved since the
+                // last synthesis, so the cost is one ref + count compare in
+                // the steady case.
+                MaybeSwapProfileForCatalog();
 
                 // Re-read _tiers: MaybeSwapProfileForCatalog may have rebuilt
                 // them above (synthesised from wheel-advertised catalog when

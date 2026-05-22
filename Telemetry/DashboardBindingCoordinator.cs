@@ -613,9 +613,26 @@ namespace MozaPlugin.Telemetry
                 var resolved = _plugin.ResolveDashboardProfileByName(newName);
                 if (resolved == null)
                 {
-                    MozaLog.Warn(
+                    // Catalog-only mode (no mzdash folder configured): the
+                    // profile can't be resolved by name, but the wheel will
+                    // re-emit its catalog for the new dash and TelemetrySender's
+                    // tick-path MaybeSwapProfileForCatalog will rebuild the
+                    // synthesised profile from the fresh URLs. Clear the
+                    // current synthesised profile so the tick path notices it
+                    // needs to rebuild AND so the UI grid empties immediately
+                    // (signature-based refresh keys on the profile ref) until
+                    // the rebuild completes. Then raise the selection-changed
+                    // event so the UI dropdown reflects the wheel's choice.
+                    if (sender.Profile != null
+                        && sender.Profile.Name == TelemetrySender.CatalogProfileName)
+                    {
+                        sender.Profile = null;
+                    }
+                    MozaLog.Info(
                         $"[Moza] WheelInitiatedSwitch slot={slot} ('{newName}'): " +
-                        $"profile not found in cache or builtins. Tier-def will use stale profile.");
+                        $"no mzdash resolved — relying on catalog-only synthesis from " +
+                        $"post-switch wheel catalog");
+                    _plugin.RaiseDashboardSelectionChangedInternal();
                     return;
                 }
 

@@ -1355,6 +1355,11 @@ namespace MozaPlugin.Devices
                 }
                 if (TelemetryProfileCombo.SelectedIndex < 0 && TelemetryProfileCombo.Items.Count > 0)
                     TelemetryProfileCombo.SelectedIndex = 0;
+
+                // Snapshot the wheel-reported slot we just populated against,
+                // so RefreshTelemetryStatus only triggers a repopulate when
+                // the wheel reports a new slot rather than on every tick.
+                _lastPopulatedWheelSlot = sender?.WheelReportedSlot ?? -1;
             }
         }
 
@@ -1364,6 +1369,18 @@ namespace MozaPlugin.Devices
         /// state first arrives mid-session.
         /// </summary>
         private bool _dashComboFromWheelState;
+
+        /// <summary>
+        /// Slot value the dropdown was last populated against
+        /// (<see cref="TelemetrySender.WheelReportedSlot"/>). Repopulate when
+        /// this changes — handles host-initiated startup switches (kind=4
+        /// emitted before wheel state finished arriving) where the wheel's
+        /// echo arrives a beat after the one-shot wheel-state population,
+        /// and the dropdown would otherwise stay on the pre-switch slot
+        /// forever. Initialised to int.MinValue so the first observation
+        /// of any slot (including -1) is treated as a change.
+        /// </summary>
+        private int _lastPopulatedWheelSlot = int.MinValue;
 
         // Signature of the data feeding the channel-mapping list. Composed from
         // (profile-ref-hash, tier-count, total-channel-count, string-channel-count,
@@ -1401,11 +1418,22 @@ namespace MozaPlugin.Devices
         {
             if (_plugin == null) return;
 
-            // Re-populate dropdown once when wheel state first becomes available.
+            // Re-populate dropdown when wheel state first becomes available
+            // OR when the wheel-reported slot changes. The slot check catches
+            // the startup case where the plugin emits kind=4 to apply the
+            // saved profile's dashboard before the wheel's b2h type-04 echo
+            // lands — without it the dropdown shows the wheel's pre-switch
+            // dash forever even though the wheel switched correctly.
             var state = _plugin.WheelStateForDiagnostics;
-            if (!_dashComboFromWheelState && state != null && state.ConfigJsonList.Count > 0)
+            var senderForCombo = _plugin.TelemetrySender;
+            int curWheelSlot = senderForCombo?.WheelReportedSlot ?? -1;
+            bool needPopulate =
+                (!_dashComboFromWheelState && state != null && state.ConfigJsonList.Count > 0)
+                || (curWheelSlot != _lastPopulatedWheelSlot);
+            if (needPopulate)
             {
-                _dashComboFromWheelState = true;
+                if (state != null && state.ConfigJsonList.Count > 0)
+                    _dashComboFromWheelState = true;
                 PopulateDashboardCombo();
             }
 
