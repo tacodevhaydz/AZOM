@@ -183,7 +183,7 @@ namespace MozaPlugin.Sdk
                 }
 
                 int desiredPort = _settings.SdkCoapPort;
-                if (desiredPort < 0 || desiredPort > 65535) desiredPort = 5683;
+                if (desiredPort < 0 || desiredPort > 65535) desiredPort = 40266;
 
                 try
                 {

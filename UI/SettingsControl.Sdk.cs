@@ -22,7 +22,7 @@ namespace MozaPlugin
         // fallback in SdkCoapPortBox_LostFocus doesn't have to walk back to
         // MozaPluginSettings just to revert. Must stay in sync with the
         // settings default.
-        private const int DefaultSdkCoapPort = 5683;
+        private const int DefaultSdkCoapPort = 40266;
         private const int MinSdkCoapPort = 1024;
         private const int MaxSdkCoapPort = 65535;
 
@@ -265,7 +265,7 @@ namespace MozaPlugin
         /// <summary>
         /// Parse the port TextBox, range-validate, and either save or revert.
         /// On invalid input the textbox snaps back to the previously-saved
-        /// value (or the 5683 default if no value was persisted). No popup —
+        /// value (or the 40266 default if no value was persisted). No popup —
         /// the snap-back is the feedback.
         /// </summary>
         private void CommitSdkCoapPort()

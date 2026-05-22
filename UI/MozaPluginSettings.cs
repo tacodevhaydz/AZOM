@@ -219,9 +219,13 @@ namespace MozaPlugin
         public bool SdkEmulationEnabled { get; set; } = false;
 
         // UDP port the embedded CoAP server binds when SdkEmulationEnabled is
-        // true. Defaults to 5683 (the CoAP standard port that PitHouse uses).
-        // Range enforced by the UI to 1024-65535. Plugin-global.
-        public int SdkCoapPort { get; set; } = 5683;
+        // true. Defaults to 40266 — the port literal hardcoded in MOZA_SDK.dll
+        // (both the official 1.0.1.8 build and iRacing's customized variant
+        // load `mov dx, 0x9D4A` into the libcoap address-setup call). The SDK
+        // does NOT discover the port; if we bind anywhere else, third-party
+        // apps never reach our handlers. Exposed as a setting only to allow
+        // re-pointing if MOZA ever changes the constant. Range 1024-65535.
+        public int SdkCoapPort { get; set; } = 40266;
 
         // Always bind to loopback (127.0.0.1) only. Hidden from the UI in v1
         // because exposing the partner-API to LAN traffic has no legitimate
