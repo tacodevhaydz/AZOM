@@ -266,6 +266,7 @@
   <data name="Subtitle_Bandwidth" xml:space="preserve"><value>// débit série · fenêtre de 30 secondes</value></data>
   <data name="Label_Inbound" xml:space="preserve"><value>ENTRANT</value></data>
   <data name="Label_Outbound" xml:space="preserve"><value>SORTANT</value></data>
+  <data name="Label_Capacity" xml:space="preserve"><value>CAPACITÉ</value></data>
   <data name="Label_Peak" xml:space="preserve"><value>PIC</value></data>
   <data name="Label_Session" xml:space="preserve"><value>SESSION</value></data>
   <data name="Section_SerialTrafficCapture" xml:space="preserve"><value>CAPTURE DU TRAFIC SÉRIE</value></data>

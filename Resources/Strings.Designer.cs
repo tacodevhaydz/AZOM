@@ -288,6 +288,7 @@ namespace MozaPlugin.Resources
         public static string Subtitle_Bandwidth => Get("Subtitle_Bandwidth");
         public static string Label_Inbound => Get("Label_Inbound");
         public static string Label_Outbound => Get("Label_Outbound");
+        public static string Label_Capacity => Get("Label_Capacity");
         public static string Label_Peak => Get("Label_Peak");
         public static string Label_Session => Get("Label_Session");
         public static string Section_SerialTrafficCapture => Get("Section_SerialTrafficCapture");

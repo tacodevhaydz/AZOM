@@ -86,17 +86,33 @@
          line's accent color at the top to fully transparent at the bottom, so
          the area under each trace gets a soft halo (mirrors the bandwidth
          sparkline's fill effect). -->
+    <!-- Per-series fills follow the typical hot→cool color hierarchy on the
+         wheelbase: MCU=red (control board / regulators run hottest), MOSFET=cyan
+         (power stage middle), Motor=green (coolest under normal use). Actual
+         ranking varies in-game; the legend re-sorts top→bottom by current temp,
+         but graph line colors stay anchored per-component for visual continuity. -->
     <LinearGradientBrush x:Key="McuFillBrush" StartPoint="0,0" EndPoint="0,1">
+        <GradientStop Color="{StaticResource RedColor}" Offset="0"/>
+        <GradientStop Color="#00FF5566" Offset="1"/>
+    </LinearGradientBrush>
+    <LinearGradientBrush x:Key="MosfetFillBrush" StartPoint="0,0" EndPoint="0,1">
         <GradientStop Color="{StaticResource CyanColor}" Offset="0"/>
         <GradientStop Color="#0000E5FF" Offset="1"/>
     </LinearGradientBrush>
-    <LinearGradientBrush x:Key="MosfetFillBrush" StartPoint="0,0" EndPoint="0,1">
+    <LinearGradientBrush x:Key="MotorFillBrush" StartPoint="0,0" EndPoint="0,1">
+        <GradientStop Color="{StaticResource GreenColor}" Offset="0"/>
+        <GradientStop Color="#0039FF88" Offset="1"/>
+    </LinearGradientBrush>
+
+    <!-- BandwidthSparkline dual-line fills: cyan (in) + amber (out), each fading
+         to transparent at the bottom. -->
+    <LinearGradientBrush x:Key="BwInFillBrush" StartPoint="0,0" EndPoint="0,1">
+        <GradientStop Color="{StaticResource CyanColor}" Offset="0"/>
+        <GradientStop Color="#0000E5FF" Offset="1"/>
+    </LinearGradientBrush>
+    <LinearGradientBrush x:Key="BwOutFillBrush" StartPoint="0,0" EndPoint="0,1">
         <GradientStop Color="{StaticResource AmberColor}" Offset="0"/>
         <GradientStop Color="#00FFB84D" Offset="1"/>
-    </LinearGradientBrush>
-    <LinearGradientBrush x:Key="MotorFillBrush" StartPoint="0,0" EndPoint="0,1">
-        <GradientStop Color="{StaticResource RedColor}" Offset="0"/>
-        <GradientStop Color="#00FF5566" Offset="1"/>
     </LinearGradientBrush>
     <LinearGradientBrush x:Key="TopBarBrush" StartPoint="0,0" EndPoint="0,1">
         <GradientStop Color="#20000000" Offset="0"/>

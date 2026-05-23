@@ -271,6 +271,7 @@
   <data name="Subtitle_Bandwidth" xml:space="preserve"><value>// rendimiento serie · ventana de 30 segundos</value></data>
   <data name="Label_Inbound" xml:space="preserve"><value>ENTRADA</value></data>
   <data name="Label_Outbound" xml:space="preserve"><value>SALIDA</value></data>
+  <data name="Label_Capacity" xml:space="preserve"><value>CAPACIDAD</value></data>
   <data name="Label_Peak" xml:space="preserve"><value>PICO</value></data>
   <data name="Label_Session" xml:space="preserve"><value>SESIÓN</value></data>
   <data name="Section_SerialTrafficCapture" xml:space="preserve"><value>CAPTURA DE TRÁFICO SERIE</value></data>

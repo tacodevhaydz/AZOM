@@ -5,7 +5,10 @@ using System.Reflection;
 using System.Windows;
 using System.Windows.Controls;
 using System.Windows.Data;
+using System.Windows.Media;
+using System.Windows.Shapes;
 using System.Windows.Threading;
+using MozaPlugin.Resources;
 using MozaPlugin.UI;
 using SerialTrafficCapture = MozaPlugin.Diagnostics.SerialTrafficCapture;
 
@@ -19,8 +22,10 @@ namespace MozaPlugin
     // untouched.
     public partial class SettingsControl
     {
-        // ---- Bandwidth sparkline state (60 samples = 30s @ 500ms tick) ----
-        private const int BandwidthSamples = 60;
+        // ---- Bandwidth sparkline state (600 samples = 5 min @ 500ms tick,
+        // matches TemperatureSamples so both graphs on the Base tab share the
+        // same horizontal timescale). ----
+        private const int BandwidthSamples = 600;
         private readonly ObservableCollection<double> _bwInSamples = new ObservableCollection<double>();
         private readonly ObservableCollection<double> _bwOutSamples = new ObservableCollection<double>();
         private DispatcherTimer? _bandwidthTimer;
@@ -32,14 +37,22 @@ namespace MozaPlugin
         private long _bwSessionIn;
         private long _bwSessionOut;
 
-        // ---- Temperature-graph sample buffers. Same window length as the
-        // bandwidth sparkline so the two share the timescale on screen. The
-        // main refresh timer (RefreshBaseTab → UpdateRedesignLiveDisplays)
-        // pushes samples at the same 500-ms cadence. ----
-        private const int TemperatureSamples = 60;
+        // ---- Temperature-graph sample buffers. The main refresh timer
+        // (RefreshBaseTab → UpdateRedesignLiveDisplays) pushes samples at
+        // 500 ms; 600 samples × 0.5 s = 5 minutes of rolling history.
+        // (Bandwidth sparkline keeps its shorter window; temps trend slowly
+        // enough to justify a longer view.) ----
+        private const int TemperatureSamples = 600;
         private readonly ObservableCollection<double> _mcuTempSamples = new ObservableCollection<double>();
         private readonly ObservableCollection<double> _mosfetTempSamples = new ObservableCollection<double>();
         private readonly ObservableCollection<double> _motorTempSamples = new ObservableCollection<double>();
+
+        // Peak temps observed since plugin launch, stored as raw 100×°C ints
+        // so unit toggling (°C↔°F) still displays correctly via ConvertTemp.
+        // -1 sentinel = "never seen a live sample yet" → display blank.
+        private int _mcuTempMaxRaw = -1;
+        private int _mosfetTempMaxRaw = -1;
+        private int _motorTempMaxRaw = -1;
 
         /// <summary>
         /// Called from the existing constructor after InitializeComponent runs.
@@ -84,9 +97,17 @@ namespace MozaPlugin
                     Eq1Slider, Eq2Slider, Eq3Slider, Eq4Slider, Eq5Slider, Eq6Slider
                 });
 
-                // Bandwidth sparkline data sources
-                BandwidthInSparkline.Samples = _bwInSamples;
-                BandwidthOutSparkline.Samples = _bwOutSamples;
+                // Bandwidth sparkline data sources — single dual-line control on
+                // the Base tab now hosts both series (in=cyan, out=amber).
+                if (BandwidthGraphViz != null)
+                {
+                    BandwidthGraphViz.InSamples = _bwInSamples;
+                    BandwidthGraphViz.OutSamples = _bwOutSamples;
+                    // Capacity readout mirrors the graph's saturation ceiling so
+                    // the label and the chart's full-scale line agree.
+                    if (BandwidthCapacityText != null && BandwidthGraphViz.MaxValue > 0)
+                        BandwidthCapacityText.Text = FormatBytesPerSec(BandwidthGraphViz.MaxValue);
+                }
                 for (int i = 0; i < BandwidthSamples; i++)
                 {
                     _bwInSamples.Add(0);
@@ -187,12 +208,15 @@ namespace MozaPlugin
                 PushTemperatureSample(_mosfetTempSamples, mosfet);
                 PushTemperatureSample(_motorTempSamples, motor);
 
-                if (McuTempLegend != null)
-                    McuTempLegend.Text = has ? $"{mcu:F0} {unit}" : "—";
-                if (MosfetTempLegend != null)
-                    MosfetTempLegend.Text = has ? $"{mosfet:F0} {unit}" : "—";
-                if (MotorTempLegend != null)
-                    MotorTempLegend.Text = has ? $"{motor:F0} {unit}" : "—";
+                // Track session-peak per sensor (raw value, so unit-toggle works).
+                if (has)
+                {
+                    if (_data.McuTemp > _mcuTempMaxRaw) _mcuTempMaxRaw = _data.McuTemp;
+                    if (_data.MosfetTemp > _mosfetTempMaxRaw) _mosfetTempMaxRaw = _data.MosfetTemp;
+                    if (_data.MotorTemp > _motorTempMaxRaw) _motorTempMaxRaw = _data.MotorTemp;
+                }
+
+                RenderRankedTempLegend(mcu, mosfet, motor, has, unit);
 
                 if (SteeringArcViz != null)
                 {
@@ -211,6 +235,58 @@ namespace MozaPlugin
         {
             series.Add(value);
             while (series.Count > TemperatureSamples) series.RemoveAt(0);
+        }
+
+        // Repopulate the 3 named temp-legend rows sorted top→bottom by current
+        // reading. Per-component brushes stay stable (MCU=red, MOSFET=cyan,
+        // Motor=green — match their graph line). Each row shows: dot, name,
+        // "{cur} {unit}", "max {peak} {unit}".
+        private static readonly string[] _emptyDash = { "—" };
+        private void RenderRankedTempLegend(double mcu, double mosfet, double motor, bool has, string unit)
+        {
+            if (TempLegendRow1 == null) return; // legacy XAML — nothing to do
+
+            var red = (Brush?)TryFindResource("RedBrush") ?? Brushes.Red;
+            var cyan = (Brush?)TryFindResource("CyanBrush") ?? Brushes.Cyan;
+            var green = (Brush?)TryFindResource("GreenBrush") ?? Brushes.LimeGreen;
+
+            var entries = new[]
+            {
+                (name: Strings.Brand_Mcu,    cur: mcu,    maxRaw: _mcuTempMaxRaw,    brush: red),
+                (name: Strings.Brand_Mosfet, cur: mosfet, maxRaw: _mosfetTempMaxRaw, brush: cyan),
+                (name: Strings.Brand_Motor,  cur: motor,  maxRaw: _motorTempMaxRaw,  brush: green),
+            };
+            // OrderByDescending is stable — components with equal temps (e.g. all
+            // zero when disconnected) keep declaration order so rows don't jitter.
+            var ranked = entries.OrderByDescending(e => e.cur).ToArray();
+
+            var rows = new (Ellipse dot, TextBlock name, TextBlock value, TextBlock max)[]
+            {
+                (TempLegendDot1, TempLegendName1, TempLegendValue1, TempLegendMax1),
+                (TempLegendDot2, TempLegendName2, TempLegendValue2, TempLegendMax2),
+                (TempLegendDot3, TempLegendName3, TempLegendValue3, TempLegendMax3),
+            };
+
+            for (int i = 0; i < 3; i++)
+            {
+                var (dot, name, value, max) = rows[i];
+                if (dot == null) continue;
+
+                var e = ranked[i];
+                dot.Fill = e.brush;
+                name.Text = e.name;
+                value.Text = has ? $"{e.cur:F0} {unit}" : "—";
+                value.Foreground = e.brush;
+                max.Text = e.maxRaw >= 0
+                    ? $"max {ConvertTemp(e.maxRaw):F0} {unit}"
+                    : "";
+            }
+
+            // Legacy hidden labels — kept written so any code reading them by
+            // name still sees the live value. Cheap; collapses to no-op cost.
+            if (McuTempLegend != null)    McuTempLegend.Text    = has ? $"{mcu:F0} {unit}" : "—";
+            if (MosfetTempLegend != null) MosfetTempLegend.Text = has ? $"{mosfet:F0} {unit}" : "—";
+            if (MotorTempLegend != null)  MotorTempLegend.Text  = has ? $"{motor:F0} {unit}" : "—";
         }
 
         // Called from existing OnSteeringAngleTick — every ~33ms.
@@ -256,8 +332,9 @@ namespace MozaPlugin
 
                         BandwidthInValueText.Text = FormatBytesPerSec(inRate);
                         BandwidthOutValueText.Text = FormatBytesPerSec(outRate);
-                        BandwidthInPeakText.Text = FormatBytesPerSec(_bwPeakIn);
-                        BandwidthOutPeakText.Text = FormatBytesPerSec(_bwPeakOut);
+                        // Inline "max NN" suffix once any traffic has been seen.
+                        BandwidthInPeakText.Text  = _bwPeakIn  > 0 ? $"max {FormatBytesPerSec(_bwPeakIn)}"  : "";
+                        BandwidthOutPeakText.Text = _bwPeakOut > 0 ? $"max {FormatBytesPerSec(_bwPeakOut)}" : "";
                         BandwidthInSessionText.Text = FormatBytesTotal(_bwSessionIn);
                         BandwidthOutSessionText.Text = FormatBytesTotal(_bwSessionOut);
                     }

@@ -266,6 +266,7 @@
   <data name="Subtitle_Bandwidth" xml:space="preserve"><value>// последовательный трафик · 30-секундное окно</value></data>
   <data name="Label_Inbound" xml:space="preserve"><value>ВХОДЯЩИЙ</value></data>
   <data name="Label_Outbound" xml:space="preserve"><value>ИСХОДЯЩИЙ</value></data>
+  <data name="Label_Capacity" xml:space="preserve"><value>ПРОПУСКНАЯ</value></data>
   <data name="Label_Peak" xml:space="preserve"><value>ПИК</value></data>
   <data name="Label_Session" xml:space="preserve"><value>СЕАНС</value></data>
   <data name="Section_SerialTrafficCapture" xml:space="preserve"><value>ЗАХВАТ ПОСЛЕДОВАТЕЛЬНОГО ТРАФИКА</value></data>

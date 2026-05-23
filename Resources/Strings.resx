@@ -271,6 +271,7 @@
   <data name="Subtitle_Bandwidth" xml:space="preserve"><value>// serial throughput · 30-second window</value></data>
   <data name="Label_Inbound" xml:space="preserve"><value>INBOUND</value></data>
   <data name="Label_Outbound" xml:space="preserve"><value>OUTBOUND</value></data>
+  <data name="Label_Capacity" xml:space="preserve"><value>CAPACITY</value></data>
   <data name="Label_Peak" xml:space="preserve"><value>PEAK</value></data>
   <data name="Label_Session" xml:space="preserve"><value>SESSION</value></data>
   <data name="Section_SerialTrafficCapture" xml:space="preserve"><value>SERIAL TRAFFIC CAPTURE</value></data>

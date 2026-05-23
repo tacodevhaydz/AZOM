@@ -351,28 +351,37 @@
             <Setter.Value>
                 <ControlTemplate TargetType="{x:Type controls:BandwidthSparkline}">
                     <Grid>
-                        <Path Data="{Binding FillGeometry, RelativeSource={RelativeSource TemplatedParent}}"
-                              StrokeThickness="0">
-                            <Path.Fill>
-                                <LinearGradientBrush StartPoint="0,0" EndPoint="0,1">
-                                    <GradientStop Color="{StaticResource CyanColor}" Offset="0"/>
-                                    <GradientStop Color="#0000E5FF" Offset="1"/>
-                                </LinearGradientBrush>
-                            </Path.Fill>
-                        </Path>
-                        <Path Data="{Binding LineGeometry, RelativeSource={RelativeSource TemplatedParent}}"
-                              Stroke="{TemplateBinding LineBrush}"
+                        <!-- Outbound drawn first (behind) so the typically-louder
+                             inbound line lays on top. Fill brushes default null
+                             (line-only) but the caller can supply gradient brushes
+                             for the under-glow effect. -->
+                        <Path Data="{Binding OutFillGeometry, RelativeSource={RelativeSource TemplatedParent}}"
+                              Fill="{TemplateBinding OutFillBrush}"
+                              StrokeThickness="0"/>
+                        <Path Data="{Binding OutLineGeometry, RelativeSource={RelativeSource TemplatedParent}}"
+                              Stroke="{TemplateBinding OutBrush}"
                               StrokeThickness="1.5"
                               StrokeStartLineCap="Round"
                               StrokeEndLineCap="Round"
-                              Effect="{StaticResource CyanGlowSoftEffect}"
+                              Fill="{x:Null}"/>
+                        <Path Data="{Binding InFillGeometry, RelativeSource={RelativeSource TemplatedParent}}"
+                              Fill="{TemplateBinding InFillBrush}"
+                              StrokeThickness="0"/>
+                        <Path Data="{Binding InLineGeometry, RelativeSource={RelativeSource TemplatedParent}}"
+                              Stroke="{TemplateBinding InBrush}"
+                              StrokeThickness="1.5"
+                              StrokeStartLineCap="Round"
+                              StrokeEndLineCap="Round"
                               Fill="{x:Null}"/>
                         <Canvas IsHitTestVisible="False">
                             <Ellipse Width="6" Height="6"
-                                     Fill="{TemplateBinding LineBrush}"
-                                     Canvas.Left="{Binding TipX, RelativeSource={RelativeSource TemplatedParent}}"
-                                     Canvas.Top="{Binding TipY, RelativeSource={RelativeSource TemplatedParent}}"
-                                     Effect="{StaticResource CyanGlowEffect}"/>
+                                     Fill="{TemplateBinding OutBrush}"
+                                     Canvas.Left="{Binding OutTipX, RelativeSource={RelativeSource TemplatedParent}}"
+                                     Canvas.Top="{Binding OutTipY, RelativeSource={RelativeSource TemplatedParent}}"/>
+                            <Ellipse Width="6" Height="6"
+                                     Fill="{TemplateBinding InBrush}"
+                                     Canvas.Left="{Binding InTipX, RelativeSource={RelativeSource TemplatedParent}}"
+                                     Canvas.Top="{Binding InTipY, RelativeSource={RelativeSource TemplatedParent}}"/>
                         </Canvas>
                     </Grid>
                 </ControlTemplate>

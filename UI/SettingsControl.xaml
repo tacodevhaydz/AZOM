@@ -340,52 +340,112 @@
                                                    VerticalAlignment="Center"
                                                    Margin="0,0,10,0"/>
                                     </DockPanel>
-                                    <!-- Combined MCU + MOSFET + MOTOR rolling graph
-                                         (replaces the three fake-meter TempCells).
-                                         Shares a 0–120 °C scale; the legend row
-                                         below shows the colour key + live values. -->
-                                    <Border Style="{StaticResource InnerCardBorder}" Padding="10,8">
-                                        <StackPanel>
-                                            <ctrl:TemperatureGraph x:Name="TemperatureGraphViz" Height="80"
-                                                                   McuBrush="{StaticResource CyanBrush}"
-                                                                   MosfetBrush="{StaticResource AmberBrush}"
-                                                                   MotorBrush="{StaticResource RedBrush}"
-                                                                   McuFillBrush="{StaticResource McuFillBrush}"
-                                                                   MosfetFillBrush="{StaticResource MosfetFillBrush}"
-                                                                   MotorFillBrush="{StaticResource MotorFillBrush}"/>
-                                            <Grid Margin="0,6,0,0">
-                                                <Grid.ColumnDefinitions>
-                                                    <ColumnDefinition Width="*"/>
-                                                    <ColumnDefinition Width="*"/>
-                                                    <ColumnDefinition Width="*"/>
-                                                </Grid.ColumnDefinitions>
-                                                <StackPanel Grid.Column="0" Orientation="Horizontal">
-                                                    <Ellipse Width="6" Height="6" VerticalAlignment="Center"
-                                                             Fill="{StaticResource CyanBrush}" Margin="0,0,6,0"/>
-                                                    <TextBlock Text="{x:Static res:Strings.Brand_Mcu}" Style="{StaticResource KvKeyText}"/>
-                                                    <TextBlock x:Name="McuTempLegend" Text="—"
-                                                               Style="{StaticResource KvValueText}"
-                                                               Foreground="{StaticResource CyanBrush}"/>
+                                    <!-- Live telemetry side-by-side:
+                                         Left  = MCU/MOSFET/Motor rolling temp graph (legend sorts hot→cool).
+                                         Right = dual-line bandwidth sparkline (cyan=in, amber=out)
+                                         relocated from the About tab so traffic + thermals are visible
+                                         on the same screen. Both halves are inner cards with their own
+                                         legend underneath. -->
+                                    <Grid>
+                                        <Grid.ColumnDefinitions>
+                                            <ColumnDefinition Width="*"/>
+                                            <ColumnDefinition Width="*"/>
+                                        </Grid.ColumnDefinitions>
+                                        <Border Grid.Column="0" Style="{StaticResource InnerCardBorder}"
+                                                Padding="10,8" Margin="0,0,7,0">
+                                            <StackPanel>
+                                                <ctrl:TemperatureGraph x:Name="TemperatureGraphViz" Height="80"
+                                                                       McuBrush="{StaticResource RedBrush}"
+                                                                       MosfetBrush="{StaticResource CyanBrush}"
+                                                                       MotorBrush="{StaticResource GreenBrush}"
+                                                                       McuFillBrush="{StaticResource McuFillBrush}"
+                                                                       MosfetFillBrush="{StaticResource MosfetFillBrush}"
+                                                                       MotorFillBrush="{StaticResource MotorFillBrush}"/>
+                                                <!-- Three legend rows sorted top→bottom by current temp each tick
+                                                     (UpdateRedesignLiveDisplays populates dot fill, name, current,
+                                                     and "max NN" since launch). Component colors are stable: MCU=red,
+                                                     MOSFET=cyan, Motor=green — match their graph line. -->
+                                                <StackPanel Margin="0,6,0,0">
+                                                    <StackPanel x:Name="TempLegendRow1" Orientation="Horizontal" Margin="0,0,0,2">
+                                                        <Ellipse x:Name="TempLegendDot1" Width="6" Height="6" VerticalAlignment="Center" Margin="0,0,6,0"/>
+                                                        <TextBlock x:Name="TempLegendName1" Style="{StaticResource KvKeyText}"/>
+                                                        <TextBlock x:Name="TempLegendValue1" Style="{StaticResource KvValueText}"/>
+                                                        <TextBlock x:Name="TempLegendMax1" Style="{StaticResource KvKeyText}" Margin="8,0,0,0" Opacity="0.7"/>
+                                                    </StackPanel>
+                                                    <StackPanel x:Name="TempLegendRow2" Orientation="Horizontal" Margin="0,0,0,2">
+                                                        <Ellipse x:Name="TempLegendDot2" Width="6" Height="6" VerticalAlignment="Center" Margin="0,0,6,0"/>
+                                                        <TextBlock x:Name="TempLegendName2" Style="{StaticResource KvKeyText}"/>
+                                                        <TextBlock x:Name="TempLegendValue2" Style="{StaticResource KvValueText}"/>
+                                                        <TextBlock x:Name="TempLegendMax2" Style="{StaticResource KvKeyText}" Margin="8,0,0,0" Opacity="0.7"/>
+                                                    </StackPanel>
+                                                    <StackPanel x:Name="TempLegendRow3" Orientation="Horizontal">
+                                                        <Ellipse x:Name="TempLegendDot3" Width="6" Height="6" VerticalAlignment="Center" Margin="0,0,6,0"/>
+                                                        <TextBlock x:Name="TempLegendName3" Style="{StaticResource KvKeyText}"/>
+                                                        <TextBlock x:Name="TempLegendValue3" Style="{StaticResource KvValueText}"/>
+                                                        <TextBlock x:Name="TempLegendMax3" Style="{StaticResource KvKeyText}" Margin="8,0,0,0" Opacity="0.7"/>
+                                                    </StackPanel>
                                                 </StackPanel>
-                                                <StackPanel Grid.Column="1" Orientation="Horizontal">
-                                                    <Ellipse Width="6" Height="6" VerticalAlignment="Center"
-                                                             Fill="{StaticResource AmberBrush}" Margin="0,0,6,0"/>
-                                                    <TextBlock Text="{x:Static res:Strings.Brand_Mosfet}" Style="{StaticResource KvKeyText}"/>
-                                                    <TextBlock x:Name="MosfetTempLegend" Text="—"
-                                                               Style="{StaticResource KvValueText}"
-                                                               Foreground="{StaticResource AmberBrush}"/>
+                                                <!-- Legacy named legend labels — kept hidden so any code that
+                                                     references McuTempLegend / MosfetTempLegend / MotorTempLegend
+                                                     by name still compiles. The ranked legend above is the
+                                                     visible source of truth. -->
+                                                <StackPanel Visibility="Collapsed">
+                                                    <TextBlock x:Name="McuTempLegend"/>
+                                                    <TextBlock x:Name="MosfetTempLegend"/>
+                                                    <TextBlock x:Name="MotorTempLegend"/>
                                                 </StackPanel>
-                                                <StackPanel Grid.Column="2" Orientation="Horizontal">
-                                                    <Ellipse Width="6" Height="6" VerticalAlignment="Center"
-                                                             Fill="{StaticResource RedBrush}" Margin="0,0,6,0"/>
-                                                    <TextBlock Text="{x:Static res:Strings.Brand_Motor}" Style="{StaticResource KvKeyText}"/>
-                                                    <TextBlock x:Name="MotorTempLegend" Text="—"
-                                                               Style="{StaticResource KvValueText}"
-                                                               Foreground="{StaticResource RedBrush}"/>
+                                            </StackPanel>
+                                        </Border>
+                                        <Border Grid.Column="1" Style="{StaticResource InnerCardBorder}"
+                                                Padding="10,8" Margin="7,0,0,0">
+                                            <StackPanel>
+                                                <!-- MaxValue = serial-port byte cap (115200 baud / 10 bits-per-byte). -->
+                                                <ctrl:BandwidthSparkline x:Name="BandwidthGraphViz" Height="80"
+                                                                         InBrush="{StaticResource CyanBrush}"
+                                                                         OutBrush="{StaticResource AmberBrush}"
+                                                                         InFillBrush="{StaticResource BwInFillBrush}"
+                                                                         OutFillBrush="{StaticResource BwOutFillBrush}"
+                                                                         MaxValue="11520"/>
+                                                <StackPanel Margin="0,6,0,0">
+                                                    <StackPanel Orientation="Horizontal" Margin="0,0,0,2">
+                                                        <Ellipse Width="6" Height="6" VerticalAlignment="Center"
+                                                                 Fill="{StaticResource CyanBrush}" Margin="0,0,6,0"/>
+                                                        <TextBlock Text="{x:Static res:Strings.Label_Inbound}" Style="{StaticResource KvKeyText}"/>
+                                                        <TextBlock x:Name="BandwidthInValueText" Text="0 B/s"
+                                                                   Style="{StaticResource KvValueText}"
+                                                                   Foreground="{StaticResource CyanBrush}"/>
+                                                        <TextBlock x:Name="BandwidthInPeakText" Style="{StaticResource KvKeyText}"
+                                                                   Margin="8,0,0,0" Opacity="0.7"/>
+                                                    </StackPanel>
+                                                    <StackPanel Orientation="Horizontal" Margin="0,0,0,2">
+                                                        <Ellipse Width="6" Height="6" VerticalAlignment="Center"
+                                                                 Fill="{StaticResource AmberBrush}" Margin="0,0,6,0"/>
+                                                        <TextBlock Text="{x:Static res:Strings.Label_Outbound}" Style="{StaticResource KvKeyText}"/>
+                                                        <TextBlock x:Name="BandwidthOutValueText" Text="0 B/s"
+                                                                   Style="{StaticResource KvValueText}"
+                                                                   Foreground="{StaticResource AmberBrush}"/>
+                                                        <TextBlock x:Name="BandwidthOutPeakText" Style="{StaticResource KvKeyText}"
+                                                                   Margin="8,0,0,0" Opacity="0.7"/>
+                                                    </StackPanel>
+                                                    <!-- Capacity = theoretical ceiling the graph saturates at
+                                                         (serial port byte cap, 115200 baud / 10 bits-per-byte).
+                                                         Lets the user gauge headroom against the lines. -->
+                                                    <StackPanel Orientation="Horizontal" Margin="0,2,0,0">
+                                                        <TextBlock Text="{x:Static res:Strings.Label_Capacity}" Style="{StaticResource KvKeyText}"/>
+                                                        <TextBlock x:Name="BandwidthCapacityText"
+                                                                   Style="{StaticResource KvValueText}"
+                                                                   Foreground="{StaticResource TextFaintBrush}"/>
+                                                    </StackPanel>
                                                 </StackPanel>
-                                            </Grid>
-                                        </StackPanel>
-                                    </Border>
+                                                <!-- Session totals not surfaced visibly; hidden stubs keep
+                                                     OnBandwidthTick writes alive without null guards. -->
+                                                <StackPanel Visibility="Collapsed">
+                                                    <TextBlock x:Name="BandwidthInSessionText"/>
+                                                    <TextBlock x:Name="BandwidthOutSessionText"/>
+                                                </StackPanel>
+                                            </StackPanel>
+                                        </Border>
+                                    </Grid>
                                 </StackPanel>
                             </Grid>
                         </Border>
@@ -2218,70 +2278,8 @@
                             </StackPanel>
                         </ctrl:SectionCard>
 
-                        <!-- ============ Bandwidth ============ -->
-                        <ctrl:SectionCard Title="{x:Static res:Strings.Section_Bandwidth}"
-                                          Subtitle="{x:Static res:Strings.Subtitle_Bandwidth}"
-                                          Icon="{StaticResource IconDiag}">
-                            <Grid>
-                                <Grid.ColumnDefinitions>
-                                    <ColumnDefinition Width="*"/>
-                                    <ColumnDefinition Width="*"/>
-                                </Grid.ColumnDefinitions>
-                                <!-- Inbound -->
-                                <Border Grid.Column="0" Style="{StaticResource InnerCardBorder}"
-                                        Margin="0,0,7,0">
-                                    <StackPanel>
-                                        <StackPanel Orientation="Horizontal" Margin="0,0,0,4">
-                                            <Ellipse Width="6" Height="6" Fill="{StaticResource CyanBrush}"
-                                                     VerticalAlignment="Center" Margin="0,0,8,0"/>
-                                            <TextBlock Text="{x:Static res:Strings.Label_Inbound}" FontSize="10" FontWeight="SemiBold"
-                                                       Foreground="{StaticResource TextDimBrush}"
-                                                       VerticalAlignment="Center"/>
-                                        </StackPanel>
-                                        <TextBlock x:Name="BandwidthInValueText" Text="0 B/s"
-                                                   FontFamily="{StaticResource FontMono}" FontSize="24"
-                                                   Foreground="{StaticResource CyanBrush}"
-                                                   Margin="0,4,0,8"/>
-                                        <!-- MaxValue = serial-port byte cap (115200 baud / 10 bits-per-byte) -->
-                                        <ctrl:BandwidthSparkline x:Name="BandwidthInSparkline" Height="56"
-                                                                 LineBrush="{StaticResource CyanBrush}"
-                                                                 MaxValue="11520"/>
-                                        <StackPanel Orientation="Horizontal" Margin="0,8,0,0">
-                                            <TextBlock Text="{x:Static res:Strings.Label_Peak}" Style="{StaticResource KvKeyText}"/>
-                                            <TextBlock x:Name="BandwidthInPeakText" Text="—" Style="{StaticResource KvValueText}"/>
-                                            <TextBlock Text="{x:Static res:Strings.Label_Session}" Style="{StaticResource KvKeyText}"/>
-                                            <TextBlock x:Name="BandwidthInSessionText" Text="—" Style="{StaticResource KvValueText}"/>
-                                        </StackPanel>
-                                    </StackPanel>
-                                </Border>
-                                <!-- Outbound -->
-                                <Border Grid.Column="1" Style="{StaticResource InnerCardBorder}"
-                                        Margin="7,0,0,0">
-                                    <StackPanel>
-                                        <StackPanel Orientation="Horizontal" Margin="0,0,0,4">
-                                            <Ellipse Width="6" Height="6" Fill="{StaticResource GreenBrush}"
-                                                     VerticalAlignment="Center" Margin="0,0,8,0"/>
-                                            <TextBlock Text="{x:Static res:Strings.Label_Outbound}" FontSize="10" FontWeight="SemiBold"
-                                                       Foreground="{StaticResource TextDimBrush}"
-                                                       VerticalAlignment="Center"/>
-                                        </StackPanel>
-                                        <TextBlock x:Name="BandwidthOutValueText" Text="0 B/s"
-                                                   FontFamily="{StaticResource FontMono}" FontSize="24"
-                                                   Foreground="{StaticResource GreenBrush}"
-                                                   Margin="0,4,0,8"/>
-                                        <ctrl:BandwidthSparkline x:Name="BandwidthOutSparkline" Height="56"
-                                                                 LineBrush="{StaticResource GreenBrush}"
-                                                                 MaxValue="11520"/>
-                                        <StackPanel Orientation="Horizontal" Margin="0,8,0,0">
-                                            <TextBlock Text="{x:Static res:Strings.Label_Peak}" Style="{StaticResource KvKeyText}"/>
-                                            <TextBlock x:Name="BandwidthOutPeakText" Text="—" Style="{StaticResource KvValueText}"/>
-                                            <TextBlock Text="{x:Static res:Strings.Label_Session}" Style="{StaticResource KvKeyText}"/>
-                                            <TextBlock x:Name="BandwidthOutSessionText" Text="—" Style="{StaticResource KvValueText}"/>
-                                        </StackPanel>
-                                    </StackPanel>
-                                </Border>
-                            </Grid>
-                        </ctrl:SectionCard>
+                        <!-- Bandwidth visualization was moved to the Base tab's live header
+                             (next to the temperature graph) as a single dual-line sparkline. -->
 
                         <ctrl:SectionCard Title="{x:Static res:Strings.Section_SerialTrafficCapture}"
                                           Subtitle="{x:Static res:Strings.Subtitle_SerialTrafficCapture}"
