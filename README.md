@@ -73,7 +73,7 @@ MOZA wheels and dashboards register as native SimHub devices, appearing in SimHu
 - **Wheelbase Ambient LEDs** — R21/R25/R27-class wheelbases register as a separate "MOZA Wheel Base" SimHub device exposing the 18-LED ambient ring. Drive it from SimHub's effects pipeline, or use the device page for indicator state, brightness, standby animation (Constant/Breath/Cycle/Rainbow/Flow), sleep mode + timeout, and startup/shutdown colors. R9/R12 bases ship without the LED strip and do not expose this device
 - **Per-Wheel Idle & Sleep Effects** — Each wheel's device page has RPM / Buttons / Knobs / Sleep tabs for the hardware's own onboard idle animations (Constant, Breathing, Color Cycle, Rainbow, Sand Flow, RGB Pulse), static RPM/flag/knob colors, and the sleep-light mode + color + standby timeout. These play locally on the wheel when SimHub isn't driving effects (game closed, telemetry paused). Sleep settings persist at the wheel level, not per game
 
-![LED Effects Configuration](docs/Leds.png)
+![Device Panel](docs/Knobs.png)
 
 The plugin injects virtual LED drivers so SimHub's effects UI shows each device as connected, even though MOZA uses a proprietary serial protocol. The computed LED colors are forwarded to the hardware each frame.
 
@@ -92,7 +92,7 @@ Tested:
 
 TBD:
 - Stand-alone dashboards
-- Older generation wheels not in the list above
+- Older generation wheels not in the list below
 
 
 ### Per-Model LED Configuration
