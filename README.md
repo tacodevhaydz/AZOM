@@ -54,7 +54,7 @@ Restart SimHub — the plugin appears under Settings > Plugins as "MOZA Control"
 
 ## Discord
 
-[Join the Discord](https://discord.gg/hBHrNeKWSm) if you want to discuss features or development of this plugin.
+[Join the Discord](https://discord.gg/J4enw43e62) if you want to discuss features or development of this plugin.
 
 ## Features
 

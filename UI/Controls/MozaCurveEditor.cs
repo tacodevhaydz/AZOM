@@ -1,20 +1,28 @@
 using System;
+using System.Globalization;
 using System.Windows;
 using System.Windows.Controls;
 using System.Windows.Input;
 using System.Windows.Media;
-using System.Windows.Shapes;
 
 namespace MozaControls
 {
     /// <summary>
-    /// Curve editor for the 5-point output curves on the Base / Handbrake /
-    /// Pedals tabs. Drag the 5 nodes (Y axis 0–100) to shape response.
-    /// Renders a cubic Catmull-Rom spline through fixed X = 20/40/60/80/100.
+    /// Draggable-node line graph. Used for the 5-point output curves on the
+    /// Base / Handbrake / Pedals tabs, and (with the MozaEqualizerLineStyle in
+    /// Themes/Generic.xaml) for the 6-band FFB equalizer.
     ///
-    /// The editor's Y1..Y5 DPs are intended to bind two-way to the underlying
-    /// FfbCurveYNSlider.Value (etc.) so existing slider ValueChanged handlers
-    /// continue to fire and MozaProfile persistence is unchanged.
+    /// Renders a cubic Catmull-Rom spline through fixed X positions. The
+    /// Y1..Y6 DPs are intended to bind two-way to the underlying
+    /// FfbCurveYNSlider.Value / EqNSlider.Value etc., so existing slider
+    /// ValueChanged handlers continue to fire and MozaProfile persistence is
+    /// unchanged.
+    ///
+    /// The control has two configurations:
+    ///   * 5-node curve (default): NodeCount=5, YMin=0, YMax=100, no reference
+    ///     line, nodes at X=20/40/60/80/100% of plot width.
+    ///   * 6-node EQ: NodeCount=6, YMin=0, YMax=400, ReferenceLineY=100, nodes
+    ///     evenly spaced at column centres (1/12..11/12 of plot width).
     /// </summary>
     public class MozaCurveEditor : Control
     {
@@ -25,12 +33,13 @@ namespace MozaControls
                 new FrameworkPropertyMetadata(typeof(MozaCurveEditor)));
         }
 
-        // -------- Y values (one per node) --------
+        // -------- Y values (one per node, up to 6) --------
         public static readonly DependencyProperty Y1Property = RegisterY(nameof(Y1), 20);
         public static readonly DependencyProperty Y2Property = RegisterY(nameof(Y2), 40);
         public static readonly DependencyProperty Y3Property = RegisterY(nameof(Y3), 60);
         public static readonly DependencyProperty Y4Property = RegisterY(nameof(Y4), 80);
         public static readonly DependencyProperty Y5Property = RegisterY(nameof(Y5), 100);
+        public static readonly DependencyProperty Y6Property = RegisterY(nameof(Y6), 100);
 
         private static DependencyProperty RegisterY(string name, double dflt)
             => DependencyProperty.Register(name, typeof(double), typeof(MozaCurveEditor),
@@ -43,6 +52,81 @@ namespace MozaControls
         public double Y3 { get => (double)GetValue(Y3Property); set => SetValue(Y3Property, value); }
         public double Y4 { get => (double)GetValue(Y4Property); set => SetValue(Y4Property, value); }
         public double Y5 { get => (double)GetValue(Y5Property); set => SetValue(Y5Property, value); }
+        public double Y6 { get => (double)GetValue(Y6Property); set => SetValue(Y6Property, value); }
+
+        // -------- Configuration DPs --------
+
+        public static readonly DependencyProperty NodeCountProperty =
+            DependencyProperty.Register(nameof(NodeCount), typeof(int), typeof(MozaCurveEditor),
+                new FrameworkPropertyMetadata(5, FrameworkPropertyMetadataOptions.AffectsRender,
+                    (d, e) => ((MozaCurveEditor)d).Recompute()));
+        public int NodeCount { get => (int)GetValue(NodeCountProperty); set => SetValue(NodeCountProperty, value); }
+
+        public static readonly DependencyProperty YMinProperty =
+            DependencyProperty.Register(nameof(YMin), typeof(double), typeof(MozaCurveEditor),
+                new FrameworkPropertyMetadata(0.0, FrameworkPropertyMetadataOptions.AffectsRender,
+                    (d, e) => ((MozaCurveEditor)d).Recompute()));
+        public double YMin { get => (double)GetValue(YMinProperty); set => SetValue(YMinProperty, value); }
+
+        public static readonly DependencyProperty YMaxProperty =
+            DependencyProperty.Register(nameof(YMax), typeof(double), typeof(MozaCurveEditor),
+                new FrameworkPropertyMetadata(100.0, FrameworkPropertyMetadataOptions.AffectsRender,
+                    (d, e) => ((MozaCurveEditor)d).Recompute()));
+        public double YMax { get => (double)GetValue(YMaxProperty); set => SetValue(YMaxProperty, value); }
+
+        // Use double.NaN as the "unset" sentinel so the dashed reference line
+        // is only drawn when explicitly opted in (e.g. the 6-band EQ neutral
+        // marker at 100%). WPF DP defaults don't play well with nullables.
+        public static readonly DependencyProperty ReferenceLineYProperty =
+            DependencyProperty.Register(nameof(ReferenceLineY), typeof(double), typeof(MozaCurveEditor),
+                new FrameworkPropertyMetadata(double.NaN, FrameworkPropertyMetadataOptions.AffectsRender,
+                    (d, e) => ((MozaCurveEditor)d).Recompute()));
+        public double ReferenceLineY { get => (double)GetValue(ReferenceLineYProperty); set => SetValue(ReferenceLineYProperty, value); }
+
+        public static readonly DependencyProperty NodeXFractionsProperty =
+            DependencyProperty.Register(nameof(NodeXFractions), typeof(string), typeof(MozaCurveEditor),
+                new FrameworkPropertyMetadata(null, FrameworkPropertyMetadataOptions.AffectsRender,
+                    (d, e) => ((MozaCurveEditor)d).Recompute()));
+        public string? NodeXFractions { get => (string?)GetValue(NodeXFractionsProperty); set => SetValue(NodeXFractionsProperty, value); }
+
+        // When true (default — output-curve behaviour), the spline is anchored
+        // at the plot's lower-left corner so the visual line implies a
+        // (0,0) → first-node segment. When false (EQ behaviour), the spline
+        // starts AT the first node and ends AT the last node with both
+        // endpoints free-floating.
+        public static readonly DependencyProperty AnchorAtOriginProperty =
+            DependencyProperty.Register(nameof(AnchorAtOrigin), typeof(bool), typeof(MozaCurveEditor),
+                new FrameworkPropertyMetadata(true, FrameworkPropertyMetadataOptions.AffectsRender,
+                    (d, e) => ((MozaCurveEditor)d).Recompute()));
+        public bool AnchorAtOrigin { get => (bool)GetValue(AnchorAtOriginProperty); set => SetValue(AnchorAtOriginProperty, value); }
+
+        // Diagonal y=x reference line from plot lower-left to upper-right —
+        // the "nominal" / linear response. Shown on output curves to make it
+        // easy to read deviation. Off on the EQ where a y=x line is
+        // meaningless.
+        public static readonly DependencyProperty ShowIdentityLineProperty =
+            DependencyProperty.Register(nameof(ShowIdentityLine), typeof(bool), typeof(MozaCurveEditor),
+                new FrameworkPropertyMetadata(true, FrameworkPropertyMetadataOptions.AffectsRender,
+                    (d, e) => ((MozaCurveEditor)d).Recompute()));
+        public bool ShowIdentityLine { get => (bool)GetValue(ShowIdentityLineProperty); set => SetValue(ShowIdentityLineProperty, value); }
+
+        public static readonly DependencyProperty XLabelFractionsProperty =
+            DependencyProperty.Register(nameof(XLabelFractions), typeof(string), typeof(MozaCurveEditor),
+                new FrameworkPropertyMetadata("0.0,0.196,0.392,0.588,0.784,0.98", FrameworkPropertyMetadataOptions.AffectsRender,
+                    (d, e) => ((MozaCurveEditor)d).Recompute()));
+        public string XLabelFractions { get => (string)GetValue(XLabelFractionsProperty); set => SetValue(XLabelFractionsProperty, value); }
+
+        public static readonly DependencyProperty XAxisLabelsProperty =
+            DependencyProperty.Register(nameof(XAxisLabels), typeof(string), typeof(MozaCurveEditor),
+                new FrameworkPropertyMetadata("0,20,40,60,80,100", FrameworkPropertyMetadataOptions.AffectsRender,
+                    (d, e) => ((MozaCurveEditor)d).Recompute()));
+        public string XAxisLabels { get => (string)GetValue(XAxisLabelsProperty); set => SetValue(XAxisLabelsProperty, value); }
+
+        public static readonly DependencyProperty YAxisLabelsProperty =
+            DependencyProperty.Register(nameof(YAxisLabels), typeof(string), typeof(MozaCurveEditor),
+                new FrameworkPropertyMetadata("100,75,50,25,0", FrameworkPropertyMetadataOptions.AffectsRender,
+                    (d, e) => ((MozaCurveEditor)d).Recompute()));
+        public string YAxisLabels { get => (string)GetValue(YAxisLabelsProperty); set => SetValue(YAxisLabelsProperty, value); }
 
         public static readonly DependencyProperty AccentBrushProperty =
             DependencyProperty.Register(nameof(AccentBrush), typeof(Brush), typeof(MozaCurveEditor),
@@ -63,15 +147,58 @@ namespace MozaControls
         public static readonly DependencyProperty GridGeometryProperty = GridGeometryKey.DependencyProperty;
         public Geometry? GridGeometry => (Geometry?)GetValue(GridGeometryProperty);
 
-        // 5 node centre positions exposed individually for Canvas-positioned ellipses
-        private static readonly DependencyPropertyKey[] NodeXKeys = new DependencyPropertyKey[5];
-        private static readonly DependencyPropertyKey[] NodeYKeys = new DependencyPropertyKey[5];
-        public static readonly DependencyProperty[] NodeXProperties = new DependencyProperty[5];
-        public static readonly DependencyProperty[] NodeYProperties = new DependencyProperty[5];
+        private static readonly DependencyPropertyKey ReferenceLineGeometryKey =
+            DependencyProperty.RegisterReadOnly(nameof(ReferenceLineGeometry), typeof(Geometry),
+                typeof(MozaCurveEditor), new PropertyMetadata(null));
+        public static readonly DependencyProperty ReferenceLineGeometryProperty = ReferenceLineGeometryKey.DependencyProperty;
+        public Geometry? ReferenceLineGeometry => (Geometry?)GetValue(ReferenceLineGeometryProperty);
 
-        static void RegisterNodeProps()
+        private static readonly DependencyPropertyKey IdentityLineGeometryKey =
+            DependencyProperty.RegisterReadOnly(nameof(IdentityLineGeometry), typeof(Geometry),
+                typeof(MozaCurveEditor), new PropertyMetadata(null));
+        public static readonly DependencyProperty IdentityLineGeometryProperty = IdentityLineGeometryKey.DependencyProperty;
+        public Geometry? IdentityLineGeometry => (Geometry?)GetValue(IdentityLineGeometryProperty);
+
+        // 6 node centre positions exposed individually for Canvas-positioned ellipses
+        private static readonly DependencyPropertyKey[] NodeXKeys = new DependencyPropertyKey[6];
+        private static readonly DependencyPropertyKey[] NodeYKeys = new DependencyPropertyKey[6];
+        public static readonly DependencyProperty[] NodeXProperties = new DependencyProperty[6];
+        public static readonly DependencyProperty[] NodeYProperties = new DependencyProperty[6];
+
+        // 6 X-axis label Canvas.Left positions (already offset by -LabelWidth/2)
+        private static readonly DependencyPropertyKey[] TickLabelXKeys = new DependencyPropertyKey[6];
+        public static readonly DependencyProperty[] TickLabelXProperties = new DependencyProperty[6];
+
+        // 6 X-axis label visibility flags (controls whether the slot has a string)
+        private static readonly DependencyPropertyKey[] XAxisLabelKeys = new DependencyPropertyKey[6];
+        public static readonly DependencyProperty[] XAxisLabelProperties = new DependencyProperty[6];
+
+        // 6 in-circle value labels (stringified current Y value, integer)
+        private static readonly DependencyPropertyKey[] NodeValueKeys = new DependencyPropertyKey[6];
+        public static readonly DependencyProperty[] NodeValueProperties = new DependencyProperty[6];
+
+        // 5 Y-axis labels (text + Canvas.Top position)
+        private static readonly DependencyPropertyKey[] YAxisLabelKeys = new DependencyPropertyKey[5];
+        public static readonly DependencyProperty[] YAxisLabelProperties = new DependencyProperty[5];
+        private static readonly DependencyPropertyKey[] YLabelYKeys = new DependencyPropertyKey[5];
+        public static readonly DependencyProperty[] YLabelYProperties = new DependencyProperty[5];
+
+        // Single shared DPs for label container positioning
+        private static readonly DependencyPropertyKey XLabelCanvasTopKey =
+            DependencyProperty.RegisterReadOnly(nameof(XLabelCanvasTop), typeof(double),
+                typeof(MozaCurveEditor), new PropertyMetadata(0.0));
+        public static readonly DependencyProperty XLabelCanvasTopProperty = XLabelCanvasTopKey.DependencyProperty;
+        public double XLabelCanvasTop => (double)GetValue(XLabelCanvasTopProperty);
+
+        private static readonly DependencyPropertyKey YLabelCanvasLeftKey =
+            DependencyProperty.RegisterReadOnly(nameof(YLabelCanvasLeft), typeof(double),
+                typeof(MozaCurveEditor), new PropertyMetadata(0.0));
+        public static readonly DependencyProperty YLabelCanvasLeftProperty = YLabelCanvasLeftKey.DependencyProperty;
+        public double YLabelCanvasLeft => (double)GetValue(YLabelCanvasLeftProperty);
+
+        static void RegisterPerSlotProps()
         {
-            for (int i = 0; i < 5; i++)
+            for (int i = 0; i < 6; i++)
             {
                 NodeXKeys[i] = DependencyProperty.RegisterReadOnly($"Node{i + 1}X", typeof(double),
                     typeof(MozaCurveEditor), new PropertyMetadata(0.0));
@@ -79,14 +206,37 @@ namespace MozaControls
                 NodeYKeys[i] = DependencyProperty.RegisterReadOnly($"Node{i + 1}Y", typeof(double),
                     typeof(MozaCurveEditor), new PropertyMetadata(0.0));
                 NodeYProperties[i] = NodeYKeys[i].DependencyProperty;
+
+                TickLabelXKeys[i] = DependencyProperty.RegisterReadOnly($"TickLabel{i}X", typeof(double),
+                    typeof(MozaCurveEditor), new PropertyMetadata(0.0));
+                TickLabelXProperties[i] = TickLabelXKeys[i].DependencyProperty;
+
+                XAxisLabelKeys[i] = DependencyProperty.RegisterReadOnly($"XAxisLabel{i}", typeof(string),
+                    typeof(MozaCurveEditor), new PropertyMetadata(string.Empty));
+                XAxisLabelProperties[i] = XAxisLabelKeys[i].DependencyProperty;
+
+                NodeValueKeys[i] = DependencyProperty.RegisterReadOnly($"Node{i + 1}Value", typeof(string),
+                    typeof(MozaCurveEditor), new PropertyMetadata(string.Empty));
+                NodeValueProperties[i] = NodeValueKeys[i].DependencyProperty;
+            }
+            for (int i = 0; i < 5; i++)
+            {
+                YAxisLabelKeys[i] = DependencyProperty.RegisterReadOnly($"YAxisLabel{i}", typeof(string),
+                    typeof(MozaCurveEditor), new PropertyMetadata(string.Empty));
+                YAxisLabelProperties[i] = YAxisLabelKeys[i].DependencyProperty;
+
+                YLabelYKeys[i] = DependencyProperty.RegisterReadOnly($"YLabel{i}Y", typeof(double),
+                    typeof(MozaCurveEditor), new PropertyMetadata(0.0));
+                YLabelYProperties[i] = YLabelYKeys[i].DependencyProperty;
             }
         }
 
-        // Static initializer used so the static ctor + DefaultStyleKey + node prop registration can be ordered
+        // Static initializer used so RegisterPerSlotProps runs after the
+        // explicit DP fields above are initialised.
         private static readonly bool _staticInit = StaticInit();
         private static bool StaticInit()
         {
-            RegisterNodeProps();
+            RegisterPerSlotProps();
             return true;
         }
 
@@ -101,13 +251,66 @@ namespace MozaControls
         public double Node4Y => (double)GetValue(NodeYProperties[3]);
         public double Node5X => (double)GetValue(NodeXProperties[4]);
         public double Node5Y => (double)GetValue(NodeYProperties[4]);
+        public double Node6X => (double)GetValue(NodeXProperties[5]);
+        public double Node6Y => (double)GetValue(NodeYProperties[5]);
+
+        public double TickLabel0X => (double)GetValue(TickLabelXProperties[0]);
+        public double TickLabel1X => (double)GetValue(TickLabelXProperties[1]);
+        public double TickLabel2X => (double)GetValue(TickLabelXProperties[2]);
+        public double TickLabel3X => (double)GetValue(TickLabelXProperties[3]);
+        public double TickLabel4X => (double)GetValue(TickLabelXProperties[4]);
+        public double TickLabel5X => (double)GetValue(TickLabelXProperties[5]);
+
+        public string XAxisLabel0 => (string)GetValue(XAxisLabelProperties[0]);
+        public string XAxisLabel1 => (string)GetValue(XAxisLabelProperties[1]);
+        public string XAxisLabel2 => (string)GetValue(XAxisLabelProperties[2]);
+        public string XAxisLabel3 => (string)GetValue(XAxisLabelProperties[3]);
+        public string XAxisLabel4 => (string)GetValue(XAxisLabelProperties[4]);
+        public string XAxisLabel5 => (string)GetValue(XAxisLabelProperties[5]);
+
+        public string Node1Value => (string)GetValue(NodeValueProperties[0]);
+        public string Node2Value => (string)GetValue(NodeValueProperties[1]);
+        public string Node3Value => (string)GetValue(NodeValueProperties[2]);
+        public string Node4Value => (string)GetValue(NodeValueProperties[3]);
+        public string Node5Value => (string)GetValue(NodeValueProperties[4]);
+        public string Node6Value => (string)GetValue(NodeValueProperties[5]);
+
+        public string YAxisLabel0 => (string)GetValue(YAxisLabelProperties[0]);
+        public string YAxisLabel1 => (string)GetValue(YAxisLabelProperties[1]);
+        public string YAxisLabel2 => (string)GetValue(YAxisLabelProperties[2]);
+        public string YAxisLabel3 => (string)GetValue(YAxisLabelProperties[3]);
+        public string YAxisLabel4 => (string)GetValue(YAxisLabelProperties[4]);
+
+        public double YLabel0Y => (double)GetValue(YLabelYProperties[0]);
+        public double YLabel1Y => (double)GetValue(YLabelYProperties[1]);
+        public double YLabel2Y => (double)GetValue(YLabelYProperties[2]);
+        public double YLabel3Y => (double)GetValue(YLabelYProperties[3]);
+        public double YLabel4Y => (double)GetValue(YLabelYProperties[4]);
 
         // -------- Layout constants --------
         private const double PadLeft = 36;
         private const double PadRight = 14;
         private const double PadTop = 14;
         private const double PadBottom = 32;
-        private static readonly double[] Xs = { 20, 40, 60, 80, 100 };
+        private const double XLabelWidth = 32;      // Width of each X-axis label TextBlock
+        private const double YLabelWidth = 26;      // Width of each Y-axis label TextBlock
+        private const double XLabelTopOffset = 4;   // Pixels below plot bottom
+        // Draggable node diameter. Big enough to host the current value
+        // (e.g. "100", "400") at FontMono 11pt inside the circle while
+        // visually occluding the spline that passes through the centre.
+        // Keep in sync with the Border Width/Height in MozaCurveEditorTemplate.
+        private const double NodeSize = 28;
+        private const double NodeHalf = NodeSize / 2.0;
+
+        // The visual X axis is uniformly compressed by 0.98 so the 28-px node
+        // circle (plus its glow) on the last node clears the outer Border's
+        // rounded corner. Every node is shifted by the same scale factor —
+        // i.e. data X=k% lands at visual fraction (k/100) × 0.98 — so the
+        // axis stays linear and the LINEAR preset's dots all sit exactly on
+        // the y=x identity line below (which also uses 0.98 as its right
+        // endpoint). Hardware-side X breakpoints (20/40/60/80/100 — written
+        // by the curve presets) are unchanged; this is purely a visual shift.
+        private static readonly double[] Default5NodeFractions = { 0.196, 0.392, 0.588, 0.784, 0.98 };
 
         public override void OnApplyTemplate()
         {
@@ -166,12 +369,21 @@ namespace MozaControls
 
         private int FindClosestNode(Point p)
         {
+            int n = ClampedNodeCount();
             int best = -1;
-            double bestDist = 256; // require within 16 px
-            for (int i = 0; i < 5; i++)
+            // Visual radius is NodeHalf; pad outward so the user has some
+            // forgiveness when clicking near (but not exactly on) the circle.
+            double r = NodeHalf + 4.0;
+            double bestDist = r * r;
+            for (int i = 0; i < n; i++)
             {
-                double dx = p.X - (double)GetValue(NodeXProperties[i]);
-                double dy = p.Y - (double)GetValue(NodeYProperties[i]);
+                // NodeXProperties stores the Border's top-left — re-centre
+                // before measuring distance so the hit area is concentric
+                // with the visible circle.
+                double cx = (double)GetValue(NodeXProperties[i]) + NodeHalf;
+                double cy = (double)GetValue(NodeYProperties[i]) + NodeHalf;
+                double dx = p.X - cx;
+                double dy = p.Y - cy;
                 double d = dx * dx + dy * dy;
                 if (d < bestDist) { bestDist = d; best = i; }
             }
@@ -180,12 +392,11 @@ namespace MozaControls
 
         private void ApplyDrag(Point p)
         {
-            double w = _canvas?.ActualWidth ?? ActualWidth;
             double h = _canvas?.ActualHeight ?? ActualHeight;
             double plotH = Math.Max(1, h - PadTop - PadBottom);
-            // Invert: 0% at bottom, 100% at top.
             double y01 = (h - PadBottom - p.Y) / plotH;
-            double v = Math.Max(0, Math.Min(100, Math.Round(y01 * 100)));
+            double range = Math.Max(1, YMax - YMin);
+            double v = Math.Max(YMin, Math.Min(YMax, Math.Round(YMin + y01 * range)));
             SetY(_dragNode, v);
         }
 
@@ -198,10 +409,40 @@ namespace MozaControls
                 case 2: Y3 = v; break;
                 case 3: Y4 = v; break;
                 case 4: Y5 = v; break;
+                case 5: Y6 = v; break;
             }
         }
 
         // -------- Geometry recomputation --------
+
+        private int ClampedNodeCount()
+        {
+            int n = NodeCount;
+            if (n < 5) return 5;
+            if (n > 6) return 6;
+            return n;
+        }
+
+        private static double[] ParseFractions(string? csv, double[] fallback)
+        {
+            if (string.IsNullOrWhiteSpace(csv)) return fallback;
+            var parts = csv!.Split(',');
+            var result = new double[parts.Length];
+            for (int i = 0; i < parts.Length; i++)
+            {
+                if (!double.TryParse(parts[i].Trim(), NumberStyles.Float, CultureInfo.InvariantCulture, out result[i]))
+                    return fallback;
+            }
+            return result;
+        }
+
+        private static string[] ParseLabels(string? csv)
+        {
+            if (string.IsNullOrEmpty(csv)) return Array.Empty<string>();
+            var parts = csv!.Split(',');
+            for (int i = 0; i < parts.Length; i++) parts[i] = parts[i].Trim();
+            return parts;
+        }
 
         private void Recompute()
         {
@@ -211,34 +452,78 @@ namespace MozaControls
 
             double plotW = Math.Max(1, w - PadLeft - PadRight);
             double plotH = Math.Max(1, h - PadTop - PadBottom);
+            int nodeCount = ClampedNodeCount();
 
-            // Node positions in canvas coordinates
-            double[] ys = { Y1, Y2, Y3, Y4, Y5 };
-            var pts = new Point[5];
-            for (int i = 0; i < 5; i++)
+            // ---- Node X fractions / Y values ----
+            double[] nodeFracs = ParseFractions(NodeXFractions, Default5NodeFractions);
+            if (nodeFracs.Length < nodeCount)
             {
-                double x = PadLeft + Xs[i] / 100.0 * plotW;
-                double y = PadTop + (1 - Math.Max(0, Math.Min(100, ys[i])) / 100.0) * plotH;
+                // Caller didn't supply enough fractions; fall back to evenly
+                // spaced column centres so we render something sensible.
+                nodeFracs = new double[nodeCount];
+                for (int i = 0; i < nodeCount; i++) nodeFracs[i] = (2.0 * i + 1) / (2.0 * nodeCount);
+            }
+            double[] ys = { Y1, Y2, Y3, Y4, Y5, Y6 };
+            double range = Math.Max(1, YMax - YMin);
+
+            // ---- Node pixel positions + in-circle value strings ----
+            var pts = new Point[nodeCount];
+            for (int i = 0; i < nodeCount; i++)
+            {
+                double frac = Math.Max(0, Math.Min(1, nodeFracs[i]));
+                double x = PadLeft + frac * plotW;
+                double yClamped = Math.Max(YMin, Math.Min(YMax, ys[i]));
+                double y = PadTop + (1 - (yClamped - YMin) / range) * plotH;
                 pts[i] = new Point(x, y);
-                SetValue(NodeXKeys[i], x - 7); // ellipse top-left offset (centre at x)
-                SetValue(NodeYKeys[i], y - 7);
+                // Canvas.Left/Top are top-left corner — back the centre off by
+                // half the node diameter so the circle is centred on (x, y).
+                SetValue(NodeXKeys[i], x - NodeHalf);
+                SetValue(NodeYKeys[i], y - NodeHalf);
+                SetValue(NodeValueKeys[i], ((int)Math.Round(yClamped)).ToString(CultureInfo.InvariantCulture));
+            }
+            // Park unused node slots well off-canvas (also clears any stale
+            // value string the template might still display).
+            for (int i = nodeCount; i < 6; i++)
+            {
+                SetValue(NodeXKeys[i], -10000.0);
+                SetValue(NodeYKeys[i], -10000.0);
+                SetValue(NodeValueKeys[i], string.Empty);
             }
 
-            // Anchor at origin (0,0) so curve starts at lower-left
-            var startPt = new Point(PadLeft, PadTop + plotH);
-            var allPts = new Point[7];
-            allPts[0] = startPt;
-            for (int i = 0; i < 5; i++) allPts[i + 1] = pts[i];
-            allPts[6] = pts[4]; // duplicate endpoint for tangent
+            // ---- Catmull-Rom spline ----
+            // Two endpoint regimes:
+            //  • AnchorAtOrigin=true (output curves): prepend the plot's
+            //    lower-left corner so the visible line starts at (0,0).
+            //  • AnchorAtOrigin=false (EQ): duplicate the first node as its
+            //    own virtual "previous" neighbour and skip the first segment,
+            //    so the line starts AT the first node with a smooth tangent.
+            // The last node is always duplicated for the same tangent reason
+            // — the curve ends AT the last node, not at the right edge.
+            bool anchor = AnchorAtOrigin;
+            var allPts = new Point[nodeCount + 2];
+            allPts[0] = anchor ? new Point(PadLeft, PadTop + plotH) : pts[0];
+            for (int i = 0; i < nodeCount; i++) allPts[i + 1] = pts[i];
+            allPts[nodeCount + 1] = pts[nodeCount - 1];
 
-            var fig = new PathFigure { StartPoint = startPt, IsClosed = false, IsFilled = false };
-            for (int i = 0; i < allPts.Length - 1; i++)
+            var fig = new PathFigure
+            {
+                StartPoint = anchor ? allPts[0] : pts[0],
+                IsClosed = false,
+                IsFilled = false,
+            };
+            // Stop the loop one short of the duplicated endpoint: the final
+            // iteration that ran before added a zero-length last_node→last_node
+            // segment whose tangent control point sticks out past the final
+            // node, rendering as a tiny tail. The duplicate is still used as
+            // p3 for the LAST visible segment's tangent computation.
+            int firstSeg = anchor ? 0 : 1;
+            int lastSeg = nodeCount;
+            for (int i = firstSeg; i < lastSeg; i++)
             {
                 Point p0 = i == 0 ? allPts[0] : allPts[i - 1];
                 Point p1 = allPts[i];
                 Point p2 = allPts[i + 1];
                 Point p3 = i + 2 >= allPts.Length ? allPts[i + 1] : allPts[i + 2];
-                // Catmull-Rom → cubic Bezier conversion (tension=0.5)
                 Point c1 = new Point(p1.X + (p2.X - p0.X) / 6.0, p1.Y + (p2.Y - p0.Y) / 6.0);
                 Point c2 = new Point(p2.X - (p3.X - p1.X) / 6.0, p2.Y - (p3.Y - p1.Y) / 6.0);
                 fig.Segments.Add(new BezierSegment(c1, c2, p2, true));
@@ -248,7 +533,11 @@ namespace MozaControls
             geom.Freeze();
             SetValue(CurveGeometryKey, geom);
 
-            // Grid: dashed lines at 20/40/60/80/100 on both axes
+            // ---- Background grid (4 interior horizontal + 4 vertical lines) ----
+            // Vertical lines scale with the rightmost node fraction so they
+            // stay under the dots/labels when the X axis is compressed; the
+            // horizontal lines stay evenly spaced (Y axis is always linear).
+            double xScale = Math.Max(0, Math.Min(1, nodeFracs[nodeCount - 1]));
             var grid = new GeometryGroup();
             for (int i = 1; i <= 4; i++)
             {
@@ -256,13 +545,81 @@ namespace MozaControls
                 grid.Children.Add(new LineGeometry(
                     new Point(PadLeft, PadTop + frac * plotH),
                     new Point(PadLeft + plotW, PadTop + frac * plotH)));
+                double vFrac = frac * xScale;
                 grid.Children.Add(new LineGeometry(
-                    new Point(PadLeft + frac * plotW, PadTop),
-                    new Point(PadLeft + frac * plotW, PadTop + plotH)));
+                    new Point(PadLeft + vFrac * plotW, PadTop),
+                    new Point(PadLeft + vFrac * plotW, PadTop + plotH)));
             }
             grid.Freeze();
             SetValue(GridGeometryKey, grid);
-        }
 
+            // ---- Optional reference line (e.g. EQ neutral at 100%) ----
+            double refY = ReferenceLineY;
+            if (!double.IsNaN(refY) && refY >= YMin && refY <= YMax)
+            {
+                double yPix = PadTop + (1 - (refY - YMin) / range) * plotH;
+                var refLine = new LineGeometry(
+                    new Point(PadLeft, yPix),
+                    new Point(PadLeft + plotW, yPix));
+                refLine.Freeze();
+                SetValue(ReferenceLineGeometryKey, refLine);
+            }
+            else
+            {
+                SetValue(ReferenceLineGeometryKey, null);
+            }
+
+            // ---- Optional y=x identity / nominal line (output curves only) ----
+            // The line ends at the rightmost node's X (not the plot's right
+            // pixel edge) so the LINEAR preset's last dot lands exactly on
+            // the diagonal — the dots are pulled slightly inside the plot to
+            // avoid clipping, and the reference must follow them.
+            if (ShowIdentityLine)
+            {
+                double rightFrac = Math.Max(0, Math.Min(1, nodeFracs[nodeCount - 1]));
+                var ident = new LineGeometry(
+                    new Point(PadLeft, PadTop + plotH),
+                    new Point(PadLeft + rightFrac * plotW, PadTop));
+                ident.Freeze();
+                SetValue(IdentityLineGeometryKey, ident);
+            }
+            else
+            {
+                SetValue(IdentityLineGeometryKey, null);
+            }
+
+            // ---- X-axis labels ----
+            double[] labelFracs = ParseFractions(XLabelFractions, new[] { 0.0, 0.2, 0.4, 0.6, 0.8, 1.0 });
+            string[] xLabels = ParseLabels(XAxisLabels);
+            for (int i = 0; i < 6; i++)
+            {
+                if (i < labelFracs.Length && i < xLabels.Length && !string.IsNullOrEmpty(xLabels[i]))
+                {
+                    double frac = Math.Max(0, Math.Min(1, labelFracs[i]));
+                    double centerX = PadLeft + frac * plotW;
+                    SetValue(TickLabelXKeys[i], centerX - XLabelWidth / 2.0);
+                    SetValue(XAxisLabelKeys[i], xLabels[i]);
+                }
+                else
+                {
+                    // Park unused slots off-canvas so their TextBlocks don't
+                    // ghost-render even if they pick up a stray binding.
+                    SetValue(TickLabelXKeys[i], -1000.0);
+                    SetValue(XAxisLabelKeys[i], string.Empty);
+                }
+            }
+            SetValue(XLabelCanvasTopKey, PadTop + plotH + XLabelTopOffset);
+
+            // ---- Y-axis labels (always 5 evenly spaced, top=YMax to bottom=YMin) ----
+            string[] yLabels = ParseLabels(YAxisLabels);
+            for (int i = 0; i < 5; i++)
+            {
+                double frac = i / 4.0; // 0, 0.25, 0.5, 0.75, 1.0
+                double yPix = PadTop + frac * plotH - 8; // 8 ≈ half line-height
+                SetValue(YLabelYKeys[i], yPix);
+                SetValue(YAxisLabelKeys[i], i < yLabels.Length ? yLabels[i] : string.Empty);
+            }
+            SetValue(YLabelCanvasLeftKey, 6.0); // matches existing left padding of 6
+        }
     }
 }

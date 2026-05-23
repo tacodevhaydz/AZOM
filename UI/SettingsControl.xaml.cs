@@ -35,7 +35,7 @@ namespace MozaPlugin
         // Per-pedal Y-curve UI bindings, cached after InitializeComponent so
         // ApplyPedalCurvePreset can take an arrays pair instead of 10 args.
         private Slider[]? _throttleCurveSliders, _brakeCurveSliders, _clutchCurveSliders;
-        private TextBlock[]? _throttleCurveLabels, _brakeCurveLabels, _clutchCurveLabels;
+        private TextBox[]? _throttleCurveLabels, _brakeCurveLabels, _clutchCurveLabels;
         private readonly DateTime[] _buttonLastPressed = new DateTime[MozaData.MaxButtons];
 
         // 500ms-refresh change-detection caches. RefreshDisplay walks every
@@ -336,14 +336,14 @@ namespace MozaPlugin
             // Reverse expression: *2 (raw → display degrees)
             double rot = _data.Limit * 2.0;
             RotationSlider.Value = Clamp(rot, 90, 2700);
-            RotationValue.Text = $"{rot:F0}°";
+            SetValueText(RotationValue, $"{rot:F0}°");
 
             double ffb = _data.FfbStrength / 10.0;
             FfbStrengthSlider.Value = Clamp(ffb, 0, 100);
-            FfbStrengthValue.Text = $"{ffb:F0}%";
+            SetValueText(FfbStrengthValue, $"{ffb:F0}%");
 
             TorqueSlider.Value = Clamp(_data.Torque, 50, 100);
-            TorqueValue.Text = $"{_data.Torque}%";
+            SetValueText(TorqueValue, $"{_data.Torque}%");
 
             // Performance output (cmd 0x1E base = TempStrategy): 0 = Reserved, 1 = Full
             int perf = _data.TempStrategy;
@@ -354,16 +354,16 @@ namespace MozaPlugin
             if (gs < 0) gs = 0;
             if (gs > 5) gs = 5;
             GearshiftVibrationSlider.Value = gs;
-            GearshiftVibrationValue.Text = gs.ToString();
+            SetValueText(GearshiftVibrationValue, gs.ToString());
 
             double spd = _data.Speed / 10.0;
             SpeedSlider.Value = Clamp(spd, 0, 200);
-            SpeedValue.Text = $"{spd:F0}%";
+            SetValueText(SpeedValue, $"{spd:F0}%");
 
             SetSliderPercent(DamperSlider, DamperValue, _data.Damper / 10.0, 0, 100);
             SetSliderPercent(FrictionSlider, FrictionValue, _data.Friction / 10.0, 0, 100);
             InertiaSlider.Value = Clamp(_data.Inertia / 10.0, 100, 500);
-            InertiaValue.Text = $"{_data.Inertia / 10.0:F0}";
+            SetValueText(InertiaValue, $"{_data.Inertia / 10.0:F0}");
             SetSliderPercent(SpringSlider, SpringValue, _data.Spring / 10.0, 0, 100);
 
             FfbReverseCheck.IsChecked = _data.FfbReverse != 0;
@@ -374,18 +374,18 @@ namespace MozaPlugin
             SetSliderPercent(GameSpringSlider, GameSpringValue, _data.GameSpring / 2.55, 0, 100);
 
             SpeedDampingSlider.Value = Clamp(_data.SpeedDamping, 0, 100);
-            SpeedDampingValue.Text = $"{_data.SpeedDamping}%";
+            SetValueText(SpeedDampingValue, $"{_data.SpeedDamping}%");
             SpeedDampingPointSlider.Value = Clamp(_data.SpeedDampingPoint, 0, 400);
-            SpeedDampingPointValue.Text = $"{_data.SpeedDampingPoint} kph";
+            SetValueText(SpeedDampingPointValue, $"{_data.SpeedDampingPoint} kph");
 
             ProtectionCheck.IsChecked = _data.Protection != 0;
             NaturalInertiaSlider.Value = Clamp(_data.NaturalInertia, 100, 4000);
-            NaturalInertiaValue.Text = $"{_data.NaturalInertia}";
+            SetValueText(NaturalInertiaValue, $"{_data.NaturalInertia}");
 
             double stiff = (_data.SoftLimitStiffness / (400.0 / 9.0)) - 2.25 + 1.0;
             stiff = Math.Round(Clamp(stiff, 1, 10));
             SoftLimitStiffnessSlider.Value = stiff;
-            SoftLimitStiffnessValue.Text = $"{stiff:F0}";
+            SetValueText(SoftLimitStiffnessValue, $"{stiff:F0}");
             SoftLimitRetainCheck.IsChecked = _data.SoftLimitRetain != 0;
 
             StandbyCheck.IsChecked = _data.WorkMode != 0;
@@ -689,7 +689,7 @@ namespace MozaPlugin
             SetComboSafe(WheelPaddlesModeCombo, _data.WheelPaddlesMode);
             UpdatePaddlePanelVisibility(_data.WheelPaddlesMode);
             WheelClutchPointSlider.Value = Clamp(_data.WheelClutchPoint, 0, 100);
-            WheelClutchPointValue.Text = $"{_data.WheelClutchPoint}%";
+            SetValueText(WheelClutchPointValue, $"{_data.WheelClutchPoint}%");
 
             bool perKnob = _data.WheelKnobSignalModeSupported;
             KnobModeLegacyPanel.Visibility = perKnob ? Visibility.Collapsed : Visibility.Visible;
@@ -821,14 +821,14 @@ namespace MozaPlugin
             HandbrakeButtonStatus.Visibility = buttonMode ? Visibility.Visible : Visibility.Collapsed;
 
             HandbrakeThresholdSlider.Value = Clamp(_data.HandbrakeButtonThreshold, 0, 100);
-            HandbrakeThresholdValue.Text = $"{_data.HandbrakeButtonThreshold}%";
+            SetValueText(HandbrakeThresholdValue, $"{_data.HandbrakeButtonThreshold}%");
 
             HandbrakeDirectionCheck.IsChecked = _data.HandbrakeDirection != 0;
 
             HandbrakeMinSlider.Value = Clamp(_data.HandbrakeMin, 0, 100);
-            HandbrakeMinValue.Text = $"{_data.HandbrakeMin}%";
+            SetValueText(HandbrakeMinValue, $"{_data.HandbrakeMin}%");
             HandbrakeMaxSlider.Value = Clamp(_data.HandbrakeMax, 0, 100);
-            HandbrakeMaxValue.Text = $"{_data.HandbrakeMax}%";
+            SetValueText(HandbrakeMaxValue, $"{_data.HandbrakeMax}%");
 
             SetSliderRaw(HbY1Slider, HbY1Value, _data.HandbrakeCurve[0], 0, 100, "");
             SetSliderRaw(HbY2Slider, HbY2Value, _data.HandbrakeCurve[1], 0, 100, "");
@@ -896,7 +896,7 @@ namespace MozaPlugin
         // is mid-flight, round the new value, paint the label, commit it to the
         // data model + device, then queue a settings save. The per-slider commit
         // lambda captures which data field and which device command to use.
-        private void OnIntSliderChanged(double newValue, TextBlock label, string suffix,
+        private void OnIntSliderChanged(double newValue, TextBox label, string suffix,
             Action<int> commit)
         {
             if (_suppressEvents) return;
@@ -909,7 +909,7 @@ namespace MozaPlugin
         // Min/max pair sliders additionally clamp against the sibling bound and
         // bounce the slider back without re-firing this handler.
         private void OnMinMaxSliderChanged(double newValue, Slider self, int otherBound,
-            bool isMin, TextBlock label, Action<int> commit)
+            bool isMin, TextBox label, Action<int> commit)
         {
             if (_suppressEvents) return;
             int v = (int)Math.Round(newValue);
@@ -921,6 +921,103 @@ namespace MozaPlugin
             label.Text = $"{v}%";
             commit(v);
             _plugin.SaveSettings();
+        }
+
+        // ===== Slider value box (keyed entry) =====
+
+        // Enter inside KeyDown also moves focus off the box, which then fires
+        // LostFocus — we'd commit the same edit twice. Track the most-recent
+        // KeyDown-commit so the immediately-following LostFocus is a no-op.
+        private TextBox? _suppressLostFocusFor;
+
+        // GotFocus strips the unit suffix (e.g. "100%" → "100", "120 kph" →
+        // "120") and selects the digits so the user can only edit the numeric
+        // portion. The canonical "{value}{suffix}" form is restored by the
+        // slider's ValueChanged handler on commit.
+        private void SliderValueBox_GotFocus(object sender, RoutedEventArgs e)
+        {
+            if (sender is not TextBox box) return;
+            string raw = box.Text ?? string.Empty;
+            string numeric = ExtractNumericPrefix(raw);
+            if (numeric != raw) box.Text = numeric;
+            box.SelectAll();
+        }
+
+        // Pressing Enter while focused on a SliderValueEditBox parses the
+        // user's input and pushes it back to the paired slider — which then
+        // fires its existing ValueChanged → On*SliderChanged → hardware-write
+        // pipeline. Tag is bound (ElementName) to the matching Slider element.
+        private void SliderValueBox_KeyDown(object sender, KeyEventArgs e)
+        {
+            if (e.Key != Key.Enter && e.Key != Key.Return) return;
+            var box = sender as TextBox;
+            ApplyEditedSliderValue(box);
+            _suppressLostFocusFor = box;
+            // Move focus off so the user sees the canonical re-formatted text.
+            box?.MoveFocus(new TraversalRequest(FocusNavigationDirection.Next));
+            e.Handled = true;
+        }
+
+        private void SliderValueBox_LostFocus(object sender, RoutedEventArgs e)
+        {
+            var box = sender as TextBox;
+            if (box != null && box == _suppressLostFocusFor)
+            {
+                _suppressLostFocusFor = null;
+                return;
+            }
+            ApplyEditedSliderValue(box);
+        }
+
+        private void ApplyEditedSliderValue(TextBox? box)
+        {
+            if (box == null || box.Tag is not Slider slider) return;
+
+            string token = ExtractNumericPrefix(box.Text ?? string.Empty);
+            bool parsed = double.TryParse(token, System.Globalization.NumberStyles.Float,
+                                          System.Globalization.CultureInfo.InvariantCulture,
+                                          out double parsedValue);
+
+            // Target slider value:
+            //   • Valid input → clamped + integer-snapped parse result.
+            //   • Empty / invalid input → keep the current slider value; the
+            //     bump dance below still fires ValueChanged so the canonical
+            //     text gets repainted.
+            double target = parsed
+                ? Math.Round(Math.Max(slider.Minimum, Math.Min(slider.Maximum, parsedValue)))
+                : slider.Value;
+
+            // ValueChanged is only raised when Value actually changes. If our
+            // target matches the current value (same number re-typed or invalid
+            // input), force a fire via a tiny bump-and-snap with the event
+            // suppressor active for the bumped value — the snap-back assignment
+            // then runs the handler and repaints the canonical text.
+            if (slider.Value == target)
+            {
+                double offset = (target < slider.Maximum) ? target + 0.0001 : target - 0.0001;
+                using (_suppressor.Begin()) slider.Value = offset;
+            }
+            slider.Value = target;
+        }
+
+        // Leading numeric token — accepts an optional sign and a single
+        // decimal point, so "120 kph", "100%", " -3.5°", "1100" all parse to
+        // the digit portion. Empty string when no numeric prefix is present.
+        private static string ExtractNumericPrefix(string raw)
+        {
+            int i = 0, n = raw.Length;
+            while (i < n && char.IsWhiteSpace(raw[i])) i++;
+            int start = i;
+            if (i < n && (raw[i] == '-' || raw[i] == '+')) i++;
+            bool sawDot = false;
+            while (i < n)
+            {
+                char c = raw[i];
+                if (char.IsDigit(c)) { i++; continue; }
+                if (c == '.' && !sawDot) { sawDot = true; i++; continue; }
+                break;
+            }
+            return (i > start) ? raw.Substring(start, i - start) : string.Empty;
         }
 
         // ===== FFB Equalizer handlers =====
@@ -936,6 +1033,32 @@ namespace MozaPlugin
         private void Eq4Slider_ValueChanged(object s, RoutedPropertyChangedEventArgs<double> e) => OnIntSliderChanged(e.NewValue, Eq4Value, "%", v => { _data.Equalizer4 = v; _plugin.WriteIfBaseConnected(EqCommands[3], v); });
         private void Eq5Slider_ValueChanged(object s, RoutedPropertyChangedEventArgs<double> e) => OnIntSliderChanged(e.NewValue, Eq5Value, "%", v => { _data.Equalizer5 = v; _plugin.WriteIfBaseConnected(EqCommands[4], v); });
         private void Eq6Slider_ValueChanged(object s, RoutedPropertyChangedEventArgs<double> e) => OnIntSliderChanged(e.NewValue, Eq6Value, "%", v => { _data.Equalizer6 = v; _plugin.WriteIfBaseConnected(EqCommands[5], v); });
+
+        // Presets for the 6-band FFB equalizer. Bands are 10/15/25/40/60/100 Hz.
+        private static readonly int[][] FfbEqPresets =
+        {
+            new[] { 100, 100, 100, 100, 100, 100 }, // FLAT (neutral, 100% gain on every band)
+            new[] { 100, 100,  90,  70,  40,  20 }, // FALLOFF (steep cut from 40 Hz upward)
+        };
+
+        private void ApplyFfbEqPreset(int[] p)
+        {
+            using (_suppressor.Begin())
+            {
+                Eq1Slider.Value = p[0]; Eq1Value.Text = $"{p[0]}%"; _data.Equalizer1 = p[0];
+                Eq2Slider.Value = p[1]; Eq2Value.Text = $"{p[1]}%"; _data.Equalizer2 = p[1];
+                Eq3Slider.Value = p[2]; Eq3Value.Text = $"{p[2]}%"; _data.Equalizer3 = p[2];
+                Eq4Slider.Value = p[3]; Eq4Value.Text = $"{p[3]}%"; _data.Equalizer4 = p[3];
+                Eq5Slider.Value = p[4]; Eq5Value.Text = $"{p[4]}%"; _data.Equalizer5 = p[4];
+                Eq6Slider.Value = p[5]; Eq6Value.Text = $"{p[5]}%"; _data.Equalizer6 = p[5];
+            }
+            for (int i = 0; i < 6; i++)
+                _plugin.WriteIfBaseConnected(EqCommands[i], p[i]);
+            _plugin.SaveSettings();
+        }
+
+        private void FfbEqPreset_Flat(object s, RoutedEventArgs e)    => ApplyFfbEqPreset(FfbEqPresets[0]);
+        private void FfbEqPreset_Falloff(object s, RoutedEventArgs e) => ApplyFfbEqPreset(FfbEqPresets[1]);
 
         // ===== FFB Curve handlers =====
 
@@ -1070,9 +1193,9 @@ namespace MozaPlugin
 
             ThrottleDirCheck.IsChecked = _data.PedalsThrottleDir != 0;
             ThrottleMinSlider.Value = Clamp(_data.PedalsThrottleMin, 0, 100);
-            ThrottleMinValue.Text = $"{_data.PedalsThrottleMin}%";
+            SetValueText(ThrottleMinValue, $"{_data.PedalsThrottleMin}%");
             ThrottleMaxSlider.Value = Clamp(_data.PedalsThrottleMax, 0, 100);
-            ThrottleMaxValue.Text = $"{_data.PedalsThrottleMax}%";
+            SetValueText(ThrottleMaxValue, $"{_data.PedalsThrottleMax}%");
             SetSliderRaw(ThrottleY1Slider, ThrottleY1Value, _data.PedalsThrottleCurve[0], 0, 100, "");
             SetSliderRaw(ThrottleY2Slider, ThrottleY2Value, _data.PedalsThrottleCurve[1], 0, 100, "");
             SetSliderRaw(ThrottleY3Slider, ThrottleY3Value, _data.PedalsThrottleCurve[2], 0, 100, "");
@@ -1081,11 +1204,11 @@ namespace MozaPlugin
 
             BrakeDirCheck.IsChecked = _data.PedalsBrakeDir != 0;
             BrakeMinSlider.Value = Clamp(_data.PedalsBrakeMin, 0, 100);
-            BrakeMinValue.Text = $"{_data.PedalsBrakeMin}%";
+            SetValueText(BrakeMinValue, $"{_data.PedalsBrakeMin}%");
             BrakeMaxSlider.Value = Clamp(_data.PedalsBrakeMax, 0, 100);
-            BrakeMaxValue.Text = $"{_data.PedalsBrakeMax}%";
+            SetValueText(BrakeMaxValue, $"{_data.PedalsBrakeMax}%");
             BrakeAngleRatioSlider.Value = Clamp(_data.PedalsBrakeAngleRatio, 0, 100);
-            BrakeAngleRatioValue.Text = $"{_data.PedalsBrakeAngleRatio}%";
+            SetValueText(BrakeAngleRatioValue, $"{_data.PedalsBrakeAngleRatio}%");
             SetSliderRaw(BrakeY1Slider, BrakeY1Value, _data.PedalsBrakeCurve[0], 0, 100, "");
             SetSliderRaw(BrakeY2Slider, BrakeY2Value, _data.PedalsBrakeCurve[1], 0, 100, "");
             SetSliderRaw(BrakeY3Slider, BrakeY3Value, _data.PedalsBrakeCurve[2], 0, 100, "");
@@ -1094,9 +1217,9 @@ namespace MozaPlugin
 
             ClutchDirCheck.IsChecked = _data.PedalsClutchDir != 0;
             ClutchMinSlider.Value = Clamp(_data.PedalsClutchMin, 0, 100);
-            ClutchMinValue.Text = $"{_data.PedalsClutchMin}%";
+            SetValueText(ClutchMinValue, $"{_data.PedalsClutchMin}%");
             ClutchMaxSlider.Value = Clamp(_data.PedalsClutchMax, 0, 100);
-            ClutchMaxValue.Text = $"{_data.PedalsClutchMax}%";
+            SetValueText(ClutchMaxValue, $"{_data.PedalsClutchMax}%");
             SetSliderRaw(ClutchY1Slider, ClutchY1Value, _data.PedalsClutchCurve[0], 0, 100, "");
             SetSliderRaw(ClutchY2Slider, ClutchY2Value, _data.PedalsClutchCurve[1], 0, 100, "");
             SetSliderRaw(ClutchY3Slider, ClutchY3Value, _data.PedalsClutchCurve[2], 0, 100, "");
@@ -1136,7 +1259,7 @@ namespace MozaPlugin
         }
 
         private void ApplyPedalCurvePreset(string pedal, int[] curve, int[] dataArray,
-            Slider[] sliders, TextBlock[] labels)
+            Slider[] sliders, TextBox[] labels)
         {
             using (_suppressor.Begin())
             {
@@ -1331,6 +1454,35 @@ namespace MozaPlugin
         }
 
         // ── Diagnostics tab ─────────────────────────────────────────────
+        // ===== About-tab link handlers =====
+
+        private const string AboutGitHubUrl  = "https://github.com/giantorth/moza-simhub-plugin";
+        private const string AboutDiscordUrl = "https://discord.gg/J4enw43e62";
+        private const string AboutSponsorUrl = "https://github.com/sponsors/giantorth";
+
+        private void AboutGitHubButton_Click(object sender, System.Windows.RoutedEventArgs e)  => OpenExternalUrl(AboutGitHubUrl);
+        private void AboutDiscordButton_Click(object sender, System.Windows.RoutedEventArgs e) => OpenExternalUrl(AboutDiscordUrl);
+        private void AboutSponsorButton_Click(object sender, System.Windows.RoutedEventArgs e) => OpenExternalUrl(AboutSponsorUrl);
+
+        // Open a URL via the OS shell. On Windows this hits the default
+        // browser; under Wine/Proton it routes through winebrowser which
+        // forwards to the host's xdg-open.
+        private static void OpenExternalUrl(string url)
+        {
+            try
+            {
+                System.Diagnostics.Process.Start(new System.Diagnostics.ProcessStartInfo
+                {
+                    FileName = url,
+                    UseShellExecute = true,
+                });
+            }
+            catch (Exception ex)
+            {
+                MozaLog.Warn($"[About] failed to open {url}: {ex.Message}");
+            }
+        }
+
         // Live state TextBlocks were removed (the FULL DIAGNOSTIC REPORT expander
         // shows the same content); BuildDiagnosticsDump now sources every line
         // straight from DiagnosticsTextBuilder.
@@ -1856,13 +2008,13 @@ namespace MozaPlugin
                 SetAb9Slider(Ab9MaxTorqueSlider,         Ab9MaxTorqueValue,         ab9.MaxTorqueLimit);
                 SetAb9Slider(Ab9EngineVibIntensitySlider, Ab9EngineVibIntensityValue, ab9.EngineVibrationIntensity);
                 Ab9EngineVibFreqSlider.Value = ab9.EngineVibrationFrequency;
-                Ab9EngineVibFreqValue.Text = ab9.EngineVibrationFrequency + " Hz";
+                SetValueText(Ab9EngineVibFreqValue, ab9.EngineVibrationFrequency + " Hz");
                 SetAb9Slider(Ab9GearShiftVibSlider,       Ab9GearShiftVibValue,       ab9.GearShiftVibrationIntensity);
             }
             _ab9UiSeeded = true;
         }
 
-        private void SetAb9Slider(Slider slider, TextBlock value, byte v)
+        private void SetAb9Slider(Slider slider, TextBox value, byte v)
         {
             slider.Value = v;
             value.Text = v.ToString();
@@ -1917,7 +2069,7 @@ namespace MozaPlugin
         private void Ab9MaxTorqueSlider_ValueChanged(object s, RoutedPropertyChangedEventArgs<double> e)
             => HandleAb9SliderChanged(Ab9MaxTorqueSlider, Ab9MaxTorqueValue, Ab9Slider.MaxTorqueLimit, e.NewValue);
 
-        private void HandleAb9SliderChanged(Slider slider, TextBlock label, Ab9Slider which, double newValue)
+        private void HandleAb9SliderChanged(Slider slider, TextBox label, Ab9Slider which, double newValue)
         {
             if (_suppressEvents) return;
             byte v = (byte)Math.Max(0, Math.Min(100, (int)Math.Round(newValue)));
@@ -2060,21 +2212,21 @@ namespace MozaPlugin
                 SetMBoosterRoleCombo(s.Role);
                 MBoosterAbsEnable.IsChecked       = s.Abs?.Enabled       ?? false;
                 MBoosterAbsIntensity.Value        = s.Abs?.IntensityPct  ?? 50;
-                MBoosterAbsIntensityValue.Text    = (s.Abs?.IntensityPct ?? 50).ToString();
+                SetValueText(MBoosterAbsIntensityValue, (s.Abs?.IntensityPct ?? 50).ToString());
                 MBoosterLockupEnable.IsChecked    = s.Lockup?.Enabled       ?? false;
                 MBoosterLockupIntensity.Value     = s.Lockup?.IntensityPct  ?? 50;
-                MBoosterLockupIntensityValue.Text = (s.Lockup?.IntensityPct ?? 50).ToString();
+                SetValueText(MBoosterLockupIntensityValue, (s.Lockup?.IntensityPct ?? 50).ToString());
                 MBoosterThresholdEnable.IsChecked    = s.Threshold?.Enabled       ?? false;
                 MBoosterThresholdIntensity.Value     = s.Threshold?.IntensityPct  ?? 50;
-                MBoosterThresholdIntensityValue.Text = (s.Threshold?.IntensityPct ?? 50).ToString();
+                SetValueText(MBoosterThresholdIntensityValue, (s.Threshold?.IntensityPct ?? 50).ToString());
                 MBoosterEngineEnable.IsChecked    = s.Engine?.Enabled       ?? false;
                 MBoosterEngineIntensity.Value     = s.Engine?.IntensityPct  ?? 50;
-                MBoosterEngineIntensityValue.Text = (s.Engine?.IntensityPct ?? 50).ToString();
+                SetValueText(MBoosterEngineIntensityValue, (s.Engine?.IntensityPct ?? 50).ToString());
                 MBoosterDirCheck.IsChecked = (s.Direction == 1);
                 MBoosterMinSlider.Value = s.Min >= 0 ? s.Min : 0;
-                MBoosterMinValue.Text = MBoosterMinSlider.Value.ToString("F0");
+                SetValueText(MBoosterMinValue, MBoosterMinSlider.Value.ToString("F0"));
                 MBoosterMaxSlider.Value = s.Max >= 0 ? s.Max : 0;
-                MBoosterMaxValue.Text = MBoosterMaxSlider.Value.ToString("F0");
+                SetValueText(MBoosterMaxValue, MBoosterMaxSlider.Value.ToString("F0"));
             }
             _mboosterUiSeeded = true;
         }

@@ -13,9 +13,10 @@ namespace MozaPlugin
 {
     // Partial-class continuation of SettingsControl that holds wiring for the
     // 2026-05 redesign (new top bar, status bar, SectionCard-wrapped sections,
-    // SteeringArc / TempCell live header, MozaCurveEditor + MozaEqualizer,
-    // bandwidth sparklines, Full Diagnostic Report expander). Lives in a
-    // separate file to keep the existing SettingsControl.xaml.cs untouched.
+    // SteeringArc / TempCell live header, MozaCurveEditor (5-node curves and
+    // 6-band EQ), bandwidth sparklines, Full Diagnostic Report expander).
+    // Lives in a separate file to keep the existing SettingsControl.xaml.cs
+    // untouched.
     public partial class SettingsControl
     {
         // ---- Bandwidth sparkline state (60 samples = 30s @ 500ms tick) ----
@@ -30,6 +31,15 @@ namespace MozaPlugin
         private long _bwPeakOut;
         private long _bwSessionIn;
         private long _bwSessionOut;
+
+        // ---- Temperature-graph sample buffers. Same window length as the
+        // bandwidth sparkline so the two share the timescale on screen. The
+        // main refresh timer (RefreshBaseTab → UpdateRedesignLiveDisplays)
+        // pushes samples at the same 500-ms cadence. ----
+        private const int TemperatureSamples = 60;
+        private readonly ObservableCollection<double> _mcuTempSamples = new ObservableCollection<double>();
+        private readonly ObservableCollection<double> _mosfetTempSamples = new ObservableCollection<double>();
+        private readonly ObservableCollection<double> _motorTempSamples = new ObservableCollection<double>();
 
         /// <summary>
         /// Called from the existing constructor after InitializeComponent runs.
@@ -66,8 +76,10 @@ namespace MozaPlugin
                     ClutchY4Slider, ClutchY5Slider
                 });
 
-                // Two-way bindings: Equalizer.BandN ↔ EqNSlider.Value
-                BindEqualizerToSliders(FfbEqualizer, new[]
+                // Two-way bindings: CurveEditor.YN ↔ EqNSlider.Value (FFB EQ
+                // now uses the same line-graph control as the output curves,
+                // configured for 6 nodes / 0-400 range via MozaEqualizerLineStyle).
+                BindEditorToSliders(FfbEqualizer, new[]
                 {
                     Eq1Slider, Eq2Slider, Eq3Slider, Eq4Slider, Eq5Slider, Eq6Slider
                 });
@@ -79,6 +91,20 @@ namespace MozaPlugin
                 {
                     _bwInSamples.Add(0);
                     _bwOutSamples.Add(0);
+                }
+
+                // Temperature graph: prime the three rolling buffers + bind.
+                if (TemperatureGraphViz != null)
+                {
+                    TemperatureGraphViz.McuSamples    = _mcuTempSamples;
+                    TemperatureGraphViz.MosfetSamples = _mosfetTempSamples;
+                    TemperatureGraphViz.MotorSamples  = _motorTempSamples;
+                }
+                for (int i = 0; i < TemperatureSamples; i++)
+                {
+                    _mcuTempSamples.Add(0);
+                    _mosfetTempSamples.Add(0);
+                    _motorTempSamples.Add(0);
                 }
 
                 _bandwidthTimer = new DispatcherTimer { Interval = TimeSpan.FromMilliseconds(500) };
@@ -102,6 +128,10 @@ namespace MozaPlugin
 
                 // Status bar removed — its content was placeholder strings.
 
+                // About-tab version line — same source as the diagnostics dump.
+                if (AboutVersionText != null)
+                    AboutVersionText.Text = "v" + DiagnosticsTextBuilder.GetPluginVersion();
+
                 // Connection pill initial sync
                 UpdateConnectionPill();
 
@@ -114,14 +144,18 @@ namespace MozaPlugin
             }
         }
 
+        // Two-way bind a MozaCurveEditor's YN dependency properties to the
+        // corresponding slider's Value. Accepts 5 sliders (curve mode) or 6
+        // (equalizer mode); the 6th slot binds to Y6Property.
         private void BindEditorToSliders(MozaControls.MozaCurveEditor editor, Slider[] sliders)
         {
             if (editor == null || sliders == null || sliders.Length < 5) return;
             var ys = new[] {
                 MozaControls.MozaCurveEditor.Y1Property, MozaControls.MozaCurveEditor.Y2Property,
                 MozaControls.MozaCurveEditor.Y3Property, MozaControls.MozaCurveEditor.Y4Property,
-                MozaControls.MozaCurveEditor.Y5Property };
-            for (int i = 0; i < 5; i++)
+                MozaControls.MozaCurveEditor.Y5Property, MozaControls.MozaCurveEditor.Y6Property };
+            int n = Math.Min(sliders.Length, ys.Length);
+            for (int i = 0; i < n; i++)
             {
                 var b = new Binding(nameof(Slider.Value))
                 {
@@ -133,25 +167,6 @@ namespace MozaPlugin
             }
         }
 
-        private void BindEqualizerToSliders(MozaControls.MozaEqualizer eq, Slider[] sliders)
-        {
-            if (eq == null || sliders == null || sliders.Length < 6) return;
-            var bands = new[] {
-                MozaControls.MozaEqualizer.Band1Property, MozaControls.MozaEqualizer.Band2Property,
-                MozaControls.MozaEqualizer.Band3Property, MozaControls.MozaEqualizer.Band4Property,
-                MozaControls.MozaEqualizer.Band5Property, MozaControls.MozaEqualizer.Band6Property };
-            for (int i = 0; i < 6; i++)
-            {
-                var b = new Binding(nameof(Slider.Value))
-                {
-                    Source = sliders[i],
-                    Mode = BindingMode.TwoWay,
-                    UpdateSourceTrigger = UpdateSourceTrigger.PropertyChanged,
-                };
-                BindingOperations.SetBinding(eq, bands[i], b);
-            }
-        }
-
         // Called from existing RefreshBaseTab — pushes new live-display values.
         private void UpdateRedesignLiveDisplays()
         {
@@ -159,24 +174,26 @@ namespace MozaPlugin
             {
                 bool has = _data.IsBaseConnected;
                 string unit = _data.UseFahrenheit ? "°F" : "°C";
-                if (McuTempCell != null)
-                {
-                    McuTempCell.HasValue = has;
-                    McuTempCell.Unit = unit;
-                    McuTempCell.Value = has ? ConvertTemp(_data.McuTemp) : 0;
-                }
-                if (MosfetTempCell != null)
-                {
-                    MosfetTempCell.HasValue = has;
-                    MosfetTempCell.Unit = unit;
-                    MosfetTempCell.Value = has ? ConvertTemp(_data.MosfetTemp) : 0;
-                }
-                if (MotorTempCell != null)
-                {
-                    MotorTempCell.HasValue = has;
-                    MotorTempCell.Unit = unit;
-                    MotorTempCell.Value = has ? ConvertTemp(_data.MotorTemp) : 0;
-                }
+
+                // Convert each raw temp to the display unit, push onto the
+                // rolling buffer, and update the legend text. When the base is
+                // disconnected the legend reads "—" but the buffer still slides
+                // (zeros) so the graph trails off to baseline.
+                double mcu = has ? ConvertTemp(_data.McuTemp) : 0;
+                double mosfet = has ? ConvertTemp(_data.MosfetTemp) : 0;
+                double motor = has ? ConvertTemp(_data.MotorTemp) : 0;
+
+                PushTemperatureSample(_mcuTempSamples, mcu);
+                PushTemperatureSample(_mosfetTempSamples, mosfet);
+                PushTemperatureSample(_motorTempSamples, motor);
+
+                if (McuTempLegend != null)
+                    McuTempLegend.Text = has ? $"{mcu:F0} {unit}" : "—";
+                if (MosfetTempLegend != null)
+                    MosfetTempLegend.Text = has ? $"{mosfet:F0} {unit}" : "—";
+                if (MotorTempLegend != null)
+                    MotorTempLegend.Text = has ? $"{motor:F0} {unit}" : "—";
+
                 if (SteeringArcViz != null)
                 {
                     double maxA = _data.MaxAngle > 0 ? _data.MaxAngle : 540;
@@ -188,6 +205,12 @@ namespace MozaPlugin
             {
                 MozaLog.Debug($"[Redesign] live update failed: {ex.Message}");
             }
+        }
+
+        private static void PushTemperatureSample(ObservableCollection<double> series, double value)
+        {
+            series.Add(value);
+            while (series.Count > TemperatureSamples) series.RemoveAt(0);
         }
 
         // Called from existing OnSteeringAngleTick — every ~33ms.

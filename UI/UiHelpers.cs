@@ -31,18 +31,29 @@ namespace MozaPlugin.UI
                 selector.SelectedIndex = index;
         }
 
+        /// <summary>Write the canonical text into a slider's value box, but
+        /// don't trample what the user is currently typing — focused boxes own
+        /// their content until the user commits via Enter or LostFocus. The
+        /// 500-ms refresh tick used to clobber keystrokes here without this
+        /// guard.</summary>
+        public static void SetValueText(TextBox box, string text)
+        {
+            if (box.IsKeyboardFocused) return;
+            box.Text = text;
+        }
+
         /// <summary>Set slider value (clamped) and paint a "%" label.</summary>
-        public static void SetSliderPercent(Slider slider, TextBlock label, double value, double min, double max)
+        public static void SetSliderPercent(Slider slider, TextBox label, double value, double min, double max)
         {
             slider.Value = Clamp(value, min, max);
-            label.Text = $"{value:F0}%";
+            SetValueText(label, $"{value:F0}%");
         }
 
         /// <summary>Set slider value (clamped) and paint a label with optional suffix.</summary>
-        public static void SetSliderRaw(Slider slider, TextBlock label, int value, int min, int max, string suffix)
+        public static void SetSliderRaw(Slider slider, TextBox label, int value, int min, int max, string suffix)
         {
             slider.Value = Clamp(value, min, max);
-            label.Text = $"{value}{suffix}";
+            SetValueText(label, $"{value}{suffix}");
         }
     }
 }

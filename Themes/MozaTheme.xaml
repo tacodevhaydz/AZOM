@@ -1,6 +1,7 @@
 <ResourceDictionary xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
                     xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
-                    xmlns:sys="clr-namespace:System;assembly=mscorlib">
+                    xmlns:sys="clr-namespace:System;assembly=mscorlib"
+                    xmlns:controls="clr-namespace:MozaControls">
 
     <!-- ============================================================ -->
     <!-- Color tokens                                                  -->
@@ -21,8 +22,8 @@
 
     <!-- Text -->
     <Color x:Key="TextColor">#FFE8EDF0</Color>
-    <Color x:Key="TextDimColor">#FF8993A0</Color>
-    <Color x:Key="TextFaintColor">#FF555C64</Color>
+    <Color x:Key="TextDimColor">#FFBBC4CC</Color>
+    <Color x:Key="TextFaintColor">#FF8E97A0</Color>
     <Color x:Key="TextMutedColor">#FF6A737C</Color>
 
     <!-- Accents -->
@@ -77,18 +78,25 @@
         <GradientStop Color="#FF1A7044" Offset="0"/>
         <GradientStop Color="{StaticResource GreenColor}" Offset="1"/>
     </LinearGradientBrush>
-    <LinearGradientBrush x:Key="EqBarFillBrush" StartPoint="0,1" EndPoint="0,0">
-        <GradientStop Color="#FF00667A" Offset="0"/>
-        <GradientStop Color="{StaticResource CyanColor}" Offset="1"/>
-    </LinearGradientBrush>
-    <LinearGradientBrush x:Key="EqBarBoostFillBrush" StartPoint="0,1" EndPoint="0,0">
-        <GradientStop Color="#FF1A7044" Offset="0"/>
-        <GradientStop Color="{StaticResource GreenColor}" Offset="1"/>
-    </LinearGradientBrush>
-    <LinearGradientBrush x:Key="TempMeterBrush" StartPoint="0,0" EndPoint="1,0">
-        <GradientStop Color="{StaticResource GreenColor}" Offset="0"/>
-        <GradientStop Color="{StaticResource AmberColor}" Offset="0.6"/>
+    <LinearGradientBrush x:Key="RedFillBrush" StartPoint="0,0" EndPoint="1,0">
+        <GradientStop Color="#FF8A1E2A" Offset="0"/>
         <GradientStop Color="{StaticResource RedColor}" Offset="1"/>
+    </LinearGradientBrush>
+    <!-- TemperatureGraph per-series under-glow gradients. Each fades from the
+         line's accent color at the top to fully transparent at the bottom, so
+         the area under each trace gets a soft halo (mirrors the bandwidth
+         sparkline's fill effect). -->
+    <LinearGradientBrush x:Key="McuFillBrush" StartPoint="0,0" EndPoint="0,1">
+        <GradientStop Color="{StaticResource CyanColor}" Offset="0"/>
+        <GradientStop Color="#0000E5FF" Offset="1"/>
+    </LinearGradientBrush>
+    <LinearGradientBrush x:Key="MosfetFillBrush" StartPoint="0,0" EndPoint="0,1">
+        <GradientStop Color="{StaticResource AmberColor}" Offset="0"/>
+        <GradientStop Color="#00FFB84D" Offset="1"/>
+    </LinearGradientBrush>
+    <LinearGradientBrush x:Key="MotorFillBrush" StartPoint="0,0" EndPoint="0,1">
+        <GradientStop Color="{StaticResource RedColor}" Offset="0"/>
+        <GradientStop Color="#00FF5566" Offset="1"/>
     </LinearGradientBrush>
     <LinearGradientBrush x:Key="TopBarBrush" StartPoint="0,0" EndPoint="0,1">
         <GradientStop Color="#20000000" Offset="0"/>
@@ -98,6 +106,22 @@
         <GradientStop Color="#3300E5FF" Offset="0"/>
         <GradientStop Color="#1000E5FF" Offset="1"/>
     </LinearGradientBrush>
+    <!-- Per-accent variants of the soft "active" background used by the
+         SegmentedControl selected item + the OffOnToggle ON pill. The
+         template references these via DynamicResource so a parent container
+         can override `ToggleOnBrush` (and the matching text color) to recolor
+         every active button-selector inside it without touching the template. -->
+    <LinearGradientBrush x:Key="GreenToggleOnBrush" StartPoint="0,0" EndPoint="0,1">
+        <GradientStop Color="#3339FF88" Offset="0"/>
+        <GradientStop Color="#1039FF88" Offset="1"/>
+    </LinearGradientBrush>
+    <LinearGradientBrush x:Key="RedToggleOnBrush" StartPoint="0,0" EndPoint="0,1">
+        <GradientStop Color="#33FF5566" Offset="0"/>
+        <GradientStop Color="#10FF5566" Offset="1"/>
+    </LinearGradientBrush>
+    <!-- Foreground tint for the active button — defaults to cyan; per-section
+         resource overrides redirect this to GreenBrush or RedBrush. -->
+    <SolidColorBrush x:Key="ToggleOnTextBrush" Color="{StaticResource CyanColor}"/>
     <LinearGradientBrush x:Key="BannerBrush" StartPoint="0,0" EndPoint="0,1">
         <GradientStop Color="#18FFB84D" Offset="0"/>
         <GradientStop Color="#08FFB84D" Offset="1"/>
@@ -130,7 +154,7 @@
 
     <Style x:Key="SectionTitleText" TargetType="TextBlock">
         <Setter Property="FontFamily" Value="{StaticResource FontUi}"/>
-        <Setter Property="FontSize" Value="13"/>
+        <Setter Property="FontSize" Value="14"/>
         <Setter Property="FontWeight" Value="SemiBold"/>
         <Setter Property="Foreground" Value="{StaticResource TextBrush}"/>
         <Setter Property="TextOptions.TextFormattingMode" Value="Display"/>
@@ -138,7 +162,7 @@
 
     <Style x:Key="SectionSubText" TargetType="TextBlock">
         <Setter Property="FontFamily" Value="{StaticResource FontMono}"/>
-        <Setter Property="FontSize" Value="12"/>
+        <Setter Property="FontSize" Value="13"/>
         <Setter Property="Foreground" Value="{StaticResource TextFaintBrush}"/>
         <Setter Property="VerticalAlignment" Value="Center"/>
         <Setter Property="Margin" Value="8,0,0,0"/>
@@ -146,14 +170,14 @@
 
     <Style x:Key="LabelText" TargetType="TextBlock">
         <Setter Property="FontFamily" Value="{StaticResource FontUi}"/>
-        <Setter Property="FontSize" Value="13.5"/>
+        <Setter Property="FontSize" Value="14.5"/>
         <Setter Property="Foreground" Value="{StaticResource TextBrush}"/>
         <Setter Property="VerticalAlignment" Value="Center"/>
     </Style>
 
     <Style x:Key="ValueText" TargetType="TextBlock">
         <Setter Property="FontFamily" Value="{StaticResource FontMono}"/>
-        <Setter Property="FontSize" Value="14"/>
+        <Setter Property="FontSize" Value="15"/>
         <Setter Property="Foreground" Value="{StaticResource CyanBrush}"/>
         <Setter Property="TextAlignment" Value="Right"/>
         <Setter Property="VerticalAlignment" Value="Center"/>
@@ -164,14 +188,14 @@
 
     <Style x:Key="MutedHintText" TargetType="TextBlock">
         <Setter Property="FontFamily" Value="{StaticResource FontUi}"/>
-        <Setter Property="FontSize" Value="11"/>
+        <Setter Property="FontSize" Value="13"/>
         <Setter Property="Foreground" Value="{StaticResource TextFaintBrush}"/>
         <Setter Property="VerticalAlignment" Value="Center"/>
     </Style>
 
     <Style x:Key="KvKeyText" TargetType="TextBlock">
         <Setter Property="FontFamily" Value="{StaticResource FontMono}"/>
-        <Setter Property="FontSize" Value="12"/>
+        <Setter Property="FontSize" Value="13"/>
         <Setter Property="Foreground" Value="{StaticResource TextFaintBrush}"/>
         <Setter Property="VerticalAlignment" Value="Center"/>
         <Setter Property="Margin" Value="0,0,6,0"/>
@@ -179,7 +203,7 @@
 
     <Style x:Key="KvValueText" TargetType="TextBlock">
         <Setter Property="FontFamily" Value="{StaticResource FontMono}"/>
-        <Setter Property="FontSize" Value="12"/>
+        <Setter Property="FontSize" Value="13"/>
         <Setter Property="Foreground" Value="{StaticResource TextDimBrush}"/>
         <Setter Property="VerticalAlignment" Value="Center"/>
         <Setter Property="Margin" Value="0,0,18,0"/>
@@ -187,7 +211,7 @@
 
     <Style x:Key="StatusBarText" TargetType="TextBlock">
         <Setter Property="FontFamily" Value="{StaticResource FontMono}"/>
-        <Setter Property="FontSize" Value="11"/>
+        <Setter Property="FontSize" Value="12"/>
         <Setter Property="Foreground" Value="{StaticResource TextFaintBrush}"/>
         <Setter Property="VerticalAlignment" Value="Center"/>
         <Setter Property="Margin" Value="0,0,18,0"/>
@@ -199,7 +223,7 @@
 
     <Style x:Key="MozaButton" TargetType="Button">
         <Setter Property="FontFamily" Value="{StaticResource FontUi}"/>
-        <Setter Property="FontSize" Value="12"/>
+        <Setter Property="FontSize" Value="13"/>
         <Setter Property="FontWeight" Value="SemiBold"/>
         <Setter Property="Foreground" Value="{StaticResource TextBrush}"/>
         <Setter Property="Background" Value="{StaticResource BgCardBrush}"/>
@@ -268,14 +292,18 @@
     <!-- ============================================================ -->
 
     <Style x:Key="MozaThumbStyle" TargetType="Thumb">
-        <Setter Property="Width" Value="4"/>
-        <Setter Property="Height" Value="18"/>
+        <Setter Property="Width" Value="14"/>
+        <Setter Property="Height" Value="22"/>
         <Setter Property="Cursor" Value="Hand"/>
+        <!-- Default thumb tint. Per-slider overrides set Foreground on the
+             enclosing Slider, which the Slider template passes down to the
+             thumb so the fill cascades. -->
+        <Setter Property="Foreground" Value="{StaticResource CyanBrush}"/>
         <Setter Property="Template">
             <Setter.Value>
                 <ControlTemplate TargetType="Thumb">
-                    <Rectangle Fill="{StaticResource CyanBrush}" RadiusX="1" RadiusY="1"
-                               Width="4" Height="18"
+                    <Rectangle Fill="{TemplateBinding Foreground}" RadiusX="3" RadiusY="3"
+                               Width="14" Height="22"
                                Effect="{StaticResource CyanGlowEffect}"/>
                 </ControlTemplate>
             </Setter.Value>
@@ -318,12 +346,13 @@
                                Value="{TemplateBinding Value}">
                             <Track.DecreaseRepeatButton>
                                 <RepeatButton Style="{StaticResource MozaRepeatButtonStyle}"
-                                              Command="Slider.DecreaseLarge">
+                                              Command="Slider.DecreaseLarge"
+                                              Foreground="{TemplateBinding Foreground}">
                                     <RepeatButton.Template>
                                         <ControlTemplate TargetType="RepeatButton">
                                             <Border Background="{TemplateBinding Background}">
                                                 <Rectangle Margin="0,8" Height="6"
-                                                           Fill="{StaticResource CyanFillBrush}"
+                                                           Fill="{TemplateBinding Foreground}"
                                                            RadiusX="2" RadiusY="2"
                                                            Effect="{StaticResource CyanGlowSoftEffect}"
                                                            VerticalAlignment="Center"
@@ -338,7 +367,8 @@
                                               Command="Slider.IncreaseLarge"/>
                             </Track.IncreaseRepeatButton>
                             <Track.Thumb>
-                                <Thumb Style="{StaticResource MozaThumbStyle}"/>
+                                <Thumb Style="{StaticResource MozaThumbStyle}"
+                                       Foreground="{TemplateBinding Foreground}"/>
                             </Track.Thumb>
                         </Track>
                     </Grid>
@@ -677,6 +707,192 @@
         <Setter Property="CornerRadius" Value="4"/>
         <Setter Property="Padding" Value="14,10"/>
         <Setter Property="Margin" Value="0,0,0,14"/>
+    </Style>
+
+    <!-- ============================================================ -->
+    <!-- MozaCurveEditor shared template + MozaEqualizerLineStyle      -->
+    <!-- ============================================================ -->
+    <!-- Lives here (not in Generic.xaml) so SettingsControl.xaml can      -->
+    <!-- reach MozaEqualizerLineStyle via its merged-dictionary lookup.    -->
+    <!-- Generic.xaml also merges this file, so its default unkeyed       -->
+    <!-- MozaCurveEditor style can reference the template by key.         -->
+
+    <ControlTemplate x:Key="MozaCurveEditorTemplate" TargetType="{x:Type controls:MozaCurveEditor}">
+        <Border Background="{StaticResource BgDeepBrush}"
+                BorderBrush="{StaticResource BorderBrush}"
+                BorderThickness="1"
+                CornerRadius="6"
+                Padding="0"
+                SnapsToDevicePixels="True">
+            <Canvas x:Name="PART_Canvas" Background="Transparent" ClipToBounds="True">
+                <!-- Grid lines -->
+                <Path Stroke="{StaticResource BorderBrush}" StrokeThickness="1"
+                      StrokeDashArray="2 3" Opacity="0.6"
+                      Data="{Binding GridGeometry, RelativeSource={RelativeSource TemplatedParent}}"/>
+                <!-- Optional y=x nominal/linear-response reference (output curves only).
+                     Same visual style as the horizontal reference line below. -->
+                <Path Stroke="{StaticResource AmberBrush}" StrokeThickness="1.5"
+                      StrokeDashArray="4 3" Opacity="0.85"
+                      Data="{Binding IdentityLineGeometry, RelativeSource={RelativeSource TemplatedParent}}"/>
+                <!-- Optional horizontal reference line (dashed amber, e.g. EQ 100% neutral) -->
+                <Path Stroke="{StaticResource AmberBrush}" StrokeThickness="1.5"
+                      StrokeDashArray="4 3" Opacity="0.85"
+                      Data="{Binding ReferenceLineGeometry, RelativeSource={RelativeSource TemplatedParent}}"/>
+                <!-- Curve -->
+                <Path Stroke="{TemplateBinding AccentBrush}" StrokeThickness="2.5"
+                      StrokeStartLineCap="Round" StrokeEndLineCap="Round"
+                      Fill="{x:Null}"
+                      Effect="{StaticResource CyanGlowSoftEffect}"
+                      Data="{Binding CurveGeometry, RelativeSource={RelativeSource TemplatedParent}}"/>
+                <!-- Up to 6 draggable nodes. Each Border is a circle (CornerRadius=
+                     half of Width/Height) with an opaque background so the spline
+                     visually terminates at the circle edge, and a centred TextBlock
+                     showing the current Y value. Unused slots are parked off-canvas
+                     by Recompute(). Width/Height/CornerRadius must stay in sync with
+                     MozaCurveEditor.NodeSize. -->
+                <Border Width="28" Height="28" CornerRadius="14"
+                        Background="#FF1E242A"
+                        BorderBrush="{TemplateBinding AccentBrush}" BorderThickness="2"
+                        Effect="{StaticResource CyanGlowSoftEffect}"
+                        Canvas.Left="{Binding Node1X, RelativeSource={RelativeSource TemplatedParent}}"
+                        Canvas.Top="{Binding Node1Y, RelativeSource={RelativeSource TemplatedParent}}">
+                    <TextBlock Text="{Binding Node1Value, RelativeSource={RelativeSource TemplatedParent}}"
+                               FontFamily="{StaticResource FontMono}" FontSize="11"
+                               Foreground="{TemplateBinding AccentBrush}"
+                               HorizontalAlignment="Center" VerticalAlignment="Center"
+                               IsHitTestVisible="False"/>
+                </Border>
+                <Border Width="28" Height="28" CornerRadius="14"
+                        Background="#FF1E242A"
+                        BorderBrush="{TemplateBinding AccentBrush}" BorderThickness="2"
+                        Effect="{StaticResource CyanGlowSoftEffect}"
+                        Canvas.Left="{Binding Node2X, RelativeSource={RelativeSource TemplatedParent}}"
+                        Canvas.Top="{Binding Node2Y, RelativeSource={RelativeSource TemplatedParent}}">
+                    <TextBlock Text="{Binding Node2Value, RelativeSource={RelativeSource TemplatedParent}}"
+                               FontFamily="{StaticResource FontMono}" FontSize="11"
+                               Foreground="{TemplateBinding AccentBrush}"
+                               HorizontalAlignment="Center" VerticalAlignment="Center"
+                               IsHitTestVisible="False"/>
+                </Border>
+                <Border Width="28" Height="28" CornerRadius="14"
+                        Background="#FF1E242A"
+                        BorderBrush="{TemplateBinding AccentBrush}" BorderThickness="2"
+                        Effect="{StaticResource CyanGlowSoftEffect}"
+                        Canvas.Left="{Binding Node3X, RelativeSource={RelativeSource TemplatedParent}}"
+                        Canvas.Top="{Binding Node3Y, RelativeSource={RelativeSource TemplatedParent}}">
+                    <TextBlock Text="{Binding Node3Value, RelativeSource={RelativeSource TemplatedParent}}"
+                               FontFamily="{StaticResource FontMono}" FontSize="11"
+                               Foreground="{TemplateBinding AccentBrush}"
+                               HorizontalAlignment="Center" VerticalAlignment="Center"
+                               IsHitTestVisible="False"/>
+                </Border>
+                <Border Width="28" Height="28" CornerRadius="14"
+                        Background="#FF1E242A"
+                        BorderBrush="{TemplateBinding AccentBrush}" BorderThickness="2"
+                        Effect="{StaticResource CyanGlowSoftEffect}"
+                        Canvas.Left="{Binding Node4X, RelativeSource={RelativeSource TemplatedParent}}"
+                        Canvas.Top="{Binding Node4Y, RelativeSource={RelativeSource TemplatedParent}}">
+                    <TextBlock Text="{Binding Node4Value, RelativeSource={RelativeSource TemplatedParent}}"
+                               FontFamily="{StaticResource FontMono}" FontSize="11"
+                               Foreground="{TemplateBinding AccentBrush}"
+                               HorizontalAlignment="Center" VerticalAlignment="Center"
+                               IsHitTestVisible="False"/>
+                </Border>
+                <Border Width="28" Height="28" CornerRadius="14"
+                        Background="#FF1E242A"
+                        BorderBrush="{TemplateBinding AccentBrush}" BorderThickness="2"
+                        Effect="{StaticResource CyanGlowSoftEffect}"
+                        Canvas.Left="{Binding Node5X, RelativeSource={RelativeSource TemplatedParent}}"
+                        Canvas.Top="{Binding Node5Y, RelativeSource={RelativeSource TemplatedParent}}">
+                    <TextBlock Text="{Binding Node5Value, RelativeSource={RelativeSource TemplatedParent}}"
+                               FontFamily="{StaticResource FontMono}" FontSize="11"
+                               Foreground="{TemplateBinding AccentBrush}"
+                               HorizontalAlignment="Center" VerticalAlignment="Center"
+                               IsHitTestVisible="False"/>
+                </Border>
+                <Border Width="28" Height="28" CornerRadius="14"
+                        Background="#FF1E242A"
+                        BorderBrush="{TemplateBinding AccentBrush}" BorderThickness="2"
+                        Effect="{StaticResource CyanGlowSoftEffect}"
+                        Canvas.Left="{Binding Node6X, RelativeSource={RelativeSource TemplatedParent}}"
+                        Canvas.Top="{Binding Node6Y, RelativeSource={RelativeSource TemplatedParent}}">
+                    <TextBlock Text="{Binding Node6Value, RelativeSource={RelativeSource TemplatedParent}}"
+                               FontFamily="{StaticResource FontMono}" FontSize="11"
+                               Foreground="{TemplateBinding AccentBrush}"
+                               HorizontalAlignment="Center" VerticalAlignment="Center"
+                               IsHitTestVisible="False"/>
+                </Border>
+
+                <!-- Y-axis labels -->
+                <TextBlock Text="{Binding YAxisLabel0, RelativeSource={RelativeSource TemplatedParent}}"
+                           Style="{StaticResource KvKeyText}" TextAlignment="Right" Width="26"
+                           Canvas.Left="{Binding YLabelCanvasLeft, RelativeSource={RelativeSource TemplatedParent}}"
+                           Canvas.Top="{Binding YLabel0Y, RelativeSource={RelativeSource TemplatedParent}}"/>
+                <TextBlock Text="{Binding YAxisLabel1, RelativeSource={RelativeSource TemplatedParent}}"
+                           Style="{StaticResource KvKeyText}" TextAlignment="Right" Width="26"
+                           Canvas.Left="{Binding YLabelCanvasLeft, RelativeSource={RelativeSource TemplatedParent}}"
+                           Canvas.Top="{Binding YLabel1Y, RelativeSource={RelativeSource TemplatedParent}}"/>
+                <TextBlock Text="{Binding YAxisLabel2, RelativeSource={RelativeSource TemplatedParent}}"
+                           Style="{StaticResource KvKeyText}" TextAlignment="Right" Width="26"
+                           Canvas.Left="{Binding YLabelCanvasLeft, RelativeSource={RelativeSource TemplatedParent}}"
+                           Canvas.Top="{Binding YLabel2Y, RelativeSource={RelativeSource TemplatedParent}}"/>
+                <TextBlock Text="{Binding YAxisLabel3, RelativeSource={RelativeSource TemplatedParent}}"
+                           Style="{StaticResource KvKeyText}" TextAlignment="Right" Width="26"
+                           Canvas.Left="{Binding YLabelCanvasLeft, RelativeSource={RelativeSource TemplatedParent}}"
+                           Canvas.Top="{Binding YLabel3Y, RelativeSource={RelativeSource TemplatedParent}}"/>
+                <TextBlock Text="{Binding YAxisLabel4, RelativeSource={RelativeSource TemplatedParent}}"
+                           Style="{StaticResource KvKeyText}" TextAlignment="Right" Width="26"
+                           Canvas.Left="{Binding YLabelCanvasLeft, RelativeSource={RelativeSource TemplatedParent}}"
+                           Canvas.Top="{Binding YLabel4Y, RelativeSource={RelativeSource TemplatedParent}}"/>
+
+                <!-- X-axis labels -->
+                <TextBlock Text="{Binding XAxisLabel0, RelativeSource={RelativeSource TemplatedParent}}"
+                           Style="{StaticResource KvKeyText}" TextAlignment="Center" Width="32"
+                           Canvas.Left="{Binding TickLabel0X, RelativeSource={RelativeSource TemplatedParent}}"
+                           Canvas.Top="{Binding XLabelCanvasTop, RelativeSource={RelativeSource TemplatedParent}}"/>
+                <TextBlock Text="{Binding XAxisLabel1, RelativeSource={RelativeSource TemplatedParent}}"
+                           Style="{StaticResource KvKeyText}" TextAlignment="Center" Width="32"
+                           Canvas.Left="{Binding TickLabel1X, RelativeSource={RelativeSource TemplatedParent}}"
+                           Canvas.Top="{Binding XLabelCanvasTop, RelativeSource={RelativeSource TemplatedParent}}"/>
+                <TextBlock Text="{Binding XAxisLabel2, RelativeSource={RelativeSource TemplatedParent}}"
+                           Style="{StaticResource KvKeyText}" TextAlignment="Center" Width="32"
+                           Canvas.Left="{Binding TickLabel2X, RelativeSource={RelativeSource TemplatedParent}}"
+                           Canvas.Top="{Binding XLabelCanvasTop, RelativeSource={RelativeSource TemplatedParent}}"/>
+                <TextBlock Text="{Binding XAxisLabel3, RelativeSource={RelativeSource TemplatedParent}}"
+                           Style="{StaticResource KvKeyText}" TextAlignment="Center" Width="32"
+                           Canvas.Left="{Binding TickLabel3X, RelativeSource={RelativeSource TemplatedParent}}"
+                           Canvas.Top="{Binding XLabelCanvasTop, RelativeSource={RelativeSource TemplatedParent}}"/>
+                <TextBlock Text="{Binding XAxisLabel4, RelativeSource={RelativeSource TemplatedParent}}"
+                           Style="{StaticResource KvKeyText}" TextAlignment="Center" Width="32"
+                           Canvas.Left="{Binding TickLabel4X, RelativeSource={RelativeSource TemplatedParent}}"
+                           Canvas.Top="{Binding XLabelCanvasTop, RelativeSource={RelativeSource TemplatedParent}}"/>
+                <TextBlock Text="{Binding XAxisLabel5, RelativeSource={RelativeSource TemplatedParent}}"
+                           Style="{StaticResource KvKeyText}" TextAlignment="Center" Width="32"
+                           Canvas.Left="{Binding TickLabel5X, RelativeSource={RelativeSource TemplatedParent}}"
+                           Canvas.Top="{Binding XLabelCanvasTop, RelativeSource={RelativeSource TemplatedParent}}"/>
+            </Canvas>
+        </Border>
+    </ControlTemplate>
+
+    <Style x:Key="MozaEqualizerLineStyle" TargetType="{x:Type controls:MozaCurveEditor}">
+        <Setter Property="MinHeight" Value="200"/>
+        <Setter Property="AccentBrush" Value="{StaticResource CyanBrush}"/>
+        <Setter Property="NodeCount" Value="6"/>
+        <Setter Property="YMin" Value="0"/>
+        <Setter Property="YMax" Value="400"/>
+        <Setter Property="ReferenceLineY" Value="100"/>
+        <Setter Property="AnchorAtOrigin" Value="False"/>
+        <Setter Property="ShowIdentityLine" Value="False"/>
+        <!-- 6 bands spread 0.04..0.96 of plot width (gap 0.184). Wider than
+             column-centres while keeping a small ~4% margin from each edge
+             (enough that the 28-px node circles don't clip the rounded
+             Border corners). End fraction matches the output curve's 0.96
+             for a balanced look between the two graphs. -->
+        <Setter Property="NodeXFractions"  Value="0.04,0.224,0.408,0.592,0.776,0.96"/>
+        <Setter Property="XLabelFractions" Value="0.04,0.224,0.408,0.592,0.776,0.96"/>
+        <Setter Property="XAxisLabels"     Value="10Hz,15Hz,25Hz,40Hz,60Hz,100Hz"/>
+        <Setter Property="YAxisLabels"     Value="400,300,200,100,0"/>
+        <Setter Property="Template" Value="{StaticResource MozaCurveEditorTemplate}"/>
     </Style>
 
 </ResourceDictionary>

@@ -35,9 +35,95 @@
                 <Setter Property="FontFamily" Value="{StaticResource FontMono}"/>
                 <Setter Property="Foreground" Value="{StaticResource CyanBrush}"/>
             </Style>
+            <!-- Editable slider value: looks like the read-only SliderValue text
+                 while idle, reveals editable chrome on hover/focus. KeyDown +
+                 LostFocus handlers in code-behind parse the typed value and
+                 push it back to the paired Slider via Tag (which is bound to
+                 the slider with ElementName). GotFocus strips the unit suffix
+                 (e.g. "100%" → "100") and selects the digits so the user can
+                 only edit the numeric portion. -->
+            <Style x:Key="SliderValueEditBox" TargetType="TextBox">
+                <EventSetter Event="GotFocus" Handler="SliderValueBox_GotFocus"/>
+                <Setter Property="VerticalAlignment" Value="Center"/>
+                <Setter Property="VerticalContentAlignment" Value="Center"/>
+                <!-- Wide enough for the longest canonical value in any box —
+                     "120 kph" (Trigger Speed) at FontMono 14pt is the tightest fit. -->
+                <Setter Property="Width" Value="78"/>
+                <Setter Property="Height" Value="26"/>
+                <Setter Property="Padding" Value="6,2"/>
+                <Setter Property="Margin" Value="8,0,0,0"/>
+                <Setter Property="TextAlignment" Value="Right"/>
+                <Setter Property="FontFamily" Value="{StaticResource FontMono}"/>
+                <Setter Property="FontSize" Value="14"/>
+                <Setter Property="Foreground" Value="{StaticResource CyanBrush}"/>
+                <Setter Property="Background" Value="Transparent"/>
+                <Setter Property="BorderBrush" Value="Transparent"/>
+                <Setter Property="BorderThickness" Value="1"/>
+                <Setter Property="CaretBrush" Value="{StaticResource CyanBrush}"/>
+                <Setter Property="SelectionBrush" Value="{StaticResource CyanBrush}"/>
+                <Setter Property="SelectionOpacity" Value="0.35"/>
+                <Setter Property="Cursor" Value="IBeam"/>
+                <Setter Property="Template">
+                    <Setter.Value>
+                        <ControlTemplate TargetType="TextBox">
+                            <Border x:Name="Bd"
+                                    Background="{TemplateBinding Background}"
+                                    BorderBrush="{TemplateBinding BorderBrush}"
+                                    BorderThickness="{TemplateBinding BorderThickness}"
+                                    CornerRadius="3"
+                                    SnapsToDevicePixels="True">
+                                <ScrollViewer x:Name="PART_ContentHost"
+                                              Margin="{TemplateBinding Padding}"
+                                              VerticalAlignment="Center"
+                                              Focusable="False"
+                                              HorizontalScrollBarVisibility="Hidden"
+                                              VerticalScrollBarVisibility="Hidden"/>
+                            </Border>
+                            <ControlTemplate.Triggers>
+                                <Trigger Property="IsMouseOver" Value="True">
+                                    <Setter TargetName="Bd" Property="Background" Value="{StaticResource BgCard2Brush}"/>
+                                    <Setter TargetName="Bd" Property="BorderBrush" Value="{StaticResource BorderBrush}"/>
+                                </Trigger>
+                                <Trigger Property="IsKeyboardFocused" Value="True">
+                                    <Setter TargetName="Bd" Property="Background" Value="{StaticResource BgCardBrush}"/>
+                                    <Setter TargetName="Bd" Property="BorderBrush" Value="{StaticResource BorderGlowBrush}"/>
+                                </Trigger>
+                            </ControlTemplate.Triggers>
+                        </ControlTemplate>
+                    </Setter.Value>
+                </Setter>
+            </Style>
+            <!-- Slider rows live in 3-column Grids (Auto label / * slider / Auto value)
+                 so the slider stretches to fill its container's remaining width
+                 instead of sitting at a fixed 300 px and leaving a gap on the
+                 right edge of the card. -->
             <Style x:Key="SettingSlider" TargetType="Slider" BasedOn="{StaticResource MozaSlider}">
-                <Setter Property="Width" Value="300"/>
+                <Setter Property="HorizontalAlignment" Value="Stretch"/>
+                <Setter Property="MinWidth" Value="160"/>
                 <Setter Property="IsSnapToTickEnabled" Value="True"/>
+            </Style>
+            <!-- Accent-colored slider variants. Foreground cascades to the
+                 thumb + decrease-track fill via TemplateBindings in MozaSlider,
+                 so a slider on the throttle (green) or brake/handbrake (red)
+                 cards picks up the matching accent without a fresh template. -->
+            <Style x:Key="GreenSettingSlider" TargetType="Slider" BasedOn="{StaticResource SettingSlider}">
+                <Setter Property="Foreground" Value="{StaticResource GreenFillBrush}"/>
+            </Style>
+            <Style x:Key="RedSettingSlider" TargetType="Slider" BasedOn="{StaticResource SettingSlider}">
+                <Setter Property="Foreground" Value="{StaticResource RedFillBrush}"/>
+            </Style>
+            <!-- Value-box accent variants. Only Foreground / caret / selection
+                 brush change; everything else (hover, focus, padding) inherits
+                 from SliderValueEditBox. -->
+            <Style x:Key="GreenSliderValueEditBox" TargetType="TextBox" BasedOn="{StaticResource SliderValueEditBox}">
+                <Setter Property="Foreground" Value="{StaticResource GreenBrush}"/>
+                <Setter Property="CaretBrush" Value="{StaticResource GreenBrush}"/>
+                <Setter Property="SelectionBrush" Value="{StaticResource GreenBrush}"/>
+            </Style>
+            <Style x:Key="RedSliderValueEditBox" TargetType="TextBox" BasedOn="{StaticResource SliderValueEditBox}">
+                <Setter Property="Foreground" Value="{StaticResource RedBrush}"/>
+                <Setter Property="CaretBrush" Value="{StaticResource RedBrush}"/>
+                <Setter Property="SelectionBrush" Value="{StaticResource RedBrush}"/>
             </Style>
             <Style x:Key="TempValue" TargetType="TextBlock">
                 <Setter Property="FontFamily" Value="{StaticResource FontMono}"/>
@@ -199,7 +285,7 @@
 
             <!-- ==================== BASE TAB ==================== -->
             <TabItem Header="Base">
-                <ScrollViewer VerticalScrollBarVisibility="Auto" Padding="22,18,22,40">
+                <ScrollViewer VerticalScrollBarVisibility="Auto" Padding="22,18,22,8">
                     <StackPanel>
                         <!-- Live telemetry header -->
                         <Border Background="{StaticResource BgCardBrush}"
@@ -214,33 +300,74 @@
                                 <ctrl:SteeringArc Grid.Column="0" x:Name="SteeringArcViz"
                                                   HorizontalAlignment="Center" VerticalAlignment="Center"/>
                                 <StackPanel Grid.Column="1" Margin="18,0,0,0">
-                                    <StackPanel Orientation="Horizontal" Margin="0,0,0,12">
-                                        <Ellipse Width="7" Height="7" Fill="{StaticResource GreenBrush}"
-                                                 VerticalAlignment="Center" Margin="0,0,8,0"
-                                                 Effect="{StaticResource GreenGlowEffect}"/>
-                                        <TextBlock Text="LIVE" FontWeight="Bold" FontSize="10"
-                                                   Foreground="{StaticResource GreenBrush}"
-                                                   VerticalAlignment="Center" Margin="0,0,12,0"/>
-                                        <TextBlock Text="Wheelbase telemetry" Style="{StaticResource MutedHintText}"
-                                                   VerticalAlignment="Center" Margin="0,0,18,0"/>
-                                        <Button x:Name="BaseCalibrateButton" Content="CALIBRATE CENTER"
+                                    <DockPanel Margin="0,0,0,12" LastChildFill="False">
+                                        <Button DockPanel.Dock="Left" x:Name="BaseCalibrateButton"
+                                                Content="CALIBRATE CENTER"
                                                 Click="BaseCalibrateButton_Click"
                                                 VerticalAlignment="Center"/>
-                                        <TextBlock x:Name="BaseCalibrateStatus"
+                                        <TextBlock DockPanel.Dock="Left" x:Name="BaseCalibrateStatus"
                                                    Style="{StaticResource MutedHintText}"
+                                                   VerticalAlignment="Center"
                                                    Margin="10,0,0,0"/>
-                                    </StackPanel>
-                                    <UniformGrid Columns="3" Rows="1" Margin="0,0,0,4">
-                                        <ctrl:TempCell x:Name="McuTempCell" Label="MCU"
-                                                       Margin="0,0,8,0"
-                                                       WarnThreshold="65" DangerThreshold="85"/>
-                                        <ctrl:TempCell x:Name="MosfetTempCell" Label="MOSFET"
-                                                       Margin="4,0"
-                                                       WarnThreshold="70" DangerThreshold="90"/>
-                                        <ctrl:TempCell x:Name="MotorTempCell" Label="MOTOR"
-                                                       Margin="8,0,0,0"
-                                                       WarnThreshold="80" DangerThreshold="100"/>
-                                    </UniformGrid>
+                                        <ctrl:SegmentedControl DockPanel.Dock="Right"
+                                                               x:Name="PerformanceOutputCombo"
+                                                               SelectionChanged="PerformanceOutputCombo_Changed"
+                                                               VerticalAlignment="Center">
+                                            <ListBoxItem Content="Reserved"/>
+                                            <ListBoxItem Content="Full"/>
+                                        </ctrl:SegmentedControl>
+                                        <TextBlock DockPanel.Dock="Right"
+                                                   Text="Performance Output"
+                                                   Style="{StaticResource LabelText}"
+                                                   VerticalAlignment="Center"
+                                                   Margin="0,0,10,0"/>
+                                    </DockPanel>
+                                    <!-- Combined MCU + MOSFET + MOTOR rolling graph
+                                         (replaces the three fake-meter TempCells).
+                                         Shares a 0–120 °C scale; the legend row
+                                         below shows the colour key + live values. -->
+                                    <Border Style="{StaticResource InnerCardBorder}" Padding="10,8">
+                                        <StackPanel>
+                                            <ctrl:TemperatureGraph x:Name="TemperatureGraphViz" Height="80"
+                                                                   McuBrush="{StaticResource CyanBrush}"
+                                                                   MosfetBrush="{StaticResource AmberBrush}"
+                                                                   MotorBrush="{StaticResource RedBrush}"
+                                                                   McuFillBrush="{StaticResource McuFillBrush}"
+                                                                   MosfetFillBrush="{StaticResource MosfetFillBrush}"
+                                                                   MotorFillBrush="{StaticResource MotorFillBrush}"/>
+                                            <Grid Margin="0,6,0,0">
+                                                <Grid.ColumnDefinitions>
+                                                    <ColumnDefinition Width="*"/>
+                                                    <ColumnDefinition Width="*"/>
+                                                    <ColumnDefinition Width="*"/>
+                                                </Grid.ColumnDefinitions>
+                                                <StackPanel Grid.Column="0" Orientation="Horizontal">
+                                                    <Ellipse Width="6" Height="6" VerticalAlignment="Center"
+                                                             Fill="{StaticResource CyanBrush}" Margin="0,0,6,0"/>
+                                                    <TextBlock Text="MCU" Style="{StaticResource KvKeyText}"/>
+                                                    <TextBlock x:Name="McuTempLegend" Text="—"
+                                                               Style="{StaticResource KvValueText}"
+                                                               Foreground="{StaticResource CyanBrush}"/>
+                                                </StackPanel>
+                                                <StackPanel Grid.Column="1" Orientation="Horizontal">
+                                                    <Ellipse Width="6" Height="6" VerticalAlignment="Center"
+                                                             Fill="{StaticResource AmberBrush}" Margin="0,0,6,0"/>
+                                                    <TextBlock Text="MOSFET" Style="{StaticResource KvKeyText}"/>
+                                                    <TextBlock x:Name="MosfetTempLegend" Text="—"
+                                                               Style="{StaticResource KvValueText}"
+                                                               Foreground="{StaticResource AmberBrush}"/>
+                                                </StackPanel>
+                                                <StackPanel Grid.Column="2" Orientation="Horizontal">
+                                                    <Ellipse Width="6" Height="6" VerticalAlignment="Center"
+                                                             Fill="{StaticResource RedBrush}" Margin="0,0,6,0"/>
+                                                    <TextBlock Text="MOTOR" Style="{StaticResource KvKeyText}"/>
+                                                    <TextBlock x:Name="MotorTempLegend" Text="—"
+                                                               Style="{StaticResource KvValueText}"
+                                                               Foreground="{StaticResource RedBrush}"/>
+                                                </StackPanel>
+                                            </Grid>
+                                        </StackPanel>
+                                    </Border>
                                 </StackPanel>
                             </Grid>
                         </Border>
@@ -256,231 +383,418 @@
                             <TextBlock x:Name="MotorTempLabel" Text="--"/>
                         </StackPanel>
 
-                        <ctrl:SectionCard Title="CORE SETTINGS" Icon="{StaticResource IconBolt}">
-                            <StackPanel>
-                                <StackPanel Orientation="Horizontal" Margin="0,4">
-                                    <TextBlock Text="Wheel Rotation Angle" Style="{StaticResource SliderLabel}"/>
-                                    <Slider x:Name="RotationSlider" Style="{StaticResource SettingSlider}" Minimum="90" Maximum="2700" TickFrequency="10" SmallChange="10" LargeChange="10" IsSnapToTickEnabled="True" ValueChanged="RotationSlider_ValueChanged"/>
-                                    <TextBlock x:Name="RotationValue" Style="{StaticResource SliderValue}" Text="900°"/>
+                        <!-- Core Settings + Gearshift Vibration side-by-side: both are
+                             "configure-then-forget" sliders that benefit from being
+                             visible together at the top of the tab. -->
+                        <Grid>
+                            <Grid.ColumnDefinitions>
+                                <ColumnDefinition Width="*"/>
+                                <ColumnDefinition Width="*"/>
+                            </Grid.ColumnDefinitions>
+                            <ctrl:SectionCard Grid.Column="0" Title="CORE SETTINGS"
+                                              Icon="{StaticResource IconBolt}" Margin="0,0,7,14">
+                                <StackPanel>
+                                    <Grid Margin="0,4">
+                                        <Grid.ColumnDefinitions>
+                                            <ColumnDefinition Width="Auto"/>
+                                            <ColumnDefinition Width="*"/>
+                                            <ColumnDefinition Width="Auto"/>
+                                        </Grid.ColumnDefinitions>
+                                        <TextBlock Grid.Column="0" Text="Wheel Rotation Angle" Style="{StaticResource SliderLabel}"/>
+                                        <Slider Grid.Column="1" x:Name="RotationSlider" Style="{StaticResource SettingSlider}" Minimum="90" Maximum="2700" TickFrequency="10" SmallChange="10" LargeChange="10" IsSnapToTickEnabled="True" ValueChanged="RotationSlider_ValueChanged"/>
+                                        <TextBox Grid.Column="2" x:Name="RotationValue" Style="{StaticResource SliderValueEditBox}"
+                                                 Tag="{Binding ElementName=RotationSlider}"
+                                                 KeyDown="SliderValueBox_KeyDown" LostFocus="SliderValueBox_LostFocus"
+                                                 Text="900°"/>
+                                    </Grid>
+                                    <Grid Margin="0,4">
+                                        <Grid.ColumnDefinitions>
+                                            <ColumnDefinition Width="Auto"/>
+                                            <ColumnDefinition Width="*"/>
+                                            <ColumnDefinition Width="Auto"/>
+                                        </Grid.ColumnDefinitions>
+                                        <TextBlock Grid.Column="0" Text="Game FFB Strength" Style="{StaticResource SliderLabel}"/>
+                                        <Slider Grid.Column="1" x:Name="FfbStrengthSlider" Style="{StaticResource SettingSlider}" Minimum="0" Maximum="100" TickFrequency="1" ValueChanged="FfbStrengthSlider_ValueChanged"/>
+                                        <TextBox Grid.Column="2" x:Name="FfbStrengthValue" Style="{StaticResource SliderValueEditBox}"
+                                                 Tag="{Binding ElementName=FfbStrengthSlider}"
+                                                 KeyDown="SliderValueBox_KeyDown" LostFocus="SliderValueBox_LostFocus"
+                                                 Text="80%"/>
+                                    </Grid>
+                                    <Grid Margin="0,4">
+                                        <Grid.ColumnDefinitions>
+                                            <ColumnDefinition Width="Auto"/>
+                                            <ColumnDefinition Width="*"/>
+                                            <ColumnDefinition Width="Auto"/>
+                                        </Grid.ColumnDefinitions>
+                                        <TextBlock Grid.Column="0" Text="Base Torque Output" Style="{StaticResource SliderLabel}"/>
+                                        <Slider Grid.Column="1" x:Name="TorqueSlider" Style="{StaticResource SettingSlider}" Minimum="50" Maximum="100" TickFrequency="5" ValueChanged="TorqueSlider_ValueChanged"/>
+                                        <TextBox Grid.Column="2" x:Name="TorqueValue" Style="{StaticResource SliderValueEditBox}"
+                                                 Tag="{Binding ElementName=TorqueSlider}"
+                                                 KeyDown="SliderValueBox_KeyDown" LostFocus="SliderValueBox_LostFocus"
+                                                 Text="100%"/>
+                                    </Grid>
+                                    <Grid Margin="0,4">
+                                        <Grid.ColumnDefinitions>
+                                            <ColumnDefinition Width="Auto"/>
+                                            <ColumnDefinition Width="*"/>
+                                            <ColumnDefinition Width="Auto"/>
+                                        </Grid.ColumnDefinitions>
+                                        <TextBlock Grid.Column="0" Text="Maximum Wheel Speed" Style="{StaticResource SliderLabel}"/>
+                                        <Slider Grid.Column="1" x:Name="SpeedSlider" Style="{StaticResource SettingSlider}" Minimum="0" Maximum="200" TickFrequency="1" ValueChanged="SpeedSlider_ValueChanged"/>
+                                        <TextBox Grid.Column="2" x:Name="SpeedValue" Style="{StaticResource SliderValueEditBox}"
+                                                 Tag="{Binding ElementName=SpeedSlider}"
+                                                 KeyDown="SliderValueBox_KeyDown" LostFocus="SliderValueBox_LostFocus"
+                                                 Text="100%"/>
+                                    </Grid>
                                 </StackPanel>
-                                <StackPanel Orientation="Horizontal" Margin="0,4">
-                                    <TextBlock Text="Game FFB Strength" Style="{StaticResource SliderLabel}"/>
-                                    <Slider x:Name="FfbStrengthSlider" Style="{StaticResource SettingSlider}" Minimum="0" Maximum="100" TickFrequency="1" ValueChanged="FfbStrengthSlider_ValueChanged"/>
-                                    <TextBlock x:Name="FfbStrengthValue" Style="{StaticResource SliderValue}" Text="80%"/>
-                                </StackPanel>
-                                <StackPanel Orientation="Horizontal" Margin="0,4">
-                                    <TextBlock Text="Base Torque Output" Style="{StaticResource SliderLabel}"/>
-                                    <Slider x:Name="TorqueSlider" Style="{StaticResource SettingSlider}" Minimum="50" Maximum="100" TickFrequency="5" ValueChanged="TorqueSlider_ValueChanged"/>
-                                    <TextBlock x:Name="TorqueValue" Style="{StaticResource SliderValue}" Text="100%"/>
-                                </StackPanel>
-                                <StackPanel Orientation="Horizontal" Margin="0,4">
-                                    <TextBlock Text="Maximum Wheel Speed" Style="{StaticResource SliderLabel}"/>
-                                    <Slider x:Name="SpeedSlider" Style="{StaticResource SettingSlider}" Minimum="0" Maximum="200" TickFrequency="1" ValueChanged="SpeedSlider_ValueChanged"/>
-                                    <TextBlock x:Name="SpeedValue" Style="{StaticResource SliderValue}" Text="100%"/>
-                                </StackPanel>
-                            </StackPanel>
-                        </ctrl:SectionCard>
+                            </ctrl:SectionCard>
 
-                        <ctrl:SectionCard Title="WHEELBASE EFFECTS" Icon="{StaticResource IconDamper}">
-                            <StackPanel>
-                                <StackPanel Orientation="Horizontal" Margin="0,4">
-                                    <TextBlock Text="Wheel Damper" Style="{StaticResource SliderLabel}"/>
-                                    <Slider x:Name="DamperSlider" Style="{StaticResource SettingSlider}" Minimum="0" Maximum="100" TickFrequency="1" ValueChanged="DamperSlider_ValueChanged"/>
-                                    <TextBlock x:Name="DamperValue" Style="{StaticResource SliderValue}" Text="0%"/>
+                            <ctrl:SectionCard Grid.Column="1" Title="GEARSHIFT VIBRATION"
+                                              Icon="{StaticResource IconShift}" Margin="7,0,0,14">
+                                <StackPanel>
+                                    <Grid Margin="0,4">
+                                        <Grid.ColumnDefinitions>
+                                            <ColumnDefinition Width="Auto"/>
+                                            <ColumnDefinition Width="*"/>
+                                            <ColumnDefinition Width="Auto"/>
+                                        </Grid.ColumnDefinitions>
+                                        <TextBlock Grid.Column="0" Text="Shift Intensity" Style="{StaticResource SliderLabel}"/>
+                                        <Slider Grid.Column="1" x:Name="GearshiftVibrationSlider" Style="{StaticResource SettingSlider}" Minimum="0" Maximum="5" TickFrequency="1" SmallChange="1" LargeChange="1" IsSnapToTickEnabled="True" ValueChanged="GearshiftVibrationSlider_ValueChanged"/>
+                                        <TextBox Grid.Column="2" x:Name="GearshiftVibrationValue" Style="{StaticResource SliderValueEditBox}"
+                                                 Tag="{Binding ElementName=GearshiftVibrationSlider}"
+                                                 KeyDown="SliderValueBox_KeyDown" LostFocus="SliderValueBox_LostFocus"
+                                                 Text="0"/>
+                                    </Grid>
+                                    <StackPanel Orientation="Horizontal" Margin="0,4">
+                                        <TextBlock Text="Vibrate on Neutral" Style="{StaticResource SliderLabel}"/>
+                                        <ctrl:OffOnToggle x:Name="GearshiftVibrateOnNeutralCheck" VerticalAlignment="Center"
+                                                  Checked="GearshiftVibrateOnNeutralCheck_Changed" Unchecked="GearshiftVibrateOnNeutralCheck_Changed"/>
+                                    </StackPanel>
+                                    <Grid Margin="0,4">
+                                        <Grid.ColumnDefinitions>
+                                            <ColumnDefinition Width="Auto"/>
+                                            <ColumnDefinition Width="*"/>
+                                            <ColumnDefinition Width="Auto"/>
+                                        </Grid.ColumnDefinitions>
+                                        <TextBlock Grid.Column="0" Text="Shift Debounce" Style="{StaticResource SliderLabel}"/>
+                                        <Slider Grid.Column="1" x:Name="GearshiftDebounceSlider" Style="{StaticResource SettingSlider}" Minimum="0" Maximum="1000" TickFrequency="50" SmallChange="50" LargeChange="50" IsSnapToTickEnabled="True" ValueChanged="GearshiftDebounceSlider_ValueChanged"/>
+                                        <TextBox Grid.Column="2" x:Name="GearshiftDebounceValue" Style="{StaticResource SliderValueEditBox}"
+                                                 Tag="{Binding ElementName=GearshiftDebounceSlider}"
+                                                 KeyDown="SliderValueBox_KeyDown" LostFocus="SliderValueBox_LostFocus"
+                                                 Text="500 ms"/>
+                                    </Grid>
                                 </StackPanel>
-                                <StackPanel Orientation="Horizontal" Margin="0,4">
-                                    <TextBlock Text="Wheel Friction" Style="{StaticResource SliderLabel}"/>
-                                    <Slider x:Name="FrictionSlider" Style="{StaticResource SettingSlider}" Minimum="0" Maximum="100" TickFrequency="1" ValueChanged="FrictionSlider_ValueChanged"/>
-                                    <TextBlock x:Name="FrictionValue" Style="{StaticResource SliderValue}" Text="0%"/>
-                                </StackPanel>
-                                <StackPanel Orientation="Horizontal" Margin="0,4">
-                                    <TextBlock Text="Natural Inertia" Style="{StaticResource SliderLabel}"/>
-                                    <Slider x:Name="InertiaSlider" Style="{StaticResource SettingSlider}" Minimum="100" Maximum="500" TickFrequency="50" ValueChanged="InertiaSlider_ValueChanged"/>
-                                    <TextBlock x:Name="InertiaValue" Style="{StaticResource SliderValue}" Text="250"/>
-                                </StackPanel>
-                                <StackPanel Orientation="Horizontal" Margin="0,4">
-                                    <TextBlock Text="Wheel Spring" Style="{StaticResource SliderLabel}"/>
-                                    <Slider x:Name="SpringSlider" Style="{StaticResource SettingSlider}" Minimum="0" Maximum="100" TickFrequency="1" ValueChanged="SpringSlider_ValueChanged"/>
-                                    <TextBlock x:Name="SpringValue" Style="{StaticResource SliderValue}" Text="0%"/>
-                                </StackPanel>
-                                <StackPanel Orientation="Horizontal" Margin="0,8">
-                                    <TextBlock Text="Force Feedback Reversal" Style="{StaticResource SliderLabel}"/>
-                                    <ctrl:OffOnToggle x:Name="FfbReverseCheck" VerticalAlignment="Center" Click="FfbReverseCheck_Click"/>
-                                </StackPanel>
-                            </StackPanel>
-                        </ctrl:SectionCard>
+                            </ctrl:SectionCard>
+                        </Grid>
 
-                        <ctrl:SectionCard Title="GAME EFFECTS" Icon="{StaticResource IconGame}">
-                            <StackPanel>
-                                <StackPanel Orientation="Horizontal" Margin="0,4">
-                                    <TextBlock Text="Game Damper" Style="{StaticResource SliderLabel}"/>
-                                    <Slider x:Name="GameDamperSlider" Style="{StaticResource SettingSlider}" Minimum="0" Maximum="100" TickFrequency="5" ValueChanged="GameDamperSlider_ValueChanged"/>
-                                    <TextBlock x:Name="GameDamperValue" Style="{StaticResource SliderValue}" Text="50%"/>
+                        <!-- Wheelbase + Game effects sit side-by-side: same widget shape
+                             (4 sliders each), benefit from being readable as a pair. -->
+                        <Grid>
+                            <Grid.ColumnDefinitions>
+                                <ColumnDefinition Width="*"/>
+                                <ColumnDefinition Width="*"/>
+                            </Grid.ColumnDefinitions>
+                            <ctrl:SectionCard Grid.Column="0" Title="WHEELBASE EFFECTS"
+                                              Icon="{StaticResource IconDamper}" Margin="0,0,7,14">
+                                <StackPanel>
+                                    <Grid Margin="0,4">
+                                        <Grid.ColumnDefinitions>
+                                            <ColumnDefinition Width="Auto"/>
+                                            <ColumnDefinition Width="*"/>
+                                            <ColumnDefinition Width="Auto"/>
+                                        </Grid.ColumnDefinitions>
+                                        <TextBlock Grid.Column="0" Text="Wheel Damper" Style="{StaticResource SliderLabel}"/>
+                                        <Slider Grid.Column="1" x:Name="DamperSlider" Style="{StaticResource SettingSlider}" Minimum="0" Maximum="100" TickFrequency="1" ValueChanged="DamperSlider_ValueChanged"/>
+                                        <TextBox Grid.Column="2" x:Name="DamperValue" Style="{StaticResource SliderValueEditBox}"
+                                                 Tag="{Binding ElementName=DamperSlider}"
+                                                 KeyDown="SliderValueBox_KeyDown" LostFocus="SliderValueBox_LostFocus"
+                                                 Text="0%"/>
+                                    </Grid>
+                                    <Grid Margin="0,4">
+                                        <Grid.ColumnDefinitions>
+                                            <ColumnDefinition Width="Auto"/>
+                                            <ColumnDefinition Width="*"/>
+                                            <ColumnDefinition Width="Auto"/>
+                                        </Grid.ColumnDefinitions>
+                                        <TextBlock Grid.Column="0" Text="Wheel Friction" Style="{StaticResource SliderLabel}"/>
+                                        <Slider Grid.Column="1" x:Name="FrictionSlider" Style="{StaticResource SettingSlider}" Minimum="0" Maximum="100" TickFrequency="1" ValueChanged="FrictionSlider_ValueChanged"/>
+                                        <TextBox Grid.Column="2" x:Name="FrictionValue" Style="{StaticResource SliderValueEditBox}"
+                                                 Tag="{Binding ElementName=FrictionSlider}"
+                                                 KeyDown="SliderValueBox_KeyDown" LostFocus="SliderValueBox_LostFocus"
+                                                 Text="0%"/>
+                                    </Grid>
+                                    <Grid Margin="0,4">
+                                        <Grid.ColumnDefinitions>
+                                            <ColumnDefinition Width="Auto"/>
+                                            <ColumnDefinition Width="*"/>
+                                            <ColumnDefinition Width="Auto"/>
+                                        </Grid.ColumnDefinitions>
+                                        <TextBlock Grid.Column="0" Text="Natural Inertia" Style="{StaticResource SliderLabel}"/>
+                                        <Slider Grid.Column="1" x:Name="InertiaSlider" Style="{StaticResource SettingSlider}" Minimum="100" Maximum="500" TickFrequency="50" ValueChanged="InertiaSlider_ValueChanged"/>
+                                        <TextBox Grid.Column="2" x:Name="InertiaValue" Style="{StaticResource SliderValueEditBox}"
+                                                 Tag="{Binding ElementName=InertiaSlider}"
+                                                 KeyDown="SliderValueBox_KeyDown" LostFocus="SliderValueBox_LostFocus"
+                                                 Text="250"/>
+                                    </Grid>
+                                    <Grid Margin="0,4">
+                                        <Grid.ColumnDefinitions>
+                                            <ColumnDefinition Width="Auto"/>
+                                            <ColumnDefinition Width="*"/>
+                                            <ColumnDefinition Width="Auto"/>
+                                        </Grid.ColumnDefinitions>
+                                        <TextBlock Grid.Column="0" Text="Wheel Spring" Style="{StaticResource SliderLabel}"/>
+                                        <Slider Grid.Column="1" x:Name="SpringSlider" Style="{StaticResource SettingSlider}" Minimum="0" Maximum="100" TickFrequency="1" ValueChanged="SpringSlider_ValueChanged"/>
+                                        <TextBox Grid.Column="2" x:Name="SpringValue" Style="{StaticResource SliderValueEditBox}"
+                                                 Tag="{Binding ElementName=SpringSlider}"
+                                                 KeyDown="SliderValueBox_KeyDown" LostFocus="SliderValueBox_LostFocus"
+                                                 Text="0%"/>
+                                    </Grid>
                                 </StackPanel>
-                                <StackPanel Orientation="Horizontal" Margin="0,4">
-                                    <TextBlock Text="Game Friction" Style="{StaticResource SliderLabel}"/>
-                                    <Slider x:Name="GameFrictionSlider" Style="{StaticResource SettingSlider}" Minimum="0" Maximum="100" TickFrequency="5" ValueChanged="GameFrictionSlider_ValueChanged"/>
-                                    <TextBlock x:Name="GameFrictionValue" Style="{StaticResource SliderValue}" Text="50%"/>
-                                </StackPanel>
-                                <StackPanel Orientation="Horizontal" Margin="0,4">
-                                    <TextBlock Text="Game Inertia" Style="{StaticResource SliderLabel}"/>
-                                    <Slider x:Name="GameInertiaSlider" Style="{StaticResource SettingSlider}" Minimum="0" Maximum="100" TickFrequency="5" ValueChanged="GameInertiaSlider_ValueChanged"/>
-                                    <TextBlock x:Name="GameInertiaValue" Style="{StaticResource SliderValue}" Text="50%"/>
-                                </StackPanel>
-                                <StackPanel Orientation="Horizontal" Margin="0,4">
-                                    <TextBlock Text="Game Spring" Style="{StaticResource SliderLabel}"/>
-                                    <Slider x:Name="GameSpringSlider" Style="{StaticResource SettingSlider}" Minimum="0" Maximum="100" TickFrequency="5" ValueChanged="GameSpringSlider_ValueChanged"/>
-                                    <TextBlock x:Name="GameSpringValue" Style="{StaticResource SliderValue}" Text="100%"/>
-                                </StackPanel>
-                            </StackPanel>
-                        </ctrl:SectionCard>
+                            </ctrl:SectionCard>
 
-                        <ctrl:SectionCard Title="HIGH SPEED DAMPING"
-                                          Subtitle="// I have no idea what these settings do"
-                                          Icon="{StaticResource IconSpeed}">
-                            <StackPanel>
-                                <StackPanel Orientation="Horizontal" Margin="0,4">
-                                    <TextBlock Text="Damping Level" Style="{StaticResource SliderLabel}"/>
-                                    <Slider x:Name="SpeedDampingSlider" Style="{StaticResource SettingSlider}" Minimum="0" Maximum="100" TickFrequency="1" ValueChanged="SpeedDampingSlider_ValueChanged"/>
-                                    <TextBlock x:Name="SpeedDampingValue" Style="{StaticResource SliderValue}" Text="0%"/>
+                            <ctrl:SectionCard Grid.Column="1" Title="GAME EFFECTS"
+                                              Icon="{StaticResource IconGame}" Margin="7,0,0,14">
+                                <StackPanel>
+                                    <Grid Margin="0,4">
+                                        <Grid.ColumnDefinitions>
+                                            <ColumnDefinition Width="Auto"/>
+                                            <ColumnDefinition Width="*"/>
+                                            <ColumnDefinition Width="Auto"/>
+                                        </Grid.ColumnDefinitions>
+                                        <TextBlock Grid.Column="0" Text="Game Damper" Style="{StaticResource SliderLabel}"/>
+                                        <Slider Grid.Column="1" x:Name="GameDamperSlider" Style="{StaticResource SettingSlider}" Minimum="0" Maximum="100" TickFrequency="5" ValueChanged="GameDamperSlider_ValueChanged"/>
+                                        <TextBox Grid.Column="2" x:Name="GameDamperValue" Style="{StaticResource SliderValueEditBox}"
+                                                 Tag="{Binding ElementName=GameDamperSlider}"
+                                                 KeyDown="SliderValueBox_KeyDown" LostFocus="SliderValueBox_LostFocus"
+                                                 Text="50%"/>
+                                    </Grid>
+                                    <Grid Margin="0,4">
+                                        <Grid.ColumnDefinitions>
+                                            <ColumnDefinition Width="Auto"/>
+                                            <ColumnDefinition Width="*"/>
+                                            <ColumnDefinition Width="Auto"/>
+                                        </Grid.ColumnDefinitions>
+                                        <TextBlock Grid.Column="0" Text="Game Friction" Style="{StaticResource SliderLabel}"/>
+                                        <Slider Grid.Column="1" x:Name="GameFrictionSlider" Style="{StaticResource SettingSlider}" Minimum="0" Maximum="100" TickFrequency="5" ValueChanged="GameFrictionSlider_ValueChanged"/>
+                                        <TextBox Grid.Column="2" x:Name="GameFrictionValue" Style="{StaticResource SliderValueEditBox}"
+                                                 Tag="{Binding ElementName=GameFrictionSlider}"
+                                                 KeyDown="SliderValueBox_KeyDown" LostFocus="SliderValueBox_LostFocus"
+                                                 Text="50%"/>
+                                    </Grid>
+                                    <Grid Margin="0,4">
+                                        <Grid.ColumnDefinitions>
+                                            <ColumnDefinition Width="Auto"/>
+                                            <ColumnDefinition Width="*"/>
+                                            <ColumnDefinition Width="Auto"/>
+                                        </Grid.ColumnDefinitions>
+                                        <TextBlock Grid.Column="0" Text="Game Inertia" Style="{StaticResource SliderLabel}"/>
+                                        <Slider Grid.Column="1" x:Name="GameInertiaSlider" Style="{StaticResource SettingSlider}" Minimum="0" Maximum="100" TickFrequency="5" ValueChanged="GameInertiaSlider_ValueChanged"/>
+                                        <TextBox Grid.Column="2" x:Name="GameInertiaValue" Style="{StaticResource SliderValueEditBox}"
+                                                 Tag="{Binding ElementName=GameInertiaSlider}"
+                                                 KeyDown="SliderValueBox_KeyDown" LostFocus="SliderValueBox_LostFocus"
+                                                 Text="50%"/>
+                                    </Grid>
+                                    <Grid Margin="0,4">
+                                        <Grid.ColumnDefinitions>
+                                            <ColumnDefinition Width="Auto"/>
+                                            <ColumnDefinition Width="*"/>
+                                            <ColumnDefinition Width="Auto"/>
+                                        </Grid.ColumnDefinitions>
+                                        <TextBlock Grid.Column="0" Text="Game Spring" Style="{StaticResource SliderLabel}"/>
+                                        <Slider Grid.Column="1" x:Name="GameSpringSlider" Style="{StaticResource SettingSlider}" Minimum="0" Maximum="100" TickFrequency="5" ValueChanged="GameSpringSlider_ValueChanged"/>
+                                        <TextBox Grid.Column="2" x:Name="GameSpringValue" Style="{StaticResource SliderValueEditBox}"
+                                                 Tag="{Binding ElementName=GameSpringSlider}"
+                                                 KeyDown="SliderValueBox_KeyDown" LostFocus="SliderValueBox_LostFocus"
+                                                 Text="100%"/>
+                                    </Grid>
                                 </StackPanel>
-                                <StackPanel Orientation="Horizontal" Margin="0,4">
-                                    <TextBlock Text="Trigger Speed" Style="{StaticResource SliderLabel}"/>
-                                    <Slider x:Name="SpeedDampingPointSlider" Style="{StaticResource SettingSlider}" Minimum="0" Maximum="400" TickFrequency="10" ValueChanged="SpeedDampingPointSlider_ValueChanged"/>
-                                    <TextBlock x:Name="SpeedDampingPointValue" Style="{StaticResource SliderValue}" Text="120 kph"/>
-                                </StackPanel>
-                            </StackPanel>
-                        </ctrl:SectionCard>
+                            </ctrl:SectionCard>
+                        </Grid>
 
-                        <ctrl:SectionCard Title="PERFORMANCE" Icon="{StaticResource IconMisc}">
-                            <StackPanel Orientation="Horizontal" Margin="0,4">
-                                <TextBlock Text="Performance Output" Style="{StaticResource SliderLabel}"/>
-                                <ctrl:SegmentedControl x:Name="PerformanceOutputCombo" SelectionChanged="PerformanceOutputCombo_Changed">
-                                    <ListBoxItem Content="Reserved"/>
-                                    <ListBoxItem Content="Full"/>
-                                </ctrl:SegmentedControl>
-                            </StackPanel>
-                        </ctrl:SectionCard>
+                        <!-- Protection + Soft Limit sit side-by-side: both small safety
+                             cards (toggle + a slider), pair nicely. -->
+                        <Grid>
+                            <Grid.ColumnDefinitions>
+                                <ColumnDefinition Width="*"/>
+                                <ColumnDefinition Width="*"/>
+                            </Grid.ColumnDefinitions>
+                            <ctrl:SectionCard Grid.Column="0" Title="PROTECTION"
+                                              Icon="{StaticResource IconShield}" Margin="0,0,7,14">
+                                <StackPanel>
+                                    <StackPanel Orientation="Horizontal" Margin="0,8">
+                                        <TextBlock Text="Hands-Off Protection" Style="{StaticResource SliderLabel}"/>
+                                        <ctrl:OffOnToggle x:Name="ProtectionCheck" VerticalAlignment="Center" Click="ProtectionCheck_Click"/>
+                                    </StackPanel>
+                                    <Grid Margin="0,4">
+                                        <Grid.ColumnDefinitions>
+                                            <ColumnDefinition Width="Auto"/>
+                                            <ColumnDefinition Width="*"/>
+                                            <ColumnDefinition Width="Auto"/>
+                                        </Grid.ColumnDefinitions>
+                                        <TextBlock Grid.Column="0" Text="Steering Wheel Inertia" Style="{StaticResource SliderLabel}"/>
+                                        <Slider Grid.Column="1" x:Name="NaturalInertiaSlider" Style="{StaticResource SettingSlider}" Minimum="100" Maximum="4000" TickFrequency="50" ValueChanged="NaturalInertiaSlider_ValueChanged"/>
+                                        <TextBox Grid.Column="2" x:Name="NaturalInertiaValue" Style="{StaticResource SliderValueEditBox}"
+                                                 Tag="{Binding ElementName=NaturalInertiaSlider}"
+                                                 KeyDown="SliderValueBox_KeyDown" LostFocus="SliderValueBox_LostFocus"
+                                                 Text="1100"/>
+                                    </Grid>
+                                </StackPanel>
+                            </ctrl:SectionCard>
 
-                        <ctrl:SectionCard Title="GEARSHIFT VIBRATION" Icon="{StaticResource IconShift}">
-                            <StackPanel>
-                                <StackPanel Orientation="Horizontal" Margin="0,4">
-                                    <TextBlock Text="Shift Intensity" Style="{StaticResource SliderLabel}"/>
-                                    <Slider x:Name="GearshiftVibrationSlider" Style="{StaticResource SettingSlider}" Minimum="0" Maximum="5" TickFrequency="1" SmallChange="1" LargeChange="1" IsSnapToTickEnabled="True" ValueChanged="GearshiftVibrationSlider_ValueChanged"/>
-                                    <TextBlock x:Name="GearshiftVibrationValue" Style="{StaticResource SliderValue}" Text="0"/>
+                            <ctrl:SectionCard Grid.Column="1" Title="SOFT LIMIT"
+                                              Icon="{StaticResource IconLimit}" Margin="7,0,0,14">
+                                <StackPanel>
+                                    <Grid Margin="0,4">
+                                        <Grid.ColumnDefinitions>
+                                            <ColumnDefinition Width="Auto"/>
+                                            <ColumnDefinition Width="*"/>
+                                            <ColumnDefinition Width="Auto"/>
+                                        </Grid.ColumnDefinitions>
+                                        <TextBlock Grid.Column="0" Text="Stiffness" Style="{StaticResource SliderLabel}"/>
+                                        <Slider Grid.Column="1" x:Name="SoftLimitStiffnessSlider" Style="{StaticResource SettingSlider}" Minimum="1" Maximum="10" TickFrequency="1" ValueChanged="SoftLimitStiffnessSlider_ValueChanged"/>
+                                        <TextBox Grid.Column="2" x:Name="SoftLimitStiffnessValue" Style="{StaticResource SliderValueEditBox}"
+                                                 Tag="{Binding ElementName=SoftLimitStiffnessSlider}"
+                                                 KeyDown="SliderValueBox_KeyDown" LostFocus="SliderValueBox_LostFocus"
+                                                 Text="5"/>
+                                    </Grid>
+                                    <StackPanel Orientation="Horizontal" Margin="0,8">
+                                        <TextBlock Text="Retain Game FFB" Style="{StaticResource SliderLabel}"/>
+                                        <ctrl:OffOnToggle x:Name="SoftLimitRetainCheck" VerticalAlignment="Center" Click="SoftLimitRetainCheck_Click"/>
+                                    </StackPanel>
                                 </StackPanel>
-                                <StackPanel Orientation="Horizontal" Margin="0,4">
-                                    <TextBlock Text="Vibrate on Neutral" Style="{StaticResource SliderLabel}"/>
-                                    <ctrl:OffOnToggle x:Name="GearshiftVibrateOnNeutralCheck" VerticalAlignment="Center"
-                                              Checked="GearshiftVibrateOnNeutralCheck_Changed" Unchecked="GearshiftVibrateOnNeutralCheck_Changed"/>
-                                </StackPanel>
-                                <StackPanel Orientation="Horizontal" Margin="0,4">
-                                    <TextBlock Text="Shift Debounce" Style="{StaticResource SliderLabel}"/>
-                                    <Slider x:Name="GearshiftDebounceSlider" Style="{StaticResource SettingSlider}" Minimum="0" Maximum="1000" TickFrequency="50" SmallChange="50" LargeChange="50" IsSnapToTickEnabled="True" ValueChanged="GearshiftDebounceSlider_ValueChanged"/>
-                                    <TextBlock x:Name="GearshiftDebounceValue" Style="{StaticResource SliderValue}" Text="500 ms"/>
-                                </StackPanel>
-                            </StackPanel>
-                        </ctrl:SectionCard>
+                            </ctrl:SectionCard>
+                        </Grid>
 
-                        <ctrl:SectionCard Title="PROTECTION" Icon="{StaticResource IconShield}">
-                            <StackPanel>
-                                <StackPanel Orientation="Horizontal" Margin="0,8">
-                                    <TextBlock Text="Hands-Off Protection" Style="{StaticResource SliderLabel}"/>
-                                    <ctrl:OffOnToggle x:Name="ProtectionCheck" VerticalAlignment="Center" Click="ProtectionCheck_Click"/>
-                                </StackPanel>
-                                <StackPanel Orientation="Horizontal" Margin="0,4">
-                                    <TextBlock Text="Steering Wheel Inertia" Style="{StaticResource SliderLabel}"/>
-                                    <Slider x:Name="NaturalInertiaSlider" Style="{StaticResource SettingSlider}" Minimum="100" Maximum="4000" TickFrequency="50" ValueChanged="NaturalInertiaSlider_ValueChanged"/>
-                                    <TextBlock x:Name="NaturalInertiaValue" Style="{StaticResource SliderValue}" Text="1100"/>
-                                </StackPanel>
-                            </StackPanel>
-                        </ctrl:SectionCard>
+                        <!-- FFB Equalizer + Output Curve sit side-by-side: same widget
+                             shape (a node graph with a row of preset buttons), benefit
+                             from being readable together. -->
+                        <Grid>
+                            <Grid.ColumnDefinitions>
+                                <ColumnDefinition Width="*"/>
+                                <ColumnDefinition Width="*"/>
+                            </Grid.ColumnDefinitions>
 
-                        <ctrl:SectionCard Title="SOFT LIMIT" Icon="{StaticResource IconLimit}">
-                            <StackPanel>
-                                <StackPanel Orientation="Horizontal" Margin="0,4">
-                                    <TextBlock Text="Stiffness" Style="{StaticResource SliderLabel}"/>
-                                    <Slider x:Name="SoftLimitStiffnessSlider" Style="{StaticResource SettingSlider}" Minimum="1" Maximum="10" TickFrequency="1" ValueChanged="SoftLimitStiffnessSlider_ValueChanged"/>
-                                    <TextBlock x:Name="SoftLimitStiffnessValue" Style="{StaticResource SliderValue}" Text="5"/>
+                            <ctrl:SectionCard Grid.Column="0" Title="FFB EQUALIZER"
+                                              Subtitle="// per-band gain · 100% = neutral · 400% = max boost"
+                                              Icon="{StaticResource IconEq}" Margin="0,0,7,14">
+                                <StackPanel>
+                                    <ctrl:MozaCurveEditor x:Name="FfbEqualizer"
+                                                          Style="{StaticResource MozaEqualizerLineStyle}"
+                                                          Height="280"/>
+                                    <StackPanel Orientation="Horizontal" Margin="0,12,0,0">
+                                        <Button Content="FLAT" Margin="0,0,8,0" Click="FfbEqPreset_Flat"/>
+                                        <Button Content="FALLOFF" Click="FfbEqPreset_Falloff"/>
+                                    </StackPanel>
                                 </StackPanel>
-                                <StackPanel Orientation="Horizontal" Margin="0,8">
-                                    <TextBlock Text="Retain Game FFB" Style="{StaticResource SliderLabel}"/>
-                                    <ctrl:OffOnToggle x:Name="SoftLimitRetainCheck" VerticalAlignment="Center" Click="SoftLimitRetainCheck_Click"/>
+                            </ctrl:SectionCard>
+
+                            <ctrl:SectionCard Grid.Column="1" Title="FFB OUTPUT CURVE"
+                                              Subtitle="// drag the 5 nodes to shape response"
+                                              Icon="{StaticResource IconCurve}"
+                                              AccentBrush="{StaticResource GreenBrush}" Margin="7,0,0,14">
+                                <StackPanel>
+                                    <ctrl:MozaCurveEditor x:Name="FfbCurveEditor" Height="280"
+                                                          AccentBrush="{StaticResource GreenBrush}"/>
+                                    <StackPanel Orientation="Horizontal" Margin="0,12,0,0">
+                                        <Button Content="LINEAR" Margin="0,0,8,0" Click="FfbCurvePreset_Linear"/>
+                                        <Button Content="S CURVE" Margin="0,0,8,0" Click="FfbCurvePreset_SCurve"/>
+                                        <Button Content="EXPONENTIAL" Margin="0,0,8,0" Click="FfbCurvePreset_Exponential"/>
+                                        <Button Content="PARABOLIC" Click="FfbCurvePreset_Parabolic"/>
+                                    </StackPanel>
                                 </StackPanel>
-                            </StackPanel>
-                        </ctrl:SectionCard>
+                            </ctrl:SectionCard>
+                        </Grid>
 
-                        <!-- FFB Equalizer (replaces 6 horizontal sliders below) -->
-                        <ctrl:SectionCard Title="FFB EQUALIZER"
-                                          Subtitle="// per-band gain · 100% = neutral · 400% = max boost"
-                                          Icon="{StaticResource IconEq}">
-                            <ctrl:MozaEqualizer x:Name="FfbEqualizer" Height="200"
-                                                FrequencyLabels="10Hz,15Hz,25Hz,40Hz,60Hz,100Hz"
-                                                MaxValue="400"/>
-                        </ctrl:SectionCard>
-
-                        <!-- Data-store sliders, driven by FfbEqualizer (visibility collapsed
-                             so they don't render but their x:Name + ValueChanged still resolve). -->
+                        <!-- Data-store sliders, driven by the editors above (visibility
+                             collapsed so they don't render but their x:Name + ValueChanged
+                             still resolve through the existing two-way bindings). -->
                         <StackPanel Visibility="Collapsed">
                             <Slider x:Name="Eq1Slider" Minimum="0" Maximum="400" TickFrequency="1" ValueChanged="Eq1Slider_ValueChanged"/>
-                            <TextBlock x:Name="Eq1Value" Text="100%"/>
+                            <TextBox x:Name="Eq1Value" Text="100%"/>
                             <Slider x:Name="Eq2Slider" Minimum="0" Maximum="400" TickFrequency="1" ValueChanged="Eq2Slider_ValueChanged"/>
-                            <TextBlock x:Name="Eq2Value" Text="100%"/>
+                            <TextBox x:Name="Eq2Value" Text="100%"/>
                             <Slider x:Name="Eq3Slider" Minimum="0" Maximum="400" TickFrequency="1" ValueChanged="Eq3Slider_ValueChanged"/>
-                            <TextBlock x:Name="Eq3Value" Text="100%"/>
+                            <TextBox x:Name="Eq3Value" Text="100%"/>
                             <Slider x:Name="Eq4Slider" Minimum="0" Maximum="400" TickFrequency="1" ValueChanged="Eq4Slider_ValueChanged"/>
-                            <TextBlock x:Name="Eq4Value" Text="100%"/>
+                            <TextBox x:Name="Eq4Value" Text="100%"/>
                             <Slider x:Name="Eq5Slider" Minimum="0" Maximum="400" TickFrequency="1" ValueChanged="Eq5Slider_ValueChanged"/>
-                            <TextBlock x:Name="Eq5Value" Text="100%"/>
+                            <TextBox x:Name="Eq5Value" Text="100%"/>
                             <Slider x:Name="Eq6Slider" Minimum="0" Maximum="400" TickFrequency="1" ValueChanged="Eq6Slider_ValueChanged"/>
-                            <TextBlock x:Name="Eq6Value" Text="100%"/>
-                        </StackPanel>
-
-                        <!-- FFB Output Curve (replaces 5 horizontal Y sliders below) -->
-                        <ctrl:SectionCard Title="FFB OUTPUT CURVE"
-                                          Subtitle="// drag the 5 nodes to shape response"
-                                          Icon="{StaticResource IconCurve}">
-                            <StackPanel>
-                                <ctrl:MozaCurveEditor x:Name="FfbCurveEditor" Height="280"/>
-                                <StackPanel Orientation="Horizontal" Margin="0,12,0,0">
-                                    <Button Content="LINEAR" Margin="0,0,8,0" Click="FfbCurvePreset_Linear"/>
-                                    <Button Content="S CURVE" Margin="0,0,8,0" Click="FfbCurvePreset_SCurve"/>
-                                    <Button Content="EXPONENTIAL" Margin="0,0,8,0" Click="FfbCurvePreset_Exponential"/>
-                                    <Button Content="PARABOLIC" Click="FfbCurvePreset_Parabolic"/>
-                                </StackPanel>
-                            </StackPanel>
-                        </ctrl:SectionCard>
-
-                        <!-- Data-store sliders, driven by FfbCurveEditor -->
-                        <StackPanel Visibility="Collapsed">
+                            <TextBox x:Name="Eq6Value" Text="100%"/>
                             <Slider x:Name="FfbCurveY1Slider" Minimum="0" Maximum="100" TickFrequency="1" ValueChanged="FfbCurveY1Slider_ValueChanged"/>
-                            <TextBlock x:Name="FfbCurveY1Value" Text="20"/>
+                            <TextBox x:Name="FfbCurveY1Value" Text="20"/>
                             <Slider x:Name="FfbCurveY2Slider" Minimum="0" Maximum="100" TickFrequency="1" ValueChanged="FfbCurveY2Slider_ValueChanged"/>
-                            <TextBlock x:Name="FfbCurveY2Value" Text="40"/>
+                            <TextBox x:Name="FfbCurveY2Value" Text="40"/>
                             <Slider x:Name="FfbCurveY3Slider" Minimum="0" Maximum="100" TickFrequency="1" ValueChanged="FfbCurveY3Slider_ValueChanged"/>
-                            <TextBlock x:Name="FfbCurveY3Value" Text="60"/>
+                            <TextBox x:Name="FfbCurveY3Value" Text="60"/>
                             <Slider x:Name="FfbCurveY4Slider" Minimum="0" Maximum="100" TickFrequency="1" ValueChanged="FfbCurveY4Slider_ValueChanged"/>
-                            <TextBlock x:Name="FfbCurveY4Value" Text="80"/>
+                            <TextBox x:Name="FfbCurveY4Value" Text="80"/>
                             <Slider x:Name="FfbCurveY5Slider" Minimum="0" Maximum="100" TickFrequency="1" ValueChanged="FfbCurveY5Slider_ValueChanged"/>
-                            <TextBlock x:Name="FfbCurveY5Value" Text="100"/>
+                            <TextBox x:Name="FfbCurveY5Value" Text="100"/>
                         </StackPanel>
 
-                        <ctrl:SectionCard Title="MISCELLANEOUS" Icon="{StaticResource IconMisc}">
-                            <StackPanel>
-                                <StackPanel Orientation="Horizontal" Margin="0,8">
-                                    <TextBlock Text="Standby Mode" Style="{StaticResource SliderLabel}"/>
-                                    <ctrl:OffOnToggle x:Name="StandbyCheck" VerticalAlignment="Center" Click="StandbyCheck_Click"/>
+                        <!-- Miscellaneous + High Speed Damping sit side-by-side: small
+                             cards that round out the tab at the bottom. -->
+                        <Grid>
+                            <Grid.ColumnDefinitions>
+                                <ColumnDefinition Width="*"/>
+                                <ColumnDefinition Width="*"/>
+                            </Grid.ColumnDefinitions>
+                            <ctrl:SectionCard Grid.Column="0" Title="MISCELLANEOUS"
+                                              Icon="{StaticResource IconMisc}" Margin="0,0,7,14">
+                                <StackPanel>
+                                    <StackPanel Orientation="Horizontal" Margin="0,8">
+                                        <TextBlock Text="Force Feedback Reversal" Style="{StaticResource SliderLabel}"/>
+                                        <ctrl:OffOnToggle x:Name="FfbReverseCheck" VerticalAlignment="Center" Click="FfbReverseCheck_Click"/>
+                                    </StackPanel>
+                                    <StackPanel Orientation="Horizontal" Margin="0,8">
+                                        <TextBlock Text="Standby Mode" Style="{StaticResource SliderLabel}"/>
+                                        <ctrl:OffOnToggle x:Name="StandbyCheck" VerticalAlignment="Center" Click="StandbyCheck_Click"/>
+                                    </StackPanel>
+                                    <StackPanel Orientation="Horizontal" Margin="0,8">
+                                        <TextBlock Text="Base Status LED" Style="{StaticResource SliderLabel}"/>
+                                        <ctrl:OffOnToggle x:Name="LedStatusCheck" VerticalAlignment="Center" Click="LedStatusCheck_Click"/>
+                                    </StackPanel>
+                                    <StackPanel Orientation="Horizontal" Margin="0,8">
+                                        <TextBlock Text="Bluetooth" Style="{StaticResource SliderLabel}"/>
+                                        <ctrl:OffOnToggle x:Name="BluetoothCheck" VerticalAlignment="Center" Click="BluetoothCheck_Click"/>
+                                    </StackPanel>
                                 </StackPanel>
-                                <StackPanel Orientation="Horizontal" Margin="0,8">
-                                    <TextBlock Text="Base Status LED" Style="{StaticResource SliderLabel}"/>
-                                    <ctrl:OffOnToggle x:Name="LedStatusCheck" VerticalAlignment="Center" Click="LedStatusCheck_Click"/>
+                            </ctrl:SectionCard>
+
+                            <ctrl:SectionCard Grid.Column="1" Title="HIGH SPEED DAMPING"
+                                              Subtitle="// I have no idea what these settings do"
+                                              Icon="{StaticResource IconSpeed}" Margin="7,0,0,14">
+                                <StackPanel>
+                                    <Grid Margin="0,4">
+                                        <Grid.ColumnDefinitions>
+                                            <ColumnDefinition Width="Auto"/>
+                                            <ColumnDefinition Width="*"/>
+                                            <ColumnDefinition Width="Auto"/>
+                                        </Grid.ColumnDefinitions>
+                                        <TextBlock Grid.Column="0" Text="Damping Level" Style="{StaticResource SliderLabel}"/>
+                                        <Slider Grid.Column="1" x:Name="SpeedDampingSlider" Style="{StaticResource SettingSlider}" Minimum="0" Maximum="100" TickFrequency="1" ValueChanged="SpeedDampingSlider_ValueChanged"/>
+                                        <TextBox Grid.Column="2" x:Name="SpeedDampingValue" Style="{StaticResource SliderValueEditBox}"
+                                                 Tag="{Binding ElementName=SpeedDampingSlider}"
+                                                 KeyDown="SliderValueBox_KeyDown" LostFocus="SliderValueBox_LostFocus"
+                                                 Text="0%"/>
+                                    </Grid>
+                                    <Grid Margin="0,4">
+                                        <Grid.ColumnDefinitions>
+                                            <ColumnDefinition Width="Auto"/>
+                                            <ColumnDefinition Width="*"/>
+                                            <ColumnDefinition Width="Auto"/>
+                                        </Grid.ColumnDefinitions>
+                                        <TextBlock Grid.Column="0" Text="Trigger Speed" Style="{StaticResource SliderLabel}"/>
+                                        <Slider Grid.Column="1" x:Name="SpeedDampingPointSlider" Style="{StaticResource SettingSlider}" Minimum="0" Maximum="400" TickFrequency="10" ValueChanged="SpeedDampingPointSlider_ValueChanged"/>
+                                        <TextBox Grid.Column="2" x:Name="SpeedDampingPointValue" Style="{StaticResource SliderValueEditBox}"
+                                                 Tag="{Binding ElementName=SpeedDampingPointSlider}"
+                                                 KeyDown="SliderValueBox_KeyDown" LostFocus="SliderValueBox_LostFocus"
+                                                 Text="120 kph"/>
+                                    </Grid>
                                 </StackPanel>
-                                <StackPanel Orientation="Horizontal" Margin="0,8">
-                                    <TextBlock Text="Bluetooth" Style="{StaticResource SliderLabel}"/>
-                                    <ctrl:OffOnToggle x:Name="BluetoothCheck" VerticalAlignment="Center" Click="BluetoothCheck_Click"/>
-                                </StackPanel>
-                            </StackPanel>
-                        </ctrl:SectionCard>
+                            </ctrl:SectionCard>
+                        </Grid>
                     </StackPanel>
                 </ScrollViewer>
             </TabItem>
@@ -521,73 +835,113 @@
 
                         <!-- Paddle Settings -->
                         <TextBlock Text="Paddle Settings" Style="{StaticResource SectionHeader}"/>
-                        <StackPanel Orientation="Horizontal" Margin="0,4">
-                            <TextBlock Text="Paddles Mode" Style="{StaticResource SliderLabel}"/>
-                            <ComboBox x:Name="WheelPaddlesModeCombo" Width="140" SelectionChanged="WheelPaddlesModeCombo_Changed">
+                        <Grid Margin="0,4">
+                            <Grid.ColumnDefinitions>
+                                <ColumnDefinition Width="*"/>
+                                <ColumnDefinition Width="*"/>
+                            </Grid.ColumnDefinitions>
+                            <TextBlock Grid.Column="0" Text="Paddles Mode" Style="{StaticResource SliderLabel}"/>
+                            <ComboBox Grid.Column="1" x:Name="WheelPaddlesModeCombo" Width="140" SelectionChanged="WheelPaddlesModeCombo_Changed">
                                 <ComboBoxItem Content="Buttons"/>
                                 <ComboBoxItem Content="Combined"/>
                                 <ComboBoxItem Content="Split"/>
                             </ComboBox>
-                        </StackPanel>
-                        <StackPanel x:Name="WheelClutchPointPanel" Orientation="Horizontal" Margin="0,4" Visibility="Collapsed">
-                            <TextBlock Text="Clutch Split Point" Style="{StaticResource SliderLabel}"/>
-                            <Slider x:Name="WheelClutchPointSlider" Style="{StaticResource SettingSlider}" Minimum="0" Maximum="100" TickFrequency="1" ValueChanged="WheelClutchPointSlider_ValueChanged"/>
-                            <TextBlock x:Name="WheelClutchPointValue" Style="{StaticResource SliderValue}" Text="50%"/>
-                        </StackPanel>
+                        </Grid>
+                        <Grid x:Name="WheelClutchPointPanel" Margin="0,4" Visibility="Collapsed">
+                            <Grid.ColumnDefinitions>
+                                <ColumnDefinition Width="Auto"/>
+                                <ColumnDefinition Width="*"/>
+                                <ColumnDefinition Width="Auto"/>
+                            </Grid.ColumnDefinitions>
+                            <TextBlock Grid.Column="0" Text="Clutch Split Point" Style="{StaticResource SliderLabel}"/>
+                            <Slider Grid.Column="1" x:Name="WheelClutchPointSlider" Style="{StaticResource SettingSlider}" Minimum="0" Maximum="100" TickFrequency="1" ValueChanged="WheelClutchPointSlider_ValueChanged"/>
+                            <TextBox Grid.Column="2" x:Name="WheelClutchPointValue" Style="{StaticResource SliderValueEditBox}"
+                                                 Tag="{Binding ElementName=WheelClutchPointSlider}"
+                                                 KeyDown="SliderValueBox_KeyDown" LostFocus="SliderValueBox_LostFocus"
+                                                 Text="50%"/>
+                        </Grid>
 
                         <!-- Input Settings (knob + stick) -->
                         <TextBlock Text="Input Settings" Style="{StaticResource SectionHeader}"/>
-                        <StackPanel x:Name="KnobModeLegacyPanel" Orientation="Horizontal" Margin="0,4">
-                            <TextBlock Text="Rotary Encoders" Style="{StaticResource SliderLabel}"/>
-                            <ComboBox x:Name="KnobModeCombo" Width="140" SelectionChanged="KnobModeCombo_Changed">
+                        <Grid x:Name="KnobModeLegacyPanel" Margin="0,4">
+                            <Grid.ColumnDefinitions>
+                                <ColumnDefinition Width="*"/>
+                                <ColumnDefinition Width="*"/>
+                            </Grid.ColumnDefinitions>
+                            <TextBlock Grid.Column="0" Text="Rotary Encoders" Style="{StaticResource SliderLabel}"/>
+                            <ComboBox Grid.Column="1" x:Name="KnobModeCombo" Width="140" SelectionChanged="KnobModeCombo_Changed">
                                 <ComboBoxItem Content="Buttons"/>
                                 <ComboBoxItem Content="Knob"/>
                             </ComboBox>
-                        </StackPanel>
+                        </Grid>
                         <StackPanel x:Name="KnobSignalModePanel" Visibility="Collapsed">
-                            <StackPanel x:Name="KnobSignalMode0Row" Orientation="Horizontal" Margin="0,4">
-                                <TextBlock Text="Rotary 1" Style="{StaticResource SliderLabel}"/>
-                                <ComboBox x:Name="KnobSignalMode0Combo" Width="140" SelectionChanged="KnobSignalMode0Combo_Changed">
+                            <Grid x:Name="KnobSignalMode0Row" Margin="0,4">
+                                <Grid.ColumnDefinitions>
+                                    <ColumnDefinition Width="*"/>
+                                    <ColumnDefinition Width="*"/>
+                                </Grid.ColumnDefinitions>
+                                <TextBlock Grid.Column="0" Text="Rotary 1" Style="{StaticResource SliderLabel}"/>
+                                <ComboBox Grid.Column="1" x:Name="KnobSignalMode0Combo" Width="140" SelectionChanged="KnobSignalMode0Combo_Changed">
                                     <ComboBoxItem Content="Buttons"/><ComboBoxItem Content="Knob"/>
                                 </ComboBox>
-                            </StackPanel>
-                            <StackPanel x:Name="KnobSignalMode1Row" Orientation="Horizontal" Margin="0,4">
-                                <TextBlock Text="Rotary 2" Style="{StaticResource SliderLabel}"/>
-                                <ComboBox x:Name="KnobSignalMode1Combo" Width="140" SelectionChanged="KnobSignalMode1Combo_Changed">
+                            </Grid>
+                            <Grid x:Name="KnobSignalMode1Row" Margin="0,4">
+                                <Grid.ColumnDefinitions>
+                                    <ColumnDefinition Width="*"/>
+                                    <ColumnDefinition Width="*"/>
+                                </Grid.ColumnDefinitions>
+                                <TextBlock Grid.Column="0" Text="Rotary 2" Style="{StaticResource SliderLabel}"/>
+                                <ComboBox Grid.Column="1" x:Name="KnobSignalMode1Combo" Width="140" SelectionChanged="KnobSignalMode1Combo_Changed">
                                     <ComboBoxItem Content="Buttons"/><ComboBoxItem Content="Knob"/>
                                 </ComboBox>
-                            </StackPanel>
-                            <StackPanel x:Name="KnobSignalMode2Row" Orientation="Horizontal" Margin="0,4">
-                                <TextBlock Text="Rotary 3" Style="{StaticResource SliderLabel}"/>
-                                <ComboBox x:Name="KnobSignalMode2Combo" Width="140" SelectionChanged="KnobSignalMode2Combo_Changed">
+                            </Grid>
+                            <Grid x:Name="KnobSignalMode2Row" Margin="0,4">
+                                <Grid.ColumnDefinitions>
+                                    <ColumnDefinition Width="*"/>
+                                    <ColumnDefinition Width="*"/>
+                                </Grid.ColumnDefinitions>
+                                <TextBlock Grid.Column="0" Text="Rotary 3" Style="{StaticResource SliderLabel}"/>
+                                <ComboBox Grid.Column="1" x:Name="KnobSignalMode2Combo" Width="140" SelectionChanged="KnobSignalMode2Combo_Changed">
                                     <ComboBoxItem Content="Buttons"/><ComboBoxItem Content="Knob"/>
                                 </ComboBox>
-                            </StackPanel>
-                            <StackPanel x:Name="KnobSignalMode3Row" Orientation="Horizontal" Margin="0,4">
-                                <TextBlock Text="Rotary 4" Style="{StaticResource SliderLabel}"/>
-                                <ComboBox x:Name="KnobSignalMode3Combo" Width="140" SelectionChanged="KnobSignalMode3Combo_Changed">
+                            </Grid>
+                            <Grid x:Name="KnobSignalMode3Row" Margin="0,4">
+                                <Grid.ColumnDefinitions>
+                                    <ColumnDefinition Width="*"/>
+                                    <ColumnDefinition Width="*"/>
+                                </Grid.ColumnDefinitions>
+                                <TextBlock Grid.Column="0" Text="Rotary 4" Style="{StaticResource SliderLabel}"/>
+                                <ComboBox Grid.Column="1" x:Name="KnobSignalMode3Combo" Width="140" SelectionChanged="KnobSignalMode3Combo_Changed">
                                     <ComboBoxItem Content="Buttons"/><ComboBoxItem Content="Knob"/>
                                 </ComboBox>
-                            </StackPanel>
-                            <StackPanel x:Name="KnobSignalMode4Row" Orientation="Horizontal" Margin="0,4">
-                                <TextBlock Text="Rotary 5" Style="{StaticResource SliderLabel}"/>
-                                <ComboBox x:Name="KnobSignalMode4Combo" Width="140" SelectionChanged="KnobSignalMode4Combo_Changed">
+                            </Grid>
+                            <Grid x:Name="KnobSignalMode4Row" Margin="0,4">
+                                <Grid.ColumnDefinitions>
+                                    <ColumnDefinition Width="*"/>
+                                    <ColumnDefinition Width="*"/>
+                                </Grid.ColumnDefinitions>
+                                <TextBlock Grid.Column="0" Text="Rotary 5" Style="{StaticResource SliderLabel}"/>
+                                <ComboBox Grid.Column="1" x:Name="KnobSignalMode4Combo" Width="140" SelectionChanged="KnobSignalMode4Combo_Changed">
                                     <ComboBoxItem Content="Buttons"/><ComboBoxItem Content="Knob"/>
                                 </ComboBox>
-                            </StackPanel>
+                            </Grid>
                         </StackPanel>
                         <StackPanel x:Name="StickModeOldPanel" Orientation="Horizontal" Margin="0,8" Visibility="Collapsed">
                             <TextBlock Text="Stick as D-Pad" Style="{StaticResource SliderLabel}"/>
                             <ctrl:OffOnToggle x:Name="StickModeCheck" VerticalAlignment="Center" Click="StickModeCheck_Click"/>
                         </StackPanel>
-                        <StackPanel x:Name="StickModeNewPanel" Orientation="Horizontal" Margin="0,8" Visibility="Collapsed">
-                            <TextBlock Text="Joystick Assignment" Style="{StaticResource SliderLabel}"/>
-                            <ComboBox x:Name="StickModeCombo" Width="120" SelectionChanged="StickModeCombo_Changed">
+                        <Grid x:Name="StickModeNewPanel" Margin="0,8" Visibility="Collapsed">
+                            <Grid.ColumnDefinitions>
+                                <ColumnDefinition Width="*"/>
+                                <ColumnDefinition Width="*"/>
+                            </Grid.ColumnDefinitions>
+                            <TextBlock Grid.Column="0" Text="Joystick Assignment" Style="{StaticResource SliderLabel}"/>
+                            <ComboBox Grid.Column="1" x:Name="StickModeCombo" Width="120" SelectionChanged="StickModeCombo_Changed">
                                 <ComboBoxItem Content="None"/>
                                 <ComboBoxItem Content="Left"/>
                                 <ComboBoxItem Content="Right"/>
                             </ComboBox>
-                        </StackPanel>
+                        </Grid>
 
                         <TextBlock TextWrapping="Wrap" Foreground="Gray" FontSize="11" Margin="0,12,0,0"
                                    Text="LED and button settings are in the MOZA Wheel device tab under Devices."/>
@@ -597,96 +951,154 @@
 
             <!-- ==================== HANDBRAKE TAB ==================== -->
             <TabItem x:Name="HandbrakeTab" Header="Handbrake" Visibility="Collapsed">
+                <!-- Red accent for active button-selectors (SegmentedControl
+                     selected item, OffOnToggle ON pill). The templates resolve
+                     these keys via DynamicResource, so overriding them here
+                     tints every active control inside the Handbrake tab. -->
+                <TabItem.Resources>
+                    <StaticResource x:Key="ToggleOnBrush" ResourceKey="RedToggleOnBrush"/>
+                    <SolidColorBrush x:Key="ToggleOnTextBrush" Color="{StaticResource RedColor}"/>
+                </TabItem.Resources>
                 <ScrollViewer VerticalScrollBarVisibility="Auto" Padding="10">
                     <StackPanel Margin="5">
 
-                        <!-- Live Input -->
-                        <TextBlock Text="Handbrake" Style="{StaticResource SectionHeader}"/>
-                        <StackPanel x:Name="HandbrakeAxisPanel" Margin="0,0,0,10">
-                            <StackPanel Width="100" HorizontalAlignment="Left">
-                                <TextBlock Text="Position" Foreground="Gray" FontSize="11"/>
-                                <ProgressBar x:Name="HandbrakeBar" Height="14" Minimum="0" Maximum="100" Value="0"/>
-                            </StackPanel>
-                        </StackPanel>
-                        <TextBlock x:Name="HandbrakeButtonStatus" FontFamily="Consolas" FontSize="14"
-                                   FontWeight="Normal" Margin="0,0,0,10" Visibility="Collapsed">Released</TextBlock>
+                        <!-- Live Input (POSITION card) + CALIBRATION side-by-side. -->
+                        <Grid>
+                            <Grid.ColumnDefinitions>
+                                <ColumnDefinition Width="*"/>
+                                <ColumnDefinition Width="*"/>
+                            </Grid.ColumnDefinitions>
+                            <ctrl:SectionCard Grid.Column="0" Title="POSITION"
+                                              Subtitle="// live handbrake input"
+                                              Icon="{StaticResource IconHandbrake}"
+                                              AccentBrush="{StaticResource RedBrush}"
+                                              Margin="0,0,7,14">
+                                <StackPanel>
+                                    <StackPanel x:Name="HandbrakeAxisPanel" Margin="0,4">
+                                        <TextBlock Text="Position" Style="{StaticResource MutedHintText}" Margin="0,0,0,4"/>
+                                        <ProgressBar x:Name="HandbrakeBar" Height="14" Minimum="0" Maximum="100" Value="0"
+                                                     HorizontalAlignment="Stretch"/>
+                                    </StackPanel>
+                                    <TextBlock x:Name="HandbrakeButtonStatus" FontFamily="Consolas" FontSize="14"
+                                               FontWeight="Normal" Margin="0,4" Visibility="Collapsed">Released</TextBlock>
+                                </StackPanel>
+                            </ctrl:SectionCard>
 
-                        <ctrl:SectionCard Title="HANDBRAKE SETTINGS" Icon="{StaticResource IconHandbrake}">
-                            <StackPanel>
+                            <ctrl:SectionCard Grid.Column="1" Title="CALIBRATION"
+                                              Subtitle="// pull the handbrake fully once"
+                                              Icon="{StaticResource IconCal}"
+                                              AccentBrush="{StaticResource RedBrush}"
+                                              Margin="7,0,0,14">
                                 <StackPanel Orientation="Horizontal" Margin="0,4">
-                                    <TextBlock Text="Mode" Style="{StaticResource SliderLabel}"/>
-                                    <ctrl:SegmentedControl x:Name="HandbrakeModeCombo" SelectionChanged="HandbrakeModeCombo_Changed">
-                                        <ListBoxItem Content="Axis"/>
-                                        <ListBoxItem Content="Button"/>
-                                    </ctrl:SegmentedControl>
+                                    <Button x:Name="HbCalStartButton" Content="START CALIBRATION" Margin="0,0,10,0" Click="HbCalStartButton_Click"/>
+                                    <Button x:Name="HbCalStopButton" Content="STOP" Click="HbCalStopButton_Click"/>
+                                    <TextBlock x:Name="HbCalStatus" Style="{StaticResource MutedHintText}" Margin="14,0,0,0" VerticalAlignment="Center"/>
                                 </StackPanel>
-                                <StackPanel x:Name="HandbrakeThresholdPanel" Orientation="Horizontal" Margin="0,4">
-                                    <TextBlock Text="Button Threshold" Style="{StaticResource SliderLabel}"/>
-                                    <Slider x:Name="HandbrakeThresholdSlider" Style="{StaticResource SettingSlider}" Minimum="0" Maximum="100" TickFrequency="1" ValueChanged="HandbrakeThresholdSlider_ValueChanged"/>
-                                    <TextBlock x:Name="HandbrakeThresholdValue" Style="{StaticResource SliderValue}" Text="50%"/>
-                                </StackPanel>
-                                <StackPanel Orientation="Horizontal" Margin="0,8">
-                                    <TextBlock Text="Reverse Direction" Style="{StaticResource SliderLabel}"/>
-                                    <ctrl:OffOnToggle x:Name="HandbrakeDirectionCheck" VerticalAlignment="Center" Click="HandbrakeDirectionCheck_Click"/>
-                                </StackPanel>
-                            </StackPanel>
-                        </ctrl:SectionCard>
+                            </ctrl:SectionCard>
+                        </Grid>
 
-                        <ctrl:SectionCard Title="RANGE" Icon="{StaticResource IconRange}">
-                            <StackPanel>
-                                <StackPanel Orientation="Horizontal" Margin="0,4">
-                                    <TextBlock Text="Min" Style="{StaticResource SliderLabel}"/>
-                                    <Slider x:Name="HandbrakeMinSlider" Style="{StaticResource SettingSlider}" Minimum="0" Maximum="100" TickFrequency="1" ValueChanged="HandbrakeMinSlider_ValueChanged"/>
-                                    <TextBlock x:Name="HandbrakeMinValue" Style="{StaticResource SliderValue}" Text="0%"/>
+                        <!-- Handbrake Settings + Range side-by-side. -->
+                        <!-- HANDBRAKE SETTINGS (mode/threshold/direction + range) on the left,
+                             OUTPUT CURVE on the right. Mirrors the BRAKE page's combined
+                             "Direction & Range" card style. -->
+                        <Grid>
+                            <Grid.ColumnDefinitions>
+                                <ColumnDefinition Width="*"/>
+                                <ColumnDefinition Width="*"/>
+                            </Grid.ColumnDefinitions>
+                            <ctrl:SectionCard Grid.Column="0" Title="HANDBRAKE SETTINGS"
+                                              Icon="{StaticResource IconHandbrake}"
+                                              AccentBrush="{StaticResource RedBrush}" Margin="0,0,7,14">
+                                <StackPanel>
+                                    <Grid Margin="0,4">
+                                        <Grid.ColumnDefinitions>
+                                            <ColumnDefinition Width="Auto"/>
+                                            <ColumnDefinition Width="*"/>
+                                        </Grid.ColumnDefinitions>
+                                        <TextBlock Grid.Column="0" Text="Mode" Style="{StaticResource SliderLabel}"/>
+                                        <ctrl:SegmentedControl Grid.Column="1" x:Name="HandbrakeModeCombo"
+                                                               HorizontalAlignment="Left"
+                                                               SelectionChanged="HandbrakeModeCombo_Changed">
+                                            <ListBoxItem Content="Axis"/>
+                                            <ListBoxItem Content="Button"/>
+                                        </ctrl:SegmentedControl>
+                                    </Grid>
+                                    <Grid x:Name="HandbrakeThresholdPanel" Margin="0,4">
+                                        <Grid.ColumnDefinitions>
+                                            <ColumnDefinition Width="Auto"/>
+                                            <ColumnDefinition Width="*"/>
+                                            <ColumnDefinition Width="Auto"/>
+                                        </Grid.ColumnDefinitions>
+                                        <TextBlock Grid.Column="0" Text="Button Threshold" Style="{StaticResource SliderLabel}"/>
+                                        <Slider Grid.Column="1" x:Name="HandbrakeThresholdSlider" Style="{StaticResource RedSettingSlider}" Minimum="0" Maximum="100" TickFrequency="1" ValueChanged="HandbrakeThresholdSlider_ValueChanged"/>
+                                        <TextBox Grid.Column="2" x:Name="HandbrakeThresholdValue" Style="{StaticResource RedSliderValueEditBox}"
+                                                     Tag="{Binding ElementName=HandbrakeThresholdSlider}"
+                                                     KeyDown="SliderValueBox_KeyDown" LostFocus="SliderValueBox_LostFocus"
+                                                     Text="50%"/>
+                                    </Grid>
+                                    <StackPanel Orientation="Horizontal" Margin="0,8">
+                                        <TextBlock Text="Reverse Direction" Style="{StaticResource SliderLabel}"/>
+                                        <ctrl:OffOnToggle x:Name="HandbrakeDirectionCheck" VerticalAlignment="Center" Click="HandbrakeDirectionCheck_Click"/>
+                                    </StackPanel>
+                                    <Grid Margin="0,4">
+                                        <Grid.ColumnDefinitions>
+                                            <ColumnDefinition Width="Auto"/>
+                                            <ColumnDefinition Width="*"/>
+                                            <ColumnDefinition Width="Auto"/>
+                                        </Grid.ColumnDefinitions>
+                                        <TextBlock Grid.Column="0" Text="Range Start" Style="{StaticResource SliderLabel}"/>
+                                        <Slider Grid.Column="1" x:Name="HandbrakeMinSlider" Style="{StaticResource RedSettingSlider}" Minimum="0" Maximum="100" TickFrequency="1" ValueChanged="HandbrakeMinSlider_ValueChanged"/>
+                                        <TextBox Grid.Column="2" x:Name="HandbrakeMinValue" Style="{StaticResource RedSliderValueEditBox}"
+                                                     Tag="{Binding ElementName=HandbrakeMinSlider}"
+                                                     KeyDown="SliderValueBox_KeyDown" LostFocus="SliderValueBox_LostFocus"
+                                                     Text="0%"/>
+                                    </Grid>
+                                    <Grid Margin="0,4">
+                                        <Grid.ColumnDefinitions>
+                                            <ColumnDefinition Width="Auto"/>
+                                            <ColumnDefinition Width="*"/>
+                                            <ColumnDefinition Width="Auto"/>
+                                        </Grid.ColumnDefinitions>
+                                        <TextBlock Grid.Column="0" Text="Range End" Style="{StaticResource SliderLabel}"/>
+                                        <Slider Grid.Column="1" x:Name="HandbrakeMaxSlider" Style="{StaticResource RedSettingSlider}" Minimum="0" Maximum="100" TickFrequency="1" ValueChanged="HandbrakeMaxSlider_ValueChanged"/>
+                                        <TextBox Grid.Column="2" x:Name="HandbrakeMaxValue" Style="{StaticResource RedSliderValueEditBox}"
+                                                     Tag="{Binding ElementName=HandbrakeMaxSlider}"
+                                                     KeyDown="SliderValueBox_KeyDown" LostFocus="SliderValueBox_LostFocus"
+                                                     Text="100%"/>
+                                    </Grid>
                                 </StackPanel>
-                                <StackPanel Orientation="Horizontal" Margin="0,4">
-                                    <TextBlock Text="Max" Style="{StaticResource SliderLabel}"/>
-                                    <Slider x:Name="HandbrakeMaxSlider" Style="{StaticResource SettingSlider}" Minimum="0" Maximum="100" TickFrequency="1" ValueChanged="HandbrakeMaxSlider_ValueChanged"/>
-                                    <TextBlock x:Name="HandbrakeMaxValue" Style="{StaticResource SliderValue}" Text="100%"/>
-                                </StackPanel>
-                            </StackPanel>
-                        </ctrl:SectionCard>
+                            </ctrl:SectionCard>
 
-                        <!-- Output Curve — drag-node editor replaces 5 horizontal Y sliders -->
-                        <ctrl:SectionCard Title="OUTPUT CURVE"
-                                          Subtitle="// map physical pull to game input"
-                                          Icon="{StaticResource IconCurve}"
-                                          AccentBrush="{StaticResource GreenBrush}">
-                            <StackPanel>
-                                <ctrl:MozaCurveEditor x:Name="HandbrakeCurveEditor" Height="260"
-                                                      AccentBrush="{StaticResource GreenBrush}"/>
-                                <StackPanel Orientation="Horizontal" Margin="0,12,0,0">
-                                    <Button Content="LINEAR" Margin="0,0,8,0" Click="HbCurvePreset_Linear"/>
-                                    <Button Content="S CURVE" Margin="0,0,8,0" Click="HbCurvePreset_SCurve"/>
-                                    <Button Content="EXPONENTIAL" Margin="0,0,8,0" Click="HbCurvePreset_Exponential"/>
-                                    <Button Content="PARABOLIC" Click="HbCurvePreset_Parabolic"/>
+                            <ctrl:SectionCard Grid.Column="1" Title="OUTPUT CURVE"
+                                              Subtitle="// map physical pull to game input"
+                                              Icon="{StaticResource IconCurve}"
+                                              AccentBrush="{StaticResource RedBrush}" Margin="7,0,0,14">
+                                <StackPanel>
+                                    <ctrl:MozaCurveEditor x:Name="HandbrakeCurveEditor" Height="260"
+                                                          AccentBrush="{StaticResource RedBrush}"/>
+                                    <StackPanel Orientation="Horizontal" Margin="0,12,0,0">
+                                        <Button Content="LINEAR" Margin="0,0,8,0" Click="HbCurvePreset_Linear"/>
+                                        <Button Content="S CURVE" Margin="0,0,8,0" Click="HbCurvePreset_SCurve"/>
+                                        <Button Content="EXPONENTIAL" Margin="0,0,8,0" Click="HbCurvePreset_Exponential"/>
+                                        <Button Content="PARABOLIC" Click="HbCurvePreset_Parabolic"/>
+                                    </StackPanel>
                                 </StackPanel>
-                            </StackPanel>
-                        </ctrl:SectionCard>
+                            </ctrl:SectionCard>
+                        </Grid>
 
                         <!-- Data-store sliders, driven by HandbrakeCurveEditor -->
                         <StackPanel Visibility="Collapsed">
                             <Slider x:Name="HbY1Slider" Minimum="0" Maximum="100" TickFrequency="1" ValueChanged="HbY1Slider_ValueChanged"/>
-                            <TextBlock x:Name="HbY1Value" Text="20"/>
+                            <TextBox x:Name="HbY1Value" Text="20"/>
                             <Slider x:Name="HbY2Slider" Minimum="0" Maximum="100" TickFrequency="1" ValueChanged="HbY2Slider_ValueChanged"/>
-                            <TextBlock x:Name="HbY2Value" Text="40"/>
+                            <TextBox x:Name="HbY2Value" Text="40"/>
                             <Slider x:Name="HbY3Slider" Minimum="0" Maximum="100" TickFrequency="1" ValueChanged="HbY3Slider_ValueChanged"/>
-                            <TextBlock x:Name="HbY3Value" Text="60"/>
+                            <TextBox x:Name="HbY3Value" Text="60"/>
                             <Slider x:Name="HbY4Slider" Minimum="0" Maximum="100" TickFrequency="1" ValueChanged="HbY4Slider_ValueChanged"/>
-                            <TextBlock x:Name="HbY4Value" Text="80"/>
+                            <TextBox x:Name="HbY4Value" Text="80"/>
                             <Slider x:Name="HbY5Slider" Minimum="0" Maximum="100" TickFrequency="1" ValueChanged="HbY5Slider_ValueChanged"/>
-                            <TextBlock x:Name="HbY5Value" Text="100"/>
+                            <TextBox x:Name="HbY5Value" Text="100"/>
                         </StackPanel>
-
-                        <ctrl:SectionCard Title="CALIBRATION"
-                                          Subtitle="// pull the handbrake fully once"
-                                          Icon="{StaticResource IconCal}">
-                            <StackPanel Orientation="Horizontal" Margin="0,4">
-                                <Button x:Name="HbCalStartButton" Content="START CALIBRATION" Margin="0,0,10,0" Click="HbCalStartButton_Click"/>
-                                <Button x:Name="HbCalStopButton" Content="STOP" Click="HbCalStopButton_Click"/>
-                                <TextBlock x:Name="HbCalStatus" Style="{StaticResource MutedHintText}" Margin="14,0,0,0"/>
-                            </StackPanel>
-                        </ctrl:SectionCard>
 
                     </StackPanel>
                 </ScrollViewer>
@@ -694,7 +1106,7 @@
 
             <!-- ==================== PEDALS TAB ==================== -->
             <TabItem x:Name="PedalsTab" Header="Pedals" Visibility="Collapsed">
-                <ScrollViewer VerticalScrollBarVisibility="Auto" Padding="22,18,22,40">
+                <ScrollViewer VerticalScrollBarVisibility="Auto" Padding="22,18,22,8">
                     <StackPanel>
 
                         <!-- Live Input (3 colored bars stacked horizontally) -->
@@ -745,55 +1157,86 @@
 
                         <!-- ===== THROTTLE ===== -->
                         <StackPanel x:Name="ThrottlePedalGroup">
-                        <ctrl:SectionCard Title="THROTTLE · DIRECTION &amp; RANGE"
-                                          Icon="{StaticResource IconPedals}"
-                                          AccentBrush="{StaticResource GreenBrush}">
-                            <StackPanel>
-                                <StackPanel Orientation="Horizontal" Margin="0,8">
-                                    <TextBlock Text="Reverse Direction" Style="{StaticResource SliderLabel}"/>
-                                    <ctrl:OffOnToggle x:Name="ThrottleDirCheck" VerticalAlignment="Center" Click="ThrottleDirCheck_Click"/>
+                            <!-- Green accent override for active button-selectors
+                                 inside this group (toggle ON pill, SegmentedControl
+                                 selected item). -->
+                            <StackPanel.Resources>
+                                <StaticResource x:Key="ToggleOnBrush" ResourceKey="GreenToggleOnBrush"/>
+                                <SolidColorBrush x:Key="ToggleOnTextBrush" Color="{StaticResource GreenColor}"/>
+                            </StackPanel.Resources>
+                        <!-- THROTTLE Direction & Range + Output Curve side-by-side. -->
+                        <Grid>
+                            <Grid.ColumnDefinitions>
+                                <ColumnDefinition Width="*"/>
+                                <ColumnDefinition Width="*"/>
+                            </Grid.ColumnDefinitions>
+                            <ctrl:SectionCard Grid.Column="0" Title="THROTTLE · DIRECTION &amp; RANGE"
+                                              Icon="{StaticResource IconPedals}"
+                                          AccentBrush="{StaticResource GreenBrush}"
+                                              Margin="0,0,7,14">
+                                <StackPanel>
+                                    <StackPanel Orientation="Horizontal" Margin="0,8">
+                                        <TextBlock Text="Reverse Direction" Style="{StaticResource SliderLabel}"/>
+                                        <ctrl:OffOnToggle x:Name="ThrottleDirCheck" VerticalAlignment="Center" Click="ThrottleDirCheck_Click"/>
+                                    </StackPanel>
+                                    <Grid Margin="0,4">
+                                        <Grid.ColumnDefinitions>
+                                            <ColumnDefinition Width="Auto"/>
+                                            <ColumnDefinition Width="*"/>
+                                            <ColumnDefinition Width="Auto"/>
+                                        </Grid.ColumnDefinitions>
+                                        <TextBlock Grid.Column="0" Text="Range Start" Style="{StaticResource SliderLabel}"/>
+                                        <Slider Grid.Column="1" x:Name="ThrottleMinSlider" Style="{StaticResource GreenSettingSlider}" Minimum="0" Maximum="100" TickFrequency="1" ValueChanged="ThrottleMinSlider_ValueChanged"/>
+                                        <TextBox Grid.Column="2" x:Name="ThrottleMinValue" Style="{StaticResource GreenSliderValueEditBox}"
+                                                     Tag="{Binding ElementName=ThrottleMinSlider}"
+                                                     KeyDown="SliderValueBox_KeyDown" LostFocus="SliderValueBox_LostFocus"
+                                                     Text="0%"/>
+                                    </Grid>
+                                    <Grid Margin="0,4">
+                                        <Grid.ColumnDefinitions>
+                                            <ColumnDefinition Width="Auto"/>
+                                            <ColumnDefinition Width="*"/>
+                                            <ColumnDefinition Width="Auto"/>
+                                        </Grid.ColumnDefinitions>
+                                        <TextBlock Grid.Column="0" Text="Range End" Style="{StaticResource SliderLabel}"/>
+                                        <Slider Grid.Column="1" x:Name="ThrottleMaxSlider" Style="{StaticResource GreenSettingSlider}" Minimum="0" Maximum="100" TickFrequency="1" ValueChanged="ThrottleMaxSlider_ValueChanged"/>
+                                        <TextBox Grid.Column="2" x:Name="ThrottleMaxValue" Style="{StaticResource GreenSliderValueEditBox}"
+                                                     Tag="{Binding ElementName=ThrottleMaxSlider}"
+                                                     KeyDown="SliderValueBox_KeyDown" LostFocus="SliderValueBox_LostFocus"
+                                                     Text="100%"/>
+                                    </Grid>
                                 </StackPanel>
-                                <StackPanel Orientation="Horizontal" Margin="0,4">
-                                    <TextBlock Text="Range Start" Style="{StaticResource SliderLabel}"/>
-                                    <Slider x:Name="ThrottleMinSlider" Style="{StaticResource SettingSlider}" Minimum="0" Maximum="100" TickFrequency="1" ValueChanged="ThrottleMinSlider_ValueChanged"/>
-                                    <TextBlock x:Name="ThrottleMinValue" Style="{StaticResource SliderValue}" Text="0%"/>
-                                </StackPanel>
-                                <StackPanel Orientation="Horizontal" Margin="0,4">
-                                    <TextBlock Text="Range End" Style="{StaticResource SliderLabel}"/>
-                                    <Slider x:Name="ThrottleMaxSlider" Style="{StaticResource SettingSlider}" Minimum="0" Maximum="100" TickFrequency="1" ValueChanged="ThrottleMaxSlider_ValueChanged"/>
-                                    <TextBlock x:Name="ThrottleMaxValue" Style="{StaticResource SliderValue}" Text="100%"/>
-                                </StackPanel>
-                            </StackPanel>
-                        </ctrl:SectionCard>
-                        <!-- Throttle Output Curve -->
-                        <ctrl:SectionCard Title="THROTTLE OUTPUT CURVE"
-                                          Subtitle="// map physical position to game input"
+                                                    </ctrl:SectionCard>
+                            <ctrl:SectionCard Grid.Column="1" Title="THROTTLE OUTPUT CURVE"
+                                              Subtitle="// map physical position to game input"
                                           Icon="{StaticResource IconCurve}"
-                                          AccentBrush="{StaticResource GreenBrush}">
-                            <StackPanel>
-                                <ctrl:MozaCurveEditor x:Name="ThrottleCurveEditor" Height="240"
-                                                      AccentBrush="{StaticResource GreenBrush}"/>
-                                <StackPanel Orientation="Horizontal" Margin="0,12,0,0">
-                                    <Button Content="LINEAR" Margin="0,0,8,0" Click="ThrottleCurvePreset_Linear"/>
-                                    <Button Content="S CURVE" Margin="0,0,8,0" Click="ThrottleCurvePreset_SCurve"/>
-                                    <Button Content="EXPONENTIAL" Margin="0,0,8,0" Click="ThrottleCurvePreset_Exponential"/>
-                                    <Button Content="PARABOLIC" Click="ThrottleCurvePreset_Parabolic"/>
+                                          AccentBrush="{StaticResource GreenBrush}"
+                                              Margin="7,0,0,14">
+                                <StackPanel>
+                                    <ctrl:MozaCurveEditor x:Name="ThrottleCurveEditor" Height="240"
+                                                          AccentBrush="{StaticResource GreenBrush}"/>
+                                    <StackPanel Orientation="Horizontal" Margin="0,12,0,0">
+                                        <Button Content="LINEAR" Margin="0,0,8,0" Click="ThrottleCurvePreset_Linear"/>
+                                        <Button Content="S CURVE" Margin="0,0,8,0" Click="ThrottleCurvePreset_SCurve"/>
+                                        <Button Content="EXPONENTIAL" Margin="0,0,8,0" Click="ThrottleCurvePreset_Exponential"/>
+                                        <Button Content="PARABOLIC" Click="ThrottleCurvePreset_Parabolic"/>
+                                    </StackPanel>
                                 </StackPanel>
-                            </StackPanel>
-                        </ctrl:SectionCard>
+                                                    </ctrl:SectionCard>
+                        </Grid>
 
                         <!-- Data-store sliders, driven by ThrottleCurveEditor -->
                         <StackPanel Visibility="Collapsed">
                             <Slider x:Name="ThrottleY1Slider" Minimum="0" Maximum="100" TickFrequency="1" ValueChanged="ThrottleY1Slider_ValueChanged"/>
-                            <TextBlock x:Name="ThrottleY1Value" Text="20"/>
+                            <TextBox x:Name="ThrottleY1Value" Text="20"/>
                             <Slider x:Name="ThrottleY2Slider" Minimum="0" Maximum="100" TickFrequency="1" ValueChanged="ThrottleY2Slider_ValueChanged"/>
-                            <TextBlock x:Name="ThrottleY2Value" Text="40"/>
+                            <TextBox x:Name="ThrottleY2Value" Text="40"/>
                             <Slider x:Name="ThrottleY3Slider" Minimum="0" Maximum="100" TickFrequency="1" ValueChanged="ThrottleY3Slider_ValueChanged"/>
-                            <TextBlock x:Name="ThrottleY3Value" Text="60"/>
+                            <TextBox x:Name="ThrottleY3Value" Text="60"/>
                             <Slider x:Name="ThrottleY4Slider" Minimum="0" Maximum="100" TickFrequency="1" ValueChanged="ThrottleY4Slider_ValueChanged"/>
-                            <TextBlock x:Name="ThrottleY4Value" Text="80"/>
+                            <TextBox x:Name="ThrottleY4Value" Text="80"/>
                             <Slider x:Name="ThrottleY5Slider" Minimum="0" Maximum="100" TickFrequency="1" ValueChanged="ThrottleY5Slider_ValueChanged"/>
-                            <TextBlock x:Name="ThrottleY5Value" Text="100"/>
+                            <TextBox x:Name="ThrottleY5Value" Text="100"/>
                         </StackPanel>
                         <ctrl:SectionCard Title="THROTTLE · CALIBRATION"
                                           Icon="{StaticResource IconCal}"
@@ -808,61 +1251,97 @@
 
                         <!-- ===== BRAKE ===== -->
                         <StackPanel x:Name="BrakePedalGroup" Visibility="Collapsed">
-                        <ctrl:SectionCard Title="BRAKE · DIRECTION &amp; RANGE"
-                                          Icon="{StaticResource IconPedals}"
-                                          AccentBrush="{StaticResource RedBrush}">
-                            <StackPanel>
-                                <StackPanel Orientation="Horizontal" Margin="0,8">
-                                    <TextBlock Text="Reverse Direction" Style="{StaticResource SliderLabel}"/>
-                                    <ctrl:OffOnToggle x:Name="BrakeDirCheck" VerticalAlignment="Center" Click="BrakeDirCheck_Click"/>
+                            <StackPanel.Resources>
+                                <StaticResource x:Key="ToggleOnBrush" ResourceKey="RedToggleOnBrush"/>
+                                <SolidColorBrush x:Key="ToggleOnTextBrush" Color="{StaticResource RedColor}"/>
+                            </StackPanel.Resources>
+                        <!-- BRAKE Direction & Range + Output Curve side-by-side. -->
+                        <Grid>
+                            <Grid.ColumnDefinitions>
+                                <ColumnDefinition Width="*"/>
+                                <ColumnDefinition Width="*"/>
+                            </Grid.ColumnDefinitions>
+                            <ctrl:SectionCard Grid.Column="0" Title="BRAKE · DIRECTION &amp; RANGE"
+                                              Icon="{StaticResource IconPedals}"
+                                          AccentBrush="{StaticResource RedBrush}"
+                                              Margin="0,0,7,14">
+                                <StackPanel>
+                                    <StackPanel Orientation="Horizontal" Margin="0,8">
+                                        <TextBlock Text="Reverse Direction" Style="{StaticResource SliderLabel}"/>
+                                        <ctrl:OffOnToggle x:Name="BrakeDirCheck" VerticalAlignment="Center" Click="BrakeDirCheck_Click"/>
+                                    </StackPanel>
+                                    <Grid Margin="0,4">
+                                        <Grid.ColumnDefinitions>
+                                            <ColumnDefinition Width="Auto"/>
+                                            <ColumnDefinition Width="*"/>
+                                            <ColumnDefinition Width="Auto"/>
+                                        </Grid.ColumnDefinitions>
+                                        <TextBlock Grid.Column="0" Text="Range Start" Style="{StaticResource SliderLabel}"/>
+                                        <Slider Grid.Column="1" x:Name="BrakeMinSlider" Style="{StaticResource RedSettingSlider}" Minimum="0" Maximum="100" TickFrequency="1" ValueChanged="BrakeMinSlider_ValueChanged"/>
+                                        <TextBox Grid.Column="2" x:Name="BrakeMinValue" Style="{StaticResource RedSliderValueEditBox}"
+                                                     Tag="{Binding ElementName=BrakeMinSlider}"
+                                                     KeyDown="SliderValueBox_KeyDown" LostFocus="SliderValueBox_LostFocus"
+                                                     Text="0%"/>
+                                    </Grid>
+                                    <Grid Margin="0,4">
+                                        <Grid.ColumnDefinitions>
+                                            <ColumnDefinition Width="Auto"/>
+                                            <ColumnDefinition Width="*"/>
+                                            <ColumnDefinition Width="Auto"/>
+                                        </Grid.ColumnDefinitions>
+                                        <TextBlock Grid.Column="0" Text="Range End" Style="{StaticResource SliderLabel}"/>
+                                        <Slider Grid.Column="1" x:Name="BrakeMaxSlider" Style="{StaticResource RedSettingSlider}" Minimum="0" Maximum="100" TickFrequency="1" ValueChanged="BrakeMaxSlider_ValueChanged"/>
+                                        <TextBox Grid.Column="2" x:Name="BrakeMaxValue" Style="{StaticResource RedSliderValueEditBox}"
+                                                     Tag="{Binding ElementName=BrakeMaxSlider}"
+                                                     KeyDown="SliderValueBox_KeyDown" LostFocus="SliderValueBox_LostFocus"
+                                                     Text="100%"/>
+                                    </Grid>
+                                    <Grid Margin="0,4">
+                                        <Grid.ColumnDefinitions>
+                                            <ColumnDefinition Width="Auto"/>
+                                            <ColumnDefinition Width="*"/>
+                                            <ColumnDefinition Width="Auto"/>
+                                        </Grid.ColumnDefinitions>
+                                        <TextBlock Grid.Column="0" Text="Sensor Ratio" Style="{StaticResource SliderLabel}"/>
+                                        <Slider Grid.Column="1" x:Name="BrakeAngleRatioSlider" Style="{StaticResource RedSettingSlider}" Minimum="0" Maximum="100" TickFrequency="1" ValueChanged="BrakeAngleRatioSlider_ValueChanged"/>
+                                        <TextBox Grid.Column="2" x:Name="BrakeAngleRatioValue" Style="{StaticResource RedSliderValueEditBox}"
+                                                     Tag="{Binding ElementName=BrakeAngleRatioSlider}"
+                                                     KeyDown="SliderValueBox_KeyDown" LostFocus="SliderValueBox_LostFocus"
+                                                     Text="50%"/>
+                                    </Grid>
+                                    <TextBlock Text="0% = Angle Sensor · 100% = Load Cell" Style="{StaticResource MutedHintText}" Margin="0,0,0,4"/>
                                 </StackPanel>
-                                <StackPanel Orientation="Horizontal" Margin="0,4">
-                                    <TextBlock Text="Range Start" Style="{StaticResource SliderLabel}"/>
-                                    <Slider x:Name="BrakeMinSlider" Style="{StaticResource SettingSlider}" Minimum="0" Maximum="100" TickFrequency="1" ValueChanged="BrakeMinSlider_ValueChanged"/>
-                                    <TextBlock x:Name="BrakeMinValue" Style="{StaticResource SliderValue}" Text="0%"/>
-                                </StackPanel>
-                                <StackPanel Orientation="Horizontal" Margin="0,4">
-                                    <TextBlock Text="Range End" Style="{StaticResource SliderLabel}"/>
-                                    <Slider x:Name="BrakeMaxSlider" Style="{StaticResource SettingSlider}" Minimum="0" Maximum="100" TickFrequency="1" ValueChanged="BrakeMaxSlider_ValueChanged"/>
-                                    <TextBlock x:Name="BrakeMaxValue" Style="{StaticResource SliderValue}" Text="100%"/>
-                                </StackPanel>
-                                <StackPanel Orientation="Horizontal" Margin="0,4">
-                                    <TextBlock Text="Sensor Ratio" Style="{StaticResource SliderLabel}"/>
-                                    <Slider x:Name="BrakeAngleRatioSlider" Style="{StaticResource SettingSlider}" Minimum="0" Maximum="100" TickFrequency="1" ValueChanged="BrakeAngleRatioSlider_ValueChanged"/>
-                                    <TextBlock x:Name="BrakeAngleRatioValue" Style="{StaticResource SliderValue}" Text="50%"/>
-                                </StackPanel>
-                                <TextBlock Text="0% = Angle Sensor · 100% = Load Cell" Style="{StaticResource MutedHintText}" Margin="0,0,0,4"/>
-                            </StackPanel>
-                        </ctrl:SectionCard>
-                        <!-- Brake Output Curve -->
-                        <ctrl:SectionCard Title="BRAKE OUTPUT CURVE"
-                                          Subtitle="// shape the brake response"
+                                                    </ctrl:SectionCard>
+                            <ctrl:SectionCard Grid.Column="1" Title="BRAKE OUTPUT CURVE"
+                                              Subtitle="// shape the brake response"
                                           Icon="{StaticResource IconCurve}"
-                                          AccentBrush="{StaticResource RedBrush}">
-                            <StackPanel>
-                                <ctrl:MozaCurveEditor x:Name="BrakeCurveEditor" Height="240"
-                                                      AccentBrush="{StaticResource RedBrush}"/>
-                                <StackPanel Orientation="Horizontal" Margin="0,12,0,0">
-                                    <Button Content="LINEAR" Margin="0,0,8,0" Click="BrakeCurvePreset_Linear"/>
-                                    <Button Content="S CURVE" Margin="0,0,8,0" Click="BrakeCurvePreset_SCurve"/>
-                                    <Button Content="EXPONENTIAL" Margin="0,0,8,0" Click="BrakeCurvePreset_Exponential"/>
-                                    <Button Content="PARABOLIC" Click="BrakeCurvePreset_Parabolic"/>
+                                          AccentBrush="{StaticResource RedBrush}"
+                                              Margin="7,0,0,14">
+                                <StackPanel>
+                                    <ctrl:MozaCurveEditor x:Name="BrakeCurveEditor" Height="240"
+                                                          AccentBrush="{StaticResource RedBrush}"/>
+                                    <StackPanel Orientation="Horizontal" Margin="0,12,0,0">
+                                        <Button Content="LINEAR" Margin="0,0,8,0" Click="BrakeCurvePreset_Linear"/>
+                                        <Button Content="S CURVE" Margin="0,0,8,0" Click="BrakeCurvePreset_SCurve"/>
+                                        <Button Content="EXPONENTIAL" Margin="0,0,8,0" Click="BrakeCurvePreset_Exponential"/>
+                                        <Button Content="PARABOLIC" Click="BrakeCurvePreset_Parabolic"/>
+                                    </StackPanel>
                                 </StackPanel>
-                            </StackPanel>
-                        </ctrl:SectionCard>
+                                                    </ctrl:SectionCard>
+                        </Grid>
 
                         <!-- Data-store sliders, driven by BrakeCurveEditor -->
                         <StackPanel Visibility="Collapsed">
                             <Slider x:Name="BrakeY1Slider" Minimum="0" Maximum="100" TickFrequency="1" ValueChanged="BrakeY1Slider_ValueChanged"/>
-                            <TextBlock x:Name="BrakeY1Value" Text="20"/>
+                            <TextBox x:Name="BrakeY1Value" Text="20"/>
                             <Slider x:Name="BrakeY2Slider" Minimum="0" Maximum="100" TickFrequency="1" ValueChanged="BrakeY2Slider_ValueChanged"/>
-                            <TextBlock x:Name="BrakeY2Value" Text="40"/>
+                            <TextBox x:Name="BrakeY2Value" Text="40"/>
                             <Slider x:Name="BrakeY3Slider" Minimum="0" Maximum="100" TickFrequency="1" ValueChanged="BrakeY3Slider_ValueChanged"/>
-                            <TextBlock x:Name="BrakeY3Value" Text="60"/>
+                            <TextBox x:Name="BrakeY3Value" Text="60"/>
                             <Slider x:Name="BrakeY4Slider" Minimum="0" Maximum="100" TickFrequency="1" ValueChanged="BrakeY4Slider_ValueChanged"/>
-                            <TextBlock x:Name="BrakeY4Value" Text="80"/>
+                            <TextBox x:Name="BrakeY4Value" Text="80"/>
                             <Slider x:Name="BrakeY5Slider" Minimum="0" Maximum="100" TickFrequency="1" ValueChanged="BrakeY5Slider_ValueChanged"/>
-                            <TextBlock x:Name="BrakeY5Value" Text="100"/>
+                            <TextBox x:Name="BrakeY5Value" Text="100"/>
                         </StackPanel>
                         <ctrl:SectionCard Title="BRAKE · CALIBRATION"
                                           Icon="{StaticResource IconCal}"
@@ -877,55 +1356,79 @@
 
                         <!-- ===== CLUTCH ===== -->
                         <StackPanel x:Name="ClutchPedalGroup" Visibility="Collapsed">
-                        <ctrl:SectionCard Title="CLUTCH · DIRECTION &amp; RANGE"
-                                          Icon="{StaticResource IconPedals}"
-                                          AccentBrush="{StaticResource CyanBrush}">
-                            <StackPanel>
-                                <StackPanel Orientation="Horizontal" Margin="0,8">
-                                    <TextBlock Text="Reverse Direction" Style="{StaticResource SliderLabel}"/>
-                                    <ctrl:OffOnToggle x:Name="ClutchDirCheck" VerticalAlignment="Center" Click="ClutchDirCheck_Click"/>
+                        <!-- CLUTCH Direction & Range + Output Curve side-by-side. -->
+                        <Grid>
+                            <Grid.ColumnDefinitions>
+                                <ColumnDefinition Width="*"/>
+                                <ColumnDefinition Width="*"/>
+                            </Grid.ColumnDefinitions>
+                            <ctrl:SectionCard Grid.Column="0" Title="CLUTCH · DIRECTION &amp; RANGE"
+                                              Icon="{StaticResource IconPedals}"
+                                          AccentBrush="{StaticResource CyanBrush}"
+                                              Margin="0,0,7,14">
+                                <StackPanel>
+                                    <StackPanel Orientation="Horizontal" Margin="0,8">
+                                        <TextBlock Text="Reverse Direction" Style="{StaticResource SliderLabel}"/>
+                                        <ctrl:OffOnToggle x:Name="ClutchDirCheck" VerticalAlignment="Center" Click="ClutchDirCheck_Click"/>
+                                    </StackPanel>
+                                    <Grid Margin="0,4">
+                                        <Grid.ColumnDefinitions>
+                                            <ColumnDefinition Width="Auto"/>
+                                            <ColumnDefinition Width="*"/>
+                                            <ColumnDefinition Width="Auto"/>
+                                        </Grid.ColumnDefinitions>
+                                        <TextBlock Grid.Column="0" Text="Range Start" Style="{StaticResource SliderLabel}"/>
+                                        <Slider Grid.Column="1" x:Name="ClutchMinSlider" Style="{StaticResource SettingSlider}" Minimum="0" Maximum="100" TickFrequency="1" ValueChanged="ClutchMinSlider_ValueChanged"/>
+                                        <TextBox Grid.Column="2" x:Name="ClutchMinValue" Style="{StaticResource SliderValueEditBox}"
+                                                     Tag="{Binding ElementName=ClutchMinSlider}"
+                                                     KeyDown="SliderValueBox_KeyDown" LostFocus="SliderValueBox_LostFocus"
+                                                     Text="0%"/>
+                                    </Grid>
+                                    <Grid Margin="0,4">
+                                        <Grid.ColumnDefinitions>
+                                            <ColumnDefinition Width="Auto"/>
+                                            <ColumnDefinition Width="*"/>
+                                            <ColumnDefinition Width="Auto"/>
+                                        </Grid.ColumnDefinitions>
+                                        <TextBlock Grid.Column="0" Text="Range End" Style="{StaticResource SliderLabel}"/>
+                                        <Slider Grid.Column="1" x:Name="ClutchMaxSlider" Style="{StaticResource SettingSlider}" Minimum="0" Maximum="100" TickFrequency="1" ValueChanged="ClutchMaxSlider_ValueChanged"/>
+                                        <TextBox Grid.Column="2" x:Name="ClutchMaxValue" Style="{StaticResource SliderValueEditBox}"
+                                                     Tag="{Binding ElementName=ClutchMaxSlider}"
+                                                     KeyDown="SliderValueBox_KeyDown" LostFocus="SliderValueBox_LostFocus"
+                                                     Text="100%"/>
+                                    </Grid>
                                 </StackPanel>
-                                <StackPanel Orientation="Horizontal" Margin="0,4">
-                                    <TextBlock Text="Range Start" Style="{StaticResource SliderLabel}"/>
-                                    <Slider x:Name="ClutchMinSlider" Style="{StaticResource SettingSlider}" Minimum="0" Maximum="100" TickFrequency="1" ValueChanged="ClutchMinSlider_ValueChanged"/>
-                                    <TextBlock x:Name="ClutchMinValue" Style="{StaticResource SliderValue}" Text="0%"/>
-                                </StackPanel>
-                                <StackPanel Orientation="Horizontal" Margin="0,4">
-                                    <TextBlock Text="Range End" Style="{StaticResource SliderLabel}"/>
-                                    <Slider x:Name="ClutchMaxSlider" Style="{StaticResource SettingSlider}" Minimum="0" Maximum="100" TickFrequency="1" ValueChanged="ClutchMaxSlider_ValueChanged"/>
-                                    <TextBlock x:Name="ClutchMaxValue" Style="{StaticResource SliderValue}" Text="100%"/>
-                                </StackPanel>
-                            </StackPanel>
-                        </ctrl:SectionCard>
-                        <!-- Clutch Output Curve -->
-                        <ctrl:SectionCard Title="CLUTCH OUTPUT CURVE"
-                                          Subtitle="// shape the clutch response"
+                                                    </ctrl:SectionCard>
+                            <ctrl:SectionCard Grid.Column="1" Title="CLUTCH OUTPUT CURVE"
+                                              Subtitle="// shape the clutch response"
                                           Icon="{StaticResource IconCurve}"
-                                          AccentBrush="{StaticResource CyanBrush}">
-                            <StackPanel>
-                                <ctrl:MozaCurveEditor x:Name="ClutchCurveEditor" Height="240"
-                                                      AccentBrush="{StaticResource CyanBrush}"/>
-                                <StackPanel Orientation="Horizontal" Margin="0,12,0,0">
-                                    <Button Content="LINEAR" Margin="0,0,8,0" Click="ClutchCurvePreset_Linear"/>
-                                    <Button Content="S CURVE" Margin="0,0,8,0" Click="ClutchCurvePreset_SCurve"/>
-                                    <Button Content="EXPONENTIAL" Margin="0,0,8,0" Click="ClutchCurvePreset_Exponential"/>
-                                    <Button Content="PARABOLIC" Click="ClutchCurvePreset_Parabolic"/>
+                                          AccentBrush="{StaticResource CyanBrush}"
+                                              Margin="7,0,0,14">
+                                <StackPanel>
+                                    <ctrl:MozaCurveEditor x:Name="ClutchCurveEditor" Height="240"
+                                                          AccentBrush="{StaticResource CyanBrush}"/>
+                                    <StackPanel Orientation="Horizontal" Margin="0,12,0,0">
+                                        <Button Content="LINEAR" Margin="0,0,8,0" Click="ClutchCurvePreset_Linear"/>
+                                        <Button Content="S CURVE" Margin="0,0,8,0" Click="ClutchCurvePreset_SCurve"/>
+                                        <Button Content="EXPONENTIAL" Margin="0,0,8,0" Click="ClutchCurvePreset_Exponential"/>
+                                        <Button Content="PARABOLIC" Click="ClutchCurvePreset_Parabolic"/>
+                                    </StackPanel>
                                 </StackPanel>
-                            </StackPanel>
-                        </ctrl:SectionCard>
+                                                    </ctrl:SectionCard>
+                        </Grid>
 
                         <!-- Data-store sliders, driven by ClutchCurveEditor -->
                         <StackPanel Visibility="Collapsed">
                             <Slider x:Name="ClutchY1Slider" Minimum="0" Maximum="100" TickFrequency="1" ValueChanged="ClutchY1Slider_ValueChanged"/>
-                            <TextBlock x:Name="ClutchY1Value" Text="20"/>
+                            <TextBox x:Name="ClutchY1Value" Text="20"/>
                             <Slider x:Name="ClutchY2Slider" Minimum="0" Maximum="100" TickFrequency="1" ValueChanged="ClutchY2Slider_ValueChanged"/>
-                            <TextBlock x:Name="ClutchY2Value" Text="40"/>
+                            <TextBox x:Name="ClutchY2Value" Text="40"/>
                             <Slider x:Name="ClutchY3Slider" Minimum="0" Maximum="100" TickFrequency="1" ValueChanged="ClutchY3Slider_ValueChanged"/>
-                            <TextBlock x:Name="ClutchY3Value" Text="60"/>
+                            <TextBox x:Name="ClutchY3Value" Text="60"/>
                             <Slider x:Name="ClutchY4Slider" Minimum="0" Maximum="100" TickFrequency="1" ValueChanged="ClutchY4Slider_ValueChanged"/>
-                            <TextBlock x:Name="ClutchY4Value" Text="80"/>
+                            <TextBox x:Name="ClutchY4Value" Text="80"/>
                             <Slider x:Name="ClutchY5Slider" Minimum="0" Maximum="100" TickFrequency="1" ValueChanged="ClutchY5Slider_ValueChanged"/>
-                            <TextBlock x:Name="ClutchY5Value" Text="100"/>
+                            <TextBox x:Name="ClutchY5Value" Text="100"/>
                         </StackPanel>
                         <ctrl:SectionCard Title="CLUTCH · CALIBRATION"
                                           Icon="{StaticResource IconCal}"
@@ -943,7 +1446,7 @@
 
             <!-- ==================== AB9 SHIFTER TAB ==================== -->
             <TabItem x:Name="Ab9Tab" Header="AB9 Shifter" Visibility="Collapsed">
-                <ScrollViewer VerticalScrollBarVisibility="Auto" Padding="22,18,22,40">
+                <ScrollViewer VerticalScrollBarVisibility="Auto" Padding="22,18,22,8">
                     <StackPanel>
 
                         <!-- Status header -->
@@ -962,9 +1465,13 @@
                         </Border>
 
                         <ctrl:SectionCard Title="MECHANICAL LAYOUT" Icon="{StaticResource IconShift}">
-                            <StackPanel Orientation="Horizontal" Margin="0,4">
-                                <TextBlock Text="Mode" Style="{StaticResource SliderLabel}"/>
-                                <ComboBox x:Name="Ab9ModeCombo" Width="220" SelectionChanged="Ab9ModeCombo_Changed">
+                            <Grid Margin="0,4">
+                                <Grid.ColumnDefinitions>
+                                    <ColumnDefinition Width="*"/>
+                                    <ColumnDefinition Width="*"/>
+                                </Grid.ColumnDefinitions>
+                                <TextBlock Grid.Column="0" Text="Mode" Style="{StaticResource SliderLabel}"/>
+                                <ComboBox Grid.Column="1" x:Name="Ab9ModeCombo" Width="220" SelectionChanged="Ab9ModeCombo_Changed">
                                     <ComboBoxItem Content="5+R Layout 1" Tag="0"/>
                                     <ComboBoxItem Content="6+R Layout 1" Tag="4"/>
                                     <ComboBoxItem Content="6+R Layout 2" Tag="5"/>
@@ -972,38 +1479,78 @@
                                     <ComboBoxItem Content="7+R Layout 2" Tag="7"/>
                                     <ComboBoxItem Content="Sequential"   Tag="9"/>
                                 </ComboBox>
-                            </StackPanel>
+                            </Grid>
                         </ctrl:SectionCard>
 
                         <ctrl:SectionCard Title="FEEL"
                                           Subtitle="// per-axis mechanical character"
                                           Icon="{StaticResource IconDamper}">
                             <StackPanel>
-                                <StackPanel Orientation="Horizontal" Margin="0,4">
-                                    <TextBlock Text="Mechanical Resistance" Style="{StaticResource SliderLabel}"/>
-                                    <Slider x:Name="Ab9MechResistanceSlider" Style="{StaticResource SettingSlider}" Minimum="0" Maximum="100" TickFrequency="1" ValueChanged="Ab9MechResistanceSlider_ValueChanged"/>
-                                    <TextBlock x:Name="Ab9MechResistanceValue" Style="{StaticResource SliderValue}" Text="50"/>
-                                </StackPanel>
-                                <StackPanel Orientation="Horizontal" Margin="0,4">
-                                    <TextBlock Text="Spring" Style="{StaticResource SliderLabel}"/>
-                                    <Slider x:Name="Ab9SpringSlider" Style="{StaticResource SettingSlider}" Minimum="0" Maximum="100" TickFrequency="1" ValueChanged="Ab9SpringSlider_ValueChanged"/>
-                                    <TextBlock x:Name="Ab9SpringValue" Style="{StaticResource SliderValue}" Text="50"/>
-                                </StackPanel>
-                                <StackPanel Orientation="Horizontal" Margin="0,4">
-                                    <TextBlock Text="Natural Damping" Style="{StaticResource SliderLabel}"/>
-                                    <Slider x:Name="Ab9DampingSlider" Style="{StaticResource SettingSlider}" Minimum="0" Maximum="100" TickFrequency="1" ValueChanged="Ab9DampingSlider_ValueChanged"/>
-                                    <TextBlock x:Name="Ab9DampingValue" Style="{StaticResource SliderValue}" Text="50"/>
-                                </StackPanel>
-                                <StackPanel Orientation="Horizontal" Margin="0,4">
-                                    <TextBlock Text="Natural Friction" Style="{StaticResource SliderLabel}"/>
-                                    <Slider x:Name="Ab9FrictionSlider" Style="{StaticResource SettingSlider}" Minimum="0" Maximum="100" TickFrequency="1" ValueChanged="Ab9FrictionSlider_ValueChanged"/>
-                                    <TextBlock x:Name="Ab9FrictionValue" Style="{StaticResource SliderValue}" Text="50"/>
-                                </StackPanel>
-                                <StackPanel Orientation="Horizontal" Margin="0,4">
-                                    <TextBlock Text="Max Output Torque Limit" Style="{StaticResource SliderLabel}"/>
-                                    <Slider x:Name="Ab9MaxTorqueSlider" Style="{StaticResource SettingSlider}" Minimum="0" Maximum="100" TickFrequency="1" ValueChanged="Ab9MaxTorqueSlider_ValueChanged"/>
-                                    <TextBlock x:Name="Ab9MaxTorqueValue" Style="{StaticResource SliderValue}" Text="50"/>
-                                </StackPanel>
+                                <Grid Margin="0,4">
+                                    <Grid.ColumnDefinitions>
+                                        <ColumnDefinition Width="Auto"/>
+                                        <ColumnDefinition Width="*"/>
+                                        <ColumnDefinition Width="Auto"/>
+                                    </Grid.ColumnDefinitions>
+                                    <TextBlock Grid.Column="0" Text="Mechanical Resistance" Style="{StaticResource SliderLabel}"/>
+                                    <Slider Grid.Column="1" x:Name="Ab9MechResistanceSlider" Style="{StaticResource SettingSlider}" Minimum="0" Maximum="100" TickFrequency="1" ValueChanged="Ab9MechResistanceSlider_ValueChanged"/>
+                                    <TextBox Grid.Column="2" x:Name="Ab9MechResistanceValue" Style="{StaticResource SliderValueEditBox}"
+                                                 Tag="{Binding ElementName=Ab9MechResistanceSlider}"
+                                                 KeyDown="SliderValueBox_KeyDown" LostFocus="SliderValueBox_LostFocus"
+                                                 Text="50"/>
+                                </Grid>
+                                <Grid Margin="0,4">
+                                    <Grid.ColumnDefinitions>
+                                        <ColumnDefinition Width="Auto"/>
+                                        <ColumnDefinition Width="*"/>
+                                        <ColumnDefinition Width="Auto"/>
+                                    </Grid.ColumnDefinitions>
+                                    <TextBlock Grid.Column="0" Text="Spring" Style="{StaticResource SliderLabel}"/>
+                                    <Slider Grid.Column="1" x:Name="Ab9SpringSlider" Style="{StaticResource SettingSlider}" Minimum="0" Maximum="100" TickFrequency="1" ValueChanged="Ab9SpringSlider_ValueChanged"/>
+                                    <TextBox Grid.Column="2" x:Name="Ab9SpringValue" Style="{StaticResource SliderValueEditBox}"
+                                                 Tag="{Binding ElementName=Ab9SpringSlider}"
+                                                 KeyDown="SliderValueBox_KeyDown" LostFocus="SliderValueBox_LostFocus"
+                                                 Text="50"/>
+                                </Grid>
+                                <Grid Margin="0,4">
+                                    <Grid.ColumnDefinitions>
+                                        <ColumnDefinition Width="Auto"/>
+                                        <ColumnDefinition Width="*"/>
+                                        <ColumnDefinition Width="Auto"/>
+                                    </Grid.ColumnDefinitions>
+                                    <TextBlock Grid.Column="0" Text="Natural Damping" Style="{StaticResource SliderLabel}"/>
+                                    <Slider Grid.Column="1" x:Name="Ab9DampingSlider" Style="{StaticResource SettingSlider}" Minimum="0" Maximum="100" TickFrequency="1" ValueChanged="Ab9DampingSlider_ValueChanged"/>
+                                    <TextBox Grid.Column="2" x:Name="Ab9DampingValue" Style="{StaticResource SliderValueEditBox}"
+                                                 Tag="{Binding ElementName=Ab9DampingSlider}"
+                                                 KeyDown="SliderValueBox_KeyDown" LostFocus="SliderValueBox_LostFocus"
+                                                 Text="50"/>
+                                </Grid>
+                                <Grid Margin="0,4">
+                                    <Grid.ColumnDefinitions>
+                                        <ColumnDefinition Width="Auto"/>
+                                        <ColumnDefinition Width="*"/>
+                                        <ColumnDefinition Width="Auto"/>
+                                    </Grid.ColumnDefinitions>
+                                    <TextBlock Grid.Column="0" Text="Natural Friction" Style="{StaticResource SliderLabel}"/>
+                                    <Slider Grid.Column="1" x:Name="Ab9FrictionSlider" Style="{StaticResource SettingSlider}" Minimum="0" Maximum="100" TickFrequency="1" ValueChanged="Ab9FrictionSlider_ValueChanged"/>
+                                    <TextBox Grid.Column="2" x:Name="Ab9FrictionValue" Style="{StaticResource SliderValueEditBox}"
+                                                 Tag="{Binding ElementName=Ab9FrictionSlider}"
+                                                 KeyDown="SliderValueBox_KeyDown" LostFocus="SliderValueBox_LostFocus"
+                                                 Text="50"/>
+                                </Grid>
+                                <Grid Margin="0,4">
+                                    <Grid.ColumnDefinitions>
+                                        <ColumnDefinition Width="Auto"/>
+                                        <ColumnDefinition Width="*"/>
+                                        <ColumnDefinition Width="Auto"/>
+                                    </Grid.ColumnDefinitions>
+                                    <TextBlock Grid.Column="0" Text="Max Output Torque Limit" Style="{StaticResource SliderLabel}"/>
+                                    <Slider Grid.Column="1" x:Name="Ab9MaxTorqueSlider" Style="{StaticResource SettingSlider}" Minimum="0" Maximum="100" TickFrequency="1" ValueChanged="Ab9MaxTorqueSlider_ValueChanged"/>
+                                    <TextBox Grid.Column="2" x:Name="Ab9MaxTorqueValue" Style="{StaticResource SliderValueEditBox}"
+                                                 Tag="{Binding ElementName=Ab9MaxTorqueSlider}"
+                                                 KeyDown="SliderValueBox_KeyDown" LostFocus="SliderValueBox_LostFocus"
+                                                 Text="50"/>
+                                </Grid>
                             </StackPanel>
                         </ctrl:SectionCard>
 
@@ -1011,25 +1558,49 @@
                                           Subtitle="// host-rendered rumble from RPM"
                                           Icon="{StaticResource IconBolt}">
                             <StackPanel>
-                                <StackPanel Orientation="Horizontal" Margin="0,4">
-                                    <TextBlock Text="Intensity" Style="{StaticResource SliderLabel}"/>
-                                    <Slider x:Name="Ab9EngineVibIntensitySlider" Style="{StaticResource SettingSlider}" Minimum="0" Maximum="100" TickFrequency="1" ValueChanged="Ab9EngineVibIntensitySlider_ValueChanged"/>
-                                    <TextBlock x:Name="Ab9EngineVibIntensityValue" Style="{StaticResource SliderValue}" Text="0"/>
-                                </StackPanel>
-                                <StackPanel Orientation="Horizontal" Margin="0,4">
-                                    <TextBlock Text="Frequency" Style="{StaticResource SliderLabel}"/>
-                                    <Slider x:Name="Ab9EngineVibFreqSlider" Style="{StaticResource SettingSlider}" Minimum="0" Maximum="200" TickFrequency="10" ValueChanged="Ab9EngineVibFreqSlider_ValueChanged"/>
-                                    <TextBlock x:Name="Ab9EngineVibFreqValue" Style="{StaticResource SliderValue}" Text="100 Hz"/>
-                                </StackPanel>
+                                <Grid Margin="0,4">
+                                    <Grid.ColumnDefinitions>
+                                        <ColumnDefinition Width="Auto"/>
+                                        <ColumnDefinition Width="*"/>
+                                        <ColumnDefinition Width="Auto"/>
+                                    </Grid.ColumnDefinitions>
+                                    <TextBlock Grid.Column="0" Text="Intensity" Style="{StaticResource SliderLabel}"/>
+                                    <Slider Grid.Column="1" x:Name="Ab9EngineVibIntensitySlider" Style="{StaticResource SettingSlider}" Minimum="0" Maximum="100" TickFrequency="1" ValueChanged="Ab9EngineVibIntensitySlider_ValueChanged"/>
+                                    <TextBox Grid.Column="2" x:Name="Ab9EngineVibIntensityValue" Style="{StaticResource SliderValueEditBox}"
+                                                 Tag="{Binding ElementName=Ab9EngineVibIntensitySlider}"
+                                                 KeyDown="SliderValueBox_KeyDown" LostFocus="SliderValueBox_LostFocus"
+                                                 Text="0"/>
+                                </Grid>
+                                <Grid Margin="0,4">
+                                    <Grid.ColumnDefinitions>
+                                        <ColumnDefinition Width="Auto"/>
+                                        <ColumnDefinition Width="*"/>
+                                        <ColumnDefinition Width="Auto"/>
+                                    </Grid.ColumnDefinitions>
+                                    <TextBlock Grid.Column="0" Text="Frequency" Style="{StaticResource SliderLabel}"/>
+                                    <Slider Grid.Column="1" x:Name="Ab9EngineVibFreqSlider" Style="{StaticResource SettingSlider}" Minimum="0" Maximum="200" TickFrequency="10" ValueChanged="Ab9EngineVibFreqSlider_ValueChanged"/>
+                                    <TextBox Grid.Column="2" x:Name="Ab9EngineVibFreqValue" Style="{StaticResource SliderValueEditBox}"
+                                                 Tag="{Binding ElementName=Ab9EngineVibFreqSlider}"
+                                                 KeyDown="SliderValueBox_KeyDown" LostFocus="SliderValueBox_LostFocus"
+                                                 Text="100 Hz"/>
+                                </Grid>
                             </StackPanel>
                         </ctrl:SectionCard>
 
                         <ctrl:SectionCard Title="GEAR SHIFT" Icon="{StaticResource IconShift}">
-                            <StackPanel Orientation="Horizontal" Margin="0,4">
-                                <TextBlock Text="Vibration Intensity" Style="{StaticResource SliderLabel}"/>
-                                <Slider x:Name="Ab9GearShiftVibSlider" Style="{StaticResource SettingSlider}" Minimum="0" Maximum="100" TickFrequency="1" ValueChanged="Ab9GearShiftVibSlider_ValueChanged"/>
-                                <TextBlock x:Name="Ab9GearShiftVibValue" Style="{StaticResource SliderValue}" Text="0"/>
-                            </StackPanel>
+                            <Grid Margin="0,4">
+                                <Grid.ColumnDefinitions>
+                                    <ColumnDefinition Width="Auto"/>
+                                    <ColumnDefinition Width="*"/>
+                                    <ColumnDefinition Width="Auto"/>
+                                </Grid.ColumnDefinitions>
+                                <TextBlock Grid.Column="0" Text="Vibration Intensity" Style="{StaticResource SliderLabel}"/>
+                                <Slider Grid.Column="1" x:Name="Ab9GearShiftVibSlider" Style="{StaticResource SettingSlider}" Minimum="0" Maximum="100" TickFrequency="1" ValueChanged="Ab9GearShiftVibSlider_ValueChanged"/>
+                                <TextBox Grid.Column="2" x:Name="Ab9GearShiftVibValue" Style="{StaticResource SliderValueEditBox}"
+                                                 Tag="{Binding ElementName=Ab9GearShiftVibSlider}"
+                                                 KeyDown="SliderValueBox_KeyDown" LostFocus="SliderValueBox_LostFocus"
+                                                 Text="0"/>
+                            </Grid>
                         </ctrl:SectionCard>
 
                     </StackPanel>
@@ -1038,7 +1609,7 @@
 
             <!-- ==================== mBOOSTER TAB ==================== -->
             <TabItem x:Name="MBoosterTab" Header="mBooster" Visibility="Collapsed">
-                <ScrollViewer VerticalScrollBarVisibility="Auto" Padding="22,18,22,40">
+                <ScrollViewer VerticalScrollBarVisibility="Auto" Padding="22,18,22,8">
                     <StackPanel>
 
                         <ctrl:SectionCard Title="MBOOSTER PEDALS"
@@ -1051,10 +1622,14 @@
                                     to feel and adjust its intensity. The Calibration section is experimental and may not be honored by
                                     mBooster firmware.
                                 </TextBlock>
-                                <StackPanel Orientation="Horizontal" Margin="0,4">
-                                    <TextBlock Text="Device" Style="{StaticResource SliderLabel}"/>
-                                    <ComboBox x:Name="MBoosterDeviceCombo" Width="320" SelectionChanged="MBoosterDeviceCombo_Changed"/>
-                                </StackPanel>
+                                <Grid Margin="0,4">
+                                    <Grid.ColumnDefinitions>
+                                        <ColumnDefinition Width="*"/>
+                                        <ColumnDefinition Width="*"/>
+                                    </Grid.ColumnDefinitions>
+                                    <TextBlock Grid.Column="0" Text="Device" Style="{StaticResource SliderLabel}"/>
+                                    <ComboBox Grid.Column="1" x:Name="MBoosterDeviceCombo" Width="320" SelectionChanged="MBoosterDeviceCombo_Changed"/>
+                                </Grid>
                                 <StackPanel Orientation="Horizontal" Margin="0,8">
                                     <Ellipse x:Name="MBoosterStatusDot" Width="10" Height="10" Fill="Gray"
                                              VerticalAlignment="Center" Margin="0,0,10,0"/>
@@ -1069,15 +1644,19 @@
 
                             <ctrl:SectionCard Title="PEDAL ROLE" Icon="{StaticResource IconPedals}">
                                 <StackPanel>
-                                    <StackPanel Orientation="Horizontal" Margin="0,4">
-                                        <TextBlock Text="Role" Style="{StaticResource SliderLabel}"/>
-                                        <ComboBox x:Name="MBoosterRoleCombo" Width="160" SelectionChanged="MBoosterRoleCombo_Changed">
+                                    <Grid Margin="0,4">
+                                        <Grid.ColumnDefinitions>
+                                            <ColumnDefinition Width="*"/>
+                                            <ColumnDefinition Width="*"/>
+                                        </Grid.ColumnDefinitions>
+                                        <TextBlock Grid.Column="0" Text="Role" Style="{StaticResource SliderLabel}"/>
+                                        <ComboBox Grid.Column="1" x:Name="MBoosterRoleCombo" Width="160" SelectionChanged="MBoosterRoleCombo_Changed">
                                             <ComboBoxItem Content="Disabled"  Tag="0"/>
                                             <ComboBoxItem Content="Throttle"  Tag="1"/>
                                             <ComboBoxItem Content="Brake"     Tag="2"/>
                                             <ComboBoxItem Content="Clutch"    Tag="3"/>
                                         </ComboBox>
-                                    </StackPanel>
+                                    </Grid>
                                     <StackPanel Orientation="Horizontal" Margin="0,4">
                                         <TextBlock Text="Position" Style="{StaticResource SliderLabel}"/>
                                         <ProgressBar x:Name="MBoosterPositionBar" Width="220" Height="14" Minimum="0" Maximum="100" Value="0"/>
@@ -1093,42 +1672,78 @@
 
                             <Expander Header="ABS" IsExpanded="True">
                                 <StackPanel Margin="8,4">
-                                    <StackPanel Orientation="Horizontal" Margin="0,4">
-                                        <ctrl:OffOnToggle x:Name="MBoosterAbsEnable" Content="Enable" VerticalAlignment="Center" Width="120" Checked="MBoosterAbsEnable_Changed" Unchecked="MBoosterAbsEnable_Changed"/>
-                                        <Slider x:Name="MBoosterAbsIntensity" Style="{StaticResource SettingSlider}" Minimum="0" Maximum="100" TickFrequency="1" ValueChanged="MBoosterAbsIntensity_ValueChanged"/>
-                                        <TextBlock x:Name="MBoosterAbsIntensityValue" Style="{StaticResource SliderValue}" Text="50"/>
-                                        <Button x:Name="MBoosterAbsTest" Content="Test 1s" Margin="6,0,0,0" Padding="10,2" Click="MBoosterAbsTest_Click"/>
-                                    </StackPanel>
+                                    <Grid Margin="0,4">
+                                        <Grid.ColumnDefinitions>
+                                            <ColumnDefinition Width="Auto"/>
+                                            <ColumnDefinition Width="*"/>
+                                            <ColumnDefinition Width="Auto"/>
+                                            <ColumnDefinition Width="Auto"/>
+                                        </Grid.ColumnDefinitions>
+                                        <ctrl:OffOnToggle Grid.Column="0" x:Name="MBoosterAbsEnable" Content="Enable" VerticalAlignment="Center" Width="120" Checked="MBoosterAbsEnable_Changed" Unchecked="MBoosterAbsEnable_Changed"/>
+                                        <Slider Grid.Column="1" x:Name="MBoosterAbsIntensity" Style="{StaticResource SettingSlider}" Minimum="0" Maximum="100" TickFrequency="1" ValueChanged="MBoosterAbsIntensity_ValueChanged"/>
+                                        <TextBox Grid.Column="2" x:Name="MBoosterAbsIntensityValue" Style="{StaticResource SliderValueEditBox}"
+                                                 Tag="{Binding ElementName=MBoosterAbsIntensitySlider}"
+                                                 KeyDown="SliderValueBox_KeyDown" LostFocus="SliderValueBox_LostFocus"
+                                                 Text="50"/>
+                                        <Button Grid.Column="3" x:Name="MBoosterAbsTest" Content="Test 1s" Margin="6,0,0,0" Padding="10,2" Click="MBoosterAbsTest_Click"/>
+                                    </Grid>
                                 </StackPanel>
                             </Expander>
                             <Expander Header="Lockup" IsExpanded="True">
                                 <StackPanel Margin="8,4">
-                                    <StackPanel Orientation="Horizontal" Margin="0,4">
-                                        <ctrl:OffOnToggle x:Name="MBoosterLockupEnable" Content="Enable" VerticalAlignment="Center" Width="120" Checked="MBoosterLockupEnable_Changed" Unchecked="MBoosterLockupEnable_Changed"/>
-                                        <Slider x:Name="MBoosterLockupIntensity" Style="{StaticResource SettingSlider}" Minimum="0" Maximum="100" TickFrequency="1" ValueChanged="MBoosterLockupIntensity_ValueChanged"/>
-                                        <TextBlock x:Name="MBoosterLockupIntensityValue" Style="{StaticResource SliderValue}" Text="50"/>
-                                        <Button x:Name="MBoosterLockupTest" Content="Test 1s" Margin="6,0,0,0" Padding="10,2" Click="MBoosterLockupTest_Click"/>
-                                    </StackPanel>
+                                    <Grid Margin="0,4">
+                                        <Grid.ColumnDefinitions>
+                                            <ColumnDefinition Width="Auto"/>
+                                            <ColumnDefinition Width="*"/>
+                                            <ColumnDefinition Width="Auto"/>
+                                            <ColumnDefinition Width="Auto"/>
+                                        </Grid.ColumnDefinitions>
+                                        <ctrl:OffOnToggle Grid.Column="0" x:Name="MBoosterLockupEnable" Content="Enable" VerticalAlignment="Center" Width="120" Checked="MBoosterLockupEnable_Changed" Unchecked="MBoosterLockupEnable_Changed"/>
+                                        <Slider Grid.Column="1" x:Name="MBoosterLockupIntensity" Style="{StaticResource SettingSlider}" Minimum="0" Maximum="100" TickFrequency="1" ValueChanged="MBoosterLockupIntensity_ValueChanged"/>
+                                        <TextBox Grid.Column="2" x:Name="MBoosterLockupIntensityValue" Style="{StaticResource SliderValueEditBox}"
+                                                 Tag="{Binding ElementName=MBoosterLockupIntensitySlider}"
+                                                 KeyDown="SliderValueBox_KeyDown" LostFocus="SliderValueBox_LostFocus"
+                                                 Text="50"/>
+                                        <Button Grid.Column="3" x:Name="MBoosterLockupTest" Content="Test 1s" Margin="6,0,0,0" Padding="10,2" Click="MBoosterLockupTest_Click"/>
+                                    </Grid>
                                 </StackPanel>
                             </Expander>
                             <Expander Header="Threshold" IsExpanded="True">
                                 <StackPanel Margin="8,4">
-                                    <StackPanel Orientation="Horizontal" Margin="0,4">
-                                        <ctrl:OffOnToggle x:Name="MBoosterThresholdEnable" Content="Enable" VerticalAlignment="Center" Width="120" Checked="MBoosterThresholdEnable_Changed" Unchecked="MBoosterThresholdEnable_Changed"/>
-                                        <Slider x:Name="MBoosterThresholdIntensity" Style="{StaticResource SettingSlider}" Minimum="0" Maximum="100" TickFrequency="1" ValueChanged="MBoosterThresholdIntensity_ValueChanged"/>
-                                        <TextBlock x:Name="MBoosterThresholdIntensityValue" Style="{StaticResource SliderValue}" Text="50"/>
-                                        <Button x:Name="MBoosterThresholdTest" Content="Test 1s" Margin="6,0,0,0" Padding="10,2" Click="MBoosterThresholdTest_Click"/>
-                                    </StackPanel>
+                                    <Grid Margin="0,4">
+                                        <Grid.ColumnDefinitions>
+                                            <ColumnDefinition Width="Auto"/>
+                                            <ColumnDefinition Width="*"/>
+                                            <ColumnDefinition Width="Auto"/>
+                                            <ColumnDefinition Width="Auto"/>
+                                        </Grid.ColumnDefinitions>
+                                        <ctrl:OffOnToggle Grid.Column="0" x:Name="MBoosterThresholdEnable" Content="Enable" VerticalAlignment="Center" Width="120" Checked="MBoosterThresholdEnable_Changed" Unchecked="MBoosterThresholdEnable_Changed"/>
+                                        <Slider Grid.Column="1" x:Name="MBoosterThresholdIntensity" Style="{StaticResource SettingSlider}" Minimum="0" Maximum="100" TickFrequency="1" ValueChanged="MBoosterThresholdIntensity_ValueChanged"/>
+                                        <TextBox Grid.Column="2" x:Name="MBoosterThresholdIntensityValue" Style="{StaticResource SliderValueEditBox}"
+                                                 Tag="{Binding ElementName=MBoosterThresholdIntensitySlider}"
+                                                 KeyDown="SliderValueBox_KeyDown" LostFocus="SliderValueBox_LostFocus"
+                                                 Text="50"/>
+                                        <Button Grid.Column="3" x:Name="MBoosterThresholdTest" Content="Test 1s" Margin="6,0,0,0" Padding="10,2" Click="MBoosterThresholdTest_Click"/>
+                                    </Grid>
                                 </StackPanel>
                             </Expander>
                             <Expander Header="Engine (continuous — auto-clamped to 10%)" IsExpanded="False">
                                 <StackPanel Margin="8,4">
-                                    <StackPanel Orientation="Horizontal" Margin="0,4">
-                                        <ctrl:OffOnToggle x:Name="MBoosterEngineEnable" Content="Enable" VerticalAlignment="Center" Width="120" Checked="MBoosterEngineEnable_Changed" Unchecked="MBoosterEngineEnable_Changed"/>
-                                        <Slider x:Name="MBoosterEngineIntensity" Style="{StaticResource SettingSlider}" Minimum="0" Maximum="100" TickFrequency="1" ValueChanged="MBoosterEngineIntensity_ValueChanged"/>
-                                        <TextBlock x:Name="MBoosterEngineIntensityValue" Style="{StaticResource SliderValue}" Text="50"/>
-                                        <Button x:Name="MBoosterEngineTest" Content="Test 1s" Margin="6,0,0,0" Padding="10,2" Click="MBoosterEngineTest_Click"/>
-                                    </StackPanel>
+                                    <Grid Margin="0,4">
+                                        <Grid.ColumnDefinitions>
+                                            <ColumnDefinition Width="Auto"/>
+                                            <ColumnDefinition Width="*"/>
+                                            <ColumnDefinition Width="Auto"/>
+                                            <ColumnDefinition Width="Auto"/>
+                                        </Grid.ColumnDefinitions>
+                                        <ctrl:OffOnToggle Grid.Column="0" x:Name="MBoosterEngineEnable" Content="Enable" VerticalAlignment="Center" Width="120" Checked="MBoosterEngineEnable_Changed" Unchecked="MBoosterEngineEnable_Changed"/>
+                                        <Slider Grid.Column="1" x:Name="MBoosterEngineIntensity" Style="{StaticResource SettingSlider}" Minimum="0" Maximum="100" TickFrequency="1" ValueChanged="MBoosterEngineIntensity_ValueChanged"/>
+                                        <TextBox Grid.Column="2" x:Name="MBoosterEngineIntensityValue" Style="{StaticResource SliderValueEditBox}"
+                                                 Tag="{Binding ElementName=MBoosterEngineIntensitySlider}"
+                                                 KeyDown="SliderValueBox_KeyDown" LostFocus="SliderValueBox_LostFocus"
+                                                 Text="50"/>
+                                        <Button Grid.Column="3" x:Name="MBoosterEngineTest" Content="Test 1s" Margin="6,0,0,0" Padding="10,2" Click="MBoosterEngineTest_Click"/>
+                                    </Grid>
                                 </StackPanel>
                             </Expander>
 
@@ -1149,16 +1764,32 @@
                                     <StackPanel Orientation="Horizontal" Margin="0,4">
                                         <ctrl:OffOnToggle x:Name="MBoosterDirCheck" Content="Reversed direction" Checked="MBoosterDirCheck_Changed" Unchecked="MBoosterDirCheck_Changed"/>
                                     </StackPanel>
-                                    <StackPanel Orientation="Horizontal" Margin="0,4">
-                                        <TextBlock Text="Min (raw)" Style="{StaticResource SliderLabel}"/>
-                                        <Slider x:Name="MBoosterMinSlider" Style="{StaticResource SettingSlider}" Minimum="0" Maximum="65535" TickFrequency="1024" ValueChanged="MBoosterMinSlider_ValueChanged"/>
-                                        <TextBlock x:Name="MBoosterMinValue" Style="{StaticResource SliderValue}" Text="0"/>
-                                    </StackPanel>
-                                    <StackPanel Orientation="Horizontal" Margin="0,4">
-                                        <TextBlock Text="Max (raw)" Style="{StaticResource SliderLabel}"/>
-                                        <Slider x:Name="MBoosterMaxSlider" Style="{StaticResource SettingSlider}" Minimum="0" Maximum="65535" TickFrequency="1024" ValueChanged="MBoosterMaxSlider_ValueChanged"/>
-                                        <TextBlock x:Name="MBoosterMaxValue" Style="{StaticResource SliderValue}" Text="0"/>
-                                    </StackPanel>
+                                    <Grid Margin="0,4">
+                                        <Grid.ColumnDefinitions>
+                                            <ColumnDefinition Width="Auto"/>
+                                            <ColumnDefinition Width="*"/>
+                                            <ColumnDefinition Width="Auto"/>
+                                        </Grid.ColumnDefinitions>
+                                        <TextBlock Grid.Column="0" Text="Min (raw)" Style="{StaticResource SliderLabel}"/>
+                                        <Slider Grid.Column="1" x:Name="MBoosterMinSlider" Style="{StaticResource SettingSlider}" Minimum="0" Maximum="65535" TickFrequency="1024" ValueChanged="MBoosterMinSlider_ValueChanged"/>
+                                        <TextBox Grid.Column="2" x:Name="MBoosterMinValue" Style="{StaticResource SliderValueEditBox}"
+                                                 Tag="{Binding ElementName=MBoosterMinSlider}"
+                                                 KeyDown="SliderValueBox_KeyDown" LostFocus="SliderValueBox_LostFocus"
+                                                 Text="0"/>
+                                    </Grid>
+                                    <Grid Margin="0,4">
+                                        <Grid.ColumnDefinitions>
+                                            <ColumnDefinition Width="Auto"/>
+                                            <ColumnDefinition Width="*"/>
+                                            <ColumnDefinition Width="Auto"/>
+                                        </Grid.ColumnDefinitions>
+                                        <TextBlock Grid.Column="0" Text="Max (raw)" Style="{StaticResource SliderLabel}"/>
+                                        <Slider Grid.Column="1" x:Name="MBoosterMaxSlider" Style="{StaticResource SettingSlider}" Minimum="0" Maximum="65535" TickFrequency="1024" ValueChanged="MBoosterMaxSlider_ValueChanged"/>
+                                        <TextBox Grid.Column="2" x:Name="MBoosterMaxValue" Style="{StaticResource SliderValueEditBox}"
+                                                 Tag="{Binding ElementName=MBoosterMaxSlider}"
+                                                 KeyDown="SliderValueBox_KeyDown" LostFocus="SliderValueBox_LostFocus"
+                                                 Text="0"/>
+                                    </Grid>
                                     <StackPanel Orientation="Horizontal" Margin="0,8">
                                         <Button x:Name="MBoosterReadCalButton" Content="READ FROM DEVICE" Margin="0,0,6,0" Click="MBoosterReadCalButton_Click"/>
                                         <Button x:Name="MBoosterApplyCalButton" Content="APPLY" Click="MBoosterApplyCalButton_Click"/>
@@ -1173,7 +1804,7 @@
 
             <!-- ==================== HUB TAB ==================== -->
             <TabItem x:Name="HubTab" Header="Hub" Visibility="Collapsed">
-                <ScrollViewer VerticalScrollBarVisibility="Auto" Padding="22,18,22,40">
+                <ScrollViewer VerticalScrollBarVisibility="Auto" Padding="22,18,22,8">
                     <StackPanel>
 
                         <ctrl:SectionCard Title="UNIVERSAL HUB · PEDALS"
@@ -1228,7 +1859,7 @@
 
             <!-- ==================== OPTIONS TAB ==================== -->
             <TabItem Header="Options">
-                <ScrollViewer VerticalScrollBarVisibility="Auto" Padding="22,18,22,40">
+                <ScrollViewer VerticalScrollBarVisibility="Auto" Padding="22,18,22,8">
                     <StackPanel>
 
                         <ctrl:SectionCard Title="PROFILES" Icon="{StaticResource IconBolt}">
@@ -1328,7 +1959,7 @@
                  functionality is wheel-scoped, so it lives next to the rest
                  of the per-wheel settings rather than at the plugin level. -->
             <TabItem Header="Upload" Visibility="Collapsed">
-                <ScrollViewer VerticalScrollBarVisibility="Auto" Padding="22,18,22,40">
+                <ScrollViewer VerticalScrollBarVisibility="Auto" Padding="22,18,22,8">
                     <StackPanel>
 
                         <!-- Work-in-progress banner -->
@@ -1419,7 +2050,7 @@
             </TabItem>
 
             <TabItem Header="Wheel Files" Visibility="Collapsed">
-                <ScrollViewer VerticalScrollBarVisibility="Auto" Padding="22,18,22,40">
+                <ScrollViewer VerticalScrollBarVisibility="Auto" Padding="22,18,22,8">
                     <ctrl:SectionCard Title="WHEEL FILES"
                                       Subtitle="// dashboards the wheel reports via session 0x09 configJson"
                                       Icon="{StaticResource IconDiag}">
@@ -1460,9 +2091,124 @@
                 </ScrollViewer>
             </TabItem>
 
-            <TabItem Header="Diagnostics">
-                <ScrollViewer VerticalScrollBarVisibility="Auto" Padding="22,18,22,40">
+            <TabItem Header="CoAP">
+                <ScrollViewer VerticalScrollBarVisibility="Auto" Padding="22,18,22,8">
                     <StackPanel>
+
+                        <ctrl:SectionCard Title="COAP SERVER"
+                                          Subtitle="// embedded CoAP/UDP server on loopback"
+                                          Icon="{StaticResource IconBolt}">
+                            <StackPanel>
+                                <TextBlock TextWrapping="Wrap" Style="{StaticResource MutedHintText}" Margin="0,0,0,10"
+                                           Text="When enabled, the plugin runs an embedded CoAP control server."/>
+                                <StackPanel Orientation="Horizontal" Margin="0,8">
+                                    <TextBlock Text="Enable CoAP server" Style="{StaticResource SliderLabel}"/>
+                                    <ctrl:OffOnToggle x:Name="SdkEmulationEnabledCheck" VerticalAlignment="Center"
+                                              Checked="SdkEmulationEnabledCheck_Changed" Unchecked="SdkEmulationEnabledCheck_Changed"/>
+                                </StackPanel>
+                                <StackPanel Orientation="Horizontal" Margin="0,8">
+                                    <TextBlock Text="UDP port" Style="{StaticResource SliderLabel}"/>
+                                    <TextBox x:Name="SdkCoapPortBox" Width="100" VerticalAlignment="Center"
+                                             FontFamily="{StaticResource FontMono}"
+                                             LostFocus="SdkCoapPortBox_LostFocus"
+                                             KeyDown="SdkCoapPortBox_KeyDown"/>
+                                    <TextBlock Text="(1024-65535, default 40266)"
+                                               Style="{StaticResource MutedHintText}"
+                                               VerticalAlignment="Center" Margin="10,0,0,0"/>
+                                </StackPanel>
+                            </StackPanel>
+                        </ctrl:SectionCard>
+
+                        <ctrl:SectionCard Title="STATUS" Icon="{StaticResource IconDiag}">
+                            <StackPanel>
+                                <Grid Margin="0,4,0,8">
+                                    <Grid.ColumnDefinitions>
+                                        <ColumnDefinition Width="200"/>
+                                        <ColumnDefinition Width="*"/>
+                                    </Grid.ColumnDefinitions>
+                                    <TextBlock Grid.Column="0" Text="CoAP server" Style="{StaticResource LabelText}"
+                                               VerticalAlignment="Center"/>
+                                    <TextBlock Grid.Column="1" x:Name="SdkServerStatusText"
+                                               Text="Disabled"
+                                               FontFamily="{StaticResource FontMono}"
+                                               Foreground="{StaticResource TextDimBrush}"
+                                               VerticalAlignment="Center"/>
+                                </Grid>
+                                <StackPanel Orientation="Horizontal" Margin="0,4,0,0">
+                                    <Button x:Name="SdkRefreshStatusButton" Content="REFRESH"
+                                            Click="SdkRefreshStatusButton_Click" MinWidth="100"/>
+                                </StackPanel>
+                            </StackPanel>
+                        </ctrl:SectionCard>
+
+                        <ctrl:SectionCard Title="RECENT REQUESTS"
+                                          Subtitle="// last 20 CoAP requests · live"
+                                          Icon="{StaticResource IconDiag}">
+                            <StackPanel>
+                                <ListBox x:Name="SdkRecentRequestsList"
+                                         FontFamily="{StaticResource FontMono}" FontSize="11"
+                                         Background="{StaticResource BgDeepBrush}"
+                                         Foreground="{StaticResource TextDimBrush}"
+                                         BorderBrush="{StaticResource BorderBrush}" BorderThickness="1"
+                                         Height="180"
+                                         HorizontalContentAlignment="Stretch"/>
+                            </StackPanel>
+                        </ctrl:SectionCard>
+
+                    </StackPanel>
+                </ScrollViewer>
+            </TabItem>
+
+            <TabItem Header="About">
+                <ScrollViewer VerticalScrollBarVisibility="Auto" Padding="22,18,22,8">
+                    <StackPanel>
+
+                        <!-- ============ About / Project links ============ -->
+                        <ctrl:SectionCard Title="ABOUT"
+                                          Subtitle="// Open-source SimHub plugin"
+                                          Icon="{StaticResource IconShield}">
+                            <StackPanel>
+                                <Grid Margin="0,0,0,12">
+                                    <Grid.ColumnDefinitions>
+                                        <ColumnDefinition Width="*"/>
+                                        <ColumnDefinition Width="Auto"/>
+                                    </Grid.ColumnDefinitions>
+                                    <StackPanel Grid.Column="0">
+                                        <TextBlock Text="Unofficial MOZA SimHub Plugin"
+                                                   FontFamily="{StaticResource FontUi}"
+                                                   FontSize="22" FontWeight="SemiBold"
+                                                   Foreground="{StaticResource TextBrush}"/>
+                                        <TextBlock x:Name="AboutVersionText"
+                                                   Text="version —"
+                                                   FontFamily="{StaticResource FontMono}"
+                                                   FontSize="13"
+                                                   Foreground="{StaticResource CyanBrush}"
+                                                   Margin="0,2,0,0"/>
+                                    </StackPanel>
+                                </Grid>
+                                <TextBlock TextWrapping="Wrap"
+                                           Style="{StaticResource MutedHintText}"
+                                           Margin="0,0,0,10"
+                                           Text="An unofficial SimHub plugin that talks directly to MOZA Racing hardware over serial — hardware configuration, LED effects pipeline, and dashboard streaming. Not affiliated with MOZA / Gudsen Technology."/>
+                                <TextBlock TextWrapping="Wrap"
+                                           Style="{StaticResource MutedHintText}"
+                                           Margin="0,0,0,14"
+                                           Text="Sponsorships are greatly appreciated, adding support for hardware I do not own can be difficult!"/>
+                                <StackPanel Orientation="Horizontal">
+                                    <Button Content="GitHub"
+                                            Click="AboutGitHubButton_Click"
+                                            Margin="0,0,8,0"
+                                            ToolTip="github.com/giantorth/moza-simhub-plugin"/>
+                                    <Button Content="Join the Discord"
+                                            Click="AboutDiscordButton_Click"
+                                            Margin="0,0,8,0"
+                                            ToolTip="Join the project Discord"/>
+                                    <Button Content="Sponsor Development"
+                                            Click="AboutSponsorButton_Click"
+                                            ToolTip="github.com/sponsors/giantorth"/>
+                                </StackPanel>
+                            </StackPanel>
+                        </ctrl:SectionCard>
 
                         <!-- ============ Bandwidth ============ -->
                         <ctrl:SectionCard Title="BANDWIDTH"
@@ -1589,74 +2335,6 @@
                                          HorizontalScrollBarVisibility="Auto"
                                          MaxHeight="400" Padding="10"
                                          Visibility="Collapsed"/>
-                            </StackPanel>
-                        </ctrl:SectionCard>
-
-                    </StackPanel>
-                </ScrollViewer>
-            </TabItem>
-
-            <TabItem Header="CoAP">
-                <ScrollViewer VerticalScrollBarVisibility="Auto" Padding="22,18,22,40">
-                    <StackPanel>
-
-                        <ctrl:SectionCard Title="COAP SERVER"
-                                          Subtitle="// embedded CoAP/UDP server on loopback"
-                                          Icon="{StaticResource IconBolt}">
-                            <StackPanel>
-                                <TextBlock TextWrapping="Wrap" Style="{StaticResource MutedHintText}" Margin="0,0,0,10"
-                                           Text="When enabled, the plugin runs an embedded CoAP control server."/>
-                                <StackPanel Orientation="Horizontal" Margin="0,8">
-                                    <TextBlock Text="Enable CoAP server" Style="{StaticResource SliderLabel}"/>
-                                    <ctrl:OffOnToggle x:Name="SdkEmulationEnabledCheck" VerticalAlignment="Center"
-                                              Checked="SdkEmulationEnabledCheck_Changed" Unchecked="SdkEmulationEnabledCheck_Changed"/>
-                                </StackPanel>
-                                <StackPanel Orientation="Horizontal" Margin="0,8">
-                                    <TextBlock Text="UDP port" Style="{StaticResource SliderLabel}"/>
-                                    <TextBox x:Name="SdkCoapPortBox" Width="100" VerticalAlignment="Center"
-                                             FontFamily="{StaticResource FontMono}"
-                                             LostFocus="SdkCoapPortBox_LostFocus"
-                                             KeyDown="SdkCoapPortBox_KeyDown"/>
-                                    <TextBlock Text="(1024-65535, default 40266)"
-                                               Style="{StaticResource MutedHintText}"
-                                               VerticalAlignment="Center" Margin="10,0,0,0"/>
-                                </StackPanel>
-                            </StackPanel>
-                        </ctrl:SectionCard>
-
-                        <ctrl:SectionCard Title="STATUS" Icon="{StaticResource IconDiag}">
-                            <StackPanel>
-                                <Grid Margin="0,4,0,8">
-                                    <Grid.ColumnDefinitions>
-                                        <ColumnDefinition Width="200"/>
-                                        <ColumnDefinition Width="*"/>
-                                    </Grid.ColumnDefinitions>
-                                    <TextBlock Grid.Column="0" Text="CoAP server" Style="{StaticResource LabelText}"
-                                               VerticalAlignment="Center"/>
-                                    <TextBlock Grid.Column="1" x:Name="SdkServerStatusText"
-                                               Text="Disabled"
-                                               FontFamily="{StaticResource FontMono}"
-                                               Foreground="{StaticResource TextDimBrush}"
-                                               VerticalAlignment="Center"/>
-                                </Grid>
-                                <StackPanel Orientation="Horizontal" Margin="0,4,0,0">
-                                    <Button x:Name="SdkRefreshStatusButton" Content="REFRESH"
-                                            Click="SdkRefreshStatusButton_Click" MinWidth="100"/>
-                                </StackPanel>
-                            </StackPanel>
-                        </ctrl:SectionCard>
-
-                        <ctrl:SectionCard Title="RECENT REQUESTS"
-                                          Subtitle="// last 20 CoAP requests · live"
-                                          Icon="{StaticResource IconDiag}">
-                            <StackPanel>
-                                <ListBox x:Name="SdkRecentRequestsList"
-                                         FontFamily="{StaticResource FontMono}" FontSize="11"
-                                         Background="{StaticResource BgDeepBrush}"
-                                         Foreground="{StaticResource TextDimBrush}"
-                                         BorderBrush="{StaticResource BorderBrush}" BorderThickness="1"
-                                         Height="180"
-                                         HorizontalContentAlignment="Stretch"/>
                             </StackPanel>
                         </ctrl:SectionCard>
 

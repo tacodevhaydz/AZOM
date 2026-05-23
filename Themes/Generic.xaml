@@ -79,9 +79,11 @@
                     </StackPanel>
                     <ControlTemplate.Triggers>
                         <Trigger Property="IsChecked" Value="True">
-                            <Setter TargetName="OnPill" Property="Background" Value="{StaticResource ToggleOnBrush}"/>
+                            <!-- DynamicResource lookup picks up per-section overrides
+                                 (Throttle = green, Brake / Handbrake = red, etc.). -->
+                            <Setter TargetName="OnPill" Property="Background" Value="{DynamicResource ToggleOnBrush}"/>
                             <Setter TargetName="OnPill" Property="BorderBrush" Value="{StaticResource BorderGlowBrush}"/>
-                            <Setter TargetName="OnText" Property="Foreground" Value="{StaticResource CyanBrush}"/>
+                            <Setter TargetName="OnText" Property="Foreground" Value="{DynamicResource ToggleOnTextBrush}"/>
                         </Trigger>
                         <Trigger Property="IsChecked" Value="False">
                             <Setter TargetName="OffPill" Property="Background" Value="{StaticResource BgCardBrush}"/>
@@ -132,9 +134,13 @@
                             <Setter Property="Foreground" Value="{StaticResource TextBrush}"/>
                         </Trigger>
                         <Trigger Property="IsSelected" Value="True">
-                            <Setter TargetName="Bd" Property="Background" Value="{StaticResource ToggleOnBrush}"/>
+                            <!-- DynamicResource so a parent container can swap the
+                                 active-button tint (e.g. red on the Handbrake card)
+                                 by overriding ToggleOnBrush / ToggleOnTextBrush in
+                                 its local Resources. -->
+                            <Setter TargetName="Bd" Property="Background" Value="{DynamicResource ToggleOnBrush}"/>
                             <Setter TargetName="Bd" Property="BorderBrush" Value="{StaticResource BorderGlowBrush}"/>
-                            <Setter Property="Foreground" Value="{StaticResource CyanBrush}"/>
+                            <Setter Property="Foreground" Value="{DynamicResource ToggleOnTextBrush}"/>
                         </Trigger>
                     </ControlTemplate.Triggers>
                 </ControlTemplate>
@@ -178,216 +184,16 @@
     <!-- ============================================================ -->
     <!-- MozaCurveEditor                                               -->
     <!-- ============================================================ -->
+    <!-- The shared template (MozaCurveEditorTemplate) and the 6-band   -->
+    <!-- MozaEqualizerLineStyle live in MozaTheme.xaml so SettingsControl-->
+    <!-- can see them via its merged-dictionary lookup. This file just  -->
+    <!-- supplies the unkeyed default style that WPF auto-applies to    -->
+    <!-- every MozaCurveEditor instance.                                -->
 
     <Style TargetType="{x:Type controls:MozaCurveEditor}">
         <Setter Property="MinHeight" Value="280"/>
         <Setter Property="AccentBrush" Value="{StaticResource CyanBrush}"/>
-        <Setter Property="Template">
-            <Setter.Value>
-                <ControlTemplate TargetType="{x:Type controls:MozaCurveEditor}">
-                    <Border Background="{StaticResource BgDeepBrush}"
-                            BorderBrush="{StaticResource BorderBrush}"
-                            BorderThickness="1"
-                            CornerRadius="6"
-                            Padding="0"
-                            SnapsToDevicePixels="True">
-                        <Grid>
-                            <!-- Y-axis labels -->
-                            <StackPanel HorizontalAlignment="Left" VerticalAlignment="Stretch"
-                                        Margin="6,14,0,32" Width="26">
-                                <TextBlock Text="100" Style="{StaticResource KvKeyText}" TextAlignment="Right" Width="22"/>
-                                <TextBlock Text="75"  Style="{StaticResource KvKeyText}" TextAlignment="Right" Width="22" Margin="0,40,0,0"/>
-                                <TextBlock Text="50"  Style="{StaticResource KvKeyText}" TextAlignment="Right" Width="22" Margin="0,40,0,0"/>
-                                <TextBlock Text="25"  Style="{StaticResource KvKeyText}" TextAlignment="Right" Width="22" Margin="0,40,0,0"/>
-                                <TextBlock Text="0"   Style="{StaticResource KvKeyText}" TextAlignment="Right" Width="22" Margin="0,40,0,0"/>
-                            </StackPanel>
-                            <!-- X-axis labels -->
-                            <Grid VerticalAlignment="Bottom" Margin="36,0,14,8" Height="14">
-                                <Grid.ColumnDefinitions>
-                                    <ColumnDefinition Width="*"/>
-                                    <ColumnDefinition Width="*"/>
-                                    <ColumnDefinition Width="*"/>
-                                    <ColumnDefinition Width="*"/>
-                                    <ColumnDefinition Width="*"/>
-                                    <ColumnDefinition Width="*"/>
-                                </Grid.ColumnDefinitions>
-                                <TextBlock Grid.Column="0" Text="0"   Style="{StaticResource KvKeyText}" TextAlignment="Left"/>
-                                <TextBlock Grid.Column="1" Text="20"  Style="{StaticResource KvKeyText}" TextAlignment="Center"/>
-                                <TextBlock Grid.Column="2" Text="40"  Style="{StaticResource KvKeyText}" TextAlignment="Center"/>
-                                <TextBlock Grid.Column="3" Text="60"  Style="{StaticResource KvKeyText}" TextAlignment="Center"/>
-                                <TextBlock Grid.Column="4" Text="80"  Style="{StaticResource KvKeyText}" TextAlignment="Center"/>
-                                <TextBlock Grid.Column="5" Text="100" Style="{StaticResource KvKeyText}" TextAlignment="Right"/>
-                            </Grid>
-                            <!-- Canvas (drag surface + spline render) -->
-                            <Canvas x:Name="PART_Canvas" Background="Transparent" ClipToBounds="True">
-                                <!-- Grid lines -->
-                                <Path Stroke="{StaticResource BorderBrush}" StrokeThickness="1"
-                                      StrokeDashArray="2 3" Opacity="0.6"
-                                      Data="{Binding GridGeometry, RelativeSource={RelativeSource TemplatedParent}}"/>
-                                <!-- Curve -->
-                                <Path Stroke="{TemplateBinding AccentBrush}" StrokeThickness="2.5"
-                                      StrokeStartLineCap="Round" StrokeEndLineCap="Round"
-                                      Fill="{x:Null}"
-                                      Effect="{StaticResource CyanGlowSoftEffect}"
-                                      Data="{Binding CurveGeometry, RelativeSource={RelativeSource TemplatedParent}}"/>
-                                <!-- 5 nodes -->
-                                <Ellipse Width="14" Height="14"
-                                         Fill="{StaticResource BgDeepBrush}"
-                                         Stroke="{TemplateBinding AccentBrush}" StrokeThickness="2"
-                                         Canvas.Left="{Binding Node1X, RelativeSource={RelativeSource TemplatedParent}}"
-                                         Canvas.Top="{Binding Node1Y, RelativeSource={RelativeSource TemplatedParent}}"
-                                         Effect="{StaticResource CyanGlowSoftEffect}"/>
-                                <Ellipse Width="14" Height="14"
-                                         Fill="{StaticResource BgDeepBrush}"
-                                         Stroke="{TemplateBinding AccentBrush}" StrokeThickness="2"
-                                         Canvas.Left="{Binding Node2X, RelativeSource={RelativeSource TemplatedParent}}"
-                                         Canvas.Top="{Binding Node2Y, RelativeSource={RelativeSource TemplatedParent}}"
-                                         Effect="{StaticResource CyanGlowSoftEffect}"/>
-                                <Ellipse Width="14" Height="14"
-                                         Fill="{StaticResource BgDeepBrush}"
-                                         Stroke="{TemplateBinding AccentBrush}" StrokeThickness="2"
-                                         Canvas.Left="{Binding Node3X, RelativeSource={RelativeSource TemplatedParent}}"
-                                         Canvas.Top="{Binding Node3Y, RelativeSource={RelativeSource TemplatedParent}}"
-                                         Effect="{StaticResource CyanGlowSoftEffect}"/>
-                                <Ellipse Width="14" Height="14"
-                                         Fill="{StaticResource BgDeepBrush}"
-                                         Stroke="{TemplateBinding AccentBrush}" StrokeThickness="2"
-                                         Canvas.Left="{Binding Node4X, RelativeSource={RelativeSource TemplatedParent}}"
-                                         Canvas.Top="{Binding Node4Y, RelativeSource={RelativeSource TemplatedParent}}"
-                                         Effect="{StaticResource CyanGlowSoftEffect}"/>
-                                <Ellipse Width="14" Height="14"
-                                         Fill="{StaticResource BgDeepBrush}"
-                                         Stroke="{TemplateBinding AccentBrush}" StrokeThickness="2"
-                                         Canvas.Left="{Binding Node5X, RelativeSource={RelativeSource TemplatedParent}}"
-                                         Canvas.Top="{Binding Node5Y, RelativeSource={RelativeSource TemplatedParent}}"
-                                         Effect="{StaticResource CyanGlowSoftEffect}"/>
-                            </Canvas>
-                        </Grid>
-                    </Border>
-                </ControlTemplate>
-            </Setter.Value>
-        </Setter>
-    </Style>
-
-    <!-- ============================================================ -->
-    <!-- MozaEqualizer                                                 -->
-    <!-- ============================================================ -->
-
-    <Style x:Key="EqBarBaseStyle" TargetType="Border">
-        <Setter Property="Background" Value="{StaticResource EqBarFillBrush}"/>
-        <Setter Property="Effect" Value="{StaticResource CyanGlowSoftEffect}"/>
-        <Setter Property="CornerRadius" Value="2"/>
-        <Setter Property="VerticalAlignment" Value="Bottom"/>
-        <Setter Property="HorizontalAlignment" Value="Stretch"/>
-        <Setter Property="Margin" Value="2"/>
-    </Style>
-
-    <Style TargetType="{x:Type controls:MozaEqualizer}">
-        <Setter Property="MinHeight" Value="200"/>
-        <Setter Property="Template">
-            <Setter.Value>
-                <ControlTemplate TargetType="{x:Type controls:MozaEqualizer}">
-                    <Grid>
-                        <Grid.RowDefinitions>
-                            <RowDefinition Height="*"/>
-                            <RowDefinition Height="Auto"/>
-                        </Grid.RowDefinitions>
-                        <Grid x:Name="PART_BarGrid" Grid.Row="0" Background="Transparent" Cursor="SizeNS">
-                            <Grid.ColumnDefinitions>
-                                <ColumnDefinition Width="*"/>
-                                <ColumnDefinition Width="*"/>
-                                <ColumnDefinition Width="*"/>
-                                <ColumnDefinition Width="*"/>
-                                <ColumnDefinition Width="*"/>
-                                <ColumnDefinition Width="*"/>
-                            </Grid.ColumnDefinitions>
-                            <Border Grid.Column="0" Background="{StaticResource BgDeepBrush}"
-                                    BorderBrush="{StaticResource BorderBrush}" BorderThickness="1"
-                                    CornerRadius="4" Margin="6">
-                                <Border Style="{StaticResource EqBarBaseStyle}"
-                                        Height="{Binding Bar1Height, RelativeSource={RelativeSource TemplatedParent}}"/>
-                            </Border>
-                            <Border Grid.Column="1" Background="{StaticResource BgDeepBrush}"
-                                    BorderBrush="{StaticResource BorderBrush}" BorderThickness="1"
-                                    CornerRadius="4" Margin="6">
-                                <Border Style="{StaticResource EqBarBaseStyle}"
-                                        Height="{Binding Bar2Height, RelativeSource={RelativeSource TemplatedParent}}"/>
-                            </Border>
-                            <Border Grid.Column="2" Background="{StaticResource BgDeepBrush}"
-                                    BorderBrush="{StaticResource BorderBrush}" BorderThickness="1"
-                                    CornerRadius="4" Margin="6">
-                                <Border Style="{StaticResource EqBarBaseStyle}"
-                                        Height="{Binding Bar3Height, RelativeSource={RelativeSource TemplatedParent}}"/>
-                            </Border>
-                            <Border Grid.Column="3" Background="{StaticResource BgDeepBrush}"
-                                    BorderBrush="{StaticResource BorderBrush}" BorderThickness="1"
-                                    CornerRadius="4" Margin="6">
-                                <Border Style="{StaticResource EqBarBaseStyle}"
-                                        Height="{Binding Bar4Height, RelativeSource={RelativeSource TemplatedParent}}"/>
-                            </Border>
-                            <Border Grid.Column="4" Background="{StaticResource BgDeepBrush}"
-                                    BorderBrush="{StaticResource BorderBrush}" BorderThickness="1"
-                                    CornerRadius="4" Margin="6">
-                                <Border Style="{StaticResource EqBarBaseStyle}"
-                                        Height="{Binding Bar5Height, RelativeSource={RelativeSource TemplatedParent}}"/>
-                            </Border>
-                            <Border Grid.Column="5" Background="{StaticResource BgDeepBrush}"
-                                    BorderBrush="{StaticResource BorderBrush}" BorderThickness="1"
-                                    CornerRadius="4" Margin="6">
-                                <Border Style="{StaticResource EqBarBaseStyle}"
-                                        Height="{Binding Bar6Height, RelativeSource={RelativeSource TemplatedParent}}"/>
-                            </Border>
-                        </Grid>
-                        <Grid Grid.Row="1" Margin="0,6,0,0">
-                            <Grid.ColumnDefinitions>
-                                <ColumnDefinition Width="*"/>
-                                <ColumnDefinition Width="*"/>
-                                <ColumnDefinition Width="*"/>
-                                <ColumnDefinition Width="*"/>
-                                <ColumnDefinition Width="*"/>
-                                <ColumnDefinition Width="*"/>
-                            </Grid.ColumnDefinitions>
-                            <StackPanel Grid.Column="0" HorizontalAlignment="Center">
-                                <TextBlock Text="{Binding Bar1Label, RelativeSource={RelativeSource TemplatedParent}}"
-                                           HorizontalAlignment="Center" Style="{StaticResource MutedHintText}"/>
-                                <TextBlock Text="{Binding Band1, RelativeSource={RelativeSource TemplatedParent}, StringFormat={}{0}%}"
-                                           HorizontalAlignment="Center" Style="{StaticResource ValueText}" Background="{x:Null}" Padding="0" MinWidth="0"/>
-                            </StackPanel>
-                            <StackPanel Grid.Column="1" HorizontalAlignment="Center">
-                                <TextBlock Text="{Binding Bar2Label, RelativeSource={RelativeSource TemplatedParent}}"
-                                           HorizontalAlignment="Center" Style="{StaticResource MutedHintText}"/>
-                                <TextBlock Text="{Binding Band2, RelativeSource={RelativeSource TemplatedParent}, StringFormat={}{0}%}"
-                                           HorizontalAlignment="Center" Style="{StaticResource ValueText}" Background="{x:Null}" Padding="0" MinWidth="0"/>
-                            </StackPanel>
-                            <StackPanel Grid.Column="2" HorizontalAlignment="Center">
-                                <TextBlock Text="{Binding Bar3Label, RelativeSource={RelativeSource TemplatedParent}}"
-                                           HorizontalAlignment="Center" Style="{StaticResource MutedHintText}"/>
-                                <TextBlock Text="{Binding Band3, RelativeSource={RelativeSource TemplatedParent}, StringFormat={}{0}%}"
-                                           HorizontalAlignment="Center" Style="{StaticResource ValueText}" Background="{x:Null}" Padding="0" MinWidth="0"/>
-                            </StackPanel>
-                            <StackPanel Grid.Column="3" HorizontalAlignment="Center">
-                                <TextBlock Text="{Binding Bar4Label, RelativeSource={RelativeSource TemplatedParent}}"
-                                           HorizontalAlignment="Center" Style="{StaticResource MutedHintText}"/>
-                                <TextBlock Text="{Binding Band4, RelativeSource={RelativeSource TemplatedParent}, StringFormat={}{0}%}"
-                                           HorizontalAlignment="Center" Style="{StaticResource ValueText}" Background="{x:Null}" Padding="0" MinWidth="0"/>
-                            </StackPanel>
-                            <StackPanel Grid.Column="4" HorizontalAlignment="Center">
-                                <TextBlock Text="{Binding Bar5Label, RelativeSource={RelativeSource TemplatedParent}}"
-                                           HorizontalAlignment="Center" Style="{StaticResource MutedHintText}"/>
-                                <TextBlock Text="{Binding Band5, RelativeSource={RelativeSource TemplatedParent}, StringFormat={}{0}%}"
-                                           HorizontalAlignment="Center" Style="{StaticResource ValueText}" Background="{x:Null}" Padding="0" MinWidth="0"/>
-                            </StackPanel>
-                            <StackPanel Grid.Column="5" HorizontalAlignment="Center">
-                                <TextBlock Text="{Binding Bar6Label, RelativeSource={RelativeSource TemplatedParent}}"
-                                           HorizontalAlignment="Center" Style="{StaticResource MutedHintText}"/>
-                                <TextBlock Text="{Binding Band6, RelativeSource={RelativeSource TemplatedParent}, StringFormat={}{0}%}"
-                                           HorizontalAlignment="Center" Style="{StaticResource ValueText}" Background="{x:Null}" Padding="0" MinWidth="0"/>
-                            </StackPanel>
-                        </Grid>
-                    </Grid>
-                </ControlTemplate>
-            </Setter.Value>
-        </Setter>
+        <Setter Property="Template" Value="{StaticResource MozaCurveEditorTemplate}"/>
     </Style>
 
     <!-- ============================================================ -->
@@ -460,63 +266,80 @@
     </Style>
 
     <!-- ============================================================ -->
-    <!-- TempCell                                                      -->
+    <!-- BandwidthSparkline                                            -->
     <!-- ============================================================ -->
 
-    <Style TargetType="{x:Type controls:TempCell}">
-        <Setter Property="MinHeight" Value="78"/>
+    <!-- ============================================================ -->
+    <!-- TemperatureGraph (MCU + MOSFET + MOTOR overlay)               -->
+    <!-- ============================================================ -->
+    <Style TargetType="{x:Type controls:TemperatureGraph}">
+        <Setter Property="MinHeight" Value="80"/>
         <Setter Property="Template">
             <Setter.Value>
-                <ControlTemplate TargetType="{x:Type controls:TempCell}">
-                    <Border Background="{StaticResource BgCard2Brush}"
-                            BorderBrush="{StaticResource BorderBrush}"
-                            BorderThickness="1"
-                            CornerRadius="5"
-                            Padding="12">
-                        <StackPanel>
-                            <TextBlock Text="{TemplateBinding Label}"
-                                       FontSize="11"
-                                       FontFamily="{StaticResource FontUi}"
-                                       Foreground="{StaticResource TextFaintBrush}"
-                                       Margin="0,0,0,4"/>
-                            <StackPanel Orientation="Horizontal" VerticalAlignment="Center">
-                                <TextBlock x:Name="ValueLabel"
-                                           Text="{Binding ValueText, RelativeSource={RelativeSource TemplatedParent}}"
-                                           FontFamily="{StaticResource FontMono}"
-                                           FontSize="24"
-                                           Foreground="{StaticResource TextBrush}"/>
-                                <TextBlock Text="{TemplateBinding Unit}"
-                                           FontFamily="{StaticResource FontMono}"
-                                           FontSize="12"
-                                           Foreground="{StaticResource TextDimBrush}"
-                                           VerticalAlignment="Bottom"
-                                           Margin="4,0,0,3"/>
-                            </StackPanel>
-                            <Grid Height="4" Margin="0,10,0,0">
-                                <Border CornerRadius="2"
-                                        Background="{StaticResource BgDeepBrush}"/>
-                                <Border CornerRadius="2"
-                                        Background="{StaticResource TempMeterBrush}"
-                                        Opacity="0.85"/>
-                            </Grid>
-                        </StackPanel>
-                    </Border>
-                    <ControlTemplate.Triggers>
-                        <Trigger Property="State" Value="warn">
-                            <Setter TargetName="ValueLabel" Property="Foreground" Value="{StaticResource AmberBrush}"/>
-                        </Trigger>
-                        <Trigger Property="State" Value="danger">
-                            <Setter TargetName="ValueLabel" Property="Foreground" Value="{StaticResource RedBrush}"/>
-                        </Trigger>
-                    </ControlTemplate.Triggers>
+                <ControlTemplate TargetType="{x:Type controls:TemperatureGraph}">
+                    <Grid>
+                        <!-- Dotted horizontal gridlines at 25/50/75 % of the plot.
+                             Stays at the back. -->
+                        <Path Data="{Binding GridGeometry, RelativeSource={RelativeSource TemplatedParent}}"
+                              Stroke="{StaticResource BorderBrush}" StrokeThickness="1"
+                              StrokeDashArray="2 3" Opacity="0.6"/>
+
+                        <!-- Series layer. Each series has an under-glow fill +
+                             a stroked line + a trailing tip dot, grouped under
+                             a single Panel.ZIndex so the hottest current trace
+                             can be lifted in front of the cooler ones. The
+                             control recomputes per-series ZIndex every tick. -->
+                        <Canvas IsHitTestVisible="False" ClipToBounds="True">
+                            <!-- MCU -->
+                            <Path Data="{Binding McuFillGeometry, RelativeSource={RelativeSource TemplatedParent}}"
+                                  Fill="{TemplateBinding McuFillBrush}" Opacity="0.55"
+                                  Panel.ZIndex="{Binding McuZIndex, RelativeSource={RelativeSource TemplatedParent}}"/>
+                            <Path Data="{Binding McuLineGeometry, RelativeSource={RelativeSource TemplatedParent}}"
+                                  Stroke="{TemplateBinding McuBrush}" StrokeThickness="1.5"
+                                  StrokeStartLineCap="Round" StrokeEndLineCap="Round"
+                                  Fill="{x:Null}"
+                                  Panel.ZIndex="{Binding McuZIndex, RelativeSource={RelativeSource TemplatedParent}}"/>
+                            <Ellipse Width="6" Height="6"
+                                     Fill="{TemplateBinding McuBrush}"
+                                     Canvas.Left="{Binding McuTipX, RelativeSource={RelativeSource TemplatedParent}}"
+                                     Canvas.Top="{Binding McuTipY, RelativeSource={RelativeSource TemplatedParent}}"
+                                     Panel.ZIndex="{Binding McuZIndex, RelativeSource={RelativeSource TemplatedParent}}"/>
+
+                            <!-- MOSFET -->
+                            <Path Data="{Binding MosfetFillGeometry, RelativeSource={RelativeSource TemplatedParent}}"
+                                  Fill="{TemplateBinding MosfetFillBrush}" Opacity="0.55"
+                                  Panel.ZIndex="{Binding MosfetZIndex, RelativeSource={RelativeSource TemplatedParent}}"/>
+                            <Path Data="{Binding MosfetLineGeometry, RelativeSource={RelativeSource TemplatedParent}}"
+                                  Stroke="{TemplateBinding MosfetBrush}" StrokeThickness="1.5"
+                                  StrokeStartLineCap="Round" StrokeEndLineCap="Round"
+                                  Fill="{x:Null}"
+                                  Panel.ZIndex="{Binding MosfetZIndex, RelativeSource={RelativeSource TemplatedParent}}"/>
+                            <Ellipse Width="6" Height="6"
+                                     Fill="{TemplateBinding MosfetBrush}"
+                                     Canvas.Left="{Binding MosfetTipX, RelativeSource={RelativeSource TemplatedParent}}"
+                                     Canvas.Top="{Binding MosfetTipY, RelativeSource={RelativeSource TemplatedParent}}"
+                                     Panel.ZIndex="{Binding MosfetZIndex, RelativeSource={RelativeSource TemplatedParent}}"/>
+
+                            <!-- MOTOR -->
+                            <Path Data="{Binding MotorFillGeometry, RelativeSource={RelativeSource TemplatedParent}}"
+                                  Fill="{TemplateBinding MotorFillBrush}" Opacity="0.55"
+                                  Panel.ZIndex="{Binding MotorZIndex, RelativeSource={RelativeSource TemplatedParent}}"/>
+                            <Path Data="{Binding MotorLineGeometry, RelativeSource={RelativeSource TemplatedParent}}"
+                                  Stroke="{TemplateBinding MotorBrush}" StrokeThickness="1.5"
+                                  StrokeStartLineCap="Round" StrokeEndLineCap="Round"
+                                  Fill="{x:Null}"
+                                  Panel.ZIndex="{Binding MotorZIndex, RelativeSource={RelativeSource TemplatedParent}}"/>
+                            <Ellipse Width="6" Height="6"
+                                     Fill="{TemplateBinding MotorBrush}"
+                                     Canvas.Left="{Binding MotorTipX, RelativeSource={RelativeSource TemplatedParent}}"
+                                     Canvas.Top="{Binding MotorTipY, RelativeSource={RelativeSource TemplatedParent}}"
+                                     Panel.ZIndex="{Binding MotorZIndex, RelativeSource={RelativeSource TemplatedParent}}"/>
+                        </Canvas>
+                    </Grid>
                 </ControlTemplate>
             </Setter.Value>
         </Setter>
     </Style>
-
-    <!-- ============================================================ -->
-    <!-- BandwidthSparkline                                            -->
-    <!-- ============================================================ -->
 
     <Style TargetType="{x:Type controls:BandwidthSparkline}">
         <Setter Property="MinHeight" Value="56"/>
