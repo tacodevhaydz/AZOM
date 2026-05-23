@@ -77,7 +77,7 @@
   <data name="Label_RightPaddle" xml:space="preserve"><value>Правый лепесток</value></data>
   <data name="Label_Combined" xml:space="preserve"><value>Комбинированный</value></data>
   <data name="Section_Buttons" xml:space="preserve"><value>Кнопки</value></data>
-  <data name="Section_PaddleSettings" xml:space="preserve"><value>Настройки лепестков</value></data>
+  <data name="Section_PaddleSettings" xml:space="preserve"><value>НАСТРОЙКИ ЛЕПЕСТКОВ</value></data>
   <data name="SliderLabel_PaddlesMode" xml:space="preserve"><value>Режим лепестков</value></data>
   <data name="Option_Buttons" xml:space="preserve"><value>Кнопки</value></data>
   <data name="Option_Combined" xml:space="preserve"><value>Комбинированный</value></data>
@@ -283,4 +283,148 @@
   <data name="Hint_ClickExpandToRender" xml:space="preserve"><value>Нажмите Развернуть, чтобы отобразить полный многосекционный отчёт.</value></data>
   <data name="Hint_MBoosterIntro" xml:space="preserve"><value>Каждый подключённый mBooster появляется ниже. Выберите роль (Газ/Тормоз/Сцепление) для каждого устройства, чтобы направить положение его педали. Раздел Калибровка — экспериментальный.</value></data>
   <data name="Hint_MBoosterCalibrationWarning" xml:space="preserve"><value>Ещё не тестировалось.</value></data>
+  <data name="Title_PickLedColor" xml:space="preserve"><value>Выбор цвета LED</value></data>
+  <data name="Label_Palette" xml:space="preserve"><value>ПАЛИТРА</value></data>
+  <data name="Label_Last" xml:space="preserve"><value>ПОСЛЕДНИЙ</value></data>
+  <data name="Label_FineTuneRgb" xml:space="preserve"><value>ТОЧНАЯ НАСТРОЙКА · RGB</value></data>
+  <data name="Button_Cancel" xml:space="preserve"><value>ОТМЕНА</value></data>
+  <data name="Button_Ok" xml:space="preserve"><value>ОК</value></data>
+  <data name="Section_BaseAmbientLeds" xml:space="preserve"><value>MOZA WHEEL BASE · ОКРУЖАЮЩИЕ СВЕТОДИОДЫ</value></data>
+  <data name="Label_BaseModel" xml:space="preserve"><value>Модель базы</value></data>
+  <data name="Hint_NoBaseAmbientDetected" xml:space="preserve"><value>Окружающие светодиоды базы не обнаружены. Базы R9/R12 не оснащены LED-лентой; эта панель активируется только на базах R21/R25/R27.</value></data>
+  <data name="Section_Mode" xml:space="preserve"><value>РЕЖИМ</value></data>
+  <data name="SliderLabel_IndicatorState" xml:space="preserve"><value>Состояние индикатора</value></data>
+  <data name="Option_Off" xml:space="preserve"><value>Выкл</value></data>
+  <data name="Option_On" xml:space="preserve"><value>Вкл</value></data>
+  <data name="SliderLabel_StandbyAnimation" xml:space="preserve"><value>Анимация в режиме ожидания</value></data>
+  <data name="Option_Constant" xml:space="preserve"><value>Постоянный</value></data>
+  <data name="Option_Breath" xml:space="preserve"><value>Дыхание</value></data>
+  <data name="Option_Cycle" xml:space="preserve"><value>Цикл</value></data>
+  <data name="Option_Rainbow" xml:space="preserve"><value>Радуга</value></data>
+  <data name="Option_Flow" xml:space="preserve"><value>Поток</value></data>
+  <data name="Section_Brightness" xml:space="preserve"><value>ЯРКОСТЬ</value></data>
+  <data name="SliderLabel_Brightness" xml:space="preserve"><value>Яркость</value></data>
+  <data name="Section_Sleep" xml:space="preserve"><value>СОН</value></data>
+  <data name="SliderLabel_SleepMode" xml:space="preserve"><value>Режим сна</value></data>
+  <data name="Option_Enabled" xml:space="preserve"><value>Включено</value></data>
+  <data name="SliderLabel_SleepTimeout" xml:space="preserve"><value>Время до сна</value></data>
+  <data name="Section_PowerOnOffColor" xml:space="preserve"><value>ЦВЕТ ВКЛЮЧЕНИЯ / ВЫКЛЮЧЕНИЯ</value></data>
+  <data name="SliderLabel_StartupColor" xml:space="preserve"><value>Цвет включения</value></data>
+  <data name="SliderLabel_ShutdownColor" xml:space="preserve"><value>Цвет выключения</value></data>
+  <data name="Section_MozaDashboard" xml:space="preserve"><value>ТАБЛО MOZA</value></data>
+  <data name="Status_SearchingForDashboard" xml:space="preserve"><value>Поиск табло…</value></data>
+  <data name="Section_IndicatorModes" xml:space="preserve"><value>РЕЖИМЫ ИНДИКАТОРА</value></data>
+  <data name="SliderLabel_RpmIndicatorMode" xml:space="preserve"><value>Режим индикатора RPM</value></data>
+  <data name="Option_SimHubMode" xml:space="preserve"><value>Режим SimHub</value></data>
+  <data name="Option_AlwaysOn" xml:space="preserve"><value>Всегда включено</value></data>
+  <data name="SliderLabel_RpmDisplayMode" xml:space="preserve"><value>Режим отображения RPM</value></data>
+  <data name="Option_Mode1" xml:space="preserve"><value>Режим 1</value></data>
+  <data name="Option_Mode2" xml:space="preserve"><value>Режим 2</value></data>
+  <data name="SliderLabel_FlagsIndicatorMode" xml:space="preserve"><value>Режим индикатора флагов</value></data>
+  <data name="SliderLabel_RpmBrightness" xml:space="preserve"><value>Яркость RPM</value></data>
+  <data name="SliderLabel_FlagsBrightness" xml:space="preserve"><value>Яркость флагов</value></data>
+  <data name="Section_RpmLedColors" xml:space="preserve"><value>ЦВЕТА LED RPM</value></data>
+  <data name="Section_RpmBlinkColors" xml:space="preserve"><value>ЦВЕТА МИГАНИЯ RPM</value></data>
+  <data name="Subtitle_RpmBlinkColors" xml:space="preserve"><value>// отображаются при выходе RPM на красную зону</value></data>
+  <data name="Section_FlagLedColors" xml:space="preserve"><value>ЦВЕТА LED ФЛАГОВ</value></data>
+  <data name="Label_SteeringAngle" xml:space="preserve"><value>УГОЛ ПОВОРОТА РУЛЯ</value></data>
+  <data name="Toggle_Off" xml:space="preserve"><value>ВЫКЛ</value></data>
+  <data name="Toggle_On" xml:space="preserve"><value>ВКЛ</value></data>
+  <data name="TabHeader_Inputs" xml:space="preserve"><value>Ввод</value></data>
+  <data name="TabHeader_Dashboard" xml:space="preserve"><value>Табло</value></data>
+  <data name="TabHeader_Rpm" xml:space="preserve"><value>RPM</value></data>
+  <data name="TabHeader_Buttons" xml:space="preserve"><value>Кнопки</value></data>
+  <data name="TabHeader_Knobs" xml:space="preserve"><value>Энкодеры</value></data>
+  <data name="TabHeader_Files" xml:space="preserve"><value>Файлы</value></data>
+  <data name="TabHeader_Sleep" xml:space="preserve"><value>Сон</value></data>
+  <data name="Status_SearchingForWheel" xml:space="preserve"><value>Поиск руля…</value></data>
+  <data name="Section_LivePaddles" xml:space="preserve"><value>ЛЕПЕСТКИ В РЕАЛЬНОМ ВРЕМЕНИ</value></data>
+  <data name="Label_PaddleLeft" xml:space="preserve"><value>ЛЕВ</value></data>
+  <data name="Label_PaddleRight" xml:space="preserve"><value>ПРАВ</value></data>
+  <data name="Label_PaddleCombined" xml:space="preserve"><value>ОБЪЕДИНЁННЫЙ</value></data>
+  <data name="Section_ActiveButtons" xml:space="preserve"><value>АКТИВНЫЕ КНОПКИ</value></data>
+  <data name="Section_Joystick" xml:space="preserve"><value>ДЖОЙСТИК</value></data>
+  <data name="Subtitle_JoystickAssignment" xml:space="preserve"><value>// назначение направленного стика</value></data>
+  <data name="Hint_NoJoystickConfig" xml:space="preserve"><value>Руль ещё не сообщил конфигурацию джойстика. Подключите руль и дождитесь завершения опроса идентификации.</value></data>
+  <data name="Label_EnableDashboardTelemetry" xml:space="preserve"><value>Включить телеметрию табло</value></data>
+  <data name="Button_LoadMzdash" xml:space="preserve"><value>ЗАГРУЗИТЬ .MZDASH…</value></data>
+  <data name="Button_SetFolder" xml:space="preserve"><value>ВЫБРАТЬ ПАПКУ…</value></data>
+  <data name="Button_AutoDetect" xml:space="preserve"><value>АВТО-ОПРЕДЕЛЕНИЕ</value></data>
+  <data name="Tooltip_LoadMzdash" xml:space="preserve"><value>Загрузить локальный .mzdash для сопоставления каналов tier-def</value></data>
+  <data name="Tooltip_SetFolder" xml:space="preserve"><value>Указать папку с файлами .mzdash как библиотеку панелей</value></data>
+  <data name="Tooltip_AutoDetect" xml:space="preserve"><value>Автоопределить папку панелей для подключённого руля</value></data>
+  <data name="Button_SendTestPattern" xml:space="preserve"><value>▶ ОТПРАВИТЬ ТЕСТОВЫЙ ПАТТЕРН</value></data>
+  <data name="Button_StopTest" xml:space="preserve"><value>■ СТОП</value></data>
+  <data name="Section_ChannelMappings" xml:space="preserve"><value>НАЗНАЧЕНИЕ КАНАЛОВ</value></data>
+  <data name="Hint_ClickPencilForProperty" xml:space="preserve"><value>Нажмите карандаш у строки, чтобы выбрать свойство SimHub</value></data>
+  <data name="Status_LoadingChannelMappings" xml:space="preserve"><value>Загрузка назначений каналов…</value></data>
+  <data name="DataGridHeader_Channel" xml:space="preserve"><value>Канал</value></data>
+  <data name="DataGridHeader_SimHubProperty" xml:space="preserve"><value>Свойство SimHub</value></data>
+  <data name="DataGridHeader_CurrentValue" xml:space="preserve"><value>Текущее значение</value></data>
+  <data name="Tooltip_EditMapping" xml:space="preserve"><value>Изменить привязку к свойству SimHub</value></data>
+  <data name="Button_ResetToDefaults" xml:space="preserve"><value>СБРОСИТЬ ПО УМОЛЧАНИЮ</value></data>
+  <data name="Section_Display" xml:space="preserve"><value>ДИСПЛЕЙ</value></data>
+  <data name="SliderLabel_DisplayBrightness" xml:space="preserve"><value>Яркость дисплея</value></data>
+  <data name="SliderLabel_StandbyTime" xml:space="preserve"><value>Время ожидания</value></data>
+  <data name="Option_Time1Min" xml:space="preserve"><value>1 минута</value></data>
+  <data name="Option_Time2Min" xml:space="preserve"><value>2 минуты</value></data>
+  <data name="Option_Time3Min" xml:space="preserve"><value>3 минуты</value></data>
+  <data name="Option_Time4Min" xml:space="preserve"><value>4 минуты</value></data>
+  <data name="Option_Time5Min" xml:space="preserve"><value>5 минут</value></data>
+  <data name="Option_Time10Min" xml:space="preserve"><value>10 минут</value></data>
+  <data name="Option_Time15Min" xml:space="preserve"><value>15 минут</value></data>
+  <data name="Option_Time20Min" xml:space="preserve"><value>20 минут</value></data>
+  <data name="Option_Time25Min" xml:space="preserve"><value>25 минут</value></data>
+  <data name="Option_Time30Min" xml:space="preserve"><value>30 минут</value></data>
+  <data name="Option_Time35Min" xml:space="preserve"><value>35 минут</value></data>
+  <data name="Option_Time40Min" xml:space="preserve"><value>40 минут</value></data>
+  <data name="Option_Time45Min" xml:space="preserve"><value>45 минут</value></data>
+  <data name="Option_Time1Hour" xml:space="preserve"><value>1 час</value></data>
+  <data name="Option_Time2Hour" xml:space="preserve"><value>2 часа</value></data>
+  <data name="Option_Time3Hour" xml:space="preserve"><value>3 часа</value></data>
+  <data name="Option_Time4Hour" xml:space="preserve"><value>4 часа</value></data>
+  <data name="Option_Time5Hour" xml:space="preserve"><value>5 часов</value></data>
+  <data name="Section_RpmLedMode" xml:space="preserve"><value>РЕЖИМ LED RPM</value></data>
+  <data name="SliderLabel_RpmLedMode" xml:space="preserve"><value>Режим LED RPM</value></data>
+  <data name="Option_Static" xml:space="preserve"><value>Статичный</value></data>
+  <data name="SliderLabel_RpmIdleEffect" xml:space="preserve"><value>Эффект простоя RPM</value></data>
+  <data name="Option_Breathing" xml:space="preserve"><value>Дыхание</value></data>
+  <data name="Option_ColorCycle" xml:space="preserve"><value>Цикл цвета</value></data>
+  <data name="Option_SandFlow" xml:space="preserve"><value>Поток песка</value></data>
+  <data name="Option_RgbPulse" xml:space="preserve"><value>Пульс RGB</value></data>
+  <data name="SliderLabel_RpmIdleSpeed" xml:space="preserve"><value>Скорость простоя RPM</value></data>
+  <data name="Section_RpmLedColorsStatic" xml:space="preserve"><value>ЦВЕТА LED RPM (СТАТИКА)</value></data>
+  <data name="Subtitle_RpmLedColorsStatic" xml:space="preserve"><value>// показываются когда телеметрия не отправляет · нажмите LED для перекраски</value></data>
+  <data name="Label_LedPlaceholder" xml:space="preserve"><value>LED 01</value></data>
+  <data name="Subtitle_ClickFlagToRecolor" xml:space="preserve"><value>// нажмите флаг для перекраски</value></data>
+  <data name="Label_FlagPlaceholder" xml:space="preserve"><value>ФЛАГ 1</value></data>
+  <data name="Section_EsWheelRpmIndicator" xml:space="preserve"><value>РУЛЬ ES · ИНДИКАТОР RPM</value></data>
+  <data name="Subtitle_EsLegacy" xml:space="preserve"><value>// унаследованный протокол ES</value></data>
+  <data name="SliderLabel_IndicatorMode" xml:space="preserve"><value>Режим индикатора</value></data>
+  <data name="SliderLabel_DisplayMode" xml:space="preserve"><value>Режим отображения</value></data>
+  <data name="Section_ButtonLedMode" xml:space="preserve"><value>РЕЖИМ LED КНОПОК</value></data>
+  <data name="SliderLabel_ButtonLedMode" xml:space="preserve"><value>Режим LED кнопок</value></data>
+  <data name="SliderLabel_ButtonIdleEffect" xml:space="preserve"><value>Эффект простоя кнопок</value></data>
+  <data name="SliderLabel_ButtonIdleSpeed" xml:space="preserve"><value>Скорость простоя кнопок</value></data>
+  <data name="Section_ButtonLedColors" xml:space="preserve"><value>ЦВЕТА LED КНОПОК</value></data>
+  <data name="Subtitle_ButtonLedColors" xml:space="preserve"><value>// нажмите кнопку для перекраски · 'по умолчанию во время телеметрии' заменяет погашенные кнопки выбранным цветом</value></data>
+  <data name="Label_ButtonPlaceholder" xml:space="preserve"><value>КНОПКА 01</value></data>
+  <data name="Section_KnobLedMode" xml:space="preserve"><value>РЕЖИМ LED ЭНКОДЕРА</value></data>
+  <data name="SliderLabel_KnobLedMode" xml:space="preserve"><value>Режим LED энкодера</value></data>
+  <data name="SliderLabel_KnobIdleEffect" xml:space="preserve"><value>Эффект простоя энкодера</value></data>
+  <data name="SliderLabel_KnobIdleSpeed" xml:space="preserve"><value>Скорость простоя энкодера</value></data>
+  <data name="Section_KnobSettings" xml:space="preserve"><value>НАСТРОЙКИ ЭНКОДЕРОВ</value></data>
+  <data name="Label_SignalMode" xml:space="preserve"><value>РЕЖИМ СИГНАЛА</value></data>
+  <data name="Subtitle_SignalMode" xml:space="preserve"><value>// как каждый ротативный передаёт ввод</value></data>
+  <data name="SliderLabel_AllRotaries" xml:space="preserve"><value>Все ротативные</value></data>
+  <data name="Label_Colours" xml:space="preserve"><value>ЦВЕТА</value></data>
+  <data name="Subtitle_KnobColours" xml:space="preserve"><value>// нажмите любой LED кольца или центральный образец для активного цвета этого энкодера</value></data>
+  <data name="Label_KnobEditing" xml:space="preserve"><value>РЕДАКТИРОВАНИЕ · ЭНКОДЕР 1 · АКТИВНЫЙ</value></data>
+  <data name="Button_FillRingWithSelected" xml:space="preserve"><value>ЗАПОЛНИТЬ КОЛЬЦО ВЫБРАННЫМ</value></data>
+  <data name="Button_CopyKnobToAll" xml:space="preserve"><value>СКОПИРОВАТЬ ЭНКОДЕР НА ВСЕ</value></data>
+  <data name="Banner_DashboardUploadNotWorkingYet" xml:space="preserve"><value>⚠  Загрузка панели пока не работает</value></data>
+  <data name="Section_SleepLight" xml:space="preserve"><value>СВЕТ В РЕЖИМЕ СНА</value></data>
+  <data name="Subtitle_SleepLight" xml:space="preserve"><value>// что показывает руль после истечения времени простоя</value></data>
+  <data name="SliderLabel_Speed" xml:space="preserve"><value>Скорость</value></data>
+  <data name="SliderLabel_Color" xml:space="preserve"><value>Цвет</value></data>
 </root>

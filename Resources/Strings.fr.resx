@@ -77,7 +77,7 @@
   <data name="Label_RightPaddle" xml:space="preserve"><value>Palette droite</value></data>
   <data name="Label_Combined" xml:space="preserve"><value>Combiné</value></data>
   <data name="Section_Buttons" xml:space="preserve"><value>Boutons</value></data>
-  <data name="Section_PaddleSettings" xml:space="preserve"><value>Réglages des palettes</value></data>
+  <data name="Section_PaddleSettings" xml:space="preserve"><value>RÉGLAGES DES PALETTES</value></data>
   <data name="SliderLabel_PaddlesMode" xml:space="preserve"><value>Mode des palettes</value></data>
   <data name="Option_Buttons" xml:space="preserve"><value>Boutons</value></data>
   <data name="Option_Combined" xml:space="preserve"><value>Combiné</value></data>
@@ -283,4 +283,148 @@
   <data name="Hint_ClickExpandToRender" xml:space="preserve"><value>Cliquez sur Développer pour afficher le rapport complet en plusieurs sections.</value></data>
   <data name="Hint_MBoosterIntro" xml:space="preserve"><value>Chaque mBooster connecté apparaît ci-dessous. Choisissez un rôle (Accélérateur/Frein/Embrayage) par périphérique pour acheminer la position de sa pédale. La section Calibration est expérimentale.</value></data>
   <data name="Hint_MBoosterCalibrationWarning" xml:space="preserve"><value>Pas encore testé.</value></data>
+  <data name="Title_PickLedColor" xml:space="preserve"><value>Choisir la couleur du LED</value></data>
+  <data name="Label_Palette" xml:space="preserve"><value>PALETTE</value></data>
+  <data name="Label_Last" xml:space="preserve"><value>DERNIER</value></data>
+  <data name="Label_FineTuneRgb" xml:space="preserve"><value>RÉGLAGE FIN · RGB</value></data>
+  <data name="Button_Cancel" xml:space="preserve"><value>ANNULER</value></data>
+  <data name="Button_Ok" xml:space="preserve"><value>OK</value></data>
+  <data name="Section_BaseAmbientLeds" xml:space="preserve"><value>MOZA WHEEL BASE · LEDS D'AMBIANCE</value></data>
+  <data name="Label_BaseModel" xml:space="preserve"><value>Modèle de base</value></data>
+  <data name="Hint_NoBaseAmbientDetected" xml:space="preserve"><value>Aucun LED d'ambiance détecté sur la base. Les bases R9/R12 ne possèdent pas la bande LED ; ce panneau ne s'active que sur les bases R21/R25/R27.</value></data>
+  <data name="Section_Mode" xml:space="preserve"><value>MODE</value></data>
+  <data name="SliderLabel_IndicatorState" xml:space="preserve"><value>État de l'indicateur</value></data>
+  <data name="Option_Off" xml:space="preserve"><value>Désactivé</value></data>
+  <data name="Option_On" xml:space="preserve"><value>Activé</value></data>
+  <data name="SliderLabel_StandbyAnimation" xml:space="preserve"><value>Animation en veille</value></data>
+  <data name="Option_Constant" xml:space="preserve"><value>Constante</value></data>
+  <data name="Option_Breath" xml:space="preserve"><value>Respiration</value></data>
+  <data name="Option_Cycle" xml:space="preserve"><value>Cycle</value></data>
+  <data name="Option_Rainbow" xml:space="preserve"><value>Arc-en-ciel</value></data>
+  <data name="Option_Flow" xml:space="preserve"><value>Flux</value></data>
+  <data name="Section_Brightness" xml:space="preserve"><value>LUMINOSITÉ</value></data>
+  <data name="SliderLabel_Brightness" xml:space="preserve"><value>Luminosité</value></data>
+  <data name="Section_Sleep" xml:space="preserve"><value>VEILLE</value></data>
+  <data name="SliderLabel_SleepMode" xml:space="preserve"><value>Mode veille</value></data>
+  <data name="Option_Enabled" xml:space="preserve"><value>Activé</value></data>
+  <data name="SliderLabel_SleepTimeout" xml:space="preserve"><value>Délai de veille</value></data>
+  <data name="Section_PowerOnOffColor" xml:space="preserve"><value>COULEUR ALLUMAGE / EXTINCTION</value></data>
+  <data name="SliderLabel_StartupColor" xml:space="preserve"><value>Couleur de démarrage</value></data>
+  <data name="SliderLabel_ShutdownColor" xml:space="preserve"><value>Couleur d'extinction</value></data>
+  <data name="Section_MozaDashboard" xml:space="preserve"><value>TABLEAU DE BORD MOZA</value></data>
+  <data name="Status_SearchingForDashboard" xml:space="preserve"><value>Recherche du tableau de bord…</value></data>
+  <data name="Section_IndicatorModes" xml:space="preserve"><value>MODES D'INDICATEUR</value></data>
+  <data name="SliderLabel_RpmIndicatorMode" xml:space="preserve"><value>Mode indicateur RPM</value></data>
+  <data name="Option_SimHubMode" xml:space="preserve"><value>Mode SimHub</value></data>
+  <data name="Option_AlwaysOn" xml:space="preserve"><value>Toujours activé</value></data>
+  <data name="SliderLabel_RpmDisplayMode" xml:space="preserve"><value>Mode d'affichage RPM</value></data>
+  <data name="Option_Mode1" xml:space="preserve"><value>Mode 1</value></data>
+  <data name="Option_Mode2" xml:space="preserve"><value>Mode 2</value></data>
+  <data name="SliderLabel_FlagsIndicatorMode" xml:space="preserve"><value>Mode indicateur de drapeaux</value></data>
+  <data name="SliderLabel_RpmBrightness" xml:space="preserve"><value>Luminosité RPM</value></data>
+  <data name="SliderLabel_FlagsBrightness" xml:space="preserve"><value>Luminosité des drapeaux</value></data>
+  <data name="Section_RpmLedColors" xml:space="preserve"><value>COULEURS LED RPM</value></data>
+  <data name="Section_RpmBlinkColors" xml:space="preserve"><value>COULEURS DE CLIGNOTEMENT RPM</value></data>
+  <data name="Subtitle_RpmBlinkColors" xml:space="preserve"><value>// affichées au passage en zone rouge</value></data>
+  <data name="Section_FlagLedColors" xml:space="preserve"><value>COULEURS LED DES DRAPEAUX</value></data>
+  <data name="Label_SteeringAngle" xml:space="preserve"><value>ANGLE DU VOLANT</value></data>
+  <data name="Toggle_Off" xml:space="preserve"><value>OFF</value></data>
+  <data name="Toggle_On" xml:space="preserve"><value>ON</value></data>
+  <data name="TabHeader_Inputs" xml:space="preserve"><value>Entrées</value></data>
+  <data name="TabHeader_Dashboard" xml:space="preserve"><value>Tableau de bord</value></data>
+  <data name="TabHeader_Rpm" xml:space="preserve"><value>RPM</value></data>
+  <data name="TabHeader_Buttons" xml:space="preserve"><value>Boutons</value></data>
+  <data name="TabHeader_Knobs" xml:space="preserve"><value>Encodeurs</value></data>
+  <data name="TabHeader_Files" xml:space="preserve"><value>Fichiers</value></data>
+  <data name="TabHeader_Sleep" xml:space="preserve"><value>Veille</value></data>
+  <data name="Status_SearchingForWheel" xml:space="preserve"><value>Recherche du volant…</value></data>
+  <data name="Section_LivePaddles" xml:space="preserve"><value>PALETTES EN DIRECT</value></data>
+  <data name="Label_PaddleLeft" xml:space="preserve"><value>GAUCHE</value></data>
+  <data name="Label_PaddleRight" xml:space="preserve"><value>DROITE</value></data>
+  <data name="Label_PaddleCombined" xml:space="preserve"><value>COMBINÉ</value></data>
+  <data name="Section_ActiveButtons" xml:space="preserve"><value>BOUTONS ACTIFS</value></data>
+  <data name="Section_Joystick" xml:space="preserve"><value>JOYSTICK</value></data>
+  <data name="Subtitle_JoystickAssignment" xml:space="preserve"><value>// affectation du stick directionnel</value></data>
+  <data name="Hint_NoJoystickConfig" xml:space="preserve"><value>Aucune configuration de joystick n'a encore été rapportée par le volant. Connectez le volant et attendez la fin de la sonde d'identité.</value></data>
+  <data name="Label_EnableDashboardTelemetry" xml:space="preserve"><value>Activer la télémétrie du tableau de bord</value></data>
+  <data name="Button_LoadMzdash" xml:space="preserve"><value>CHARGER .MZDASH…</value></data>
+  <data name="Button_SetFolder" xml:space="preserve"><value>CHOISIR DOSSIER…</value></data>
+  <data name="Button_AutoDetect" xml:space="preserve"><value>AUTO-DÉTECTER</value></data>
+  <data name="Tooltip_LoadMzdash" xml:space="preserve"><value>Charger un fichier .mzdash local pour l'appariement des canaux tier-def</value></data>
+  <data name="Tooltip_SetFolder" xml:space="preserve"><value>Définir un dossier de fichiers .mzdash comme bibliothèque de tableaux de bord</value></data>
+  <data name="Tooltip_AutoDetect" xml:space="preserve"><value>Détecter automatiquement le dossier de tableaux de bord pour le volant connecté</value></data>
+  <data name="Button_SendTestPattern" xml:space="preserve"><value>▶ ENVOYER UN MOTIF DE TEST</value></data>
+  <data name="Button_StopTest" xml:space="preserve"><value>■ ARRÊT</value></data>
+  <data name="Section_ChannelMappings" xml:space="preserve"><value>AFFECTATIONS DES CANAUX</value></data>
+  <data name="Hint_ClickPencilForProperty" xml:space="preserve"><value>Cliquez sur le crayon d'une ligne pour choisir une propriété SimHub</value></data>
+  <data name="Status_LoadingChannelMappings" xml:space="preserve"><value>Chargement des affectations de canaux…</value></data>
+  <data name="DataGridHeader_Channel" xml:space="preserve"><value>Canal</value></data>
+  <data name="DataGridHeader_SimHubProperty" xml:space="preserve"><value>Propriété SimHub</value></data>
+  <data name="DataGridHeader_CurrentValue" xml:space="preserve"><value>Valeur actuelle</value></data>
+  <data name="Tooltip_EditMapping" xml:space="preserve"><value>Modifier la liaison à la propriété SimHub</value></data>
+  <data name="Button_ResetToDefaults" xml:space="preserve"><value>RÉINITIALISER PAR DÉFAUT</value></data>
+  <data name="Section_Display" xml:space="preserve"><value>AFFICHAGE</value></data>
+  <data name="SliderLabel_DisplayBrightness" xml:space="preserve"><value>Luminosité de l'affichage</value></data>
+  <data name="SliderLabel_StandbyTime" xml:space="preserve"><value>Délai de veille</value></data>
+  <data name="Option_Time1Min" xml:space="preserve"><value>1 minute</value></data>
+  <data name="Option_Time2Min" xml:space="preserve"><value>2 minutes</value></data>
+  <data name="Option_Time3Min" xml:space="preserve"><value>3 minutes</value></data>
+  <data name="Option_Time4Min" xml:space="preserve"><value>4 minutes</value></data>
+  <data name="Option_Time5Min" xml:space="preserve"><value>5 minutes</value></data>
+  <data name="Option_Time10Min" xml:space="preserve"><value>10 minutes</value></data>
+  <data name="Option_Time15Min" xml:space="preserve"><value>15 minutes</value></data>
+  <data name="Option_Time20Min" xml:space="preserve"><value>20 minutes</value></data>
+  <data name="Option_Time25Min" xml:space="preserve"><value>25 minutes</value></data>
+  <data name="Option_Time30Min" xml:space="preserve"><value>30 minutes</value></data>
+  <data name="Option_Time35Min" xml:space="preserve"><value>35 minutes</value></data>
+  <data name="Option_Time40Min" xml:space="preserve"><value>40 minutes</value></data>
+  <data name="Option_Time45Min" xml:space="preserve"><value>45 minutes</value></data>
+  <data name="Option_Time1Hour" xml:space="preserve"><value>1 heure</value></data>
+  <data name="Option_Time2Hour" xml:space="preserve"><value>2 heures</value></data>
+  <data name="Option_Time3Hour" xml:space="preserve"><value>3 heures</value></data>
+  <data name="Option_Time4Hour" xml:space="preserve"><value>4 heures</value></data>
+  <data name="Option_Time5Hour" xml:space="preserve"><value>5 heures</value></data>
+  <data name="Section_RpmLedMode" xml:space="preserve"><value>MODE LED RPM</value></data>
+  <data name="SliderLabel_RpmLedMode" xml:space="preserve"><value>Mode LED RPM</value></data>
+  <data name="Option_Static" xml:space="preserve"><value>Statique</value></data>
+  <data name="SliderLabel_RpmIdleEffect" xml:space="preserve"><value>Effet au repos RPM</value></data>
+  <data name="Option_Breathing" xml:space="preserve"><value>Respiration</value></data>
+  <data name="Option_ColorCycle" xml:space="preserve"><value>Cycle de couleurs</value></data>
+  <data name="Option_SandFlow" xml:space="preserve"><value>Flux de sable</value></data>
+  <data name="Option_RgbPulse" xml:space="preserve"><value>Pulsation RGB</value></data>
+  <data name="SliderLabel_RpmIdleSpeed" xml:space="preserve"><value>Vitesse au repos RPM</value></data>
+  <data name="Section_RpmLedColorsStatic" xml:space="preserve"><value>COULEURS LED RPM (STATIQUE)</value></data>
+  <data name="Subtitle_RpmLedColorsStatic" xml:space="preserve"><value>// affichées quand la télémétrie n'envoie pas · cliquez sur un LED pour le recolorer</value></data>
+  <data name="Label_LedPlaceholder" xml:space="preserve"><value>LED 01</value></data>
+  <data name="Subtitle_ClickFlagToRecolor" xml:space="preserve"><value>// cliquez sur un drapeau pour le recolorer</value></data>
+  <data name="Label_FlagPlaceholder" xml:space="preserve"><value>DRAPEAU 1</value></data>
+  <data name="Section_EsWheelRpmIndicator" xml:space="preserve"><value>VOLANT ES · INDICATEUR RPM</value></data>
+  <data name="Subtitle_EsLegacy" xml:space="preserve"><value>// protocole ES hérité</value></data>
+  <data name="SliderLabel_IndicatorMode" xml:space="preserve"><value>Mode indicateur</value></data>
+  <data name="SliderLabel_DisplayMode" xml:space="preserve"><value>Mode d'affichage</value></data>
+  <data name="Section_ButtonLedMode" xml:space="preserve"><value>MODE LED BOUTONS</value></data>
+  <data name="SliderLabel_ButtonLedMode" xml:space="preserve"><value>Mode LED boutons</value></data>
+  <data name="SliderLabel_ButtonIdleEffect" xml:space="preserve"><value>Effet au repos boutons</value></data>
+  <data name="SliderLabel_ButtonIdleSpeed" xml:space="preserve"><value>Vitesse au repos boutons</value></data>
+  <data name="Section_ButtonLedColors" xml:space="preserve"><value>COULEURS LED BOUTONS</value></data>
+  <data name="Subtitle_ButtonLedColors" xml:space="preserve"><value>// cliquez sur un bouton pour le recolorer · 'par défaut pendant la télémétrie' remplace les boutons éteints par la couleur choisie</value></data>
+  <data name="Label_ButtonPlaceholder" xml:space="preserve"><value>BOUTON 01</value></data>
+  <data name="Section_KnobLedMode" xml:space="preserve"><value>MODE LED ENCODEUR</value></data>
+  <data name="SliderLabel_KnobLedMode" xml:space="preserve"><value>Mode LED encodeur</value></data>
+  <data name="SliderLabel_KnobIdleEffect" xml:space="preserve"><value>Effet au repos encodeur</value></data>
+  <data name="SliderLabel_KnobIdleSpeed" xml:space="preserve"><value>Vitesse au repos encodeur</value></data>
+  <data name="Section_KnobSettings" xml:space="preserve"><value>RÉGLAGES DES ENCODEURS</value></data>
+  <data name="Label_SignalMode" xml:space="preserve"><value>MODE DE SIGNAL</value></data>
+  <data name="Subtitle_SignalMode" xml:space="preserve"><value>// comment chaque rotatif rapporte l'entrée</value></data>
+  <data name="SliderLabel_AllRotaries" xml:space="preserve"><value>Tous les rotatifs</value></data>
+  <data name="Label_Colours" xml:space="preserve"><value>COULEURS</value></data>
+  <data name="Subtitle_KnobColours" xml:space="preserve"><value>// cliquez sur n'importe quel LED du cercle, ou sur l'échantillon central pour la couleur active de cet encodeur</value></data>
+  <data name="Label_KnobEditing" xml:space="preserve"><value>ÉDITION · ENCODEUR 1 · ACTIF</value></data>
+  <data name="Button_FillRingWithSelected" xml:space="preserve"><value>REMPLIR LE CERCLE AVEC LA SÉLECTION</value></data>
+  <data name="Button_CopyKnobToAll" xml:space="preserve"><value>COPIER CET ENCODEUR À TOUS</value></data>
+  <data name="Banner_DashboardUploadNotWorkingYet" xml:space="preserve"><value>⚠  Le téléversement du tableau de bord ne fonctionne pas encore</value></data>
+  <data name="Section_SleepLight" xml:space="preserve"><value>LUMIÈRE DE VEILLE</value></data>
+  <data name="Subtitle_SleepLight" xml:space="preserve"><value>// ce que le volant affiche après expiration du délai d'inactivité</value></data>
+  <data name="SliderLabel_Speed" xml:space="preserve"><value>Vitesse</value></data>
+  <data name="SliderLabel_Color" xml:space="preserve"><value>Couleur</value></data>
 </root>

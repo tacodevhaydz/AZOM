@@ -2,6 +2,7 @@
              xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
              xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
              xmlns:ctrl="clr-namespace:MozaControls"
+             xmlns:res="clr-namespace:MozaPlugin.Resources"
              Padding="14"
              TextElement.Foreground="{DynamicResource TextBrush}"
              TextElement.FontFamily="{DynamicResource FontUi}"
@@ -65,7 +66,7 @@
                 <StackPanel Orientation="Horizontal">
                     <Ellipse x:Name="StatusDot" Width="10" Height="10" Fill="Gray"
                              VerticalAlignment="Center" Margin="0,0,12,0"/>
-                    <TextBlock Text="MOZA DASHBOARD"
+                    <TextBlock Text="{x:Static res:Strings.Section_MozaDashboard}"
                                FontWeight="SemiBold" FontSize="14"
                                VerticalAlignment="Center" Margin="0,0,18,0"/>
                     <TextBlock x:Name="StatusText" Style="{StaticResource MutedHintText}"
@@ -74,56 +75,56 @@
             </Border>
 
             <StackPanel x:Name="DashNotDetectedPanel">
-                <TextBlock Text="Searching for dashboard..."
+                <TextBlock Text="{x:Static res:Strings.Status_SearchingForDashboard}"
                            Style="{StaticResource MutedHintText}" FontStyle="Italic" Margin="0,10"/>
             </StackPanel>
 
             <StackPanel x:Name="DashPanel" Visibility="Collapsed">
 
-                <ctrl:SectionCard Title="INDICATOR MODES" Icon="{StaticResource IconBolt}">
+                <ctrl:SectionCard Title="{x:Static res:Strings.Section_IndicatorModes}" Icon="{StaticResource IconBolt}">
                     <StackPanel>
                         <StackPanel Orientation="Horizontal" Margin="0,4">
-                            <TextBlock Text="RPM Indicator Mode" Style="{StaticResource SliderLabel}"/>
+                            <TextBlock Text="{x:Static res:Strings.SliderLabel_RpmIndicatorMode}" Style="{StaticResource SliderLabel}"/>
                             <ComboBox x:Name="DashRpmIndicatorCombo" Width="140" SelectionChanged="DashRpmIndicatorCombo_Changed">
-                                <ComboBoxItem Content="SimHub Mode"/>
-                                <ComboBoxItem Content="Always On"/>
-                                <ComboBoxItem Content="Off"/>
+                                <ComboBoxItem Content="{x:Static res:Strings.Option_SimHubMode}"/>
+                                <ComboBoxItem Content="{x:Static res:Strings.Option_AlwaysOn}"/>
+                                <ComboBoxItem Content="{x:Static res:Strings.Option_Off}"/>
                             </ComboBox>
                         </StackPanel>
                         <StackPanel Orientation="Horizontal" Margin="0,4">
-                            <TextBlock Text="RPM Display Mode" Style="{StaticResource SliderLabel}"/>
+                            <TextBlock Text="{x:Static res:Strings.SliderLabel_RpmDisplayMode}" Style="{StaticResource SliderLabel}"/>
                             <ComboBox x:Name="DashRpmDisplayCombo" Width="140" SelectionChanged="DashRpmDisplayCombo_Changed">
-                                <ComboBoxItem Content="Mode 1"/>
-                                <ComboBoxItem Content="Mode 2"/>
+                                <ComboBoxItem Content="{x:Static res:Strings.Option_Mode1}"/>
+                                <ComboBoxItem Content="{x:Static res:Strings.Option_Mode2}"/>
                             </ComboBox>
                         </StackPanel>
                         <StackPanel Orientation="Horizontal" Margin="0,4">
-                            <TextBlock Text="Flags Indicator Mode" Style="{StaticResource SliderLabel}"/>
+                            <TextBlock Text="{x:Static res:Strings.SliderLabel_FlagsIndicatorMode}" Style="{StaticResource SliderLabel}"/>
                             <ComboBox x:Name="DashFlagsIndicatorCombo" Width="140" SelectionChanged="DashFlagsIndicatorCombo_Changed">
-                                <ComboBoxItem Content="SimHub Mode"/>
-                                <ComboBoxItem Content="Always On"/>
-                                <ComboBoxItem Content="Off"/>
+                                <ComboBoxItem Content="{x:Static res:Strings.Option_SimHubMode}"/>
+                                <ComboBoxItem Content="{x:Static res:Strings.Option_AlwaysOn}"/>
+                                <ComboBoxItem Content="{x:Static res:Strings.Option_Off}"/>
                             </ComboBox>
                         </StackPanel>
                     </StackPanel>
                 </ctrl:SectionCard>
 
-                <ctrl:SectionCard Title="BRIGHTNESS" Icon="{StaticResource IconLed}">
+                <ctrl:SectionCard Title="{x:Static res:Strings.Section_Brightness}" Icon="{StaticResource IconLed}">
                     <StackPanel>
                         <StackPanel Orientation="Horizontal" Margin="0,4">
-                            <TextBlock Text="RPM Brightness" Style="{StaticResource SliderLabel}"/>
+                            <TextBlock Text="{x:Static res:Strings.SliderLabel_RpmBrightness}" Style="{StaticResource SliderLabel}"/>
                             <Slider x:Name="DashRpmBrightnessSlider" Style="{StaticResource SettingSlider}" Minimum="0" Maximum="100" TickFrequency="1" ValueChanged="DashRpmBrightnessSlider_ValueChanged"/>
                             <TextBlock x:Name="DashRpmBrightnessValue" Style="{StaticResource SliderValue}" Text="100"/>
                         </StackPanel>
                         <StackPanel Orientation="Horizontal" Margin="0,4">
-                            <TextBlock Text="Flags Brightness" Style="{StaticResource SliderLabel}"/>
+                            <TextBlock Text="{x:Static res:Strings.SliderLabel_FlagsBrightness}" Style="{StaticResource SliderLabel}"/>
                             <Slider x:Name="DashFlagsBrightnessSlider" Style="{StaticResource SettingSlider}" Minimum="0" Maximum="100" TickFrequency="1" ValueChanged="DashFlagsBrightnessSlider_ValueChanged"/>
                             <TextBlock x:Name="DashFlagsBrightnessValue" Style="{StaticResource SliderValue}" Text="100"/>
                         </StackPanel>
                     </StackPanel>
                 </ctrl:SectionCard>
 
-                <ctrl:SectionCard Title="RPM LED COLORS" Icon="{StaticResource IconLed}">
+                <ctrl:SectionCard Title="{x:Static res:Strings.Section_RpmLedColors}" Icon="{StaticResource IconLed}">
                     <StackPanel>
                         <StackPanel Orientation="Horizontal" Margin="0,0,0,2">
                             <TextBlock Style="{StaticResource LedIndex}" Text="1"/><TextBlock Style="{StaticResource LedIndex}" Text="2"/>
@@ -136,8 +137,8 @@
                     </StackPanel>
                 </ctrl:SectionCard>
 
-                <ctrl:SectionCard Title="RPM BLINK COLORS"
-                                  Subtitle="// shown when RPM goes redline"
+                <ctrl:SectionCard Title="{x:Static res:Strings.Section_RpmBlinkColors}"
+                                  Subtitle="{x:Static res:Strings.Subtitle_RpmBlinkColors}"
                                   Icon="{StaticResource IconLed}">
                     <StackPanel>
                         <StackPanel Orientation="Horizontal" Margin="0,0,0,2">
@@ -151,7 +152,7 @@
                     </StackPanel>
                 </ctrl:SectionCard>
 
-                <ctrl:SectionCard Title="FLAG LED COLORS" Icon="{StaticResource IconAlert}">
+                <ctrl:SectionCard Title="{x:Static res:Strings.Section_FlagLedColors}" Icon="{StaticResource IconAlert}">
                     <StackPanel>
                         <StackPanel Orientation="Horizontal" Margin="0,0,0,2">
                             <TextBlock Style="{StaticResource LedIndex}" Text="1"/><TextBlock Style="{StaticResource LedIndex}" Text="2"/>
