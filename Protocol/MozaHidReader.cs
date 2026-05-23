@@ -1,7 +1,6 @@
 using System;
 using System.Collections.Generic;
 using System.Linq;
-using System.Text.RegularExpressions;
 using System.Threading;
 using HidSharp;
 using HidSharp.Reports;
@@ -38,17 +37,6 @@ namespace MozaPlugin.Protocol
         private const uint UsageSimRud = 0x000200BA; // Simulation.Rudder     → handbrake (native Windows)
 
         private static readonly uint[] TrackedUsages = { UsageX, UsageY, UsageZ, UsageRx, UsageRy, UsageRz, UsageSlider, UsageDial, UsageSimRud };
-
-        private static readonly Regex HandbrakePattern = new Regex(@"hbp handbrake", RegexOptions.IgnoreCase | RegexOptions.Compiled);
-
-        // Device name patterns (lowercased), matching boxflat/foxblat's MozaHidDevice class
-        private static readonly string[] DevicePatterns =
-        {
-            @"gudsen (moza )?r[0-9]{1,2} (ultra base|base|racing wheel and pedals)",
-            @"gudsen moza (srp|sr-p|crp)[0-9]? pedals",
-            @"hbp handbrake",
-            @"gudsen universal hub",
-        };
 
         private readonly MozaData _data;
         private Thread? _thread;
@@ -152,7 +140,7 @@ namespace MozaPlugin.Protocol
                             // Register so Dispose() can force-close on shutdown.
                             lock (_streamsLock) _liveStreams.Add(stream);
 
-                            bool isHandbrake = HandbrakePattern.IsMatch(device.GetFriendlyName() ?? "");
+                            bool isHandbrake = MozaUsbIds.IsHandbrakePid((ushort)device.ProductID);
                             string idCapture = identity;
                             MozaHidClass classCapture = deviceClass;
                             // ReadDevice owns `stream` and disposes it before returning.
@@ -200,12 +188,21 @@ namespace MozaPlugin.Protocol
         }
 
         /// <summary>
-        /// Finds all Moza HID devices: (a) name-regex match for the
-        /// wheelbase / standalone pedals / handbrake / hub family, plus
-        /// (b) VID/PID match (0x346E / 0x0008) for mBooster Pedals. mBooster
+        /// Finds all Moza HID devices by VID 0x346E, then categorizes by PID
+        /// via <see cref="MozaUsbIds"/>: wheelbase / pedals / handbrake / hub are
+        /// treated as <see cref="MozaHidClass.Standard"/>; mBooster (PID 0x0008)
         /// is tagged with <see cref="MozaHidClass.MBooster"/> + a stable identity
         /// extracted from <see cref="HidDevice.DevicePath"/> so the registry
-        /// can pair the HID device with its serial-port sibling.
+        /// can pair the HID device with its serial-port sibling. AB9 / shifter
+        /// PIDs are skipped (no axes we consume). Unknown Moza PIDs are admitted
+        /// optimistically so future hardware works without a code change.
+        ///
+        /// VID-based matching replaces an earlier friendly-name regex, which
+        /// only worked on Linux: HidSharp's <c>GetFriendlyName()</c> returns the
+        /// kernel HID name there (e.g. "Gudsen MOZA R9 Ultra Base") but the
+        /// generic SetupAPI device description on Windows ("HID-compliant game
+        /// controller"), so no regex pattern matched and the steering / pedal /
+        /// handbrake bars stayed blank.
         /// </summary>
         private static List<(HidDevice device, Dictionary<uint, (int min, int max)> usages, MozaHidClass kind, string identity)> FindMozaDevices()
         {
@@ -221,15 +218,18 @@ namespace MozaPlugin.Protocol
             {
                 try
                 {
-                    string name = (dev.GetFriendlyName() ?? "").ToLowerInvariant();
+                    if (dev.VendorID != MozaPortDiscovery.MozaVid) continue;
 
-                    // (a) mBooster: VID 0x346E + PID 0x0008. Identified by VID/PID
-                    // (deterministic) instead of name regex — name format on real
-                    // hardware is unverified at the time of this code.
-                    bool isMBooster = dev.VendorID == 0x346E && dev.ProductID == 0x0008;
+                    ushort pid = (ushort)dev.ProductID;
+                    var category = MozaUsbIds.Categorize(pid);
 
-                    // (b) Standard wheelbase / pedals / handbrake / hub via name regex.
-                    bool isStandard = DevicePatterns.Any(p => Regex.IsMatch(name, p));
+                    bool isMBooster = category == MozaDeviceCategory.MBooster;
+                    bool isStandard =
+                        category == MozaDeviceCategory.Wheelbase ||
+                        category == MozaDeviceCategory.Pedals    ||
+                        category == MozaDeviceCategory.Handbrake ||
+                        category == MozaDeviceCategory.Hub       ||
+                        category == MozaDeviceCategory.Unknown;  // forward-compat for new PIDs
 
                     if (!isMBooster && !isStandard) continue;
 
