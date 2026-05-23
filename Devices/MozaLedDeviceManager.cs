@@ -578,8 +578,12 @@ namespace MozaPlugin.Devices
                     if (knobBitmask != 0)
                         _lastKnobActivityTime = DateTime.UtcNow;
 
-                    // Skip sending when all knobs are black and we haven't previously
-                    // sent a non-zero bitmask — avoids waking the knob LED controller.
+                    // Stay engaged once we've ever sent a non-zero bitmask: keep
+                    // streaming colour chunks (including all-black frames) so the
+                    // firmware's buffer always reflects the current animation
+                    // state. The bitmask is sticky — transitions from non-zero
+                    // back to zero are suppressed in the bitmask-write block
+                    // below to avoid the static-default flash described there.
                     bool knobsActive = knobBitmask != 0 || _lastKnobBitmask > 0;
 
                     if (knobsActive)
@@ -593,7 +597,19 @@ namespace MozaPlugin.Devices
 
                             SendColorChunks(plugin, knobColors, count, "wheel-telemetry-knob-colors");
 
-                            if (alwaysResendBitmask || knobBitmask != _lastKnobBitmask)
+                            // Hold the bitmask sticky once telemetry is engaged:
+                            // animation frames that drive every knob black would
+                            // otherwise emit active_mask=0, which the firmware reads
+                            // as "telemetry no longer owns the knobs" and briefly
+                            // reverts the ring to the stored static EEPROM colours
+                            // before the next non-zero frame arrives — the user
+                            // sees this as a default-colour flash. Colour chunks
+                            // still go out above so the firmware's buffer reflects
+                            // the animation's black frame and renders black with
+                            // the prior active_mask still in effect. The bitmask
+                            // is released back to -1 only via explicit teardown
+                            // (Disconnect / InvalidateLiveCache), not mid-animation.
+                            if (knobBitmask != 0 && (alwaysResendBitmask || knobBitmask != _lastKnobBitmask))
                             {
                                 _lastKnobBitmask = knobBitmask;
                                 int windowMask = (1 << knobCount) - 1;
