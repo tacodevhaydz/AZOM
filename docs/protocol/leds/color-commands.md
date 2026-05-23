@@ -72,6 +72,25 @@ Companion color writes set per-knob RGB (gradient from blue → purple → red):
        knob 0=blue   knob 1        knob 2        knob 3=red    (padding)
 ```
 
+**Sticky-bitmask discipline (knob group).** Writing `active_mask = 0` to
+`1A 03` while the firmware was previously in the "telemetry owns the
+knobs" state drops the knob LEDs back to their stored EEPROM defaults
+(per-knob `27 [knob] 00` Active colours, ring `1F 03 01 [N]` Inactive
+colours) for ~1 frame before the next non-zero bitmask re-engages the
+live path. Visible as a default-colour flash whenever a host-driven
+animation passes through an all-black frame. PitHouse never trips this
+in observed captures — 286/286 knob-bitmask writes in
+`sim/logs/bridge-20260517-081336.jsonl` are `active=0/window=0`,
+i.e. PitHouse drives no dynamic knob telemetry, so it has no active
+state to lose. Hosts that **do** drive per-frame knob colour chunks
+must hold the bitmask sticky across mid-session black frames: keep
+streaming colour chunks (so the firmware buffer renders the actual
+black frame), but suppress the bitmask write when its current value
+would be zero. Release the bitmask to zero only on explicit teardown
+(disconnect, mode switch). Plugin implementation: the knob block in
+`Devices/MozaLedDeviceManager.cs` Display() gates the `1A 03` write on
+`knobBitmask != 0`; the keepalive re-emits the last non-zero value.
+
 **Button color chunk** (`wheel-telemetry-button-colors`):
 
 ```
