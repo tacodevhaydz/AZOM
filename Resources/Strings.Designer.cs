@@ -35,6 +35,7 @@ namespace MozaPlugin.Resources
                 { "es", new ResourceManager("MozaPlugin.Resources.Strings.es", typeof(Strings).Assembly) },
                 { "fr", new ResourceManager("MozaPlugin.Resources.Strings.fr", typeof(Strings).Assembly) },
                 { "ru", new ResourceManager("MozaPlugin.Resources.Strings.ru", typeof(Strings).Assembly) },
+                { "vi", new ResourceManager("MozaPlugin.Resources.Strings.vi", typeof(Strings).Assembly) },
             };
 
         private static string Get(string key)
