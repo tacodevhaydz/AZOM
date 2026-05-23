@@ -26,7 +26,7 @@ namespace MozaPlugin.Settings
         /// </summary>
         public bool MigrateToSchemaV2()
         {
-            if (_settings == null || _settings.SettingsSchemaVersion >= 9)
+            if (_settings == null || _settings.SettingsSchemaVersion >= 10)
                 return false;
 
             var store = _settings.ProfileStore;
@@ -37,7 +37,7 @@ namespace MozaPlugin.Settings
             // empty-profiles branch so pre-refactor users (no profiles in JSON)
             // still get their flat fields carried over. Helpers are idempotent.
             bool ranV4Plus = false;
-            if (_settings.SettingsSchemaVersion < 9)
+            if (_settings.SettingsSchemaVersion < 10)
             {
                 ranV4Plus = true;
                 MigrateMzdashFolderToPerPage(profiles);
@@ -52,13 +52,13 @@ namespace MozaPlugin.Settings
                 // No profiles yet — InitProfileSystem will create a default and
                 // seed its baselines from the flat fields via
                 // SeedProfileBaselineFromFlatFields. Bump straight to v9.
-                _settings.SettingsSchemaVersion = 9;
+                _settings.SettingsSchemaVersion = 10;
                 ClearLegacyAfterMigration();
                 MozaLog.Debug("[Moza] Schema v9: no profiles present, marking migrated (default profile will be seeded by InitProfileSystem)");
                 return true;
             }
 
-            if (_settings.SettingsSchemaVersion >= 3)
+            if (_settings.SettingsSchemaVersion >= 3 && _settings.SettingsSchemaVersion < 10)
             {
                 // v3+ → v9 path. The per-page dicts above are the only data-
                 // carrying step; the v7 baseline-reseed runs unconditionally
@@ -66,7 +66,7 @@ namespace MozaPlugin.Settings
                 foreach (var profile in profiles)
                     SeedProfileBaselineFromFlatFields(profile);
 
-                _settings.SettingsSchemaVersion = 9;
+                _settings.SettingsSchemaVersion = 10;
                 ClearLegacyAfterMigration();
                 if (ranV4Plus)
                     MozaLog.Info("[Moza] Schema v9 migration: moved mzdash folder + telemetry-enable + wheel-era + sleep-light + idle-effect/speed to per-wheel-page dicts; reseeded profile baselines from flat fields where sentinel.");
@@ -316,7 +316,7 @@ namespace MozaPlugin.Settings
             MigrateWheelSleepToPerPage(profiles);
             MigrateWheelIdleToPerPage(profiles);
 
-            _settings.SettingsSchemaVersion = 9;
+            _settings.SettingsSchemaVersion = 10;
             MozaLog.Info(
                 $"[Moza] Schema v9 migration: PerWheelSlots={slotsCount}, " +
                 $"ChannelMappings={channelMappingsCount}, TelemetryByUid={uidSlotCount}, " +

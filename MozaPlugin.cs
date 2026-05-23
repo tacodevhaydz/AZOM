@@ -1,5 +1,6 @@
 using System;
 using System.Collections.Generic;
+using System.Globalization;
 using System.IO;
 using System.Linq;
 using System.Text;
@@ -11,6 +12,7 @@ using SimHub.Plugins;
 using MozaPlugin.Devices;
 using MozaPlugin.Hardware;
 using MozaPlugin.Protocol;
+using MozaPlugin.Resources;
 using MozaPlugin.Settings;
 using MozaPlugin.Telemetry;
 using MozaPlugin.Telemetry.Dashboard;
@@ -359,6 +361,17 @@ namespace MozaPlugin
             {
                 _data = new MozaData();
                 _settings = this.ReadCommonSettings<MozaPluginSettings>("MozaPluginSettings", () => new MozaPluginSettings());
+
+                // Set the UI culture from SimHub's own language setting BEFORE
+                // any WPF control is constructed — x:Static bindings in
+                // SettingsControl.xaml evaluate against Thread.CurrentUICulture
+                // at parse time, so a later assignment wouldn't retroactively
+                // re-translate the UI. (Note: SimHub doesn't propagate its
+                // chosen UI language onto plugin threads, hence reading the
+                // setting ourselves in LanguageResolver.)
+                var resolvedCulture = LanguageResolver.Resolve();
+                Thread.CurrentThread.CurrentUICulture = resolvedCulture;
+                CultureInfo.DefaultThreadCurrentUICulture = resolvedCulture;
 
                 // Null-guard for upgraded settings missing ProfileStore
                 if (_settings.ProfileStore == null)
@@ -1203,6 +1216,24 @@ namespace MozaPlugin
 
         public System.Windows.Controls.Control GetWPFSettingsControl(PluginManager pluginManager)
         {
+            // The WPF UI thread predates plugin Init, so the CurrentUICulture
+            // we assigned in Init lives on a different thread. Re-apply it here
+            // (we are on the UI thread) so that {x:Static res:Strings.X} bindings
+            // in SettingsControl.xaml resolve against the user's choice rather
+            // than the default thread culture.
+            // The WPF UI thread predates plugin Init, so the CurrentUICulture
+            // we assigned in Init lives on a different thread. Re-apply it here
+            // (we are on the UI thread) so that {x:Static res:Strings.X} bindings
+            // in SettingsControl.xaml resolve against the SimHub-selected language
+            // rather than the default thread culture.
+            var c = LanguageResolver.Resolve();
+            if (!Thread.CurrentThread.CurrentUICulture.Equals(c))
+            {
+                MozaLog.Info($"[Moza] GetWPFSettingsControl: switching UI thread culture from " +
+                             $"'{Thread.CurrentThread.CurrentUICulture.Name}' to '{c.Name}' " +
+                             $"(from SimHub Culture setting)");
+                Thread.CurrentThread.CurrentUICulture = c;
+            }
             return new SettingsControl(this);
         }
 
