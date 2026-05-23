@@ -230,7 +230,6 @@
         <Setter Property="BorderBrush" Value="{StaticResource BorderBrightBrush}"/>
         <Setter Property="BorderThickness" Value="1"/>
         <Setter Property="Padding" Value="13,7"/>
-        <Setter Property="Cursor" Value="Hand"/>
         <Setter Property="HorizontalContentAlignment" Value="Center"/>
         <Setter Property="VerticalContentAlignment" Value="Center"/>
         <Setter Property="SnapsToDevicePixels" Value="True"/>
@@ -294,7 +293,6 @@
     <Style x:Key="MozaThumbStyle" TargetType="Thumb">
         <Setter Property="Width" Value="14"/>
         <Setter Property="Height" Value="22"/>
-        <Setter Property="Cursor" Value="Hand"/>
         <!-- Default thumb tint. Per-slider overrides set Foreground on the
              enclosing Slider, which the Slider template passes down to the
              thumb so the fill cascades. -->
@@ -517,7 +515,6 @@
         <Setter Property="FontFamily" Value="{StaticResource FontUi}"/>
         <Setter Property="FontSize" Value="13"/>
         <Setter Property="VerticalContentAlignment" Value="Center"/>
-        <Setter Property="Cursor" Value="Hand"/>
         <Setter Property="Template">
             <Setter.Value>
                 <ControlTemplate TargetType="CheckBox">
@@ -560,7 +557,6 @@
         <Setter Property="FontWeight" Value="Bold"/>
         <Setter Property="Foreground" Value="{StaticResource TextFaintBrush}"/>
         <Setter Property="Background" Value="Transparent"/>
-        <Setter Property="Cursor" Value="Hand"/>
         <Setter Property="Padding" Value="18,0"/>
         <Setter Property="Height" Value="44"/>
         <Setter Property="Template">

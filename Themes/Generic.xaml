@@ -15,7 +15,6 @@
     <!-- ============================================================ -->
 
     <Style TargetType="{x:Type controls:OffOnToggle}">
-        <Setter Property="Cursor" Value="Hand"/>
         <Setter Property="Foreground" Value="{StaticResource TextBrush}"/>
         <Setter Property="FontFamily" Value="{StaticResource FontUi}"/>
         <Setter Property="FontSize" Value="12"/>
@@ -106,7 +105,6 @@
     <!-- ============================================================ -->
 
     <Style x:Key="SegmentedItemStyle" TargetType="ListBoxItem">
-        <Setter Property="Cursor" Value="Hand"/>
         <Setter Property="Foreground" Value="{StaticResource TextDimBrush}"/>
         <Setter Property="FontFamily" Value="{StaticResource FontUi}"/>
         <Setter Property="FontSize" Value="12"/>
