@@ -133,33 +133,22 @@ namespace MozaPlugin.Devices
 
             bool streamActive = gameOn && intensity > 0 && rpm > 100.0 && freqHz > 0.0;
 
-            // Scale the slider intensity by current/max RPM so the buzz fades
-            // in toward the slider value as the engine climbs to redline.
-            // Games that don't report MaxRpm (or report 0) bypass scaling so
-            // the slider behaves like a flat amplitude — better than silently
-            // collapsing to zero when the source data is missing. <100 RPM
-            // floor on maxRpm rejects obviously-bogus zero / idle-noise values.
-            double rpmFraction = 1.0;
+            // Engine-RPM relative to redline (0..1). Drives the engine-pulse
+            // pair RATE per the PitHouse envelope: ~1.7 Hz at idle, ~34 Hz
+            // at redline. Games that don't report MaxRpm fall back to an
+            // 8000 RPM redline (HardwareApplier convention) so the buzz
+            // still has dynamic range.
+            double rpmRedlineFraction;
             if (maxRpm > 100.0)
-            {
-                rpmFraction = rpm / maxRpm;
-                if (rpmFraction < 0.0) rpmFraction = 0.0;
-                if (rpmFraction > 1.0) rpmFraction = 1.0;
-            }
-            int scaledIntensity = (int)Math.Round(intensity * rpmFraction);
-            if (scaledIntensity < 0) scaledIntensity = 0;
-            if (scaledIntensity > 100) scaledIntensity = 100;
+                rpmRedlineFraction = Math.Min(1.0, Math.Max(0.0, rpm / maxRpm));
+            else
+                rpmRedlineFraction = Math.Min(1.0, Math.Max(0.0, rpm / 8000.0));
 
             // Slot ID is binary: active slot (0x1996) while streaming, silent
-            // slot (0x0000) otherwise. Earlier builds Bresenham-modulated this
-            // at the 91 Hz tick rate to scale intensity, but that produced an
-            // audible sub-bass rumble at low intensity (the on/off pattern beat
-            // at sub-frame rates). PitHouse modulates intensity by adding or
-            // removing parallel slot streams, never by toggling one slot in
-            // time — see docs/protocol/devices/ab9-shifter.md "Slider effects
-            // on the stream". Intensity scaling now happens entirely through
-            // the engine-pulse-pair amp16 (already linear, already PitHouse-
-            // faithful).
+            // slot (0x0000) otherwise. PitHouse's intensity slider mostly
+            // toggles between these two states at the wire level — the
+            // perceived intensity envelope comes from engine-pulse-pair
+            // density, not slot-side amplitude.
             bool slotActive = streamActive;
 
             // 0x0A 0x05 engine-vibration refresh — every tick.
@@ -183,7 +172,7 @@ namespace MozaPlugin.Devices
                 _active = streamActive;
                 MozaLog.Debug($"[Moza/AB9] engine-vib {(streamActive ? "active" : "silent")} "
                               + $"(rpm={rpm:F0}/{maxRpm:F0} freq={freqHz:F1}Hz period={period} "
-                              + $"int={intensity}→{scaledIntensity})");
+                              + $"int={intensity} rpmRel={rpmRedlineFraction:F2})");
             }
 
             // Sub-streams gated on `streamActive` — silent keepalive only otherwise.
@@ -200,17 +189,37 @@ namespace MozaPlugin.Devices
             if (tick % KeepalivePairBaseTicks == 0)
                 _ab9.SendKeepalivePair();
 
-            // 0x0B 0x02/03 engine-pulse pair — RPM-scaled rate. The pair's
-            // amp16 (offset 19-20 of the wire frame) scales linearly with
-            // `scaledIntensity` (slider × rpm/maxRpm), so the buzz fades up
-            // toward the slider setting as the engine climbs to redline
-            // instead of sitting at full amplitude from idle.
-            int pulseInterval = Math.Max(2, (int)(EnginePulsePairBaseTicks / rpmFactor));
-            if (tick % pulseInterval == 0)
+            // 0x0B 0x02/03 engine-pulse pair — emission RATE modulates audible
+            // intensity. PitHouse fires the pair at ~1.7 Hz at idle and ~34 Hz
+            // near redline (linear-ish in RPM); see capture analysis in
+            // docs/protocol/devices/ab9-shifter.md. The intensity slider
+            // multiplicatively attenuates that RPM-driven rate, so:
+            //   slider = 0   → silent
+            //   slider = 50  → half PitHouse rate at every RPM
+            //   slider = 100 → full PitHouse rate
+            //
+            // amp16 is held at constant 0x2328 (PitHouse-faithful, verified
+            // across 17,603 capture frames) by passing `100` to
+            // SendEnginePulsePair — which maps 100 → 0x2328 in the manager.
+            // Pre-2026-05-24, the plugin scaled amp16 by slider, but (a) the
+            // pulse-frame layout was off-by-one so the device firmware was
+            // already reading amp16 from a different field, and (b) PitHouse
+            // never modulates amp16 anyway — those bugs combined are what
+            // produced the binary-slider report.
+            const double PulseRateIdleHz = 1.7;
+            const double PulseRateRedlineHz = 34.0;
+            double rpmDrivenHz = PulseRateIdleHz
+                                 + (PulseRateRedlineHz - PulseRateIdleHz) * rpmRedlineFraction;
+            double pulseRateHz = (intensity / 100.0) * rpmDrivenHz;
+            if (pulseRateHz > 0.01)
             {
-                ushort step = (ushort)Math.Min(0xFFFF, (int)(32 + 78 * Math.Min(1.0, rpmFactor / 10.0)));
-                unchecked { _pulsePhase += step; }
-                _ab9.SendEnginePulsePair(_pulsePhase, scaledIntensity);
+                int pulseInterval = Math.Max(2, (int)Math.Round(1000.0 / TickPeriodMs / pulseRateHz));
+                if (tick % pulseInterval == 0)
+                {
+                    ushort step = (ushort)Math.Min(0xFFFF, (int)(32 + 78 * Math.Min(1.0, rpmFactor / 10.0)));
+                    unchecked { _pulsePhase += step; }
+                    _ab9.SendEnginePulsePair(_pulsePhase, intensity0to100: 100);
+                }
             }
 
             // 0x0D 0x05 RPM-tracking trigger.

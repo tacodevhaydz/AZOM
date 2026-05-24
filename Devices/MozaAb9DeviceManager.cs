@@ -438,8 +438,29 @@ namespace MozaPlugin.Devices
 
         private static byte[] BuildEnginePulseFrame(byte subLo, ushort phase, ushort amplitude)
         {
-            // Wire: 7E 16 20 12 0B XX 00 00 00 00 [ph ph][ph ph] 00×6 FF FA 04 [amp_hi amp_lo] 00
+            // Wire: 7E 16 20 12 0B XX 00 00 00 [ph ph][ph ph] 00×6 FF FA 04 [amp_hi amp_lo] 00 00
             //       len 0x16 = 22 = payload (2 sub-cmd + 20 fixed)
+            //
+            // Layout verified byte-for-byte against PitHouse capture
+            // (sim/logs/ab9-game-20260513.jsonl, 17,603 pulse-on frames):
+            //
+            //   payload[0..1]   = sub-cmd (0B 02/03)
+            //   payload[2..4]   = 3 zero pad   ← was 4 before 2026-05-24 fix
+            //   payload[5..6]   = phase counter (16-bit BE)
+            //   payload[7..8]   = phase counter mirror (same value)
+            //   payload[9..14]  = 6 zero pad
+            //   payload[15..16] = FF FA (const)
+            //   payload[17]     = 04 (tag)
+            //   payload[18..19] = amp16 (0x2328 on, 0x0000 off)
+            //   payload[20..21] = 2 zero trailing
+            //
+            // Pre-fix the layout was shifted right by 1 byte: phase landed at
+            // payload[6..7], amp16 at payload[19..20]. The device firmware
+            // reads amp16 from PitHouse's offset (18..19), so our amp_hi
+            // landed where the tag byte should be and our tag byte landed in
+            // the amp16 high slot — capping effective amp16 in the
+            // 0x0400..0x0423 range regardless of slider value. That was the
+            // root cause of the binary engine-vib-intensity report.
             var frame = new byte[27];
             frame[0]  = MozaProtocol.MessageStart;
             frame[1]  = 0x16;
@@ -447,18 +468,18 @@ namespace MozaPlugin.Devices
             frame[3]  = MozaProtocol.DeviceAb9;
             frame[4]  = 0x0B;
             frame[5]  = subLo;
-            // frame[6..9] zero
-            frame[10] = (byte)(phase >> 8);
-            frame[11] = (byte)(phase & 0xFF);
-            frame[12] = (byte)(phase >> 8);
-            frame[13] = (byte)(phase & 0xFF);
-            // frame[14..19] zero
-            frame[20] = 0xFF;
-            frame[21] = 0xFA;
-            frame[22] = 0x04;
-            frame[23] = (byte)(amplitude >> 8);
-            frame[24] = (byte)(amplitude & 0xFF);
-            // frame[25] zero (trailing)
+            // frame[6..8] zero (3 bytes — payload[2..4])
+            frame[9]  = (byte)(phase >> 8);
+            frame[10] = (byte)(phase & 0xFF);
+            frame[11] = (byte)(phase >> 8);
+            frame[12] = (byte)(phase & 0xFF);
+            // frame[13..18] zero (6 bytes — payload[9..14])
+            frame[19] = 0xFF;
+            frame[20] = 0xFA;
+            frame[21] = 0x04;
+            frame[22] = (byte)(amplitude >> 8);
+            frame[23] = (byte)(amplitude & 0xFF);
+            // frame[24..25] zero (2 bytes trailing — payload[20..21])
             frame[26] = MozaProtocol.CalculateWireChecksum(frame, 26);
             return frame;
         }
