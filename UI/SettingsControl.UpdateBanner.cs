@@ -1,4 +1,5 @@
 using System;
+using System.IO;
 using System.Threading;
 using System.Threading.Tasks;
 using System.Windows;
@@ -33,6 +34,12 @@ namespace MozaPlugin
         // on Unload so a slow request doesn't try to update a torn-down UI.
         private CancellationTokenSource? _updateCheckCts;
 
+        // Same idea for the in-flight install (download + extract + swap).
+        // Cancelled on Unload — but note that if the cancel lands AFTER the
+        // file swap, the install completed and the banner just won't update;
+        // RefreshUpdateBannerFromSettings re-detects the .old file next open.
+        private CancellationTokenSource? _updateInstallCts;
+
         private void InitUpdateBannerControls()
         {
             try
@@ -61,6 +68,23 @@ namespace MozaPlugin
         private void OnUnloadedCancelUpdateCheck(object sender, RoutedEventArgs e)
         {
             try { _updateCheckCts?.Cancel(); } catch { }
+            try { _updateInstallCts?.Cancel(); } catch { }
+        }
+
+        // An install completed earlier this SimHub session (or in a prior
+        // session that wasn't followed by a restart) — the rename-aside
+        // dropped a MozaPlugin.dll.old next to the loaded DLL. Until SimHub
+        // restarts, we can't safely install again because the .old file is
+        // the rollback target for the previous install.
+        private static bool IsInstallPending()
+        {
+            try
+            {
+                string p = UpdateInstallService.GetPluginAssemblyPath();
+                return !string.IsNullOrEmpty(p)
+                    && File.Exists(p + UpdateInstallService.OldSuffix);
+            }
+            catch { return false; }
         }
 
         // Reads the persisted "last seen" version + skip state and decides
@@ -102,6 +126,127 @@ namespace MozaPlugin
 
             UpdateBannerText.Text = $"{Strings.Label_UpdateAvailable}: v{current} → v{latest}";
             UpdateBannerBorder.Visibility = Visibility.Visible;
+
+            if (IsInstallPending())
+            {
+                // Previous install completed but SimHub hasn't been restarted
+                // yet — show the "restart required" state instead of inviting
+                // another install that would fail with OldPending.
+                SetBannerState_Installed(latest);
+            }
+            else
+            {
+                SetBannerState_Available(hasAsset: !string.IsNullOrEmpty(s.LastSeenAssetUrl));
+            }
+        }
+
+        // ----- Banner state machine -----
+
+        // Default state: update is available and (optionally) installable.
+        // Hides Install when no asset URL is cached (manual hand-cut release
+        // or 404 path) so the user can only click "Open release notes".
+        private void SetBannerState_Available(bool hasAsset)
+        {
+            if (UpdateBannerInstallButton != null)
+            {
+                UpdateBannerInstallButton.Visibility = hasAsset ? Visibility.Visible : Visibility.Collapsed;
+                UpdateBannerInstallButton.IsEnabled = true;
+            }
+            if (UpdateBannerOpenButton != null) UpdateBannerOpenButton.Visibility = Visibility.Visible;
+            if (UpdateBannerSkipButton != null)
+            {
+                UpdateBannerSkipButton.Visibility = Visibility.Visible;
+                UpdateBannerSkipButton.IsEnabled = true;
+            }
+            if (UpdateBannerDismissButton != null)
+            {
+                UpdateBannerDismissButton.Visibility = Visibility.Visible;
+                UpdateBannerDismissButton.IsEnabled = true;
+            }
+            if (UpdateBannerProgressText != null)
+                UpdateBannerProgressText.Visibility = Visibility.Collapsed;
+        }
+
+        // Mid-install: download/extract/swap underway. All actions disabled
+        // (cancellation only via tab close, which fires the Unloaded handler).
+        private void SetBannerState_Installing()
+        {
+            if (UpdateBannerInstallButton != null) UpdateBannerInstallButton.IsEnabled = false;
+            if (UpdateBannerSkipButton != null) UpdateBannerSkipButton.IsEnabled = false;
+            if (UpdateBannerDismissButton != null) UpdateBannerDismissButton.IsEnabled = false;
+            if (UpdateBannerProgressText != null)
+            {
+                UpdateBannerProgressText.Visibility = Visibility.Visible;
+                UpdateBannerProgressText.Text = Strings.Status_DownloadingStart;
+            }
+        }
+
+        // Install succeeded — DLL is swapped, restart required. Hide the
+        // Install + Skip buttons (re-installing would just fail); keep
+        // Open release notes + Dismiss for navigation.
+        private void SetBannerState_Installed(string version)
+        {
+            if (UpdateBannerInstallButton != null) UpdateBannerInstallButton.Visibility = Visibility.Collapsed;
+            if (UpdateBannerSkipButton != null) UpdateBannerSkipButton.Visibility = Visibility.Collapsed;
+            if (UpdateBannerOpenButton != null) UpdateBannerOpenButton.Visibility = Visibility.Visible;
+            if (UpdateBannerDismissButton != null)
+            {
+                UpdateBannerDismissButton.Visibility = Visibility.Visible;
+                UpdateBannerDismissButton.IsEnabled = true;
+            }
+            if (UpdateBannerProgressText != null)
+            {
+                UpdateBannerProgressText.Visibility = Visibility.Visible;
+                UpdateBannerProgressText.Text = string.Format(
+                    Strings.Status_InstalledRestartRequired, version);
+            }
+        }
+
+        // Install failed — re-enable actions and show what went wrong.
+        // Cancellation just clears the progress line silently.
+        private void SetBannerState_Failed(InstallErrorKind kind, string detail)
+        {
+            if (UpdateBannerInstallButton != null) UpdateBannerInstallButton.IsEnabled = true;
+            if (UpdateBannerSkipButton != null) UpdateBannerSkipButton.IsEnabled = true;
+            if (UpdateBannerDismissButton != null) UpdateBannerDismissButton.IsEnabled = true;
+            if (UpdateBannerProgressText == null) return;
+
+            if (kind == InstallErrorKind.Cancelled)
+            {
+                UpdateBannerProgressText.Visibility = Visibility.Collapsed;
+                return;
+            }
+
+            string desc;
+            switch (kind)
+            {
+                case InstallErrorKind.Network:
+                case InstallErrorKind.Http:
+                    desc = Strings.Status_UpdateFailedNetwork;
+                    break;
+                case InstallErrorKind.ZipMalformed:
+                case InstallErrorKind.Validation:
+                    desc = Strings.Status_InstallFailedBadPackage;
+                    break;
+                case InstallErrorKind.OldPending:
+                    desc = Strings.Status_InstallFailedPendingRestart;
+                    break;
+                case InstallErrorKind.WriteFailed:
+                    desc = Strings.Status_InstallFailedWriteDenied;
+                    break;
+                default:
+                    desc = string.IsNullOrEmpty(detail) ? "unknown" : detail;
+                    break;
+            }
+            UpdateBannerProgressText.Visibility = Visibility.Visible;
+            UpdateBannerProgressText.Text = string.Format(Strings.Status_InstallFailed, desc);
+        }
+
+        private static string FormatBytes(long bytes)
+        {
+            if (bytes < 1024) return bytes + " B";
+            if (bytes < 1024 * 1024) return (bytes / 1024.0).ToString("F0") + " KB";
+            return (bytes / (1024.0 * 1024)).ToString("F1") + " MB";
         }
 
         // Updates the "last checked" status line. Uses the same persisted
@@ -182,6 +327,7 @@ namespace MozaPlugin
             // dev build (and vice versa). Clear so the next check repopulates.
             s.LastSeenLatestVersion = "";
             s.LastSeenReleaseUrl = "";
+            s.LastSeenAssetUrl = "";
             s.LastSkippedVersion = "";
             try { _plugin!.PersistSettings(); } catch { }
             RefreshUpdateBannerFromSettings();
@@ -232,6 +378,7 @@ namespace MozaPlugin
                 {
                     s.LastSeenLatestVersion = result.LatestVersion;
                     s.LastSeenReleaseUrl = result.ReleaseUrl;
+                    s.LastSeenAssetUrl = result.AssetUrl;
                 }
                 // result.Success with empty LatestVersion = 404 on dev-latest
                 // (no dev release published yet). Leave cached values alone
@@ -274,6 +421,104 @@ namespace MozaPlugin
             }
 
             if (UpdateCheckNowButton != null) UpdateCheckNowButton.IsEnabled = true;
+        }
+
+        // ----- Install flow -----
+
+        private async void UpdateBanner_Install_Click(object sender, RoutedEventArgs e)
+        {
+            var s = _plugin?.Settings;
+            if (s == null) return;
+            if (string.IsNullOrEmpty(s.LastSeenAssetUrl)) return;
+
+            // Defensive: if a previous install is still pending the swap
+            // would fail with OldPending. Surface the restart-required UI
+            // instead of even attempting the network call.
+            if (IsInstallPending())
+            {
+                SetBannerState_Installed(s.LastSeenLatestVersion ?? "");
+                return;
+            }
+
+            try { _updateInstallCts?.Cancel(); } catch { }
+            _updateInstallCts = new CancellationTokenSource();
+            var ct = _updateInstallCts.Token;
+
+            SetBannerState_Installing();
+
+            // Progress is delivered on the Task scheduler; Progress<T>
+            // captures the originating SynchronizationContext (WPF dispatcher)
+            // so the callback marshals back to the UI thread automatically.
+            var progress = new Progress<InstallProgress>(OnInstallProgress);
+
+            InstallResult result;
+            try
+            {
+                result = await Task.Run(
+                    () => UpdateInstallService.DownloadAndInstallAsync(
+                        s.LastSeenAssetUrl,
+                        UpdateCheckService.Http,
+                        progress,
+                        ct),
+                    ct).ConfigureAwait(true);
+            }
+            catch (OperationCanceledException)
+            {
+                SetBannerState_Failed(InstallErrorKind.Cancelled, "");
+                return;
+            }
+            catch (Exception ex)
+            {
+                MozaLog.Warn($"[UpdateInstall] threw: {ex.GetType().Name}: {ex.Message}");
+                SetBannerState_Failed(InstallErrorKind.Unknown, ex.Message);
+                return;
+            }
+
+            if (result.Success)
+            {
+                MozaLog.Info($"[UpdateInstall] installed v{s.LastSeenLatestVersion} — restart required");
+                SetBannerState_Installed(s.LastSeenLatestVersion ?? "");
+            }
+            else
+            {
+                MozaLog.Warn($"[UpdateInstall] failed: {result.ErrorKind} {result.ErrorMessage}");
+                SetBannerState_Failed(result.ErrorKind, result.ErrorMessage);
+            }
+        }
+
+        private void OnInstallProgress(InstallProgress p)
+        {
+            if (UpdateBannerProgressText == null) return;
+            switch (p.Phase)
+            {
+                case InstallPhase.Downloading:
+                    if (p.TotalBytes <= 0)
+                    {
+                        UpdateBannerProgressText.Text = string.Format(
+                            Strings.Status_DownloadingIndeterminate,
+                            FormatBytes(p.BytesDownloaded));
+                    }
+                    else
+                    {
+                        int pct = (int)Math.Round(p.Fraction * 100);
+                        UpdateBannerProgressText.Text = string.Format(
+                            Strings.Status_Downloading,
+                            pct,
+                            FormatBytes(p.BytesDownloaded),
+                            FormatBytes(p.TotalBytes));
+                    }
+                    break;
+                case InstallPhase.Extracting:
+                    UpdateBannerProgressText.Text = Strings.Status_Extracting;
+                    break;
+                case InstallPhase.Installing:
+                    UpdateBannerProgressText.Text = Strings.Status_Installing;
+                    break;
+                case InstallPhase.Done:
+                    // Final UI state is set by SetBannerState_Installed after
+                    // the await completes — no-op here.
+                    break;
+            }
         }
     }
 }

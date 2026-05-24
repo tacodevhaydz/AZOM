@@ -420,6 +420,15 @@ namespace MozaPlugin
                 _data = new MozaData();
                 _settings = this.ReadCommonSettings<MozaPluginSettings>("MozaPluginSettings", () => new MozaPluginSettings());
 
+                // Sweep leftover install artifacts before doing anything
+                // heavyweight. After a successful in-app update + SimHub
+                // restart, we land here with the NEW DLL loaded and the
+                // PREVIOUS DLL renamed to MozaPlugin.dll.old next to us;
+                // it's safe to delete because nothing holds a handle to it
+                // anymore. Also cleans up MozaPlugin.dll.new (interrupted
+                // install) and MozaPlugin.update.zip (interrupted download).
+                UpdateInstallService.CleanupLeftoverArtifacts(MozaLog.Debug);
+
                 // Set the UI culture BEFORE any WPF control is constructed —
                 // x:Static bindings in SettingsControl.xaml evaluate against
                 // Thread.CurrentUICulture at parse time, so a later assignment

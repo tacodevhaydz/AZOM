@@ -24,6 +24,10 @@ namespace MozaPlugin.UI.UpdateCheck
         public string LatestVersion { get; }
         public string ReleaseUrl { get; }
         public string ReleaseNotes { get; }
+        // browser_download_url of the first MozaPlugin*.zip asset (empty if
+        // the release has no matching asset — happens for hand-cut tags).
+        // Used by the in-app installer to fetch the new DLL.
+        public string AssetUrl { get; }
         public UpdateCheckErrorKind ErrorKind { get; }
         public string ErrorMessage { get; }
 
@@ -32,6 +36,7 @@ namespace MozaPlugin.UI.UpdateCheck
             string latestVersion,
             string releaseUrl,
             string releaseNotes,
+            string assetUrl,
             UpdateCheckErrorKind errorKind,
             string errorMessage)
         {
@@ -39,18 +44,19 @@ namespace MozaPlugin.UI.UpdateCheck
             LatestVersion = latestVersion ?? "";
             ReleaseUrl = releaseUrl ?? "";
             ReleaseNotes = releaseNotes ?? "";
+            AssetUrl = assetUrl ?? "";
             ErrorKind = errorKind;
             ErrorMessage = errorMessage ?? "";
         }
 
-        public static UpdateCheckResult Ok(string version, string url, string notes)
-            => new UpdateCheckResult(true, version, url, notes, UpdateCheckErrorKind.None, "");
+        public static UpdateCheckResult Ok(string version, string url, string notes, string assetUrl)
+            => new UpdateCheckResult(true, version, url, notes, assetUrl, UpdateCheckErrorKind.None, "");
 
         public static UpdateCheckResult NoReleaseAvailable()
-            => new UpdateCheckResult(true, "", "", "", UpdateCheckErrorKind.None, "");
+            => new UpdateCheckResult(true, "", "", "", "", UpdateCheckErrorKind.None, "");
 
         public static UpdateCheckResult Fail(UpdateCheckErrorKind kind, string message)
-            => new UpdateCheckResult(false, "", "", "", kind, message);
+            => new UpdateCheckResult(false, "", "", "", "", kind, message);
     }
 
     /// <summary>
@@ -68,8 +74,14 @@ namespace MozaPlugin.UI.UpdateCheck
 
         // Single-instance HttpClient lives for the lifetime of the plugin
         // AppDomain. SimHub keeps the AppDomain alive across plugin reloads,
-        // so disposing this in End() would break the next Init.
+        // so disposing this in End() would break the next Init. Exposed
+        // via Http so the in-app installer can reuse the same User-Agent /
+        // TLS-protocol configuration without a second client. The 10s
+        // Timeout only applies to header-reading (UpdateInstallService uses
+        // HttpCompletionOption.ResponseHeadersRead for asset downloads, so
+        // multi-MB body streams aren't timeout-capped).
         private static readonly HttpClient s_http;
+        public static HttpClient Http => s_http;
 
         static UpdateCheckService()
         {
@@ -174,6 +186,7 @@ namespace MozaPlugin.UI.UpdateCheck
                 string name = (string?)json["name"] ?? "";
                 string htmlUrl = (string?)json["html_url"] ?? "";
                 string notes = (string?)json["body"] ?? "";
+                string assetUrl = ExtractAssetUrl(json);
 
                 string version = ExtractVersion(channel, tagName, name);
                 if (string.IsNullOrEmpty(version))
@@ -182,12 +195,38 @@ namespace MozaPlugin.UI.UpdateCheck
                         UpdateCheckErrorKind.Parse,
                         "could not extract version from response");
                 }
-                return UpdateCheckResult.Ok(version, htmlUrl, notes);
+                return UpdateCheckResult.Ok(version, htmlUrl, notes, assetUrl);
             }
             catch (Exception ex)
             {
                 return UpdateCheckResult.Fail(UpdateCheckErrorKind.Parse, ex.Message);
             }
+        }
+
+        // Pull the browser_download_url for the first ZIP asset that looks
+        // like our plugin bundle. Both stable (`MozaPlugin_v0.9.2.zip`) and
+        // dev (`MozaPlugin_dev.zip`) follow the `MozaPlugin*.zip` pattern,
+        // so a startswith+endswith match handles both. Returns "" if no
+        // matching asset is found — the caller treats absent asset URL as
+        // "in-app install unavailable, fall back to release-notes link".
+        internal static string ExtractAssetUrl(JObject json)
+        {
+            try
+            {
+                var assets = json["assets"] as JArray;
+                if (assets == null) return "";
+                foreach (var asset in assets)
+                {
+                    string assetName = (string?)asset["name"] ?? "";
+                    if (assetName.StartsWith("MozaPlugin", StringComparison.OrdinalIgnoreCase)
+                        && assetName.EndsWith(".zip", StringComparison.OrdinalIgnoreCase))
+                    {
+                        return (string?)asset["browser_download_url"] ?? "";
+                    }
+                }
+            }
+            catch { /* malformed assets array — fall through to empty */ }
+            return "";
         }
 
         // Stable: tag_name is "v1.2.3" → "1.2.3".

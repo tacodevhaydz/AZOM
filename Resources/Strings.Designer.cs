@@ -338,6 +338,17 @@ namespace MozaPlugin.Resources
         public static string Status_UpdateFailedNetwork => Get("Status_UpdateFailedNetwork");
         public static string Status_UpdateFailedHttp => Get("Status_UpdateFailedHttp");
         public static string Status_UpdateFailedParse => Get("Status_UpdateFailedParse");
+        public static string Button_InstallUpdate => Get("Button_InstallUpdate");
+        public static string Status_DownloadingStart => Get("Status_DownloadingStart");
+        public static string Status_Downloading => Get("Status_Downloading");
+        public static string Status_DownloadingIndeterminate => Get("Status_DownloadingIndeterminate");
+        public static string Status_Extracting => Get("Status_Extracting");
+        public static string Status_Installing => Get("Status_Installing");
+        public static string Status_InstalledRestartRequired => Get("Status_InstalledRestartRequired");
+        public static string Status_InstallFailed => Get("Status_InstallFailed");
+        public static string Status_InstallFailedBadPackage => Get("Status_InstallFailedBadPackage");
+        public static string Status_InstallFailedPendingRestart => Get("Status_InstallFailedPendingRestart");
+        public static string Status_InstallFailedWriteDenied => Get("Status_InstallFailedWriteDenied");
         public static string Section_Bandwidth => Get("Section_Bandwidth");
         public static string Subtitle_Bandwidth => Get("Subtitle_Bandwidth");
         public static string Label_Inbound => Get("Label_Inbound");

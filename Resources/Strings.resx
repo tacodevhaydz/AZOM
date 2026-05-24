@@ -286,6 +286,17 @@
   <data name="Status_UpdateFailedNetwork" xml:space="preserve"><value>Check failed (network)</value></data>
   <data name="Status_UpdateFailedHttp" xml:space="preserve"><value>Check failed (server)</value></data>
   <data name="Status_UpdateFailedParse" xml:space="preserve"><value>Check failed (response format)</value></data>
+  <data name="Button_InstallUpdate" xml:space="preserve"><value>Install update</value></data>
+  <data name="Status_DownloadingStart" xml:space="preserve"><value>Starting download…</value></data>
+  <data name="Status_Downloading" xml:space="preserve"><value>Downloading {0}% ({1} of {2})</value></data>
+  <data name="Status_DownloadingIndeterminate" xml:space="preserve"><value>Downloading… ({0})</value></data>
+  <data name="Status_Extracting" xml:space="preserve"><value>Extracting…</value></data>
+  <data name="Status_Installing" xml:space="preserve"><value>Installing…</value></data>
+  <data name="Status_InstalledRestartRequired" xml:space="preserve"><value>Update installed — restart SimHub to load v{0}</value></data>
+  <data name="Status_InstallFailed" xml:space="preserve"><value>Install failed: {0}</value></data>
+  <data name="Status_InstallFailedBadPackage" xml:space="preserve"><value>release package is invalid</value></data>
+  <data name="Status_InstallFailedPendingRestart" xml:space="preserve"><value>previous install pending — restart SimHub first</value></data>
+  <data name="Status_InstallFailedWriteDenied" xml:space="preserve"><value>cannot write to plugin folder</value></data>
   <data name="Section_Bandwidth" xml:space="preserve"><value>BANDWIDTH</value></data>
   <data name="Subtitle_Bandwidth" xml:space="preserve"><value>// serial throughput · 30-second window</value></data>
   <data name="Label_Inbound" xml:space="preserve"><value>INBOUND</value></data>
