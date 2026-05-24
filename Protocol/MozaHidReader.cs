@@ -229,6 +229,7 @@ namespace MozaPlugin.Protocol
                         category == MozaDeviceCategory.Pedals    ||
                         category == MozaDeviceCategory.Handbrake ||
                         category == MozaDeviceCategory.Hub       ||
+                        category == MozaDeviceCategory.Stalks    ||
                         category == MozaDeviceCategory.Unknown;  // forward-compat for new PIDs
 
                     if (!isMBooster && !isStandard) continue;
