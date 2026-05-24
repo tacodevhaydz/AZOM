@@ -277,8 +277,8 @@
   <data name="Subtitle_SerialTrafficCapture" xml:space="preserve"><value>// ghi lại mọi khung TX/RX</value></data>
   <data name="Hint_CaptureDataInMemory" xml:space="preserve"><value>Dữ liệu chỉ nằm trong bộ nhớ — không có gì được lưu giữa các lần khởi chạy. Nhấn Dừng để Xuất gói ZIP hỗ trợ chẩn đoán.</value></data>
   <data name="Button_StartCapture" xml:space="preserve"><value>BẮT ĐẦU GHI</value></data>
-  <data name="Label_StartCaptureOnNextLaunch" xml:space="preserve"><value>Bắt đầu ghi chẩn đoán ở lần khởi chạy/đổi game kế tiếp</value></data>
-  <data name="Tooltip_StartCaptureOnNextLaunch" xml:space="preserve"><value>Đặt sẵn để bắt đầu ghi ở lần khởi chạy tiếp theo.</value></data>
+  <data name="Label_AlwaysCaptureOnStartup" xml:space="preserve"><value>Luôn bắt đầu ghi chẩn đoán khi khởi chạy/đổi game</value></data>
+  <data name="Tooltip_AlwaysCaptureOnStartup" xml:space="preserve"><value>Khi bật, việc ghi lưu lượng serial sẽ tự động bắt đầu mỗi khi plugin khởi động.</value></data>
   <data name="Button_ExportBundle" xml:space="preserve"><value>XUẤT GÓI (ZIP)…</value></data>
   <data name="Button_CopyCapture" xml:space="preserve"><value>SAO CHÉP BẢN GHI VÀO CLIPBOARD</value></data>
   <data name="Section_FullDiagReport" xml:space="preserve"><value>BÁO CÁO CHẨN ĐOÁN ĐẦY ĐỦ</value></data>

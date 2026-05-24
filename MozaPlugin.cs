@@ -478,14 +478,17 @@ namespace MozaPlugin
                     }
                 }
 
-                // One-shot "start capture on next launch" arm flag. Cleared
-                // before any device traffic so the capture covers the full connect.
-                if (_settings.StartCaptureOnNextLaunch)
+                // Persistent always-capture: ensure capture is on before any device traffic
+                // so it covers the full connect/handshake. EnsureRunning() — not Start() —
+                // so the buffer survives plugin reload on game switches (Start clears the ring).
+                if (_settings.AlwaysCaptureOnStartup)
                 {
-                    _settings.StartCaptureOnNextLaunch = false;
-                    try { this.SaveCommonSettings("MozaPluginSettings", _settings); } catch { }
-                    global::MozaPlugin.Diagnostics.SerialTrafficCapture.Instance.Start();
-                    MozaLog.Debug("[Moza] Serial traffic capture armed from previous session — capturing now");
+                    var cap = global::MozaPlugin.Diagnostics.SerialTrafficCapture.Instance;
+                    bool wasRunning = cap.Enabled;
+                    cap.EnsureRunning();
+                    MozaLog.Debug(wasRunning
+                        ? $"[Moza] Serial traffic capture preserved across reload — AlwaysCaptureOnStartup is on ({cap.Count} entries)"
+                        : "[Moza] Serial traffic capture auto-started — AlwaysCaptureOnStartup is on");
                 }
 
                 // Fire-and-forget update check against the GitHub Releases API.
@@ -901,8 +904,14 @@ namespace MozaPlugin
             {
                 try { _telemetrySender?.Dispose(); } catch { }
             }
+            // File sink always closes on teardown — new file per Init by design.
+            // In-memory ring stays enabled across plugin reload when always-capture is on,
+            // so buffered frames survive game switches (next Init's EnsureRunning is a no-op).
             try { global::MozaPlugin.Diagnostics.SerialTrafficCapture.Instance.StopFileSink(); } catch { }
-            try { global::MozaPlugin.Diagnostics.SerialTrafficCapture.Instance.Stop(); } catch { }
+            if (_settings?.AlwaysCaptureOnStartup != true)
+            {
+                try { global::MozaPlugin.Diagnostics.SerialTrafficCapture.Instance.Stop(); } catch { }
+            }
             if (ownConnection)
             {
                 try { _connection?.Dispose(); } catch { }
@@ -1286,9 +1295,14 @@ namespace MozaPlugin
                 _telemetrySender?.Stop();
             }
 
-            // Release the wire-trace file handle.
+            // Release the wire-trace file handle (new file per Init by design).
+            // Keep the in-memory ring enabled across plugin reload when always-capture
+            // is on, so buffered frames survive game switches.
             try { global::MozaPlugin.Diagnostics.SerialTrafficCapture.Instance.StopFileSink(); } catch { }
-            try { global::MozaPlugin.Diagnostics.SerialTrafficCapture.Instance.Stop(); } catch { }
+            if (_settings?.AlwaysCaptureOnStartup != true)
+            {
+                try { global::MozaPlugin.Diagnostics.SerialTrafficCapture.Instance.Stop(); } catch { }
+            }
 
             // 5. Cancel paced setting-reads (avoids tasks running past teardown).
             try { _deviceManager?.Dispose(); } catch { }
@@ -1391,8 +1405,9 @@ namespace MozaPlugin
                         {
                             _settings.LastSeenLatestVersion = result.LatestVersion;
                             _settings.LastSeenReleaseUrl = result.ReleaseUrl;
+                            _settings.LastSeenAssetUrl = result.AssetUrl;
                             MozaLog.Debug(
-                                $"[UpdateCheck] {channel}: latest={result.LatestVersion}");
+                                $"[UpdateCheck] {channel}: latest={result.LatestVersion} asset={(string.IsNullOrEmpty(result.AssetUrl) ? "(none)" : "ok")}");
                         }
                         else if (!result.Success)
                         {

@@ -11,8 +11,11 @@ namespace MozaPlugin.Diagnostics
     /// Process-wide ring buffer of timestamped serial frames in both directions,
     /// plus an optional always-on JSONL sink that mirrors the layout produced by
     /// <c>sim/bridge.py</c> so capture-comparison tooling works on either source.
-    /// In-memory ring is cleared on every Start(); file sink (when enabled) keeps
-    /// growing until plugin unload.
+    /// In-memory ring is cleared on every Start() (user-initiated capture);
+    /// EnsureRunning() enables capture without clearing, used by the
+    /// AlwaysCaptureOnStartup auto-start path so the buffer survives plugin
+    /// reload across game switches. File sink (when enabled) keeps growing
+    /// until StopFileSink() or plugin unload.
     /// </summary>
     public sealed class SerialTrafficCapture
     {
@@ -69,6 +72,19 @@ namespace MozaPlugin.Diagnostics
         {
             Clear();
             _startedAtUtc = DateTime.UtcNow;
+            _enabled = true;
+        }
+
+        /// <summary>
+        /// Idempotent enable: turns capture on without clearing the buffer or
+        /// resetting StartedAtUtc. No-op when already enabled. Use this from
+        /// auto-start paths (AlwaysCaptureOnStartup) so accumulated frames
+        /// survive plugin reload on game switches.
+        /// </summary>
+        public void EnsureRunning()
+        {
+            if (_enabled) return;
+            if (_startedAtUtc == default) _startedAtUtc = DateTime.UtcNow;
             _enabled = true;
         }
 

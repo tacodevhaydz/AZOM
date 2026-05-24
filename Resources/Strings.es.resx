@@ -282,8 +282,8 @@
   <data name="Subtitle_SerialTrafficCapture" xml:space="preserve"><value>// graba cada trama TX/RX</value></data>
   <data name="Hint_CaptureDataInMemory" xml:space="preserve"><value>Los datos solo viven en memoria — no se guarda nada entre arranques. Pulsa Detener para exportar un paquete ZIP de soporte de diagnóstico.</value></data>
   <data name="Button_StartCapture" xml:space="preserve"><value>INICIAR CAPTURA</value></data>
-  <data name="Label_StartCaptureOnNextLaunch" xml:space="preserve"><value>Iniciar la captura de diagnóstico en el próximo arranque o cambio de juego</value></data>
-  <data name="Tooltip_StartCaptureOnNextLaunch" xml:space="preserve"><value>Arma la captura para que comience en el próximo arranque.</value></data>
+  <data name="Label_AlwaysCaptureOnStartup" xml:space="preserve"><value>Iniciar siempre la captura de diagnóstico al arranque o cambio de juego</value></data>
+  <data name="Tooltip_AlwaysCaptureOnStartup" xml:space="preserve"><value>Cuando está activado, la captura de tráfico serie comienza automáticamente cada vez que se inicia el plugin.</value></data>
   <data name="Button_ExportBundle" xml:space="preserve"><value>EXPORTAR PAQUETE (ZIP)…</value></data>
   <data name="Button_CopyCapture" xml:space="preserve"><value>COPIAR CAPTURA AL PORTAPAPELES</value></data>
   <data name="Section_FullDiagReport" xml:space="preserve"><value>INFORME COMPLETO DE DIAGNÓSTICO</value></data>

@@ -2312,7 +2312,19 @@
                                                    Foreground="{StaticResource CyanBrush}"
                                                    TextWrapping="Wrap"
                                                    Margin="0,0,0,8"/>
+                                        <!-- Progress line. Hidden in the Available state;
+                                             shows download progress, installing/installed
+                                             status, or failure messages. -->
+                                        <TextBlock x:Name="UpdateBannerProgressText"
+                                                   Style="{StaticResource MutedHintText}"
+                                                   TextWrapping="Wrap"
+                                                   Visibility="Collapsed"
+                                                   Margin="0,0,0,8"/>
                                         <StackPanel Orientation="Horizontal">
+                                            <Button x:Name="UpdateBannerInstallButton"
+                                                    Content="{x:Static res:Strings.Button_InstallUpdate}"
+                                                    Click="UpdateBanner_Install_Click"
+                                                    Margin="0,0,8,0"/>
                                             <Button x:Name="UpdateBannerOpenButton"
                                                     Content="{x:Static res:Strings.Button_OpenReleaseNotes}"
                                                     Click="UpdateBanner_OpenNotes_Click"
@@ -2402,11 +2414,11 @@
                                     <TextBlock x:Name="SerialCaptureStatusText" Text="{x:Static res:Strings.Status_Idle}"
                                                Style="{StaticResource MutedHintText}" Margin="14,0,0,0"/>
                                 </StackPanel>
-                                <ctrl:OffOnToggle x:Name="StartCaptureOnNextLaunchCheck"
-                                          Content="{x:Static res:Strings.Label_StartCaptureOnNextLaunch}"
-                                          Click="StartCaptureOnNextLaunch_Click"
+                                <ctrl:OffOnToggle x:Name="AlwaysCaptureOnStartupCheck"
+                                          Content="{x:Static res:Strings.Label_AlwaysCaptureOnStartup}"
+                                          Click="AlwaysCaptureOnStartup_Click"
                                           Margin="0,0,0,10"
-                                          ToolTip="{x:Static res:Strings.Tooltip_StartCaptureOnNextLaunch}"/>
+                                          ToolTip="{x:Static res:Strings.Tooltip_AlwaysCaptureOnStartup}"/>
                                 <TextBox x:Name="SerialCaptureOutputBox" FontFamily="{StaticResource FontMono}" FontSize="11"
                                          IsReadOnly="True" TextWrapping="NoWrap" AcceptsReturn="True"
                                          Background="{StaticResource BgDeepBrush}"

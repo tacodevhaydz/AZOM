@@ -98,14 +98,14 @@ namespace MozaPlugin
                 }
                 DisableSerialProbeFallbackCheck.IsChecked = plugin.Settings.DisableSerialProbeFallback;
                 DisableAb9DetectionCheck.IsChecked = plugin.Settings.DisableAb9Detection;
-                StartCaptureOnNextLaunchCheck.IsChecked = plugin.Settings.StartCaptureOnNextLaunch;
-                // Reflect any in-flight capture (e.g. armed from a previous session
-                // and started in MozaPlugin.Init) so the user sees Stop instead of
-                // a stale Start button when they open the Diagnostics tab.
+                AlwaysCaptureOnStartupCheck.IsChecked = plugin.Settings.AlwaysCaptureOnStartup;
+                // Reflect any in-flight capture (auto-started by MozaPlugin.Init when
+                // AlwaysCaptureOnStartup is on) so the user sees Stop instead of a stale
+                // Start button when they open the Diagnostics tab.
                 if (SerialTrafficCapture.Instance.Enabled)
                 {
                     SerialCaptureToggleButton.Content = "Stop capture";
-                    SerialCaptureStatusText.Text = "capturing… (armed from prior session — click Stop when ready)";
+                    SerialCaptureStatusText.Text = "capturing… (always-capture is on — click Stop when ready)";
                 }
             }
 
@@ -1578,10 +1578,10 @@ namespace MozaPlugin
             catch { /* clipboard contested; ignore */ }
         }
 
-        private void StartCaptureOnNextLaunch_Click(object sender, System.Windows.RoutedEventArgs e)
+        private void AlwaysCaptureOnStartup_Click(object sender, System.Windows.RoutedEventArgs e)
         {
             if (_suppressEvents) return;
-            _plugin.Settings.StartCaptureOnNextLaunch = StartCaptureOnNextLaunchCheck.IsChecked == true;
+            _plugin.Settings.AlwaysCaptureOnStartup = AlwaysCaptureOnStartupCheck.IsChecked == true;
             _plugin.SaveSettings();
         }
 

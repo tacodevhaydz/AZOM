@@ -297,8 +297,8 @@
   <data name="Subtitle_SerialTrafficCapture" xml:space="preserve"><value>// records every TX/RX frame</value></data>
   <data name="Hint_CaptureDataInMemory" xml:space="preserve"><value>Data lives in memory only — nothing is saved between launches. Click Stop to Export a ZIP bundle for diagnostic support.</value></data>
   <data name="Button_StartCapture" xml:space="preserve"><value>START CAPTURE</value></data>
-  <data name="Label_StartCaptureOnNextLaunch" xml:space="preserve"><value>Start diagnostics capture on next launch/game switch</value></data>
-  <data name="Tooltip_StartCaptureOnNextLaunch" xml:space="preserve"><value>Arms the capture so it begins on next launch.</value></data>
+  <data name="Label_AlwaysCaptureOnStartup" xml:space="preserve"><value>Always start diagnostics capture on launch/game switch</value></data>
+  <data name="Tooltip_AlwaysCaptureOnStartup" xml:space="preserve"><value>When on, the serial traffic capture begins automatically each time the plugin starts.</value></data>
   <data name="Button_ExportBundle" xml:space="preserve"><value>EXPORT BUNDLE (ZIP)…</value></data>
   <data name="Button_CopyCapture" xml:space="preserve"><value>COPY CAPTURE TO CLIPBOARD</value></data>
   <data name="Section_FullDiagReport" xml:space="preserve"><value>FULL DIAGNOSTIC REPORT</value></data>

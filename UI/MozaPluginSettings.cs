@@ -170,11 +170,10 @@ namespace MozaPlugin
         public bool GearshiftVibrateOnNeutral { get; set; } = false;
         public int GearshiftDebounceMs { get; set; } = 500;
 
-        // One-shot flag: arm capture from the Diagnostics tab so it's already running when
-        // the plugin re-initializes (catches early connect/handshake traffic that the user
-        // can't normally arm in time). Cleared on Init the moment capture is started, so
-        // it never persists past one launch.
-        public bool StartCaptureOnNextLaunch { get; set; } = false;
+        // Persistent: when true, MozaPlugin.Init starts the serial traffic capture
+        // automatically (catches early connect/handshake traffic the user can't normally
+        // arm in time). Stays on across launches until the user toggles it off.
+        public bool AlwaysCaptureOnStartup { get; set; } = false;
 
         // Bridge-format JSONL wire trace at SimHub/Logs/moza-wire-*.jsonl.
         // Code-only toggle — not serialized so changing the default here
@@ -243,6 +242,13 @@ namespace MozaPlugin
         // html_url from the last successful check — wired to the "Open release
         // notes" banner button. Empty when LastSeenLatestVersion is empty.
         public string LastSeenReleaseUrl { get; set; } = "";
+
+        // browser_download_url of the first MozaPlugin*.zip asset on the
+        // latest release. Used by the in-app installer to fetch the new DLL
+        // without re-hitting the GitHub API. Empty if the latest release has
+        // no matching asset (manual hand-cut tags, or 404 on dev-latest) —
+        // in which case the banner falls back to the release-notes link only.
+        public string LastSeenAssetUrl { get; set; } = "";
 
         // ===== Third-party SDK emulation =====
         // Master toggle for the in-plugin CoAP/UDP server that mimics MOZA's

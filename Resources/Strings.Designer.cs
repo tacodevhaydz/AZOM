@@ -349,8 +349,8 @@ namespace MozaPlugin.Resources
         public static string Subtitle_SerialTrafficCapture => Get("Subtitle_SerialTrafficCapture");
         public static string Hint_CaptureDataInMemory => Get("Hint_CaptureDataInMemory");
         public static string Button_StartCapture => Get("Button_StartCapture");
-        public static string Label_StartCaptureOnNextLaunch => Get("Label_StartCaptureOnNextLaunch");
-        public static string Tooltip_StartCaptureOnNextLaunch => Get("Tooltip_StartCaptureOnNextLaunch");
+        public static string Label_AlwaysCaptureOnStartup => Get("Label_AlwaysCaptureOnStartup");
+        public static string Tooltip_AlwaysCaptureOnStartup => Get("Tooltip_AlwaysCaptureOnStartup");
         public static string Button_ExportBundle => Get("Button_ExportBundle");
         public static string Button_CopyCapture => Get("Button_CopyCapture");
         public static string Section_FullDiagReport => Get("Section_FullDiagReport");
