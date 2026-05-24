@@ -37,6 +37,25 @@ namespace MozaPlugin
         // process exit or on wheel unplug (Init checks "still connected?").
         private static MozaSerialConnection? s_persistentConnection;
         private static TelemetrySender? s_persistentTelemetrySender;
+
+        // AppDomain.ProcessExit registration is one-shot per process. End()
+        // intentionally leaves the persistent wire alive across plugin
+        // reloads (game switches) — the wheel never sees the 10–14 s
+        // sess=0x09 settle, so the next Init reuses an already-engaged
+        // session. On full SimHub exit that optimization becomes a
+        // liability: with no SessionClose 0x01/0x02/0x03 on the way out
+        // the wheel retains its host-side sess state, and on the next
+        // SimHub launch keeps emitting heartbeat chunks on its old
+        // sess=0x09 instead of re-engaging via a fresh SessionOpen 0x81.
+        // The s09 watchdog then burns its 56 s retry budget (10 rounds,
+        // SessionWatchdogManager.S09BackoffMs) and parks the dashboard
+        // pipeline — observed as "dashboard display failed to connect"
+        // on cold start until the user toggles telemetry.
+        //
+        // The ProcessExit hook closes those sessions on the persistent
+        // wire so the wheel sees a clean shutdown regardless of which
+        // End() path ran (keepWireAlive=true is the common case).
+        private static int s_processExitHandlerRegistered;
         // Detection-flag bag captured alongside the persistent wire. When a
         // game switch reloads the plugin while the hardware stays physically
         // attached, restoring this preserves sub-device tab visibility
@@ -386,6 +405,12 @@ namespace MozaPlugin
 
         public void Init(PluginManager pluginManager)
         {
+            // Register the AppDomain.ProcessExit hook on first Init in the
+            // process so a clean SessionClose 0x01/0x02/0x03 reaches the
+            // wheel on full SimHub exit even when End() takes the
+            // keepWireAlive=true branch (the common case).
+            EnsureProcessExitHandlerRegistered();
+
             // Defensive: if Init() is called twice without End() (host reload path
             // or upgrade-in-place), tear down any live resources from the prior
             // init before re-creating them. CleanupPartialInit is idempotent and
@@ -1357,6 +1382,55 @@ namespace MozaPlugin
 
             // 8. Null Instance last so any straggler callback can still no-op via IsShuttingDown.
             Instance = null;
+        }
+
+        // One-shot registration of the AppDomain.ProcessExit handler. Safe
+        // to call from every Init() — only the first crosses the gate.
+        private static void EnsureProcessExitHandlerRegistered()
+        {
+            if (Interlocked.Exchange(ref s_processExitHandlerRegistered, 1) != 0) return;
+            try { AppDomain.CurrentDomain.ProcessExit += OnAppDomainProcessExit; }
+            catch (Exception ex)
+            {
+                try { MozaLog.Warn($"[Moza] ProcessExit handler registration failed: {ex.Message}"); } catch { }
+            }
+        }
+
+        // Fires when the SimHub process is terminating. End() ran earlier
+        // for each plugin instance but the keepWireAlive branch leaves the
+        // persistent telemetry sender / serial connection alive (so plugin
+        // reloads on game switch don't pay the sess=0x09 settle wait). On
+        // full exit we still need a clean SessionClose 0x01/0x02/0x03
+        // burst so the wheel doesn't carry stale host-side session state
+        // into the next SimHub launch — see s_processExitHandlerRegistered
+        // doc for the failure mode.
+        //
+        // ProcessExit has a ~2 s budget before the runtime is killed. Stop()
+        // takes ~110 ms (timer dispose + FlushPendingWrites + 3 close frames
+        // + 100 ms drain sleep), well inside budget. Connection Dispose then
+        // closes the serial port cleanly so the close frames actually leave
+        // the OS write buffer before the FTDI handle goes away.
+        private static void OnAppDomainProcessExit(object? sender, EventArgs e)
+        {
+            try
+            {
+                var ts = s_persistentTelemetrySender;
+                if (ts != null && !ts.IsDisposedFlag)
+                {
+                    try { ts.Stop(); }
+                    catch (Exception ex)
+                    {
+                        try { MozaLog.Warn($"[Moza] ProcessExit Stop(): {ex.GetType().Name}: {ex.Message}"); } catch { }
+                    }
+                }
+            }
+            catch { }
+            try
+            {
+                var conn = s_persistentConnection;
+                conn?.Dispose();
+            }
+            catch { }
         }
 
         internal MozaHidReader HidReader => _hidReader;
