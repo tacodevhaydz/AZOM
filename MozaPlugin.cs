@@ -608,6 +608,8 @@ namespace MozaPlugin
                         if (!string.IsNullOrEmpty(savedModel))
                         {
                             WheelModelInfo = Devices.WheelModelInfo.FromModelName(savedModel);
+                            // Also restore _data.WheelModelName.
+                            _data.WheelModelName = savedModel;
                             MozaLog.Debug(
                                 $"[Moza] Restored WheelModelInfo from persistent state: {savedModel} " +
                                 $"(rpm={WheelModelInfo?.RpmLedCount}, buttons={WheelModelInfo?.ButtonLedCount}, " +
