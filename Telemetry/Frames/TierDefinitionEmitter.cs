@@ -1,0 +1,596 @@
+using System;
+using System.Collections.Generic;
+using System.Threading;
+using MozaPlugin.Telemetry.Dashboard;
+using MozaPlugin.Telemetry.Era;
+using MozaPlugin.Telemetry.TestMode;
+
+namespace MozaPlugin.Telemetry.Frames
+{
+    /// <summary>
+    /// Builds and emits the tier-definition on the wheel's tier-def session.
+    /// Also owns blind retransmit (Era2026 doesn't ack sess=0x01), subscription
+    /// diagnostics, and catalog-aware filter/sort helpers.
+    /// </summary>
+    internal sealed class TierDefinitionEmitter
+    {
+        private readonly TelemetrySender _sender;
+
+        // Wire-protocol concern: has the V2 tier-def preamble (tag 0x07/0x03)
+        // been emitted this session. PitHouse only sends preamble once at
+        // connect; subsequent tier-def re-sends (dashboard switch) omit it.
+        // 2025-era firmware accepts preamble on every send; 2026-era rejects.
+        private bool _tierDefPreambleSent;
+
+        // Blind retransmission for session 0x01 tier-def chunks. PitHouse
+        // retransmits each chunk ~10× regardless of acks. See
+        // docs/protocol/findings/2026-05-02-tier-def-retransmission.md.
+        private byte[][]? _tierDefBlindFrames;
+        private int _tierDefBlindSentRounds;
+        private int _tierDefBlindLastTickCount;
+        private static int TierDefBlindMaxRounds
+            => global::MozaPlugin.Protocol.RetryBackoff.TierDefBlindMs.Length;
+
+        // Tier-def binding completeness (last emission). Channels whose URL
+        // isn't in the wheel's catalog get chIndex=0 → wheel can't bind them.
+        // Plugin uses this to decide if a catalog re-sync is still needed.
+        private int _lastTierDefUnboundCount = -1;
+        private int _lastTierDefTotalCount = -1;
+
+        public int LastTierDefUnboundCount => _lastTierDefUnboundCount;
+        public int LastTierDefTotalCount => _lastTierDefTotalCount;
+        public bool IsTierDefFullyBound =>
+            _lastTierDefUnboundCount == 0 && _lastTierDefTotalCount > 0;
+
+        // Subscription diagnostics for the Diagnostics tab.
+        private volatile TelemetrySender.SubscriptionDiagnostics? _lastSubscriptionDiag;
+        public TelemetrySender.SubscriptionDiagnostics? LastSubscription => _lastSubscriptionDiag;
+
+        public TierDefinitionEmitter(TelemetrySender sender)
+        {
+            _sender = sender;
+        }
+
+        /// <summary>Reset all state on sender Start/Stop boundary.</summary>
+        public void Reset()
+        {
+            _tierDefPreambleSent = false;
+            _tierDefBlindFrames = null;
+            _tierDefBlindSentRounds = 0;
+            _tierDefBlindLastTickCount = 0;
+            _lastTierDefUnboundCount = -1;
+            _lastTierDefTotalCount = -1;
+            _lastSubscriptionDiag = null;
+        }
+
+        /// <summary>
+        /// Spin-wait for the wheel's catalog push to go quiet. Returns when
+        /// last catalog activity is older than <paramref name="quietMs"/>.
+        /// </summary>
+        public void WaitForChannelCatalogQuiet(int quietMs, int timeoutMs)
+        {
+            int deadline = Environment.TickCount + timeoutMs;
+            while (Environment.TickCount < deadline)
+            {
+                if (_sender.StateIsIdle || !_sender.ConnectionIsConnected) return;
+                int lastAct = _sender.CatalogParser.LastActivityMs;
+                int idle = lastAct == 0 ? 0 : Environment.TickCount - lastAct;
+                int bufCount = _sender.CatalogParser.BufferLength;
+                if (bufCount > 0 && idle >= quietMs)
+                    return;
+                Thread.Sleep(20);
+            }
+        }
+
+        /// <summary>Filter a profile to channels in the catalog (last-segment match accepted).</summary>
+        public static MultiStreamProfile FilterProfileToCatalog(
+            MultiStreamProfile profile,
+            IReadOnlyList<string> catalog)
+        {
+            var set = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+            foreach (var entry in catalog)
+            {
+                if (string.IsNullOrEmpty(entry)) continue;
+                set.Add(entry);
+                int slash = entry.LastIndexOf('/');
+                if (slash >= 0 && slash < entry.Length - 1)
+                    set.Add(entry.Substring(slash + 1));
+            }
+
+            bool ChannelMatches(ChannelDefinition ch)
+            {
+                if (set.Contains(ch.Url)) return true;
+                int slash = ch.Url.LastIndexOf('/');
+                if (slash >= 0 && slash < ch.Url.Length - 1
+                    && set.Contains(ch.Url.Substring(slash + 1))) return true;
+                return false;
+            }
+
+            var result = new MultiStreamProfile
+            {
+                Name = profile.Name,
+                PageCount = profile.PageCount,
+            };
+            foreach (var tier in profile.Tiers)
+            {
+                var kept = new List<ChannelDefinition>();
+                foreach (var ch in tier.Channels)
+                    if (ChannelMatches(ch)) kept.Add(ch);
+                if (kept.Count == 0) continue;
+                result.Tiers.Add(new DashboardProfile
+                {
+                    Name = tier.Name,
+                    Channels = kept,
+                    PackageLevel = tier.PackageLevel,
+                    TotalBits = tier.TotalBits,
+                    TotalBytes = tier.TotalBytes,
+                    FlagByte = tier.FlagByte,
+                });
+            }
+            // Empty filter → fall back to original (wheel rejects empty tier-defs).
+            return result.Tiers.Count == 0 ? profile : result;
+        }
+
+        /// <summary>Build a V0 subscription profile from the wheel's full catalog (host metadata reused per URL).</summary>
+        public static MultiStreamProfile BuildV0ProfileFromCatalog(
+            MultiStreamProfile hostProfile,
+            IReadOnlyList<string> catalog)
+        {
+            var hostByUrl = new Dictionary<string, ChannelDefinition>(
+                StringComparer.OrdinalIgnoreCase);
+            foreach (var tier in hostProfile.Tiers)
+                foreach (var ch in tier.Channels)
+                    if (!string.IsNullOrEmpty(ch.Url) && !hostByUrl.ContainsKey(ch.Url))
+                        hostByUrl[ch.Url] = ch;
+
+            int packageLevel = hostProfile.Tiers.Count > 0
+                ? hostProfile.Tiers[0].PackageLevel
+                : 30;
+
+            var channels = new List<ChannelDefinition>();
+            foreach (var url in catalog)
+            {
+                if (string.IsNullOrEmpty(url)) continue;
+                if (hostByUrl.TryGetValue(url, out var existing))
+                {
+                    channels.Add(existing);
+                }
+                else
+                {
+                    string fallbackName = url.Substring(url.LastIndexOf('/') + 1);
+                    channels.Add(new ChannelDefinition
+                    {
+                        Name = fallbackName,
+                        Url = url,
+                        Compression = "uint32_t",
+                        BitWidth = 32,
+                        SimHubField = SimHubField.Zero,
+                        SimHubProperty = "",
+                        SimHubPropertyScale = 1.0,
+                        PackageLevel = packageLevel,
+                        TestSignal = TestSignalCatalog.Resolve(fallbackName, null, null, "uint32_t"),
+                    });
+                }
+            }
+
+            return new MultiStreamProfile
+            {
+                Name = hostProfile.Name,
+                PageCount = hostProfile.PageCount,
+                Tiers = new List<DashboardProfile>
+                {
+                    new DashboardProfile
+                    {
+                        Name = "V0Catalog",
+                        Channels = channels,
+                        PackageLevel = packageLevel,
+                    },
+                },
+            };
+        }
+
+        /// <summary>
+        /// Filter to catalog + sort by catalog idx per unique Channels list.
+        /// Broadcast replicas share lists by reference, so each unique list
+        /// is mutated once. Recomputes TotalBits/Bytes.
+        /// </summary>
+        public void SortTierChannelsByCatalogIdx(
+            MultiStreamProfile profile,
+            IReadOnlyList<string> catalog)
+        {
+            var idxByUrl = ChannelCatalogParser.BuildIdxByUrl(catalog);
+
+            int IdxFor(ChannelDefinition c)
+                => idxByUrl.TryGetValue(c.Url ?? "", out var ix) ? ix : 0;
+
+            // Dedupe by Channels reference: broadcast replicas share the same list.
+            var sortedRefs = new List<object>();
+            foreach (var tier in profile.Tiers)
+            {
+                if (tier.Channels == null || tier.Channels.Count == 0) continue;
+                bool already = false;
+                foreach (var seen in sortedRefs)
+                {
+                    if (object.ReferenceEquals(seen, tier.Channels)) { already = true; break; }
+                }
+                if (already) continue;
+                sortedRefs.Add(tier.Channels);
+                var list = (List<ChannelDefinition>)tier.Channels;
+                list.RemoveAll(c => IdxFor(c) <= 0);
+                list.Sort((a, b) => IdxFor(a).CompareTo(IdxFor(b)));
+            }
+
+            // Recompute TotalBits/TotalBytes so FrameBuilder buffers resize.
+            foreach (var tier in profile.Tiers)
+            {
+                int bits = 0;
+                foreach (var ch in tier.Channels) bits += ch.BitWidth;
+                tier.TotalBits = bits;
+                tier.TotalBytes = (bits + 7) / 8;
+            }
+        }
+
+        /// <summary>
+        /// Rebuild per-tier FrameBuilders from the sender's current profile.
+        /// Called after <see cref="SortTierChannelsByCatalogIdx"/> mutates
+        /// the live profile post-Profile-setter.
+        /// </summary>
+        public void RebuildFrameBuildersFromProfile()
+        {
+            var profile = _sender.ProfileRef;
+            var tiers = _sender.Tiers;
+            if (profile == null || tiers == null) return;
+            if (tiers.Length != profile.Tiers.Count) return;
+            for (int i = 0; i < profile.Tiers.Count; i++)
+            {
+                tiers[i].Builder = new TelemetryFrameBuilder(
+                    profile.Tiers[i], _sender.PropertyResolver,
+                    type02NConvention: false,
+                    deviceId: _sender.TargetDeviceId);
+            }
+        }
+
+        /// <summary>Send the tier-definition (7c:00 type=0x01 chunks on sess=0x02).</summary>
+        public void SendTierDefinition()
+        {
+            var profile = _sender.ProfileRef;
+            if (profile == null || profile.Tiers.Count == 0)
+                return;
+            if (!_sender.ConnectionIsConnected)
+                return;
+
+            // V0: synthesize from catalog. V2/Type02: send all channels. V2 legacy: filter to catalog.
+            // NEVER assign Profile property here — its setter re-expands tiers exponentially.
+            var catalog = _sender.CatalogParser.Catalog;
+            var policy = _sender.Policy;
+            if (catalog != null && catalog.Count > 0)
+            {
+                if (policy.Encoding == TierDefEncoding.V0Url)
+                {
+                    profile = BuildV0ProfileFromCatalog(profile, catalog);
+                    int catalogCh = profile.Tiers[0].Channels.Count;
+                    MozaLog.Debug(
+                        $"[Moza] V0 subscription expanded to wheel catalog: " +
+                        $"{catalogCh} channels");
+                }
+            }
+
+            // Era-driven session pick. 2025-era VGS firmware: tier-def on
+            // FlagByte (typically 0x02). 2026-era: tier-def on mgmt port 0x01.
+            byte tierDefSession;
+            object seqLock;
+            if (policy.TierDefSession == TierDefSessionPolicy.FlagByte)
+            {
+                tierDefSession = _sender.FlagByte;
+                seqLock = _sender.Session02SeqLock;
+            }
+            else
+            {
+                byte mgmtPort = _sender.MgmtPort;
+                tierDefSession = mgmtPort != 0 ? mgmtPort : (byte)0x01;
+                seqLock = _sender.Session01SeqLock;
+            }
+
+            // Reserve seq range under the per-session lock so no other writer
+            // (V0 value frames, FF property pushes, RPC reply) interleaves a
+            // seq into the middle of our chunk train.
+            lock (seqLock)
+            {
+            int seq = policy.TierDefSession == TierDefSessionPolicy.FlagByte
+                ? Math.Max(2, _sender.Session02OutboundSeq)
+                : Math.Max(2, _sender.Session01OutboundSeq);
+
+            // Send wrapper: under blind-retransmit policy (Era2026), every
+            // tier-def chunk is also tracked by the retransmitter for the
+            // tick-loop blind-retx replay. Era2024/2025 send raw.
+            void Send(byte[] frame)
+            {
+                if (policy.BlindRetransmitTierDef)
+                    _sender.SendAndTrackChunkInternal(frame);
+                else
+                    _sender.SendRawFrame(frame);
+            }
+
+            switch (policy.Encoding)
+            {
+                case TierDefEncoding.V0Url:
+                {
+                    // V0: URL-based subscription. Sentinel 0xFF + tag 0x03 inline. No separate preamble.
+                    byte[] message = TierDefinitionBuilder.BuildV0UrlSubscription(profile);
+                    var frames = TierDefinitionBuilder.ChunkMessage(message, tierDefSession, ref seq, _sender.TargetDeviceId);
+
+                    int channelCount = 0;
+                    foreach (var t in profile.Tiers) channelCount += t.Channels.Count;
+                    MozaLog.Debug(
+                        $"[Moza] Sending v0 URL subscription: " +
+                        $"{message.Length} bytes in {frames.Count} chunks " +
+                        $"on session 0x{tierDefSession:X2} ({channelCount} channels)");
+
+                    foreach (var frame in frames)
+                        Send(frame);
+
+                    if (policy.BlindRetransmitTierDef)
+                    {
+                        _tierDefBlindFrames = frames.ToArray();
+                        _tierDefBlindSentRounds = 0;
+                        _tierDefBlindLastTickCount = Environment.TickCount;
+                    }
+
+                    CaptureSubscriptionDiag(tierDefSession, "v0-url",
+                        Array.Empty<byte>(), message, profile);
+                    break;
+                }
+
+                case TierDefEncoding.V2Compact:
+                case TierDefEncoding.V2Type02:
+                {
+                    // V2 preamble: tag 0x07 (version=2), tag 0x03 (value=0).
+                    // 2025-era needs it on every send; 2026-era accepts it once per connect.
+                    bool emitPreamble = policy.SendV2PreambleEverySend
+                                        || !_tierDefPreambleSent;
+                    int preambleChunkCount = 0;
+                    if (emitPreamble)
+                    {
+                        byte[] preambleMsg = new byte[]
+                        {
+                            0x07, 0x04, 0x00, 0x00, 0x00, 0x02, 0x00, 0x00, 0x00,
+                            0x03, 0x00, 0x00, 0x00, 0x00
+                        };
+                        var preambleFrames = TierDefinitionBuilder.ChunkMessage(preambleMsg, tierDefSession, ref seq, _sender.TargetDeviceId);
+                        foreach (var frame in preambleFrames)
+                            Send(frame);
+                        preambleChunkCount = preambleFrames.Count;
+                        _tierDefPreambleSent = true;
+                    }
+
+                    // Type02 indexes channels by wheel-catalog position. Without
+                    // a catalog, fall through to alphabetic indices.
+                    bool cspIdx = policy.Encoding == TierDefEncoding.V2Type02;
+                    if (cspIdx && (_sender.CatalogParser.Catalog == null || _sender.CatalogParser.Catalog.Count == 0))
+                    {
+                        MozaLog.Debug(
+                            "[Moza] No wheel catalog — using alphabetic indices for initial tier-def. " +
+                            "Wheel will push corrected catalog after receiving this.");
+                        cspIdx = false;
+                    }
+
+                    // Restore pristine pre-filter snapshot before re-filtering,
+                    // so a prior call against a stale catalog hasn't permanently
+                    // stripped channels. Makes ApplySubscription idempotent w.r.t. catalog.
+                    var tiers = _sender.Tiers;
+                    if (tiers != null)
+                    {
+                        for (int i = 0; i < profile.Tiers.Count && i < tiers.Length; i++)
+                        {
+                            var st = tiers[i];
+                            if (st?.OriginalChannels == null) continue;
+                            var tier = profile.Tiers[i];
+                            if (tier.Channels is List<ChannelDefinition> list)
+                            {
+                                list.Clear();
+                                list.AddRange(st.OriginalChannels);
+                                tier.TotalBits = st.OriginalTotalBits;
+                                tier.TotalBytes = st.OriginalTotalBytes;
+                            }
+                        }
+                    }
+
+                    // Now re-filter+re-sort against current catalog.
+                    if (_sender.CatalogParser.Catalog != null
+                        && _sender.CatalogParser.Catalog.Count > 0)
+                    {
+                        SortTierChannelsByCatalogIdx(profile, _sender.CatalogParser.Catalog);
+                        RebuildFrameBuildersFromProfile();
+                    }
+
+                    byte flagBase = _sender.NextFlagBase;
+                    var prevSub = _sender.ActiveSubscription;
+
+                    // END u32: echo of the wheel's most-recent END marker. PitHouse
+                    // handshake: wheel sends tag=0x06 size=4 value=u32 announcing a
+                    // tier-def version; PitHouse emits tier-def with the SAME u32
+                    // in its END marker. Mismatched END = wheel treats as duplicate.
+                    // Fallback 0 for cold-start.
+                    uint endForThisEmission = _sender.CatalogParser.LastWheelEndMarker;
+                    byte[] message;
+                    if (cspIdx)
+                    {
+                        message = TierDefinitionBuilder.BuildTierDefinitionMessage(
+                            profile, flagBase,
+                            includeEnableEntries: true,
+                            useWheelCatalogIndices: true,
+                            wheelCatalog: _sender.CatalogParser.Catalog,
+                            endMarkerCounter: endForThisEmission,
+                            prevFlagBase: prevSub?.FlagBase,
+                            prevTierCount: prevSub?.TierCount ?? 0,
+                            prevSubPerBroadcast: prevSub?.SubTiersPerBroadcast ?? 0);
+                    }
+                    else
+                    {
+                        message = TierDefinitionBuilder.BuildTierDefinitionV2(
+                            profile, flagBase, wheelCatalog: null);
+                    }
+                    var frames = TierDefinitionBuilder.ChunkMessage(message, tierDefSession, ref seq, _sender.TargetDeviceId);
+
+                    MozaLog.Debug(
+                        $"[Moza] Sending {(cspIdx ? "type02-section" : "v2-flat")} tier definition: " +
+                        $"flagBase=0x{flagBase:X2}, end={endForThisEmission} (echoing wheel), " +
+                        $"prev={(prevSub != null ? $"0x{prevSub.FlagBase:X2}/{prevSub.TierCount}t/{prevSub.SubTiersPerBroadcast}spb" : "none")}, " +
+                        $"preamble ({preambleChunkCount} chunks)" +
+                        $" + {message.Length} bytes in {frames.Count} chunks " +
+                        $"on session 0x{tierDefSession:X2} ({profile.Tiers.Count} tiers, " +
+                        $"idx={(cspIdx ? "wheel-catalog" : "alpha")})");
+
+                    _sender.ActiveSubscription = new TelemetrySender.SubscriptionState(
+                        flagBase: flagBase,
+                        tierCount: profile.Tiers.Count,
+                        subTiersPerBroadcast: TierDefinitionBuilder.DetectSubTiersPerBroadcast(profile),
+                        profileName: profile.Name);
+                    _sender.IncrementSubscriptionGen();
+                    _sender.NextFlagBase = (byte)(flagBase + profile.Tiers.Count);
+                    // Snapshot catalog size for grow-subscription detection.
+                    _sender.CatalogCountAtLastSubscription = _sender.CatalogParser.Count;
+
+                    // Tier-def binding completeness check. Channels whose URL isn't
+                    // in the wheel's catalog get chIndex=0 → wheel can't bind them.
+                    // If unbound > 0 → schedule kind=4 re-emit to nudge wheel re-advertise.
+                    if (cspIdx)
+                    {
+                        var catalogSnapshot = _sender.CatalogParser.Catalog;
+                        if (catalogSnapshot != null && catalogSnapshot.Count > 0)
+                        {
+                            var have = new HashSet<string>(
+                                catalogSnapshot, StringComparer.OrdinalIgnoreCase);
+                            int unbound = 0, total = 0;
+                            string? firstUnboundUrl = null;
+                            foreach (var t2 in profile.Tiers)
+                            foreach (var c2 in t2.Channels)
+                            {
+                                total++;
+                                if (string.IsNullOrEmpty(c2.Url) || !have.Contains(c2.Url))
+                                {
+                                    unbound++;
+                                    if (firstUnboundUrl == null) firstUnboundUrl = c2.Url;
+                                }
+                            }
+                            _lastTierDefUnboundCount = unbound;
+                            _lastTierDefTotalCount = total;
+                            if (unbound > 0)
+                            {
+                                MozaLog.Warn(
+                                    $"[Moza] Tier-def has {unbound}/{total} unbound channels " +
+                                    $"(chIndex=0; wheel catalog has {catalogSnapshot.Count} entries). " +
+                                    $"First unbound: {firstUnboundUrl ?? "(null)"}. " +
+                                    "Scheduling kind=4 re-emit to nudge wheel re-advertise.");
+                                _sender.ScheduleCatalogResyncProbeInternal();
+                            }
+                        }
+                    }
+
+                    foreach (var frame in frames)
+                        Send(frame);
+
+                    if (policy.BlindRetransmitTierDef)
+                    {
+                        _tierDefBlindFrames = frames.ToArray();
+                        _tierDefBlindSentRounds = 0;
+                        _tierDefBlindLastTickCount = Environment.TickCount;
+                    }
+
+                    CaptureSubscriptionDiag(tierDefSession,
+                        cspIdx ? "v2-type02" : "v2-compact",
+                        Array.Empty<byte>(), message, profile);
+                    break;
+                }
+            }
+
+            // Persist the new seq counter on whichever session we used.
+            if (policy.TierDefSession == TierDefSessionPolicy.FlagByte)
+                _sender.Session02OutboundSeq = seq;
+            else
+                _sender.Session01OutboundSeq = seq;
+            } // lock (seqLock)
+        }
+
+        private void CaptureSubscriptionDiag(byte session, string format,
+            byte[] preamble, byte[] body, MultiStreamProfile profile)
+        {
+            var diag = new TelemetrySender.SubscriptionDiagnostics
+            {
+                SessionByte = $"0x{session:X2}",
+                Format = format,
+                PreambleBytes = preamble,
+                BodyBytes = body,
+                CapturedAt = DateTime.Now,
+            };
+            int idx = 1;
+            foreach (var tier in profile.Tiers)
+            {
+                foreach (var ch in tier.Channels)
+                {
+                    uint comp = TierDefinitionBuilder.LookupCompressionCode(ch.Compression);
+                    diag.Channels.Add((idx, ch.Url, comp, (uint)ch.BitWidth));
+                    idx++;
+                }
+            }
+            _lastSubscriptionDiag = diag;
+
+            // Open a 5 s capture window on the sender for inbound chunks on
+            // session 0x02 — the wheel returns its channel-token TLVs there
+            // right after subscription.
+            _sender.OpenSubscriptionResponseCapture(System.Diagnostics.Stopwatch.GetTimestamp()
+                + System.Diagnostics.Stopwatch.Frequency * 5);
+        }
+
+        /// <summary>Re-emit blind tier-def chunks (Era2024/25 doesn't ack sess=0x01).</summary>
+        public void TickEmitTierDefBlindRetransmits()
+        {
+            if (_tierDefBlindFrames == null) return;
+            if (_tierDefBlindSentRounds >= TierDefBlindMaxRounds)
+            {
+                _tierDefBlindFrames = null;
+                return;
+            }
+            // Early-exit: every tier-def chunk was tracked via SendAndTrackChunk,
+            // so SessionRetransmitter.Contains tells us per-chunk ack state.
+            if (_tierDefBlindSentRounds > 0 && AllBlindChunksAcked())
+            {
+                MozaLog.Debug(
+                    $"[Moza] Blind retransmit early-exit after round {_tierDefBlindSentRounds}/{TierDefBlindMaxRounds} " +
+                    "(all blind chunks acked by wheel)");
+                _tierDefBlindFrames = null;
+                return;
+            }
+            var schedule = global::MozaPlugin.Protocol.RetryBackoff.TierDefBlindMs;
+            int gateMs = schedule[Math.Min(_tierDefBlindSentRounds, schedule.Length - 1)];
+            if (Environment.TickCount - _tierDefBlindLastTickCount < gateMs) return;
+
+            _tierDefBlindSentRounds++;
+            _tierDefBlindLastTickCount = Environment.TickCount;
+            for (int i = 0; i < _tierDefBlindFrames.Length; i++)
+            {
+                if (_sender.StateIsIdle || !_sender.ConnectionIsConnected) break;
+                _sender.SendRawFrame(_tierDefBlindFrames[i]);
+            }
+            MozaLog.Debug(
+                $"[Moza] Blind retransmit round {_tierDefBlindSentRounds}/{TierDefBlindMaxRounds} " +
+                $"({_tierDefBlindFrames.Length} chunks, next gate {gateMs}ms)");
+            if (_tierDefBlindSentRounds >= TierDefBlindMaxRounds)
+                _tierDefBlindFrames = null;
+        }
+
+        private bool AllBlindChunksAcked()
+        {
+            if (_tierDefBlindFrames == null) return true;
+            foreach (var frame in _tierDefBlindFrames)
+            {
+                if (frame == null || frame.Length < 10) continue;
+                byte session = frame[6];
+                int seq = frame[8] | (frame[9] << 8);
+                if (_sender.Retransmitter.Contains(session, seq))
+                    return false;
+            }
+            return true;
+        }
+    }
+}

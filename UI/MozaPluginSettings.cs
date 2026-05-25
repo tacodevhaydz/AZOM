@@ -2,6 +2,7 @@ using System;
 using System.Collections.Generic;
 using MozaPlugin.Telemetry;
 using MozaPlugin.Telemetry.Era;
+using MozaPlugin.UI.UpdateCheck;
 
 namespace MozaPlugin
 {
@@ -152,11 +153,6 @@ namespace MozaPlugin
         // Fixes flickering on some non-ES wheels. When false, respects SimHub's refresh cycle.
         public bool LimitWheelUpdates { get; set; } = false;
 
-        // Per-slot min/max index for the experimental diagnostic panels (slots 0..5).
-        // -1 sentinel = "use full range" (slot's MaxLeds-1 for max, 0 for min).
-        public int[] ExtLedDiagMin { get; set; } = new[] { -1, -1, -1, -1, -1, -1 };
-        public int[] ExtLedDiagMax { get; set; } = new[] { -1, -1, -1, -1, -1, -1 };
-
         // When true, resend LED state to wheel every ~1 second even if unchanged.
         // Some ES wheels need this to stay in telemetry mode.
         public bool WheelKeepalive { get; set; } = true;
@@ -174,11 +170,10 @@ namespace MozaPlugin
         public bool GearshiftVibrateOnNeutral { get; set; } = false;
         public int GearshiftDebounceMs { get; set; } = 500;
 
-        // One-shot flag: arm capture from the Diagnostics tab so it's already running when
-        // the plugin re-initializes (catches early connect/handshake traffic that the user
-        // can't normally arm in time). Cleared on Init the moment capture is started, so
-        // it never persists past one launch.
-        public bool StartCaptureOnNextLaunch { get; set; } = false;
+        // Persistent: when true, MozaPlugin.Init starts the serial traffic capture
+        // automatically (catches early connect/handshake traffic the user can't normally
+        // arm in time). Stays on across launches until the user toggles it off.
+        public bool AlwaysCaptureOnStartup { get; set; } = false;
 
         // Bridge-format JSONL wire trace at SimHub/Logs/moza-wire-*.jsonl.
         // Code-only toggle — not serialized so changing the default here
@@ -214,6 +209,85 @@ namespace MozaPlugin
         /// </summary>
         public int AutoTestLastSlot { get; set; } = -1;
 
+        // ===== Update notifier =====
+        // In-plugin update check that hits the GitHub Releases API on plugin
+        // load (and at most once per 24h thereafter), compares to the running
+        // AssemblyInformationalVersion, and surfaces a banner in the About
+        // tab when a newer release is available. Opt-out via UpdateCheckEnabled.
+        // Network call is silent on failure for the automatic path; only the
+        // manual "Check now" button surfaces errors inline. See
+        // UI/UpdateCheck/UpdateCheckService.cs for the wire details.
+        public bool UpdateCheckEnabled { get; set; } = true;
+
+        // Release stream the checker follows. Stable = /releases/latest,
+        // Dev = /releases/tags/dev-latest. Persisted as int so JSON shape
+        // matches the existing enum convention (see TelemetryWheelEra).
+        public UpdateChannel UpdateChannel { get; set; } = UpdateChannel.Stable;
+
+        // Version the user clicked "Skip this version" on — the banner stays
+        // hidden as long as the latest published version still equals this
+        // string. When a newer version appears the banner re-shows.
+        public string LastSkippedVersion { get; set; } = "";
+
+        // UTC timestamp of the last successful (or failed) check; the
+        // automatic check skips while less than 24h has passed. DateTime.MinValue
+        // means "never checked" → check immediately on next Init.
+        public DateTime LastUpdateCheckUtc { get; set; } = DateTime.MinValue;
+
+        // Cached version string from the last successful check. Lets the About
+        // tab paint the banner immediately on open without waiting for a fresh
+        // network round-trip. Empty = no successful check yet (or 404 on dev-latest).
+        public string LastSeenLatestVersion { get; set; } = "";
+
+        // html_url from the last successful check — wired to the "Open release
+        // notes" banner button. Empty when LastSeenLatestVersion is empty.
+        public string LastSeenReleaseUrl { get; set; } = "";
+
+        // browser_download_url of the first MozaPlugin*.zip asset on the
+        // latest release. Used by the in-app installer to fetch the new DLL
+        // without re-hitting the GitHub API. Empty if the latest release has
+        // no matching asset (manual hand-cut tags, or 404 on dev-latest) —
+        // in which case the banner falls back to the release-notes link only.
+        public string LastSeenAssetUrl { get; set; } = "";
+
+        // ===== Third-party SDK emulation =====
+        // Master toggle for the in-plugin CoAP/UDP server that mimics MOZA's
+        // PitHouse "partner SDK" surface (iRacing in particular). When false
+        // (default) the plugin makes no attempt to bind a port — third-party
+        // apps that depend on PitHouse continue to talk to PitHouse, not us.
+        // Plugin-global (not per-game / per-wheel). Takes effect on next
+        // plugin restart — Stream 7 wires the actual server lifecycle.
+        public bool SdkEmulationEnabled { get; set; } = false;
+
+        // Always bind to loopback (127.0.0.1) only. Hidden from the UI in v1
+        // because exposing the partner-API to LAN traffic has no legitimate
+        // use case and only adds attack surface — but plumbed through so a
+        // future power-user switch can flip it without a settings migration.
+        public bool SdkBindLoopbackOnly { get; set; } = true;
+
+        // NOTE: ports for both UDP surfaces are NOT settings — they are
+        // protocol-mandated and not actually configurable in practice.
+        //   * CoAP SDK port 40266 is hardcoded as `mov dx, 0x9D4A` in
+        //     MOZA_SDK.dll (both the official 1.0.1.8 build and iRacing's
+        //     customized variant); the SDK does not discover the port.
+        //   * UDP control port 40288 is the value third-party wheel-config
+        //     tools assume by default; clients also accept an override
+        //     from a settings.ini, but letting a SimHub user pick a port
+        //     just guarantees the SDK / clients can't reach them.
+        // The constants live with the server classes
+        // (MozaSdkCoapServer + MozaControlUdpServer). If MOZA ever changes
+        // the literals in a firmware/SDK update, change them there.
+
+        // Independent enable for the plain-UDP-CBOR control surface
+        // (MozaControlUdpServer on port 40288). Separate from
+        // SdkEmulationEnabled so a user can run the CoAP server without the
+        // UDP server or vice-versa. Default true so existing users with
+        // SdkEmulationEnabled=true keep the previous combined behaviour
+        // without a migration; users who want CoAP-only can flip this off
+        // explicitly. When false, no UDP listener binds and clients on
+        // 40288 silently fail to connect.
+        public bool UdpControlEnabled { get; set; } = true;
+
         // ===== Profile system (SimHub native) =====
         public MozaProfileStore ProfileStore { get; set; } = new MozaProfileStore();
 
@@ -239,7 +313,30 @@ namespace MozaPlugin
         //       from WheelOverride.WheelSleep* (now captured via LegacyJsonFields),
         //       MozaProfile.WheelSleep* baseline (now captured via JsonExtensionData
         //       on MozaProfile), and the _settings.WheelSleep* flat fields.
+        //   9 = wheel idle-effect + idle-speed (telemetry/buttons/knob) moved
+        //       off WheelOverride / MozaProfile baseline onto WheelIdleByPageGuid.
+        //       Same reasoning as v8 sleep: the idle animation pick is a property
+        //       of the wheel, not the game. Migration drains from the per-profile
+        //       overlay, the profile baseline, and the _settings flat fields,
+        //       then zeroes the legacy slots so subsequent saves don't resurrect
+        //       per-game values.
         public int SettingsSchemaVersion { get; set; } = 0;
+
+        // Explicit plugin-pane language override picked from the Options tab.
+        // null/empty/"auto" = auto-detect (LanguageResolver walks SimHub culture
+        // → OS culture → en). A BCP-47 tag like "es" / "fr" / "ru" pins the
+        // plugin to that language regardless of what SimHub or the OS reports.
+        public string? PreferredLanguage { get; set; }
+
+        // Marks the wheel device extension as already drained into the per-page
+        // bundle + overlay. MozaWheelExtensionSettings.ApplyTo gates on this:
+        // once true, subsequent SetSettings calls (which fire every restart and
+        // every profile switch) skip the merge entirely, so a stale device JSON
+        // cannot clobber the user's saved values. Lives on MozaPluginSettings
+        // (which the plugin reliably flushes via the debounce timer + End())
+        // rather than on the DTO (which SimHub doesn't reliably re-serialize
+        // before shutdown).
+        public bool WheelExtensionDrained { get; set; } = false;
 
         // Per-wheel-page mzdash folder library. Keyed by SimHub page DescriptorUniqueId
         // GUID. Shared across all profiles — every game using the same wheel sees
@@ -268,6 +365,15 @@ namespace MozaPlugin
         // Absence = wheel keeps its currently-stored value.
         public Dictionary<Guid, WheelSleepSettings> WheelSleepByPageGuid { get; set; }
             = new Dictionary<Guid, WheelSleepSettings>();
+
+        // Per-wheel-page idle-effect/speed settings (telemetry-area RPM LEDs,
+        // buttons, knob). Schema v9 moved these off WheelOverride / MozaProfile
+        // baseline because the idle animation is a property of the wheel, not
+        // the game — same as the sleep-light bundle above. Each entry holds the
+        // three effect IDs (cmd 0x1D [group]) and the three per-group speeds
+        // (cmd 0x1E [group] [BE u16 ms]).
+        public Dictionary<Guid, WheelIdleSettings> WheelIdleByPageGuid { get; set; }
+            = new Dictionary<Guid, WheelIdleSettings>();
 
         // ===== Dashboard Telemetry =====
         public bool TelemetryEnabled { get; set; } = false;
@@ -435,6 +541,37 @@ namespace MozaPlugin
                 TimeoutMin = TimeoutMin,
                 SpeedMs = SpeedMs,
                 Color = Color != null ? (int[])Color.Clone() : null,
+            };
+        }
+    }
+
+    /// <summary>
+    /// Per-wheel-page idle-effect + idle-speed bundle stored on
+    /// <see cref="MozaPluginSettings.WheelIdleByPageGuid"/>. Wraps the
+    /// three telemetry/buttons/knob effect IDs and the three matching
+    /// per-group speed values (ms) into one dict-value, mirroring the
+    /// per-page sleep bundle (<see cref="WheelSleepSettings"/>).
+    /// All fields use -1 as the "not set" sentinel.
+    /// </summary>
+    public sealed class WheelIdleSettings
+    {
+        public int TelemetryEffect { get; set; } = -1;   // cmd 0x1D [0]
+        public int ButtonsEffect { get; set; } = -1;     // cmd 0x1D [1]
+        public int KnobEffect { get; set; } = -1;        // cmd 0x1D [3]
+        public int TelemetrySpeedMs { get; set; } = -1;  // cmd 0x1E [0] [BE u16]
+        public int ButtonsSpeedMs { get; set; } = -1;    // cmd 0x1E [1] [BE u16]
+        public int KnobSpeedMs { get; set; } = -1;       // cmd 0x1E [3] [BE u16]
+
+        public WheelIdleSettings Clone()
+        {
+            return new WheelIdleSettings
+            {
+                TelemetryEffect = TelemetryEffect,
+                ButtonsEffect = ButtonsEffect,
+                KnobEffect = KnobEffect,
+                TelemetrySpeedMs = TelemetrySpeedMs,
+                ButtonsSpeedMs = ButtonsSpeedMs,
+                KnobSpeedMs = KnobSpeedMs,
             };
         }
     }

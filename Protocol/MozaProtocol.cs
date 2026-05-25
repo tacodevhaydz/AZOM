@@ -77,23 +77,13 @@ namespace MozaPlugin.Protocol
         public const byte WheelCfgOpcodeMultiFunction = 0x28;
 
         /// <summary>
-        /// Wire-level checksum over a decoded frame. Per doc § 54, each `0x7E`
-        /// in the decoded body (positions 2 through <paramref name="bodyEnd"/>-1)
-        /// adds an extra `0x7E` to the wire-level sum because byte-stuffing
-        /// doubles it on the wire and the sender includes both copies in its
-        /// checksum. Use for verifying received frames and for computing
-        /// outgoing checksum when the payload may contain `0x7E` bytes.
+        /// Wire-level checksum: each 0x7E in body positions 2.. counts twice
+        /// (byte-stuffing doubles it on the wire). See docs § 54.
         /// </summary>
-        /// <param name="data">Frame bytes: <c>[start, len, group, device, payload...]</c> without the checksum slot.</param>
         public static byte CalculateWireChecksum(byte[] data)
             => CalculateWireChecksum(data, data.Length);
 
-        /// <summary>
-        /// Same as <see cref="CalculateWireChecksum(byte[])"/> but operates on
-        /// the first <paramref name="length"/> bytes. Pass <c>frame.Length - 1</c>
-        /// when building an outgoing frame to exclude the pre-allocated
-        /// checksum slot from both the raw sum and the escape-count walk.
-        /// </summary>
+        /// <summary>Wire-level checksum over the first <paramref name="length"/> bytes.</summary>
         public static byte CalculateWireChecksum(byte[] data, int length)
         {
             int sum = MagicValue;
@@ -105,16 +95,42 @@ namespace MozaPlugin.Protocol
             return (byte)(sum & 0xFF);
         }
 
+        /// <summary>
+        /// Allocation-free overload for the read path. Computes the expected
+        /// checksum of the conceptual frame
+        /// <c>[MessageStart, length, body[0..bodyLength-1], 0]</c> — i.e. the
+        /// same answer as
+        /// <see cref="CalculateWireChecksum(byte[], int)"/> applied to a synthesised
+        /// frame, without requiring the synthesised array to exist. ReadLoop
+        /// uses this to avoid a per-Rx <c>byte[payloadLength+4]</c> allocation
+        /// at telemetry rates (250–1000 frames/sec).
+        /// </summary>
+        public static byte CalculateWireChecksumFromParts(byte length, byte[] body, int bodyLength)
+        {
+            // Conceptual frame contributes: MessageStart + length + body[0..bodyLength-1]
+            // plus a trailing zero placeholder (the checksum slot itself). The
+            // trailing zero adds nothing to either accumulator, so we drop it.
+            int sum = MagicValue + MessageStart + length;
+            for (int i = 0; i < bodyLength; i++)
+            {
+                byte b = body[i];
+                sum += b;
+                // The escape-double pass in the array overload covers indices ≥ 2,
+                // i.e. everything in `body`. Index 0 (start) and index 1 (length)
+                // never participate in the doubling. length is constrained ≤ 64
+                // so it can never collide with MessageStart anyway.
+                if (b == MessageStart)
+                    sum += MessageStart;
+            }
+            return (byte)(sum & 0xFF);
+        }
+
         public static byte SwapNibbles(byte b)
         {
             return (byte)(((b & 0x0F) << 4) | ((b & 0xF0) >> 4));
         }
 
-        /// <summary>
-        /// Wire size (bytes) after byte-stuffing the given decoded frame. Header
-        /// bytes 0..1 (start, len) are never stuffed; every 0x7E from index 2 onward
-        /// is doubled on the wire.
-        /// </summary>
+        /// <summary>Stuffed wire-size: header (0..1) unchanged; every 0x7E from idx 2 doubles.</summary>
         public static int StuffedFrameSize(byte[] frame)
         {
             int escapes = 0;
@@ -123,13 +139,7 @@ namespace MozaPlugin.Protocol
             return frame.Length + escapes;
         }
 
-        /// <summary>
-        /// Byte-stuff <paramref name="frame"/> into <paramref name="dest"/>, returning
-        /// the number of bytes written. Caller must size <paramref name="dest"/> to at
-        /// least <see cref="StuffedFrameSize(byte[])"/>. Header bytes 0..1 are copied
-        /// raw; from index 2 onward each 0x7E is emitted twice. Enables a single
-        /// <c>SerialPort.Write</c> call per frame instead of per-byte writes.
-        /// </summary>
+        /// <summary>Byte-stuff <paramref name="frame"/> into <paramref name="dest"/>; returns bytes written.</summary>
         public static int StuffFrame(byte[] frame, byte[] dest)
         {
             if (frame.Length < 2) return 0;
@@ -151,11 +161,8 @@ namespace MozaPlugin.Protocol
         }
 
         /// <summary>
-        /// Commands the wheel echoes back verbatim (group | 0x80, device nibble-swapped,
-        /// payload mirrored). Mirrors sim/wheel_sim.py:_WHEEL_ECHO_PREFIXES.
-        /// Match form: (group, device, payload-prefix bytes). Used to short-circuit
-        /// unmatched-response logging and treat echoes as wheel keepalive signals
-        /// for commands not in MozaCommandDatabase.
+        /// Wheel-echoed write prefixes (group|0x80, dev nibble-swapped, payload mirrored).
+        /// Used to swallow echo responses + treat as keepalive. Mirrors sim/wheel_sim.py.
         /// </summary>
         public static readonly byte[][] WheelEchoPrefixes = new[]
         {

@@ -1,6 +1,7 @@
 using System;
 using System.Collections.Concurrent;
 using System.Collections.Generic;
+using System.IO;
 using System.IO.Ports;
 using System.Linq;
 using System.Threading;
@@ -10,11 +11,8 @@ using MozaPlugin.Diagnostics;
 namespace MozaPlugin.Protocol
 {
     /// <summary>
-    /// Stream identifier for coalescing latest-wins telemetry frames. Each kind has
-    /// a single slot in <see cref="MozaSerialConnection"/>; enqueueing a new frame
-    /// for the same kind overwrites any not-yet-sent predecessor, so stale frames
-    /// can never pile up behind newer ones. One-shot/session traffic should still
-    /// use <see cref="MozaSerialConnection.Send(byte[])"/>.
+    /// Latest-wins coalescing slot identifier; one slot per kind. Use Send() for
+    /// one-shot/session traffic instead.
     /// </summary>
     public enum StreamKind
     {
@@ -29,70 +27,53 @@ namespace MozaPlugin.Protocol
         Enable = 8,
         Sequence = 9,
         Mode = 10,
-        // AB9 host-rendered engine vibration: 0x20/dev 0x12/cmd 0x0A 0x05 frames
-        // streamed at ~91 Hz from MozaPlugin's worker thread. Latest-wins is
-        // correct — only the freshest period needs to reach the wire.
+        // AB9 host-rendered engine vibration (0x20/0x0A 05) at ~91 Hz.
         Ab9EngineVibration = 11,
-        // AB9 secondary FFB sub-streams. Each lane is latest-wins because
-        // stale frames carry stale phase/magnitude values; the worker
-        // recomputes from current RPM at the next tick. Pairs (0x0B 0x02/0x03
-        // and 0x08 0x04/0x06) share a lane because they're emitted back-to-back
-        // and the device pairs them by tag/phase, not by independent ordering.
+        // AB9 secondary FFB sub-streams (latest-wins per lane).
         Ab9EnginePulse = 12,
         Ab9TriggerA = 13,        // 0x0D 0x02 + 0x0D 0x03 (flat ~9 Hz keepalive)
         Ab9TriggerRpm = 14,      // 0x0D 0x05 (RPM-tracking trigger)
         Ab9TriggerExtra = 15,    // 0x0D 0x01 (newly-observed sub-cmd)
         Ab9LowRate = 16,         // 0x08 0x04 + 0x08 0x06 (signed-pair low-rate)
+        // mBooster motor-write lane (single slot per connection; the worker
+        // emits one frame per ~20 ms tick across all four effects, so a
+        // shared lane is sufficient — latest-wins on the writer-lag edge).
+        MBoosterEffect = 17,
     }
 
-    /// <summary>
-    /// Which device family the probe path should target when WMI enumeration
-    /// fails. Each target uses a frame the device responds to with its own
-    /// distinct response group, so a single probe pass can confirm identity
-    /// without grabbing the wrong device's port.
-    /// </summary>
+    /// <summary>Device family targeted by the serial probe fallback (registry-empty case).</summary>
     public enum MozaProbeTarget
     {
         BaseAndHub,
         Ab9,
+        // mBooster has no handshake (protocol note § 1) and the multi-device
+        // discovery is registry-driven; the serial-probe fallback would have
+        // to write at every COM port to find a unit, which we deliberately
+        // skip to keep the per-port probe surface minimal. See FindMozaPort.
+        MBooster,
     }
 
     public class MozaSerialConnection : IDisposable
     {
-        private const int StreamSlotCount = 17;
+        private const int StreamSlotCount = 18;
 
-        // Ports currently held by a live MozaSerialConnection. Probe path skips
-        // these so the AB9 manager (or any future second connection) can't open
-        // the wheelbase's tty under Wine — Linux pty serial drivers don't enforce
-        // O_EXCL, so a second SerialPort.Open succeeds and any probe written
-        // there reaches the device that's already conversing with the first
-        // connection. The unsolicited 0x89 reply then lands on the wrong read
-        // thread and the parser logs it as a spurious wheel-presence response.
+        // Ports held by a live connection — probe path skips these (Wine pty
+        // doesn't enforce O_EXCL, so a second Open would steal the device).
         private static readonly System.Collections.Concurrent.ConcurrentDictionary<string, byte> _activePorts =
             new System.Collections.Concurrent.ConcurrentDictionary<string, byte>(StringComparer.OrdinalIgnoreCase);
 
-        // Filter applied during port discovery. Receives the registry-reported
-        // PID ("0x1000") or null for probe-based discovery where PID is unknown.
-        // Returns true to accept, false to skip. Default = accept all.
+        // PID filter for port discovery; null PID = probe-based (unknown).
         private readonly Func<string?, bool>? _pidFilter;
         private readonly MozaProbeTarget _probeTarget;
-        // When set and returning true, FindMozaPort never falls back to the
-        // legacy serial-probe path even if the registry returned no MOZA
-        // devices. Default (null or false) leaves the fallback armed for the
-        // empty-registry case (Wine/Proton without USB enumeration, driver not
-        // loaded). Toggled by the user via MozaPluginSettings.DisableSerialProbeFallback.
+        // Hard-disable serial probe fallback (user-toggle via MozaPluginSettings).
         private readonly Func<bool>? _disableProbeFallback;
 
         private volatile SerialPort? _port;
         private Thread? _readThread;
         private Thread? _writeThread;
-        // One-shot lane: session traffic, settings writes, probes — must preserve
-        // FIFO order and receives 4 ms pacing when bursted (Moza bases drop rapid
-        // settings writes otherwise; see WriteLoop).
+        // One-shot lane: FIFO + 4 ms burst pacing (bases drop unpaced rapid writes).
         private readonly ConcurrentQueue<byte[]> _oneShotQueue = new ConcurrentQueue<byte[]>();
-        // Stream lane: per-kind latest-wins slots for periodic telemetry. Drained
-        // after the one-shot lane, unpaced. SendStream overwrites any pending
-        // slot so lagging frames never reach the wire stale.
+        // Stream lane: per-kind latest-wins slots, unpaced. SendStream overwrites pending values.
         private readonly byte[]?[] _streamSlots = new byte[StreamSlotCount][];
         private readonly WriteBudget _budget = new WriteBudget();
         private int _framesDropped;
@@ -123,34 +104,18 @@ namespace MozaPlugin.Protocol
         private int _portFailureLogged;
         private const int PortDeadThreshold = 10;
 
-        // Set by ReadLoop to the group byte of the first valid frame
-        // received after TryOpen. Used by Connect() to verify a cached
-        // port has the expected MOZA device behind it — not a ghost port,
-        // not a different device that happens to send bytes. 0 = nothing
-        // received yet (0x00 is never a valid response group).
-        private int _firstRxGroup;
-
-        // Bitmap of every response group byte ReadLoop has seen since the
-        // last Connect() reset. Cached-port validation checks this — looking
-        // for the EXPECTED probe response group anywhere in the validation
-        // window instead of just the literal first frame. Required because
-        // some wheels emit boot-time debug-log frames (group 0x0E) before
-        // responding to the base/AB9/hub probe; the probe response then
-        // arrives a few ms later mixed in with the noise, and pre-2026-05-10
-        // logic at `_firstRxGroup` saw the noise byte first and rejected
-        // the (valid) port. 32 bytes × 8 bits covers the full byte range.
-        private readonly byte[] _rxGroupsSeen = new byte[32];
-        private void NoteRxGroup(byte g) { _rxGroupsSeen[g >> 3] |= (byte)(1 << (g & 7)); }
-        private bool HaveSeenRxGroup(byte g) => (_rxGroupsSeen[g >> 3] & (1 << (g & 7))) != 0;
-        private void ResetRxGroupsSeen() { for (int i = 0; i < _rxGroupsSeen.Length; i++) _rxGroupsSeen[i] = 0; }
+        // Classified open-failure surface. UI hint-builder reads this every
+        // 500 ms to distinguish port-in-use from generic disconnect. Counter
+        // is incremented atomically; the snapshot struct is copied under
+        // _failureLock so the UI sees a consistent view across fields.
+        private readonly object _failureLock = new object();
+        private ConnectionFailureInfo _lastFailure;
+        private int _consecutiveOpenFailures;
+        private DateTime _lastSuccessfulOpenUtc;
 
         public event Action<byte[]>? MessageReceived;
-        // Raised on the thread that hit the I/O failure (reader or writer)
-        // when the port was force-closed by HandleIoFailure. Subscribers
-        // must be safe to invoke from a background thread and should not
-        // block — used to pause the telemetry sender and reset wheel
-        // detection state immediately rather than waiting for the next
-        // reconnect-timer tick.
+        // Raised on the I/O thread after HandleIoFailure force-closes the port.
+        // Subscribers must be background-safe and non-blocking.
         public event Action? Disconnected;
         public bool IsConnected => _port?.IsOpen == true;
 
@@ -167,13 +132,7 @@ namespace MozaPlugin.Protocol
         /// </summary>
         public string? DiscoveredPid { get; private set; }
 
-        /// <summary>
-        /// True when the last successful port-detect probe succeeded via the
-        /// hub probe (group 0x64, dev 0x12, cmd 0x03). Indicates a Universal Hub
-        /// is on the bus. Used by TelemetrySender to gate the post-session-open
-        /// 5-slot enumeration burst (`0x64/0x12 cmd 01 NN 00`) that PitHouse
-        /// fires only when a hub is attached.
-        /// </summary>
+        /// <summary>True if the hub probe (0x64/0x12/0x03) succeeded — gates the post-session 5-slot burst.</summary>
         public bool HubProbeSucceeded { get; private set; }
 
         /// <summary>Sliding-window snapshot of write-budget utilization. Read by
@@ -203,25 +162,93 @@ namespace MozaPlugin.Protocol
             }
         }
 
-        public MozaSerialConnection() : this(null, MozaProbeTarget.BaseAndHub, null) { }
+        /// <summary>
+        /// Snapshot of the most recent open-failure classification. Returns
+        /// <see cref="ConnectionFailureInfo.None"/> when no failure is current
+        /// (either we've never tried to connect or the last connect succeeded
+        /// and <see cref="ResetFailureState"/> ran).
+        /// </summary>
+        public ConnectionFailureInfo LastFailure
+        {
+            get { lock (_failureLock) return _lastFailure; }
+        }
 
         /// <summary>
-        /// Construct a serial connection scoped to a subset of MOZA composite
-        /// devices. <paramref name="pidFilter"/> receives each candidate port's
-        /// PID (null only on the legacy probe path where PID is unknown) and
-        /// returns true to accept.
-        /// <paramref name="probeTarget"/> selects which probe frames are issued
-        /// if and only if the legacy probe fallback runs; AB9 callers must pass
-        /// <see cref="MozaProbeTarget.Ab9"/>.
-        /// <paramref name="disableProbeFallback"/> hard-disables the legacy
-        /// probe fallback. Default (null) leaves it armed for the case where
-        /// the registry returned no matching MOZA device — then the probe
-        /// runs against the unclassified ports as a last resort so users on
-        /// systems without USB PnP enumeration (Wine/Proton, broken driver
-        /// install) can still connect. The probe never writes bytes at a
-        /// port the registry already pinned to a non-matching MOZA PID, and
-        /// reduces to a no-op when every COM port is classified — see
-        /// <see cref="FindMozaPort"/>.
+        /// Number of consecutive <see cref="TryOpen"/> calls that have failed
+        /// since the last successful open. Reset to 0 on each successful Open
+        /// and on <see cref="ResetFailureState"/>. UI hint-builder requires
+        /// >= 2 before showing the port-in-use banner so a single transient
+        /// failure during plug-in doesn't flash a banner.
+        /// </summary>
+        public int ConsecutiveOpenFailures =>
+            Interlocked.CompareExchange(ref _consecutiveOpenFailures, 0, 0);
+
+        /// <summary>UTC of the most recent successful <see cref="TryOpen"/>;
+        /// <see cref="DateTime.MinValue"/> if never connected this session.</summary>
+        public DateTime LastSuccessfulOpenUtc
+        {
+            get { lock (_failureLock) return _lastSuccessfulOpenUtc; }
+        }
+
+        /// <summary>
+        /// Clear the classified-failure surface. Called from <see cref="TryOpen"/>
+        /// on success and from <see cref="MozaPlugin"/> when the user toggles
+        /// the connection off (so a stale "port in use" banner doesn't linger
+        /// after a deliberate disable).
+        /// </summary>
+        public void ResetFailureState()
+        {
+            Interlocked.Exchange(ref _consecutiveOpenFailures, 0);
+            lock (_failureLock)
+            {
+                _lastFailure = ConnectionFailureInfo.None;
+            }
+        }
+
+        private void RecordOpenFailure(string portName, ConnectionFailureKind kind, Exception ex)
+        {
+            Interlocked.Increment(ref _consecutiveOpenFailures);
+            lock (_failureLock)
+            {
+                _lastFailure = new ConnectionFailureInfo(kind, portName, ex.Message, DateTime.UtcNow);
+            }
+        }
+
+        // SerialPort.Open / CreateFile under Wine and native Windows both
+        // produce ERROR_ACCESS_DENIED (HResult 0x80070005) when another
+        // process holds the port (PitHouse is the canonical case). The
+        // exception type can be UnauthorizedAccessException OR IOException
+        // depending on driver path; the substring check covers both, and
+        // the HResult check is a belt-and-braces alternative when the
+        // message has been localized.
+        private static bool LooksLikeAccessDenied(Exception ex)
+        {
+            const int E_ACCESSDENIED = unchecked((int)0x80070005);
+            if (ex.HResult == E_ACCESSDENIED) return true;
+            var msg = ex.Message;
+            if (string.IsNullOrEmpty(msg)) return false;
+            return msg.IndexOf("access is denied", StringComparison.OrdinalIgnoreCase) >= 0
+                || msg.IndexOf("already in use", StringComparison.OrdinalIgnoreCase) >= 0
+                || msg.IndexOf("sharing violation", StringComparison.OrdinalIgnoreCase) >= 0
+                || msg.IndexOf("resource busy", StringComparison.OrdinalIgnoreCase) >= 0;
+        }
+
+        // "Port vanished" — registry enumeration showed the COM but Open
+        // can't see it. Distinct from access-denied because the remediation
+        // is different (replug, not close-other-app).
+        private static bool LooksLikePortVanished(Exception ex)
+        {
+            var msg = ex.Message;
+            if (string.IsNullOrEmpty(msg)) return false;
+            return msg.IndexOf("does not exist", StringComparison.OrdinalIgnoreCase) >= 0
+                || msg.IndexOf("no such", StringComparison.OrdinalIgnoreCase) >= 0;
+        }
+
+        /// <summary>
+        /// Connection scoped to a subset of MOZA PIDs. <paramref name="pidFilter"/>
+        /// accepts/rejects ports by PID; <paramref name="probeTarget"/> selects which
+        /// probe frames the fallback issues; <paramref name="disableProbeFallback"/>
+        /// hard-disables the fallback (default keeps it armed for empty-registry case).
         /// </summary>
         public MozaSerialConnection(
             Func<string?, bool>? pidFilter,
@@ -241,13 +268,7 @@ namespace MozaPlugin.Protocol
         private static string FormatPid(ushort pid) =>
             "0x" + pid.ToString("X4", System.Globalization.CultureInfo.InvariantCulture);
 
-        /// <summary>
-        /// Mark the hub as observed on this pipe. Called from MozaPlugin's
-        /// device-detect handler when a hub-group response arrives, so the
-        /// post-session 5-slot enumeration burst still fires for hub-attached
-        /// wheels even though we no longer learn about hubs from a probe.
-        /// Idempotent; latched true.
-        /// </summary>
+        /// <summary>Latch hub-observed (idempotent); used to fire the post-session 5-slot burst.</summary>
         public void MarkHubDetected()
         {
             HubProbeSucceeded = true;
@@ -263,23 +284,9 @@ namespace MozaPlugin.Protocol
             if (_running || _port != null)
                 Disconnect();
 
-            // Try the last known port first to avoid re-probing — but only if
-            // the registry still confirms the port belongs to a MOZA device of
-            // the right family. Identity is settled at the registry layer
-            // before we open anything, which eliminates two old hazards:
-            //  1. The cached port being reassigned to a different MOZA device
-            //     after a USB-port swap (e.g. wheelbase relocated to where the
-            //     AB9 used to be) — the legacy probe-based liveness check
-            //     would mis-validate because AB9's main dev id 0x12 collides
-            //     with the wheelbase Hub id and both reply 0x89 to the AB9
-            //     identity probe.
-            //  2. Ghost registry entries — MozaPortDiscovery filters those out
-            //     by cross-referencing against SerialPort.GetPortNames().
-            //
-            // The `_activePorts` peer-held check stays as defence-in-depth so
-            // a same-process sibling connection (wheelbase vs AB9 holding the
-            // same saved COM) can't double-open under Wine, which doesn't
-            // enforce O_EXCL on pty serial drivers.
+            // Try the cached port first, gated on registry confirming it still
+            // belongs to a MOZA device of the right family. _activePorts guards
+            // against same-process sibling-connection double-open on Wine ptys.
             if (_lastPortName != null
                 && !_activePorts.ContainsKey(_lastPortName))
             {
@@ -320,8 +327,6 @@ namespace MozaPlugin.Protocol
             while (_oneShotQueue.TryDequeue(out _)) { }
             for (int k = 0; k < _streamSlots.Length; k++)
                 Interlocked.Exchange(ref _streamSlots[k], null);
-            Interlocked.Exchange(ref _firstRxGroup, 0);
-            lock (_rxGroupsSeen) ResetRxGroupsSeen();
 
             try
             {
@@ -329,15 +334,10 @@ namespace MozaPlugin.Protocol
                 {
                     ReadTimeout = 500,
                     WriteTimeout = 500,
-                    // Larger buffers cushion bursts under Wine/tty0tty where
-                    // the kernel-side pty queue can hold multiple concurrent
-                    // device-session chunks (session 0x09 configJson state
-                    // burst is up to 7 × 68B = ~500B in under 40ms).
+                    // Larger buffers cushion Wine/tty0tty session-burst contention.
                     ReadBufferSize = 65536,
                     WriteBufferSize = 16384,
-                    // CDC ACM uses DTR as "host connected" signal. Must be true
-                    // so Close() drops DTR and Open() raises it — giving the
-                    // wheel a real disconnect/reconnect on the control lines.
+                    // CDC ACM: DTR is the host-connected signal; Close/Open must toggle it.
                     DtrEnable = true,
                 };
                 _port.Open();
@@ -369,11 +369,42 @@ namespace MozaPlugin.Protocol
                 _activePorts[portName] = 1;
                 Interlocked.Exchange(ref _consecutiveIoErrors, 0);
                 Interlocked.Exchange(ref _portFailureLogged, 0);
+                lock (_failureLock)
+                {
+                    _lastFailure = ConnectionFailureInfo.None;
+                    _lastSuccessfulOpenUtc = DateTime.UtcNow;
+                }
+                Interlocked.Exchange(ref _consecutiveOpenFailures, 0);
                 MozaLog.Info($"[Moza] Connected to {portName}");
                 return true;
             }
+            catch (UnauthorizedAccessException ex)
+            {
+                RecordOpenFailure(portName, ConnectionFailureKind.AccessDenied, ex);
+                MozaLog.Error($"[Moza] Failed to connect to {portName}: {ex.Message}");
+                return false;
+            }
+            catch (IOException ex) when (LooksLikeAccessDenied(ex))
+            {
+                RecordOpenFailure(portName, ConnectionFailureKind.AccessDenied, ex);
+                MozaLog.Error($"[Moza] Failed to connect to {portName}: {ex.Message}");
+                return false;
+            }
+            catch (FileNotFoundException ex)
+            {
+                RecordOpenFailure(portName, ConnectionFailureKind.PortVanished, ex);
+                MozaLog.Error($"[Moza] Failed to connect to {portName}: {ex.Message}");
+                return false;
+            }
+            catch (IOException ex) when (LooksLikePortVanished(ex))
+            {
+                RecordOpenFailure(portName, ConnectionFailureKind.PortVanished, ex);
+                MozaLog.Error($"[Moza] Failed to connect to {portName}: {ex.Message}");
+                return false;
+            }
             catch (Exception ex)
             {
+                RecordOpenFailure(portName, ConnectionFailureKind.OpenFailedOther, ex);
                 MozaLog.Error($"[Moza] Failed to connect to {portName}: {ex.Message}");
                 return false;
             }
@@ -383,13 +414,7 @@ namespace MozaPlugin.Protocol
         {
             _running = false;
 
-            // Close the port BEFORE joining threads so any read/write blocked
-            // in a kernel syscall on a wedged tty (sleep/resume, unplug, or
-            // device-side stall) returns with an error and the thread can
-            // exit. If we joined first, a wedged Write would sit holding no
-            // lock but still pinned in the syscall; Join would hit its 1000ms
-            // timeout and we'd proceed to Close, but SimHub's End() timeout
-            // on the surrounding call would already have expired.
+            // Close before joining so a syscall-wedged R/W returns to its loop.
             SerialPort? p;
             lock (_lock)
             {
@@ -415,12 +440,7 @@ namespace MozaPlugin.Protocol
                 _oneShotQueue.Enqueue(message);
         }
 
-        /// <summary>
-        /// Enqueue a periodic-stream frame with latest-wins coalescing. Any frame
-        /// already pending in the same <see cref="StreamKind"/> slot is discarded.
-        /// Use for telemetry/enable/sequence/mode — frames that only matter at their
-        /// latest value. For ordered one-shot traffic use <see cref="Send(byte[])"/>.
-        /// </summary>
+        /// <summary>Enqueue a periodic-stream frame with latest-wins coalescing per <see cref="StreamKind"/>.</summary>
         public void SendStream(StreamKind kind, byte[] message)
         {
             if (message == null) return;
@@ -429,12 +449,7 @@ namespace MozaPlugin.Protocol
             Interlocked.Exchange(ref _streamSlots[idx], message);
         }
 
-        /// <summary>
-        /// Drop everything pending: one-shot FIFO, all stream slots, and the OS
-        /// write buffer. Called from TelemetrySender.Stop so clicking the test
-        /// button's Stop halts the wheel immediately instead of bleeding through
-        /// the ~16 KB WriteBufferSize (~1.4 s at 115200 baud).
-        /// </summary>
+        /// <summary>Drop one-shot FIFO + all stream slots + the OS write buffer (Stop button halts the wheel instantly).</summary>
         public void FlushPendingWrites()
         {
             while (_oneShotQueue.TryDequeue(out _)) { }
@@ -507,12 +522,7 @@ namespace MozaPlugin.Protocol
                         continue;
                     }
 
-                    // Wine's SerialPort.Read blocks for full count (doesn't
-                    // return early when fewer bytes available), so we can't use
-                    // a plain blocking Read. Instead poll BytesToRead and pull
-                    // whatever is available. 2 ms sleep when idle keeps CPU
-                    // usage negligible while still draining the pty buffer
-                    // promptly — observed 1-15 bytes per pull at 115200 baud.
+                    // Wine SerialPort.Read blocks for full count; poll BytesToRead instead.
                     int avail = port.BytesToRead;
                     if (avail == 0)
                     {
@@ -604,12 +614,13 @@ namespace MozaPlugin.Protocol
                         }
 
                         // Validate wire-level checksum (includes 0x7E escape
-                        // accounting per doc § 54).
-                        var wireFrame = new byte[2 + payloadLength + 2];
-                        wireFrame[0] = MozaProtocol.MessageStart;
-                        wireFrame[1] = (byte)payloadLength;
-                        Array.Copy(raw, 0, wireFrame, 2, payloadLength + 2);
-                        byte expected = MozaProtocol.CalculateWireChecksum(wireFrame);
+                        // accounting per doc § 54). Allocation-free overload —
+                        // ReadLoop used to allocate a wireFrame byte[] here every
+                        // received frame just to feed the array-based checksum;
+                        // CalculateWireChecksumFromParts derives the same value
+                        // directly from raw + payloadLength.
+                        byte expected = MozaProtocol.CalculateWireChecksumFromParts(
+                            (byte)payloadLength, raw, payloadLength + 2);
                         byte actual = raw[raw.Length - 1];
                         if (expected != actual)
                         {
@@ -652,11 +663,6 @@ namespace MozaPlugin.Protocol
                                 $"[Moza] WIRE sess=0x{sess:X2} type=0x{type:X2} seq={seqWire} " +
                                 $"totalLen={data.Length} payload={bodyLen}B first8={first8}");
                         }
-                        Interlocked.CompareExchange(ref _firstRxGroup, data[0], 0);
-                        // Also record every group seen so cached-port
-                        // validation can find the expected response group
-                        // even when boot-time debug spam beats it to the port.
-                        lock (_rxGroupsSeen) NoteRxGroup(data[0]);
                         SerialTrafficCapture.Instance.RecordRx(CaptureLabel, data);
                         MessageReceived?.Invoke(data);
                         // Move cursor past the consumed wire bytes.
@@ -705,15 +711,8 @@ namespace MozaPlugin.Protocol
             {
                 bool didWork = false;
 
-                // 1) One-shot FIFO: session traffic, settings writes, probes.
-                //    Paced at 4 ms between consecutive one-shots — Moza bases drop
-                //    settings writes when flooded (ApplyProfile sends 30+ in a burst).
-                //    Pacing is skipped when the previous write was a stream frame,
-                //    since telemetry-group writes never trigger the drop.
-                //
-                //    Under bandwidth pressure, the budget extends the gate further
-                //    (still order-preserving FIFO, never drops) so the wheel can
-                //    drain its receive buffer before we pile on more.
+                // 1) One-shot FIFO with 4 ms inter-write pacing (bases drop unpaced bursts).
+                //    WriteBudget extends the gate under bandwidth pressure.
                 if (_oneShotQueue.TryDequeue(out var msg))
                 {
                     long now = System.Diagnostics.Stopwatch.GetTimestamp();
@@ -741,22 +740,9 @@ namespace MozaPlugin.Protocol
                     didWork = true;
                 }
 
-                // 2) Stream lane: latest-wins per kind, drained after every FIFO
-                //    item (not only when FIFO is empty). Retransmit + blind
-                //    retransmit can keep the FIFO perpetually non-empty for seconds,
-                //    starving value frames if streams are gated on FIFO-empty.
-                //
-                //    The stream lane is NOT bandwidth-gated. Latest-wins
-                //    coalescing already provides natural backpressure — when
-                //    writes lag, fresh SendStream calls overwrite the slot
-                //    before the previous frame is dequeued, so the wheel sees
-                //    the freshest value automatically. SerialPort.Write blocks
-                //    when the OS buffer fills (16 kB), giving us a hard
-                //    physical-layer gate without artificial software gating.
-                //    Software gating here was the 2026-05-08 regression: it
-                //    held value frames for ~700ms-1s during routine bursts and
-                //    starved the wheel into dropping configJson chunks during
-                //    cold-start and post-switch.
+                // 2) Stream lane drained after every FIFO item (retransmit bursts
+                //    can keep FIFO non-empty for seconds). No software gating —
+                //    latest-wins + OS write-buffer block provides backpressure.
                 for (int k = 0; k < _streamSlots.Length; k++)
                 {
                     var slot = Interlocked.Exchange(ref _streamSlots[k], null);
@@ -771,14 +757,11 @@ namespace MozaPlugin.Protocol
                     }
                 }
 
-                // Periodic budget warning — single line per second, only when over
-                // 90 % of target. Lets the user / log analyzer correlate stress
-                // periods with downstream symptoms (frame drops, retransmits).
+                // Periodic budget warning — 1/s when over 90% of target.
                 long warnNow = System.Diagnostics.Stopwatch.GetTimestamp();
                 if (warnNow - lastBudgetWarnTs >= oneSecTicks)
                 {
-                    // PeekSnapshot doesn't reset the rolling peak — leaves it
-                    // intact for the diagnostics tab's GetSnapshot to consume.
+                    // PeekSnapshot preserves the rolling peak for the diagnostics tab.
                     var snap = _budget.PeekSnapshot();
                     if (snap.PercentBudget >= 90)
                     {
@@ -793,14 +776,7 @@ namespace MozaPlugin.Protocol
             }
         }
 
-        /// <summary>
-        /// Byte-stuff <paramref name="msg"/> into <paramref name="stuffBuf"/> (growing
-        /// it if needed) and write the stuffed bytes to the port in one call.
-        /// Returns the wire-byte count on success or -1 if the port write raised.
-        /// Callers pass <paramref name="needed"/> (precomputed via
-        /// <see cref="MozaProtocol.StuffedFrameSize"/>) so this method doesn't
-        /// re-scan the input twice on the one-shot hot path.
-        /// </summary>
+        /// <summary>Byte-stuff and write a frame. Returns wire-byte count or -1 on write failure.</summary>
         private int WriteFrame(byte[] msg, ref byte[] stuffBuf, int needed)
         {
             try
@@ -808,14 +784,8 @@ namespace MozaPlugin.Protocol
                 if (stuffBuf.Length < needed)
                     stuffBuf = new byte[Math.Max(needed, stuffBuf.Length * 2)];
                 int len = MozaProtocol.StuffFrame(msg, stuffBuf);
-                // No lock around the kernel Write syscall. Only this thread
-                // calls WriteFrame, and Disconnect/HandleIoFailure close the
-                // port without contending. A concurrent Close turns this into
-                // an IOException/ObjectDisposedException, which is handled
-                // below. Previously we locked around Write; a wedged port
-                // (dead tty after sleep/resume) could leave the syscall
-                // blocked past WriteTimeout, pinning the lock forever and
-                // hanging SimHub shutdown.
+                // No lock on Write: only this thread calls it; Close races
+                // resolve via IOException/ObjectDisposedException below.
                 _port?.Write(stuffBuf, 0, len);
                 Interlocked.Exchange(ref _consecutiveIoErrors, 0);
                 SerialTrafficCapture.Instance.RecordTx(CaptureLabel, msg);
@@ -831,29 +801,9 @@ namespace MozaPlugin.Protocol
         }
 
         /// <summary>
-        /// Locate a MOZA device the connection should attach to. Two-stage chain:
-        ///   1. <see cref="MozaPortDiscovery"/> registry walk (the always-on
-        ///      primary path on Windows, and on Wine/Proton when the Wine
-        ///      USB subsystem populates the registry tree). Returns directly
-        ///      if any port satisfies the PID filter — no serial bytes
-        ///      written, identity settled at the registry layer.
-        ///   2. Legacy serial-probe fallback. Runs when the registry didn't
-        ///      give us a direct match. Honours the registry classifications
-        ///      it does have: ports the registry already pinned to a PID
-        ///      matching <paramref name="pidFilter"/> are claimed
-        ///      immediately without serial bytes; ports pinned to a
-        ///      mismatching MOZA PID are skipped (so we never re-send a
-        ///      base/hub/AB9 probe at hardware we've already identified —
-        ///      this also preserves the original "no AB9 probe storm at a
-        ///      Windows wheelbase-only user" behaviour because every COM
-        ///      port ends up classified). Only unclassified ports actually
-        ///      receive probe writes. <paramref name="disableProbeFallback"/>
-        ///      hard-disables the probe (user opt-out via
-        ///      <c>DisableSerialProbeFallback</c>).
-        ///
-        /// <paramref name="preferredPort"/> tilts the registry result selection
-        /// toward the saved port when multiple MOZA devices of the same family
-        /// are present (multi-rig setups, or transient duplicate enumerations).
+        /// Locate a MOZA device: (1) registry walk (no serial bytes), (2) probe fallback
+        /// against unclassified ports only. Registry-classified mismatches are skipped.
+        /// <paramref name="preferredPort"/> tilts toward the saved port on multi-rig setups.
         /// </summary>
         private static (string? PortName, string? Pid, bool ViaHubProbe) FindMozaPort(
             Func<string?, bool>? pidFilter,
@@ -919,15 +869,8 @@ namespace MozaPlugin.Protocol
                 return nb.CompareTo(na); // Descending - check high ports first
             });
 
-            // Count probe-eligible ports — anything the registry hasn't already
-            // pinned to a non-matching PID. If the registry covers every COM
-            // port with non-matching classifications, there's nothing left to
-            // probe, so we skip the probe entirely and preserve the historical
-            // "trust the registry's no answer" behaviour (this is what kept
-            // the AB9 probe storm off Windows users with a wheelbase but no
-            // AB9). When at least one unclassified-or-matching port exists,
-            // we let the probe run — the per-port guard inside each loop
-            // skips registry-classified non-matching ports one by one.
+            // Skip the probe entirely when every COM port is registry-classified
+            // with a non-matching PID (kept the AB9 probe storm off wheelbase-only users).
             int probeEligible = 0;
             for (int i = 0; i < ports.Length; i++)
             {
@@ -957,22 +900,11 @@ namespace MozaPlugin.Protocol
             // port can't block all detection.
             var unreachable = new HashSet<string>();
 
-            // Skip ports already held by a sibling MozaSerialConnection. Linux
-            // pty drivers don't enforce O_EXCL so a probe Open() on the live
-            // wheelbase tty would succeed and the probe write would reach the
-            // device that connection is already conversing with — the resulting
-            // 0x89 reply lands on the original read thread and the parser logs
-            // a spurious wheel-presence response every probe cycle.
+            // Skip ports held by a sibling connection (Wine pty has no O_EXCL).
             bool IsHeldByPeer(string port) => _activePorts.ContainsKey(port);
 
-            // Registry-aware guard for a single port. Three outcomes:
-            //   * unclassified  → return false, caller probes the port.
-            //   * matching PID  → write `decided` with a no-probe direct
-            //                     claim using the registry-reported PID.
-            //   * mismatching   → write `decided` = (null, null, false)
-            //                     and caller `continue`s past this port.
-            // Centralised so AB9 and BaseAndHub branches share identical
-            // behaviour and log lines.
+            // Per-port registry guard: unclassified → probe, matching → claim,
+            // mismatching → caller skips. Shared by AB9 and BaseAndHub branches.
             bool RegistrySaysSkip(string port, out (string?, string?, bool) decided)
             {
                 decided = (null, null, false);
@@ -993,22 +925,23 @@ namespace MozaPlugin.Protocol
                 return true;
             }
 
+            if (probeTarget == MozaProbeTarget.MBooster)
+            {
+                // mBooster has no application-level handshake (protocol note § 1)
+                // and dev id 0x12 collides with wheelbase Main + AB9 main, so
+                // writing a discovery probe at every COM port is high-risk.
+                // The multi-device registry path is registry-only by design —
+                // if the registry doesn't see the device we don't probe.
+                MozaLog.Debug("[Moza] mBooster probe fallback is disabled by design (registry-only discovery)");
+                return (null, null, false);
+            }
+
             if (probeTarget == MozaProbeTarget.Ab9)
             {
-                // AB9 main device id (0x12) is shared with the wheelbase Main
-                // controller, and the wheelbase happily answers AB9 identity
-                // probes — so claiming a port purely on a 0x89 reply mis-claims
-                // a wheelbase tty whenever the wheelbase manager hasn't locked
-                // its port yet (e.g. first reconnect tick after plugin start).
-                // Disambiguate by running a base probe (group 0x2B dev 0x13)
-                // first: AB9 has no dev 0x13 and never replies to it, while
-                // the wheelbase always does. A 0xAB reply means "this is a
-                // wheelbase" → skip. Only ports that don't respond to the base
-                // probe get the AB9 probe.
-                //
-                // The base-disambig probe is suppressed entirely for ports
-                // the registry already pinned to a wheelbase PID — that's
-                // exactly the leak the per-port registry guard fixes.
+                // AB9 dev id 0x12 collides with wheelbase Main — disambiguate
+                // with a base probe (0x2B/0x13) first; only ports that don't
+                // reply to it get the AB9 probe. Registry-classified wheelbase
+                // ports are skipped entirely (no base probe written).
                 foreach (var port in ports)
                 {
                     if (cancel?.Invoke() == true) return (null, null, false);
@@ -1088,39 +1021,22 @@ namespace MozaPlugin.Protocol
 
         private enum ProbeKind { Base, Hub, Ab9 }
 
-        // Pre-built probe frames. Base targets group 43, device 19, cmd id 2 (state-change probe).
-        // Hub targets group 100, device 18, cmd id 3 (port1 power).
-        // AB9 targets group 9, device 18 — PitHouse identity probe; the AB9 main
-        // device shares dev id 0x12 with Hub but does not respond to the hub-read
-        // group 0x64, so its response group (0x89) cleanly disambiguates the two.
-        // Base probe arg matches PitHouse wire pattern (documented § Group 0x2B) so device
-        // responses stay consistent across clients.
+        // Pre-built probe frames. Base: grp 0x2B dev 0x13 cmd 2. Hub: grp 0x64
+        // dev 0x12 cmd 3. AB9: grp 0x09 dev 0x12 (identity).
         private static readonly byte[] BaseProbeFrame = BuildProbe(new byte[] { 0x7E, 0x03, 0x2B, 0x13, 0x02, 0x00, 0x00, 0x00 });
         private static readonly byte[] HubProbeFrame  = BuildProbe(new byte[] { 0x7E, 0x03, 0x64, 0x12, 0x03, 0x00, 0x00, 0x00 });
         private static readonly byte[] Ab9ProbeFrame  = BuildProbe(new byte[] { 0x7E, 0x00, 0x09, 0x12, 0x00 });
 
         private static byte[] BuildProbe(byte[] frame)
         {
-            // Wire-level checksum so the probe stays valid if the payload ever
-            // contains a 0x7E byte (unstuffed wire writes a 0x7E payload byte
-            // raw, but the receiver decodes by collapsing 0x7E 0x7E → 0x7E and
-            // sums the wire-doubled byte twice). For the current static probes
-            // there are no 0x7E bytes from index 2 onward so the result equals
-            // CalculateChecksum, but using the wire variant prevents a silent
-            // failure if a future probe template is added with a 0x7E in it.
+            // Wire-level checksum — stays correct if a probe template later contains 0x7E.
             frame[frame.Length - 1] = MozaProtocol.CalculateWireChecksum(frame, frame.Length - 1);
             return frame;
         }
 
         /// <summary>
-        /// Run the probe on a background thread with a hard time budget (ms).
-        /// Returns (responded, reachable). reachable=false means open/timeout failed
-        /// — caller can skip this port in subsequent passes.
-        ///
-        /// On timeout, the outer thread closes the SerialPort to unblock any inner
-        /// syscall (Open/Write/Read) — without this, a stuck Write would leave the
-        /// probe thread alive holding the port handle until the OS eventually
-        /// returned, leaking threads under repeat probe pressure.
+        /// Probe a port with a hard time budget. On timeout the outer thread closes
+        /// the SerialPort to unblock any inner syscall.
         /// </summary>
         private static (bool responded, bool reachable) ProbeWithTimeout(string portName, int timeoutMs, ProbeKind kind)
         {
@@ -1138,8 +1054,7 @@ namespace MozaPlugin.Protocol
                         ReadTimeout = 300,
                         WriteTimeout = 300
                     };
-                    // Publish BEFORE Open() so a timed-out caller can close the
-                    // port even if Open itself blocks on a syscall.
+                    // Publish before Open so a timed-out caller can close mid-syscall.
                     System.Threading.Volatile.Write(ref portRef, probe);
                     probe.Open();
                     (responded, reachable) = ProbeMozaDeviceCore(probe, kind, portName);
@@ -1156,10 +1071,7 @@ namespace MozaPlugin.Protocol
 
             if (!t.Join(timeoutMs))
             {
-                // Force the inner syscall to throw by closing the port from
-                // this side. .NET SerialPort.Close from another thread while
-                // a Write is in progress is documented to throw IOException
-                // on the blocked call — which the inner catch handles.
+                // Close from this thread to unblock the inner syscall with IOException.
                 var p = System.Threading.Volatile.Read(ref portRef);
                 try { p?.Close(); } catch { }
                 try { p?.Dispose(); } catch { }
@@ -1171,16 +1083,8 @@ namespace MozaPlugin.Protocol
         }
 
         /// <summary>
-        /// Send the requested probe on an already-open port and confirm the reply
-        /// by checking the response group at wire offset 2 against the expected
-        /// toggled-bit-7 group for the kind being probed. Disambiguating by response
-        /// group stops AB9 (dev id 0x12, same as Hub) from being misidentified as a
-        /// hub when both share the bus.
-        /// Single-message probe avoids the v0.7.0 issue where back-to-back base+hub
-        /// writes left the device in a state where it stopped answering after reopen.
-        ///
-        /// Caller (ProbeWithTimeout) owns the port lifecycle so a hung syscall can
-        /// be unblocked by closing the port from outside.
+        /// Send probe + match response group at wire offset 2 (single-msg avoids
+        /// the v0.7.0 stuck-after-back-to-back-writes regression).
         /// </summary>
         private static (bool responded, bool reachable) ProbeMozaDeviceCore(SerialPort probe, ProbeKind kind, string portName)
         {
@@ -1198,15 +1102,8 @@ namespace MozaPlugin.Protocol
             {
                 probe.DiscardInBuffer();
 
-                // Generous validation window with periodic re-probes. The
-                // wheel commonly emits a burst of boot-time debug-log
-                // frames (group 0x0E, ASCII text) for several hundred ms
-                // on first open, drowning out a single 100ms probe-and-
-                // peek. We poll in short slices, re-emit the probe on a
-                // ~200ms cadence, and accept as soon as we see ANY frame
-                // whose group at wire offset +2 matches the expected
-                // response — surviving leading debug spam without a
-                // false positive on 0x0E frames.
+                // Re-probe periodically and poll in short slices — boot-time
+                // debug-log bursts (group 0x0E) drown a single probe-and-peek.
                 const int TotalBudgetMs = 500;
                 const int ProbeRepeatMs = 200;
                 const int PollSliceMs = 25;

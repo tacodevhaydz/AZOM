@@ -4,36 +4,13 @@ using System.Diagnostics;
 namespace MozaPlugin.Protocol
 {
     /// <summary>
-    /// Token-bucket bandwidth gate for the serial write loop. The 115200-baud link
-    /// has a hard ceiling of ~11 520 wire bytes/sec; this class tracks bytes
-    /// written over a sliding 1-second window and recommends additional pacing
-    /// for one-shot writes plus a drop-this-iteration signal for the latest-wins
-    /// stream lane when the budget is approached.
-    ///
-    /// Latest-wins safety: skipping a stream-lane drain under saturation is safe
-    /// because fresh frames overwrite the pending slot before the next iteration —
-    /// telemetry data is never queued, only the most recent value survives.
-    ///
-    /// One-shot ordering: FIFO order is preserved; saturation extends the existing
-    /// 4 ms pacing gate rather than dropping frames. Settings/session/probe traffic
-    /// is order-sensitive and must never be silently dropped.
+    /// Sliding-window bandwidth gate for the serial write loop (115200 baud =
+    /// ~11.5 kB/s ceiling). Extends one-shot pacing under saturation; never drops.
     /// </summary>
     public sealed class WriteBudget
     {
-        // Wire ceiling = 11 520 B/s (115200 baud / 10 bits per byte). Measured
-        // steady-state telemetry traffic averages ~5 kB/s with bursts to 9-12
-        // kB/s during cold-start, post-switch settings ApplyProfile, and tier-
-        // def blind retransmit. The target must sit above the P99 of normal
-        // traffic, otherwise MayDrainStreams gates the stream lane during
-        // routine bursts and starves the wheel of fresh tier value frames —
-        // the exact failure mode that broke configJson handshakes post-switch
-        // in the 2026-05-09 regression trace (chunk drop on sess=0x09 + 4×
-        // dashboard-switch retries within 2 min).
-        //
-        // Sustained target = ~95 % of wire ceiling. The OS write buffer
-        // (16 kB on Wine SerialPort) provides natural backpressure above this
-        // point: SerialPort.Write blocks once the kernel buffer fills, which
-        // gates the host without us needing a software gate.
+        // Sustained target = ~95% of the 11520 B/s wire ceiling; OS write
+        // buffer (16 kB) blocks beyond, providing natural backpressure.
         public const int TargetBytesPerWindow = 11000;
         // Bursts up to BurstAllowedBytes / window are tolerated without pacing
         // adjustment — settings ApplyProfile (~30 frames × 4 ms = 120 ms burst)
@@ -124,12 +101,7 @@ namespace MozaPlugin.Protocol
         }
 
 
-        /// <summary>Snapshot of current bandwidth state. Peak is monotonic
-        /// per session (max bytes-in-1s-window ever observed since the last
-        /// <see cref="ResetPeak"/> or session start). Earlier semantics
-        /// reset the peak on every call, which made the diagnostics UI's
-        /// peak field jump around every poll — confusing for users trying
-        /// to spot saturation events.</summary>
+        /// <summary>Snapshot of current bandwidth; peak is monotonic until ResetPeak.</summary>
         public Snapshot GetSnapshot()
         {
             lock (_lock)

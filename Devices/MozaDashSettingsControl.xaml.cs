@@ -5,6 +5,7 @@ using System.Windows.Input;
 using System.Windows.Media;
 using System.Windows.Threading;
 using MozaPlugin.UI;
+using static MozaPlugin.UI.UiHelpers;
 
 namespace MozaPlugin.Devices
 {
@@ -292,18 +293,7 @@ namespace MozaPlugin.Devices
             }
         }
 
-        private static void SetComboSafe(ComboBox combo, int index)
-        {
-            if (index >= 0 && index < combo.Items.Count)
-                combo.SelectedIndex = index;
-        }
-
-        private static double Clamp(double value, double min, double max)
-        {
-            if (value < min) return min;
-            if (value > max) return max;
-            return value;
-        }
+        // SetComboSafe, Clamp moved to UI/UiHelpers.
 
         // ===== Handlers =====
 

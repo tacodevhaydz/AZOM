@@ -10,14 +10,22 @@ namespace MozaPlugin
         // Connection status
         public volatile bool IsBaseConnected;
         public volatile bool IsHubConnected;
+        /// <summary>
+        /// True when a standalone dashboard (e.g. CM2 Racing Dash on PID 0x0025) is
+        /// confirmed on the serial bus — either via USB-PID-driven detection in
+        /// <c>MozaPlugin.MarkStandaloneDashboardDetectedFromUsb</c> or because the
+        /// dashboard answered a dash-* settings read on the wire. Lets
+        /// <see cref="IsConnected"/> turn true without a wheelbase/hub present.
+        /// </summary>
+        public volatile bool IsDashboardConnected;
         public volatile bool BaseSettingsRead;
 
         /// <summary>
-        /// True when any Moza device is confirmed on the serial bus (base or hub).
-        /// Use this as the "can I send commands?" guard instead of IsBaseConnected,
-        /// which is only true when a wheelbase is present.
+        /// True when any Moza device is confirmed on the serial bus (base, hub,
+        /// or standalone dashboard). Use this as the "can I send commands?" guard
+        /// instead of IsBaseConnected, which is only true when a wheelbase is present.
         /// </summary>
-        public bool IsConnected => IsBaseConnected || IsHubConnected;
+        public bool IsConnected => IsBaseConnected || IsHubConnected || IsDashboardConnected;
 
         // Wheel identity (populated after wheel detection, cleared on disconnect)
         // Volatile: written from serial read thread, read from UI thread.
@@ -179,6 +187,34 @@ namespace MozaPlugin
         public volatile bool WheelDualStickSupported;
         public volatile int WheelRpmDisplayMode;
 
+        // Single lock guarding all wheel/dash LED colour byte[][] arrays for
+        // multi-byte RGB read/write atomicity. The arrays themselves are readonly
+        // refs (`byte[][]`), so the lock only needs to cover the sequence of byte
+        // accesses inside one [i] slot. Display() reads `sc[0]; sc[1]; sc[2]` for
+        // the WheelButtonDefaultDuringTelemetry override on the SimHub effect
+        // thread; UI handlers write `arr[i][0]=r; arr[i][1]=g; arr[i][2]=b;` on
+        // the WPF dispatcher. Without this lock a click during active telemetry
+        // can produce a single torn-RGB frame on the wheel (one byte from the new
+        // colour, two from the old). The window is small but real; the lock is
+        // free in the no-contention case (UI clicks are infrequent vs the 60 Hz
+        // Display tick).
+        public readonly object LedColorLock = new object();
+
+        /// <summary>
+        /// Atomic 3-byte RGB write into <paramref name="dst"/> under <see cref="LedColorLock"/>.
+        /// Use from UI handlers in place of three separate <c>dst[0]=…; dst[1]=…; dst[2]=…</c>
+        /// assignments.
+        /// </summary>
+        public void WriteLedColor(byte[] dst, byte r, byte g, byte b)
+        {
+            lock (LedColorLock)
+            {
+                dst[0] = r;
+                dst[1] = g;
+                dst[2] = b;
+            }
+        }
+
         // Wheel RPM colors (10 LEDs, [R, G, B] each)
         public readonly byte[][] WheelRpmColors = InitWheelRpmColorArray();
         public readonly byte[][] WheelRpmBlinkColors = InitRpmColorArray();
@@ -216,7 +252,7 @@ namespace MozaPlugin
         public volatile int DashRpmDisplayMode;
         public volatile int DashRpmBrightness;
         public volatile int DashFlagsBrightness;
-        public volatile int DashDisplayBrightness;
+        public volatile int DashDisplayBrightness = -1;
         public volatile int DashDisplayStandbyMin;
 
         public readonly byte[][] DashRpmColors = InitRpmColorArray();
@@ -235,6 +271,16 @@ namespace MozaPlugin
         // Diagnostic only — stitched from group 0x07 cmd 0x01 + cmd 0x02 reads
         // against dev 0x12 (e.g. "R25 Black # MOT-1 -V01"). Not used for gating.
         public volatile string BaseModelName = "";
+        // ===== Base identity (device 0x13 — direct probes, mirror of the
+        // Wheel identity fields). Populated by base-model-name / base-sw-version
+        // / base-hw-version / base-hw-sub / base-mcu-uid / base-identity-11
+        // responses. DeviceCatalog consumes these to synthesise the Motor +
+        // Wheel Base manifest entries iRacing's CoAP client expects. =====
+        public volatile string BaseSwVersion = "";
+        public volatile string BaseHwVersion = "";
+        public volatile string BaseHwSubVersion = "";
+        public byte[] BaseMcuUid = System.Array.Empty<byte>();
+        public byte[] BaseIdentity11 = System.Array.Empty<byte>();
 
         // ===== FFB Equalizer (6 bands: 10/15/25/40/60/100 Hz, 0-400% where 100% = flat) =====
         public volatile int Equalizer1 = 100;
@@ -400,7 +446,9 @@ namespace MozaPlugin
                 case "wheel-flags-brightness":       WheelFlagsBrightness = value; break;
                 case "wheel-idle-mode":              WheelIdleMode = value; break;
                 case "wheel-idle-timeout":           WheelIdleTimeout = value; break;
-                case "wheel-idle-speed":             WheelIdleSpeed = value; break;
+                // wheel-idle-speed handled in UpdateFromArray — payload is
+                // [mode, ms_msb, ms_lsb], so the ParseIntValue of all 3 bytes
+                // (mode<<16)|ms is wrong. The array path extracts ms.
                 case "wheel-paddles-mode":           WheelPaddlesMode = value - 1; break; // raw 1/2/3 → display 0/1/2
                 case "wheel-clutch-point":           WheelClutchPoint = value; break;
                 case "wheel-knob-mode":              WheelKnobMode = value; break;
@@ -415,12 +463,13 @@ namespace MozaPlugin
                 case "wheel-old-rpm-brightness":     WheelESRpmBrightness = value; break;
                 case "wheel-knob-brightness":        KnobRingBrightness = value; break;
 
-                // Dash settings
-                case "dash-rpm-indicator-mode":  DashRpmIndicatorMode = value; break;
-                case "dash-flags-indicator-mode": DashFlagsIndicatorMode = value; break;
-                case "dash-rpm-display-mode":    DashRpmDisplayMode = value; break;
-                case "dash-rpm-brightness":      DashRpmBrightness = value; break;
-                case "dash-flags-brightness":    DashFlagsBrightness = value; break;
+                // Dash settings — receiving any of these confirms a dashboard
+                // is on the bus (whether wheel-bridged or standalone USB).
+                case "dash-rpm-indicator-mode":   DashRpmIndicatorMode = value; IsDashboardConnected = true; break;
+                case "dash-flags-indicator-mode": DashFlagsIndicatorMode = value; IsDashboardConnected = true; break;
+                case "dash-rpm-display-mode":     DashRpmDisplayMode = value; IsDashboardConnected = true; break;
+                case "dash-rpm-brightness":       DashRpmBrightness = value; IsDashboardConnected = true; break;
+                case "dash-flags-brightness":     DashFlagsBrightness = value; IsDashboardConnected = true; break;
 
                 // Base ambient LED settings
                 case "base-ambient-brightness":      BaseAmbientBrightness = value; break;
@@ -506,6 +555,19 @@ namespace MozaPlugin
         {
             if (data == null) return;
 
+            // **A5 gate**: drop wheel-LED colour responses while live telemetry is
+            // actively flowing. Even though writes are no longer gated (cmd 0x27 / cmd
+            // 0x1F land on the wheel as the user clicks), a read response that was
+            // already in flight before the write landed will carry the wheel's pre-
+            // write EEPROM value. If that response then writes into `_data`, the
+            // user's pick is silently clobbered in the in-memory mirror until the
+            // next read returns the post-write value. The race is small but real
+            // (interval between read send and read response, vs UI write landing).
+            // Disk + overlay still hold the user's pick correctly; the gate is
+            // only protecting the live `_data` mirror used by UI swatches.
+            if (Devices.MozaLedDeviceManager.IsLiveAnywhere() && IsWheelLedColorCommand(commandName))
+                return;
+
             // Color commands need at least 3 bytes (R, G, B)
             // Wheel RPM colors
             if (commandName.StartsWith("wheel-rpm-color") && !commandName.Contains("blink"))
@@ -541,6 +603,17 @@ namespace MozaPlugin
                 if (data.Length >= 3)
                     SetColor(WheelIdleColor, data);
             }
+            // Wheel sleep-light speed: 3-byte payload [mode, ms_msb, ms_lsb].
+            // The slider in the UI stores a single ms value (for whichever mode
+            // is currently selected on the wheel), so we extract only the ms
+            // portion. Storing the raw 3-byte big-endian int would yield
+            // (mode<<16)|ms, which the slider clamps and the bundle would
+            // round-trip incorrectly on next launch.
+            else if (commandName == "wheel-idle-speed")
+            {
+                if (data.Length >= 3)
+                    WheelIdleSpeed = (data[1] << 8) | data[2];
+            }
             // Base ambient startup / shutdown colors
             else if (commandName == "base-ambient-startup-color")
             {
@@ -572,6 +645,22 @@ namespace MozaPlugin
                 int idx = ParseTrailingIndex(commandName, "wheel-knob-bg-color");
                 if (idx >= 0 && idx < KnobRingLedMax && data.Length >= 3)
                     SetColor(KnobRingColors[idx], data);
+            }
+            // Per-knob Active LED color (cmd 0x27, role=0). Command name shape
+            // is "wheel-knob{N}-active-color" with N in 1..5. Cheap StartsWith
+            // gate keeps the parse off the hot path for unrelated frames.
+            else if (commandName.StartsWith("wheel-knob") && commandName.EndsWith("-active-color"))
+            {
+                // Extract the knob index between "wheel-knob" (10 chars) and
+                // "-active-color" (13 chars).
+                int start = "wheel-knob".Length;
+                int end = commandName.Length - "-active-color".Length;
+                if (end > start && data.Length >= 3
+                    && int.TryParse(commandName.Substring(start, end - start), out int knob1)
+                    && knob1 >= 1 && knob1 <= WheelKnobPrimaryColors.Length)
+                {
+                    SetColor(WheelKnobPrimaryColors[knob1 - 1], data);
+                }
             }
             // Wheel identity strings (work with any data length)
             else if (commandName == "wheel-model-name")
@@ -620,6 +709,34 @@ namespace MozaPlugin
             else if (commandName == "wheel-mcu-uid")
             {
                 WheelMcuUid = (byte[])data.Clone();
+            }
+            // Base identity (parallel to wheel identity, dev 0x13). Drives the
+            // Motor + Wheel Base manifest entries served at
+            // /MOZARacing/ProductDevice/{id} so iRacing's CoAP client engages
+            // beyond the device-list probe.
+            else if (commandName == "base-model-name")
+            {
+                BaseModelName = ParseNullTerminatedString(data);
+            }
+            else if (commandName == "base-sw-version")
+            {
+                BaseSwVersion = ParseNullTerminatedString(data);
+            }
+            else if (commandName == "base-hw-version")
+            {
+                BaseHwVersion = ParseNullTerminatedString(data);
+            }
+            else if (commandName == "base-hw-sub")
+            {
+                BaseHwSubVersion = ParseNullTerminatedString(data);
+            }
+            else if (commandName == "base-mcu-uid")
+            {
+                BaseMcuUid = (byte[])data.Clone();
+            }
+            else if (commandName == "base-identity-11")
+            {
+                BaseIdentity11 = (byte[])data.Clone();
             }
             else if (commandName == "wheel-identity-11")
             {
@@ -691,6 +808,15 @@ namespace MozaPlugin
             DisplayDeviceType = System.Array.Empty<byte>();
             DisplayCapabilities = System.Array.Empty<byte>();
             DisplayIdentity11 = System.Array.Empty<byte>();
+            // Base identity — clear alongside wheel/display so a fresh
+            // connection re-probes and DeviceCatalog doesn't serve stale
+            // Motor / Wheel Base manifest entries from a previous session.
+            BaseModelName = "";
+            BaseSwVersion = "";
+            BaseHwVersion = "";
+            BaseHwSubVersion = "";
+            BaseMcuUid = System.Array.Empty<byte>();
+            BaseIdentity11 = System.Array.Empty<byte>();
             Last28x00Byte5 = 0;
             Last28x00ByteValid = false;
             Last28x01Byte4 = 0;
@@ -715,11 +841,37 @@ namespace MozaPlugin
             return -1;
         }
 
-        private static void SetColor(byte[] target, byte[] source)
+        // Lock around the 3-byte copy so Display() / PackColors callers never
+        // observe a torn RGB. Source for wheel-response paths is the parser-
+        // allocated array, so it's safe to read outside the lock.
+        private void SetColor(byte[] target, byte[] source)
         {
-            target[0] = source[0];
-            target[1] = source[1];
-            target[2] = source[2];
+            lock (LedColorLock)
+            {
+                target[0] = source[0];
+                target[1] = source[1];
+                target[2] = source[2];
+            }
+        }
+
+        // A5: identifies wheel-side LED colour commands whose UpdateFromArray
+        // responses should be suppressed while live telemetry is active. Dash
+        // (`dash-rpm-color*` / `dash-flag-color*`) and base-ambient colours are
+        // *not* included — they don't conflict with the wheel's live pipeline.
+        // ES wheel (`wheel-old-*`) excluded — old-protocol wheel has no live
+        // colour pipeline that could race.
+        private static bool IsWheelLedColorCommand(string commandName)
+        {
+            // wheel-rpm-color{N} (but not wheel-rpm-blink-color)
+            if (commandName.StartsWith("wheel-rpm-color") && !commandName.Contains("blink"))
+                return true;
+            if (commandName.StartsWith("wheel-button-color")) return true;
+            if (commandName.StartsWith("wheel-flag-color")) return true;
+            if (commandName.StartsWith("wheel-knob-bg-color")) return true;
+            // wheel-knob{N}-active-color
+            if (commandName.StartsWith("wheel-knob") && commandName.EndsWith("-active-color"))
+                return true;
+            return false;
         }
     }
 }

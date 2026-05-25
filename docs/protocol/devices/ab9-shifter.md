@@ -1,6 +1,10 @@
 ## AB9 active shifter (2026-04-24)
 
-**Status (2026-05-15)**: full PitHouse-replicating implementation in `Devices/MozaAb9DeviceManager.cs` — FFB init handshake, multi-stream worker (engine-vib `0x0A 0x05`, pulse pair `0x0B 0x02/03`, triggers `0x0D 0x01/02/03/05`, low-rate signed pair `0x08 0x04/06`), corrected `0x1E` read group, bus-hint detection. Verified on real AB9 hardware: detection latches to "AB9 connected" within ~1 s, engine rumble fires with intensity/frequency sliders driving amplitude and oscillator period, H-pattern + slider config + gear-shift vibration all working.
+**Status (2026-05-24, engine-vib intensity correction)**: engine-pulse-pair frame layout was off-by-one against PitHouse (`BuildEnginePulseFrame` wrote 4 zero pad bytes before the phase counter; PitHouse uses 3), so amp16 landed in the device firmware's trailing-zero slot and the firmware was reading our protocol tag byte `0x04` as the amp16 high-byte. Effective device-side amp16 only varied in `0x0400..0x0423` regardless of slider position — root cause of the user-reported binary engine-vib intensity. Frame layout now matches PitHouse byte-for-byte (verified against 17,603 capture frames). Intensity slider now modulates pulse-pair *emission rate* (not amplitude) — amp16 is held at the constant `0x2328` PitHouse uses. See "Engine vibration is host-rendered" and `0x0B 0x02 / 0x0B 0x03` sections below for the corrected protocol facts.
+
+**Status (2026-05-24)**: full PitHouse-replicating implementation in `Devices/MozaAb9DeviceManager.cs` — FFB init handshake, multi-stream worker (engine-vib `0x0A 0x05`, pulse pair `0x0B 0x02/03`, triggers `0x0D 0x01..0x06`, low-rate signed pair `0x08 0x04/06`), corrected `0x1E` read group, bus-hint detection, **event-driven per-shift triggers** (`0x0D 0x01` + `0x0D 0x04`/`0x0D 0x06` fired from `MozaPlugin.CheckAb9GearshiftEvent` on each SimHub gear-string transition). Verified on real AB9 hardware: detection latches to "AB9 connected" within ~1 s, engine rumble fires with intensity/frequency sliders driving amplitude and oscillator period, H-pattern + slider config + gear-shift vibration all working.
+
+**Status (2026-05-15)**: prior PitHouse-replication landed without per-shift triggers, on the (later-disproved) hypothesis that gear-shift feedback was firmware-driven without host involvement. Engine-vib worked but gear-shift rumble was silent — corrected in 2026-05-24.
 
 Captures: `usb-capture/AB9/{Shifter mode change,PitHouse settings change,Launch and H-pattern gear engage,SQ gear change}.pcapng` plus event-time spreadsheet `Moza AB9.xlsx`. Captured on Windows host with PitHouse driving the shifter while wheelbase was also attached. Engine-vibration streams decoded against `sim/logs/ab9-game-20260513.jsonl` (PitHouse + Assetto Corsa, 942,634 frames, 40.9 min) — see `tools/ab9-decode-session` for the analysis pipeline.
 
@@ -50,13 +54,21 @@ Four PitHouse-settings events generated **zero** host→device packets on either
 
 Verified across both EP 0x02 OUT (CDC) and EP 0x03 OUT (HID, never used) on the AB9, and across all OUT pipes on the wheelbase. The slider moves were real (different from/to values per spreadsheet), so PitHouse either: (a) batches these to an "Apply" / save action that wasn't pressed during this capture, (b) renders engine vibration host-side and streams it as continuous output (not configuration), or (c) caches them locally until the next session/connect. Not yet disambiguated — needs a capture with the Apply button pressed, or a SimHub-driven RPM telemetry stream while engine-vib intensity is non-zero.
 
-### Shift-trigger feedback is firmware-driven; engine vibration needs telemetry
+### Shift-trigger feedback — corrected 2026-05-24
 
-The H-pattern (1st→7th + reverse, 18 engage/neutral transitions over 30 s) and SQ gear (6 up/down events incl. holds over 14 s) captures contain **no host→device FFB writes** during shifts. Only sparse identity probes and `Output(d4/d7/d8)` polls — same heartbeat traffic seen at idle. HID IN on EP 0x83 streams continuously at ~1 kHz regardless of shift activity.
+The 2026-04-24 capture pair (H-pattern 1st→7th + reverse over 30 s, SQ gear up/down over 14 s) appeared to contain **no host→device FFB writes** during shifts, leading us to conclude shift feedback was firmware-driven via the AB9's mechanical engagement sensor with the host playing no real-time role.
 
-For *shift-triggered* effects (notchiness, gear-shift vibration, damping during engage): **firmware-driven**. Host pushes static configuration once, then AB9 firmware detects shifts mechanically, plays back stored vibration pattern + notch/damping per stored settings, and reports new gear via HID IN. Host plays no real-time role in shift feel.
+**That conclusion was wrong.** Two follow-up captures in 2026-05-24 (`usb-capture/AB9/all_gears.pcapng` cycling every gear, `usb-capture/AB9/1-N.pcapng` cycling 1↔N) with PitHouse + Assetto Corsa show PitHouse fires **per-shift host→device triggers on Group 0x20**:
 
-For *engine vibration* (intensity + frequency sliders) and any other RPM- or speed-modulated effect: **resolved as host-rendered streaming on `Group 0x20` — see next section.**
+- **`0x0D 0x04`** (3-byte frame `7e 03 20 12 0d 04 01 <chk>`, never observed at idle in the 40-min 2026-05-13 reference) — fires when entering any non-neutral gear. Device ACKs with the standard `0xA0` generic FFB response.
+- **`0x0D 0x06`** (3-byte frame `7e 03 20 12 0d 06 01 <chk>`, also unseen at idle) — fires when entering neutral.
+- **`0x0D 0x01`** (Sparse) — rate jumps from ~0.10 Hz at idle to ~1.2 Hz during gear cycling, accompanying each `0x0D 0x04` / `0x0D 0x06`. The same trigger family was tagged "phantom-shift-causing" in the 2026-05-15 doc — that was correct observation, wrong diagnosis: the rumble we labelled "phantom" *was* the gear-shift firmware response, just fired at the wrong cadence by a periodic timer instead of on real events.
+
+Why the 2026-04-24 captures looked clean: they were recorded while PitHouse was running but, per the new evidence, those captures evidently didn't include real shift events on the wire — possibly an artefact of the capture wiring, or the user not actually moving the lever between recordings, or PitHouse-version differences. Either way, the empirical truth is the AB9 needs host triggers to fire shift haptics; the firmware does NOT autonomously rumble on the mechanical-sensor signal alone.
+
+**Implementation:** `MozaPlugin.CheckAb9GearshiftEvent` watches `data.NewData.Gear`, debounces against `GearshiftDebounceMs`, honours `GearshiftVibrateOnNeutral` (sharing both knobs with the wheelbase gear-shift detector at `CheckGearshiftEvent`), and calls `_ab9Manager.SendGearShiftTrigger(engageNotDisengage: !isNeutral)`. The manager emits the `0x0D 0x01` + `0x0D 0x04`/`0x0D 0x06` pair via the one-shot FIFO so they can't drop or coalesce against the engine-vib streams.
+
+For *engine vibration* (intensity + frequency sliders) and any other RPM- or speed-modulated effect: **host-rendered streaming on `Group 0x20` — see next section.**
 
 ### Engine vibration is host-rendered via `Group 0x20 → dev 0x12` (2026-05-13)
 
@@ -67,15 +79,17 @@ Concurrent sub-streams on `Group 0x20 → dev 0x12` during steady-state driving:
 | Sub-cmd | Frame len | Rate at idle | Rate at redline | Role |
 |---|---|---|---|---|
 | `0x0A 0x05` | 19 B | ~85-90 Hz | ~87 Hz | Primary oscillator-period push, one frame per allocated effect slot. See "0x0A 05 payload schema" below — 24-bit BE period field, inversely proportional to vibration frequency (verified 2×). |
-| `0x0B 0x02` + `0x0B 0x03` | 22 B each | 1.7 Hz each | 34.6 Hz each | **Engine-cycle pulse train.** `02` carries `… 04 23 28 00 00` (on half), `03` carries `… 04 00 00 00 00` (off half). 16-bit field at payload offset 4-7 advances/varies per pulse (looks like a bipolar envelope sample or per-pulse phase; not yet definitively decoded). **Rate scales linearly with engine speed** — best RPM proxy in the stream. |
+| `0x0B 0x02` + `0x0B 0x03` | 22 B each | 1.7 Hz each | 34.6 Hz each | **Engine-cycle pulse train.** `02` is the on-half (amp16 `0x2328` at offsets 18-19), `03` is the off-half (amp16 `0x0000`). 16-bit phase counter at offsets 5-6 (duplicated at 7-8) advances monotonically per pair, step size scales with RPM. **Rate scales linearly with engine speed at slider=100 %, multiplicatively attenuated by the intensity slider** — drops to zero pulses for 40+ consecutive seconds at stable cruise (load-gated). Best RPM proxy in the stream when emitting. See `0x0B` schema below. |
 | `0x0D 0x02` + `0x0D 0x03` | 3 B (payload `01 D0` / `01 D1`) | 9.1 Hz each | 9.2 Hz each | **Heartbeat-rate trigger** — flat regardless of RPM. Purpose unclear; possibly slot-keepalive. |
+| `0x0D 0x04` | 3 B (payload `01`) | not observed at idle | not observed at idle | **Per-shift "engage" trigger** — fires on transition to any non-neutral gear. Resolved 2026-05-24 via `usb-capture/AB9/all_gears.pcapng`. |
 | `0x0D 0x05` | 3 B (payload `01 D3`) | 2.0 Hz | 19.1 Hz | RPM-tracking trigger (≈10× scaling from idle to redline). |
+| `0x0D 0x06` | 3 B (payload `01`) | not observed at idle | not observed at idle | **Per-shift "disengage" trigger** — fires on transition into neutral. Resolved 2026-05-24 via `usb-capture/AB9/{all_gears,1-N}.pcapng`. |
 | `0x08 0x04` + `0x08 0x06` | 11 B each | <0.1 Hz (1 frame each in 40 s) | not observed at redline | Low-rate update (~3.9 Hz each averaged across whole 190 s session — fired in bursts around state changes, not steady-state). Purpose unknown. |
 | `0x0A 0x01`, `0x07 0x01/03/04/09`, `0x0E 0x01/02`, `0x13 0x00` | 2-19 B | 1-2 frames per session each | — | One-shot init / config (the `0x0A 0x01` 24-byte form matches `Gear Shift Vibration` config from the 2026-04-24 capture analysis above; the streaming `0x0A 0x05` form is distinct). |
 
 Effects: PitHouse allocates **6 FFB effect slots** at session start via group `0x20` init (`ffb_init`/`ffb_alloc` in the sim counters); the streams above re-parameterize those slots continuously — no per-frame re-allocation. Slot IDs observed in the session: `1 → 3, 2 → 9, 3 → 9, 4 → 1, 5 → 4, 6 → 1`.
 
-What changes when the user moves the PitHouse "Engine Vibration" slider (50% → 100% verified): the **streamed `0x0A 0x05` values shift to new amplitude/period pairs**. No stored-setting write is observed on `Group 0x1F`. Confirms the slider modulates PitHouse's host-side envelope generator, not a device-resident setting. By extension, the four PitHouse sliders flagged in the previous section as producing zero USB write (`Gear Damping`, `Gear Notchiness`, `Engine vibration intensity`, `Engine vibration frequency`) are very likely **all host-applied modulators** — they only become observable in the wire stream while a sim is running.
+What changes when the user moves the PitHouse "Engine Vibration" intensity slider (re-resolved 2026-05-24): **the `0x0B 0x02/03` pulse-pair emission rate**. No stored-setting write is observed on `Group 0x1F` or anywhere else. No bit values inside any frame change with intensity — pulse-pair amp16 stays constant at `0x2328` across all 17,603 captured pulse-on frames, vib-stream period bytes stay byte-identical between intensity levels at the same `(freq, RPM)`, and the `0x0A 0x05` slot ID toggles binary (active value at slider > 0, `0x0000` at slider = 0). The slider purely modulates *how often* pulse pairs are emitted — see "Slider effects on the stream" below for the corrected detail. The prior version of this paragraph claimed "0x0A 0x05 values shift to new amplitude/period pairs" — that conflated multi-period interleaving (which does happen and is freq-slider-driven) with an intensity effect (which is rate-driven on `0x0B`, not bit-value-driven on `0x0A 0x05`). By extension, the four PitHouse sliders flagged in the previous section as producing zero USB write (`Gear Damping`, `Gear Notchiness`, `Engine vibration intensity`, `Engine vibration frequency`) are all host-applied modulators on the streaming-frame generator — they only become observable in the wire stream while a sim is running.
 
 #### Engine-vib off → slot ID `0x0000` keepalive
 
@@ -110,21 +124,23 @@ Each refresh cycle pushes a *pair* of consecutive frames per slot — typically 
 | redline | 200 Hz | `0x1996` + `0x1478` (harmonics) | `0x050032 / 0x050033` | 327 K | 0.13× (RPM ×7.5) | **0.133×** ✓ |
 | redline | 50 Hz | `0x1996` | `0x1400C8 / 0x1400CC` | 1.31 M | 4× vs redline+200Hz, 0.13× vs idle+50Hz | **4.0× / 0.130×** ✓ |
 
-Both axes (freq slider and engine RPM) are independently confirmed: `period = K / (engine_rpm × freq_slider)`, with K ≈ 2.46 M × 200 = 492 M (in `ticks × Hz`) using idle as the RPM=1 reference. At idle RPM ≈ 800 the constant K ≈ 615 K × ticks × Hz / rpm.
+Both axes (freq slider and engine RPM) are independently confirmed: `period = K / (engine_rpm × freq_slider)`. The original K ≈ 3.95e11 was derived from this capture under an *assumed* idle RPM of ~800 — but the assumption turned out to be wrong by a factor of ~1.41.
+
+**K recalibrated to 5.56e11 (2026-05-24).** Direct phone-microphone measurement on real hardware: PitHouse driving a manual Cayman GT4 (~7700 RPM redline) at slider=100 Hz, the user measured ~103 Hz audible buzz at redline. The plugin with the old K produced ~145 Hz at the same operating point. Ratio 145/103 = 1.41 → corrected K = 3.95e11 × 1.41 ≈ 5.56e11. At (7700 RPM, slider=100 Hz) the new constant predicts 102.7 Hz output, matching the PitHouse measurement. The relative shape of the period verification table above is unchanged (freq-doubling and RPM-doubling ratios still hold) — only the absolute calibration constant moved.
 
 Slider effects on the stream:
 - **Engine Vibration Frequency**: scales the period inversely; verified across 4× (50 → 200 Hz) at both idle and redline.
-- **Engine Vibration Intensity**: controls **slot allocation, not byte values**. Period bytes are byte-identical between intensity levels at the same `(freq, RPM)`; intensity adds/removes simultaneously-streamed slots.
+- **Engine Vibration Intensity**: encoded as `0x0B 0x02/03` pulse-pair *emission rate*, not as bit values inside any frame. Verified by full-session decode (2026-05-24 re-analysis):
+  - `0x0B 0x02` amp16 (offsets 18-19) is **constant `0x2328`** across all 17,603 captured pulse-on frames — never modulated by slider, RPM, or freq.
+  - `0x0B 0x02` duty byte (the "0x28" claim in the prior version of this doc was wrong — that byte was actually the low half of amp16) is **constant `0x00`**.
+  - `0x0B 0x03` amp16 is **constant `0x0000`** across all 17,603 pulse-off frames.
+  - `0x0A 0x05` slot ID flips between an "active" value (e.g. `0x1996`) at slider > 0 and `0x0000` silent-keepalive at slider = 0 — this is the only slider effect visible in the vib-stream's bit values.
 
-  Slot-count behavior is **RPM-dependent**, not a clean 25%↔1-slot / 100%↔2-slot rule:
-  - Idle, freq=200 Hz, int=100% → 2 slots (`0x1996` + `0x0624`)
-  - Idle, freq=200 Hz, int=25% → 1 slot (`0x0624` only — `0x1996` drops)
-  - Redline, freq=200 Hz, int=25% → 2 slots (`0x0624` + `0x1996`) — both already present at lower intensity than at idle
-  - Redline, freq=200 Hz, int=100% → 2 main slots (`0x1996` + `0x1478`) plus transient slot churn during the engine ramp
+  Pulse-pair emission rate is what carries the audible intensity envelope. PitHouse drives roughly `1.7 Hz at idle → 34 Hz at redline` (linear in RPM at slider = 100%), with the slider acting as a multiplicative attenuator on that rate. In the session capture, the pair often falls to **zero pulses for 40+ consecutive seconds at stable cruise** even with the vib-stream still active at 91 Hz with slot `0x1996` — pulse-pair emission is additionally gated by engine load / dRPM-dt, not just RPM. Plugin replication: pulse-pair rate `= (slider / 100) × (1.7 + 32.3 × rpm / maxRpm)`; the load-gate isn't modelled (would need throttle telemetry).
 
-  At high RPM the host generates richer multi-harmonic effects even at low intensity slider, presumably modelling engine-rumble overtones that scale with engine load.
+- **The prior "slot allocation" intensity model in this doc was largely wrong.** A 500 ms-window sweep across the 40-min session found only **10 of 4,754 windows (0.21 %)** with two slot IDs sustained ≥ 5 frames each — and inspection at 50 ms resolution shows those are DirectInput effect-handle rollovers (slot ID advances by `0x0106 = 262` per Windows-side reallocation), not concurrent multi-slot streaming. Periods are byte-identical across the rollover, confirming a single effect being re-handled rather than parallel slots. The four "Idle / Redline × 25 % / 100 %" example cells in the prior version of this section were one-off observations at slot-rollover transitions, not a general pattern. They are removed because the slot-count model does not generalize to the rest of the session.
 
-- **Multi-harmonic layering observed at redline+200 Hz+int=100%**: slot `0x1996` streams two distinct periods in alternation — the 200 Hz fundamental (`0x050032`, ×1731) and a 1/4-frequency overtone (`0x1400C8`, ×617 + `0x1400CC`, ×594) corresponding to 50 Hz. When the freq slider is dropped to 50 Hz the fundamental disappears and only the overtone remains, suggesting the overtone is a fixed engine-model contribution that isn't freq-slider-driven.
+- **Multi-period interleaving observed at redline+200 Hz+int=100%**: slot `0x1996` streams two distinct periods in alternation — the 200 Hz fundamental (`0x050032`, ×1731) and a 1/4-frequency overtone (`0x1400C8`, ×617 + `0x1400CC`, ×594) corresponding to 50 Hz. When the freq slider is dropped to 50 Hz the fundamental disappears and only the overtone remains, suggesting the overtone is a fixed engine-model contribution that isn't freq-slider-driven. This is multi-period within one slot, not multi-slot — distinct from the (incorrect) slot-allocation intensity model above.
 
 #### `0x0A 0x01` payload schema — Gear Shift Vibration intensity (resolved 2026-05-13)
 
@@ -145,15 +161,20 @@ Verification:
 
 3930 / 13100 = 30.00% exact, confirming **linear 16-bit BE encoding with max value `0x332C`** (i.e. ~40% of `0xFFFF`'s range). The 2026-04-24 doc's "intensity 100 = `33 2c`, intensity 0 = `00 00`" anchors are fully consistent with this scaling. PitHouse pushes a `0x0A 0x01` snapshot on connect and an immediate write on each slider drag — no caching, no Apply button needed for this slider.
 
-#### Gear-shift feedback is firmware-driven (confirmed 2026-05-13)
+#### Gear-shift feedback — corrected 2026-05-24
 
-Direct test: 4 gear shifts performed with engine vibration active, then a second test of "many shifts" with engine vibration intensity set to 0 to silence the dominant `0x0A 0x05` stream. **In both tests, gear shifts produce zero host→device CDC traffic.** Per-shift windows are byte-for-byte identical to steady-state idle on every frame signature. No new frame types appear; no rate change on existing streams.
+The 2026-05-13 test ("4 gear shifts then many shifts with engine vibration silenced; in both tests gear shifts produce zero host→device CDC traffic") was wrong. Either the lever didn't actually engage during that test session, or the capture window missed the events, but the conclusion that the AB9 fires shift haptics autonomously from its mechanical sensor was definitively disproved by the 2026-05-24 captures in `usb-capture/AB9/all_gears.pcapng` and `1-N.pcapng`.
 
-This rules out paths 1 (group `0x43` push to AB9), 2 (HID-OUT on EP `0x03`), and 3 (wheelbase relay) for shift-triggered feedback. The AB9 detects gear changes via its own internal mechanical sensor, emits the new gear as a joystick button press on HID IN, and **fires its stored vibration pattern + notchiness + damping pattern from firmware** — all without host involvement. **PitHouse pushes the slider config (`0x0A 0x01`) once per slider change, and the AB9 firmware does all the rest.**
+What actually happens: PitHouse watches game gear state and fires a 3-frame burst on each transition:
+- `0x0D 0x01` (Sparse) — fires within ~50 ms of the engage/disengage trigger
+- `0x0D 0x04` (Engage) — when entering any non-neutral gear
+- `0x0D 0x06` (Disengage) — when entering neutral
 
-##### No analogue to wheelbase `cmd 0x76` shift-trigger needed
+The AB9 firmware ACKs each via the standard `0xA0` generic FFB response and plays back the stored rumble pattern (configured by the `0x0A 0x01` snapshot at session connect) in response. Without the host triggers, the firmware does **not** rumble on the mechanical-engagement event alone — verified empirically by the user 2026-05-24, who reported "Gear shift doesn't work at all" against the plugin build that omitted all three triggers.
 
-The wheelbase has a two-command pattern for gear-shift vibration: cmd `0x2E` (Group 0x29) is the stored intensity, and cmd `0x76` (Group 0x2D, `76 00 01` fire-and-forget) is a per-shift trigger that the SimHub plugin fires from game telemetry — needed because paddle-shifters are just buttons with no native shift semantics. **The AB9 needs no such trigger** because its H-pattern lever has a built-in mechanical engagement sensor; the device knows when a shift happened before the host does (the HID joystick-button event is the *output* of that internal detection, not its trigger). Searching all AB9 captures (the 2026-04-24 PitHouse-only set plus the 2026-05-13 PitHouse+AC session) shows zero short fire-and-forget commands targeting AB9 dev 0x12 during any shift event, and no SimHub plugin or PitHouse code path is observed to fire one. Conclusion: **the AB9 protocol surface intentionally has no host-side shift-trigger command**. The plugin's AB9 device manager correctly omits a `SendShiftEvent` method (see `Devices/MozaAb9DeviceManager.cs`); attempting to add one would have nothing to fire.
+##### Plugin parity with wheelbase shift-trigger pattern
+
+The wheelbase has a two-command pattern: `cmd 0x2E` (Group 0x29) is the stored intensity, and `cmd 0x76` (Group 0x2D, `76 00 01`) is the per-shift trigger the SimHub plugin fires from game telemetry. **The AB9 follows the same pattern**: `0x0A 0x01` is the stored intensity (set once on connect / slider drag), and the `0x0D 0x01`/`0x04`/`0x06` triplet is the per-shift trigger fired by `MozaPlugin.CheckAb9GearshiftEvent` on every SimHub gear-string transition. Both detectors share the `GearshiftDebounceMs` and `GearshiftVibrateOnNeutral` profile knobs so the user gets consistent behaviour across devices.
 
 ### FFB session-init handshake decoded (2026-05-15, full-session pass)
 
@@ -200,18 +221,22 @@ Full-session decode resolves the doc's previous "open schema questions" below:
 #### `0x0B 0x02 / 0x0B 0x03` engine-pulse pair — 22 byte payload
 
 ```
-0B XX [00 00 00 00] [pp pp] [pp pp] [00 00 00 00 00 00] [FF FA] 04 [aa aa] [dd] [00 00]
-   sub  4 zero pad   ╰─ phase counter (16-bit BE, duplicated) ─╯   const   tag amp16  duty pad
+0B XX [00 00 00] [pp pp] [pp pp] [00 00 00 00 00 00] [FF FA] 04 [aa aa] [00 00]
+   sub  3 zero pad ╰─ phase counter (16-bit BE, duplicated) ─╯   const   tag amp16  2-zero pad
 ```
 
-- `XX = 0x02` (pulse-on) or `0x03` (pulse-off). Pulses come in tightly-spaced ON/OFF pairs (sub-ms apart) that share the same phase counter value.
-- **Phase counter (offset 6-7 = offset 8-9, duplicated within frame)** is a 16-bit BE counter that advances monotonically across the session; advance per pair scales with RPM (small advance at idle, large advance at redline). **It is NOT a bipolar envelope sample** — the duplicated 16-bit field was the same value, not two independent samples. The duplication is likely a "phase / phase-mirror" or "expected / actual" position pair the device cross-checks.
-- `FF FA` at offset 16-17: constant signed-16 envelope param (-6 or near-max unsigned). Unchanged across all observations.
-- Tag byte `0x04` at offset 18: matches the same tag used in `0x0A 0x05`. Constant.
-- **Amplitude16 (offset 19-20)**: `23 28` = 9000 in `0x0B 0x02`, `00 00` in `0x0B 0x03`. So 0x0B 0x03 is literally "this pulse with amplitude = 0" — encoding the OFF half of a square-wave pulse as a separate frame rather than a single-frame on/off envelope.
-- **Duty byte (offset 21)**: `0x28 = 40` in 0x0B 0x02, `0x00` in 0x0B 0x03. Likely the device-side mixer level for this slot.
+Offsets are 0-indexed payload positions (the wire frame's `frame[4]` is `payload[0]`). Verified byte-for-byte against the 2026-05-13 capture across 17,603 pulse-on and 17,603 pulse-off frames (2026-05-24 re-decode):
 
-Implementation rule: monotonic phase counter that advances per-pulse-pair (RPM-driven cadence drives the rate); amplitude/duty derived from intensity slider; constants verbatim.
+- `XX = 0x02` (pulse-on) or `0x03` (pulse-off). Pulses come in tightly-spaced ON/OFF pairs (sub-ms apart) that share the same phase counter value.
+- **3 zero pad at offsets 2-4** (the prior version of this doc said "4 zero pad" — that was wrong and was the source of the engine-pulse-pair off-by-one bug in the plugin's `BuildEnginePulseFrame` pre-2026-05-24).
+- **Phase counter at offsets 5-6 = offsets 7-8 (duplicated within frame)** is a 16-bit BE counter that advances monotonically across the session; advance per pair scales with RPM (small advance at idle, large advance at redline). **It is NOT a bipolar envelope sample** — the duplicated 16-bit field was the same value, not two independent samples. The duplication is likely a "phase / phase-mirror" or "expected / actual" position pair the device cross-checks.
+- **6 zero pad at offsets 9-14**.
+- `FF FA` at offsets 15-16: constant. Unchanged across all observations.
+- Tag byte `0x04` at offset 17: matches the same tag used in `0x0A 0x05`. Constant.
+- **Amplitude16 (offsets 18-19)**: `23 28` = 9000 in `0x0B 0x02`, `00 00` in `0x0B 0x03`. So 0x0B 0x03 is literally "this pulse with amplitude = 0" — encoding the OFF half of a square-wave pulse as a separate frame rather than a single-frame on/off envelope. **Constant across the full session in both directions** — PitHouse never modulates this with slider, RPM, or freq.
+- **2 zero trailing pad at offsets 20-21** (the prior version of this doc said "duty byte 0x28 at offset 21" — that was wrong; offset 20 was misread as a duty field because of the earlier off-by-one, and the "0x28 = 40" value was the low half of amp16 (`0x2328`)).
+
+Implementation rule: monotonic phase counter that advances per-pulse-pair (RPM-driven cadence drives the rate); amp16 = `0x2328` constant for ON, `0x0000` for OFF; *intensity is encoded in pulse-pair emission rate, not amplitude* — see "Slider effects on the stream" above.
 
 #### `0x08 0x04 / 0x08 0x06` low-rate signed-pair — 11 byte payload
 
@@ -237,13 +262,23 @@ Frequency: ~0.35 Hz across the session (sparse). Likely fires per engine cycle (
 
 Implementation rule: state-driven by an RPM-cycle phase accumulator; emit the pair when the accumulator crosses a threshold; magnitude = current phase position.
 
-#### `0x0D 0x01` (newly observed, was missing from the 2026-05-13 doc) — 3 byte payload
+#### `0x0D 0x01` / `0x04` / `0x06` — per-shift trigger triplet (resolved 2026-05-24)
 
 ```
-0D 01 [01]
+0D 01 [01]   — Sparse / shift-co-fire
+0D 04 [01]   — Engage  (any non-neutral gear)
+0D 06 [01]   — Disengage / neutral
 ```
 
-3-byte frame, payload `0x0D 0x01 0x01`. First occurrence at t_rel = 53.60 s (not at session start). 241 frames over the session, ~0.10 Hz. Same shape as `0x0D 0x02/03/05`. Purpose unresolved; for plugin replication, emit at the same low rate as `0x0D 0x02/03` since the sim accepts it with the generic FFB ACK.
+All three are 3-byte fixed-payload frames, same shape as the `0x0D 0x02/03/05` keepalive/RPM-track triggers. Rates:
+
+| Trigger | Idle (2026-05-13 reference, 40 min, no shifts) | Gear cycling (2026-05-24 captures, ~10 s, active shifts) |
+|---|---|---|
+| `0x0D 0x01` | 0.10 Hz | **1.17–1.50 Hz** |
+| `0x0D 0x04` | 0 occurrences | 0.33 Hz |
+| `0x0D 0x06` | 0 occurrences | 0.17 Hz |
+
+The 2026-05-13 doc tagged `0x0D 0x01` as "purpose unresolved" and the prior plugin implementation periodically emitted it at ~0.1 Hz, then disabled it after that produced "phantom gear-shift-like vibrations every ~10 s". The phantom vibrations were the gear-shift firmware response, just fired at the wrong cadence (timer-driven instead of event-driven). 0x0D 0x01 is fired by PitHouse alongside every 0x0D 0x04 / 0x0D 0x06 trigger (often within 50 ms) and is part of the per-shift triplet, not a free-standing keepalive. Plugin replication: emit all three only on real SimHub gear-string transitions, debounced via `GearshiftDebounceMs`.
 
 #### Slot-ID table observed (2026-05-15 update)
 
@@ -266,6 +301,7 @@ For plugin replication, a **fixed slot table** is sufficient: `0x1996` for prima
 
 These survive the full-session decode and are likely not blockers for plugin replication:
 
-- The `0x0D 0x05` rate model — sub-linear with `(freq × RPM × intensity)`, intensity-sign flips at idle vs redline. For replication, drive it from the same per-RPM-cycle phase accumulator as `0x0B 0x02/03` and `0x08 0x04/06`; the rate will fall out of the cadence naturally without needing a closed-form rate model.
+- The `0x0D 0x05` rate model — varies roughly with `(freq × RPM)` but the per-second rate also shows windows of the same period band with different rates, suggesting a load-gate similar to `0x0B 0x02/03`. The 2026-05-15 "intensity-sign flip" wording in the prior version was speculative — the trigger frame's 3-byte payload doesn't contain a sign. For replication, drive it from the same per-RPM-cycle phase accumulator as `0x0B 0x02/03` and `0x08 0x04/06`; the rate will fall out of the cadence naturally without needing a closed-form rate model.
 - The eight zero bytes between slot ID and period in `0x0A 0x05`, and the four trailing zeros — static across all observations; treat as fixed protocol padding.
 - The `FF FA` constant in `0x0B 0x02/03` and the `0E 00 64 04` tail in `0x0A 0x01` vib-config — neither varies across intensity/RPM sweeps; treat as fixed protocol padding for replication.
+- The pulse-pair load-gate — `0x0B 0x02/03` stops entirely during long stable-RPM cruise (period stable at e.g. `0x250172` for 40+ seconds at 0 pulses/sec, then resumes when RPM starts changing). The trigger is presumably engine load / dRPM-dt, but the 2026-05-13 capture doesn't include game-side telemetry to confirm. Plugin replication: `(slider/100) × rpm_relative_linear_rate` is a workable approximation without throttle telemetry; a future capture with synchronized AC telemetry could resolve the exact gate predicate.

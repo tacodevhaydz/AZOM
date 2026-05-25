@@ -84,6 +84,52 @@ namespace MozaPlugin.Telemetry.Frames
         // until the wheel has emitted its post-switch END" gating.
         private volatile int _lastWheelEndMarkerTickMs;
 
+        // Live-set tracking: dashboard switches don't drop stale idxs from
+        // _catalog (preserving prior bindings is required for back-ref
+        // resolution under the wire protocol — see the parser's class
+        // docs). For consumers that need "ONLY the channels in the wheel's
+        // currently-loaded dashboard" (catalog-only profile synthesis,
+        // tier-def channel filter), we additionally track which idxs the
+        // wheel touched in the current END-marker generation and publish
+        // a masked view of the catalog. _pendingIdxs accumulates each idx
+        // (full URL or back-ref) parsed since the last END marker bump;
+        // when LastWheelEndMarker advances, _liveCatalog is rebuilt as
+        // _catalog with non-pending positions blanked, and _pendingIdxs is
+        // cleared for the next generation.
+        private readonly HashSet<int> _pendingIdxs = new HashSet<int>();
+        private volatile List<string>? _liveCatalog;
+        // Snapshot of _pendingIdxs at the last commit. Used to skip
+        // redundant updates + log lines when re-parses produce the same
+        // live set (the parse loop re-walks the full buffer each pass and
+        // can re-encounter the same END marker, so without this dedup we
+        // commit and log on every tick).
+        private HashSet<int>? _lastCommittedIdxs;
+        // END-marker value at last commit. Diagnostic only (used in log).
+        private uint _committedEndMarker;
+        // Set of every markerValue that has already triggered a commit
+        // since session start. Per the docs (session-02-channel-catalog.md
+        // §"Back-references and END-marker generations"), the wheel emits:
+        //   (a) keepalive ENDs at the CURRENT generation's marker (same
+        //       value as last commit — handled by the markerValue ==
+        //       _committedEndMarker fast path);
+        //   (b) historical re-affirmation ENDs at PRIOR generations'
+        //       markers, with full-URL records before them re-declaring
+        //       the prior dashboard's idxs (so the wheel's back-ref table
+        //       stays consistent on the host). These come at DIFFERENT
+        //       markerValues from the current generation but are NOT real
+        //       switches — they're the wheel replaying past mappings.
+        // The doc explicitly states "switch END markers bump to a new
+        // value", so any markerValue we've already committed in this
+        // session cannot be a real switch — it must be re-affirmation.
+        // Tracking the full set lets us drop case (b) cleanly; the prior
+        // single-uint check only caught case (a) and let (b) overwrite
+        // _liveCatalog with stale prior-dashboard idxs (observed
+        // 2026-05-24 on slot=1→slot=0 contracting switches: parse pass
+        // produced end=24→3 liveIdxs={1,2,3} followed by end=3→24
+        // liveIdxs={1..18}, leaving _liveCatalog with the 18 ETS2-ATS
+        // idxs instead of the 3 Simple Rally idxs).
+        private readonly HashSet<uint> _committedMarkers = new HashSet<uint>();
+
         /// <summary>u32 value of the most-recently-seen wheel-side END
         /// marker (tag 0x06) in a catalog push. PitHouse echoes this in
         /// its own tier-def END markers as a version handshake — see
@@ -92,8 +138,21 @@ namespace MozaPlugin.Telemetry.Frames
         public int LastWheelEndMarkerTickMs => _lastWheelEndMarkerTickMs;
 
         /// <summary>Latest parsed catalog (idx-1 positional, "" for unannounced
-        /// gaps). Null until the first parse succeeds. Reads are volatile.</summary>
+        /// gaps). Null until the first parse succeeds. Reads are volatile.
+        /// Contains URLs from every dashboard the wheel has ever loaded in
+        /// the current session — stale idxs from prior dashes remain so
+        /// back-ref resolution keeps working. Callers that need the
+        /// current dash's URLs ONLY should use <see cref="LiveCatalog"/>.</summary>
         public IReadOnlyList<string>? Catalog => _catalog;
+
+        /// <summary>Catalog filtered to the wheel's most-recently-committed
+        /// END-marker generation: same positional shape as
+        /// <see cref="Catalog"/>, but slots not touched in the current
+        /// generation are blanked (empty strings). Null until the first
+        /// END marker bump observes a non-empty pending set. Use this for
+        /// tier-def synthesis and channel-mapping UI — drops stale idxs
+        /// from prior dashes after a switch.</summary>
+        public IReadOnlyList<string>? LiveCatalog => _liveCatalog;
 
         /// <summary>Channel count in the latest catalog, or 0 if none.</summary>
         public int Count => _catalog?.Count ?? 0;
@@ -287,6 +346,11 @@ namespace MozaPlugin.Telemetry.Frames
             _catalog = null;
             _idxByUrl = null;
             _lastActivityMs = 0;
+            _liveCatalog = null;
+            _committedEndMarker = 0;
+            _committedMarkers.Clear();
+            _lastCommittedIdxs = null;
+            _pendingIdxs.Clear();
         }
 
         /// <summary>Returns the total buffer length (across sessions) the last
@@ -365,6 +429,17 @@ namespace MozaPlugin.Telemetry.Frames
             _lastParseLen = totalBytes;
             if (snapshots.Count == 0) return;
 
+            // Clear pending at start: the parse loop walks the whole buffer
+            // each pass and rebuilds pending in byte order. Carrying pending
+            // across passes would let URLs from an in-flight (uncommitted)
+            // generation pollute the FIRST commit of the next pass — that
+            // commit would erroneously include them in a prior generation's
+            // live set. The buffer is append-only, so any in-flight URLs
+            // get re-parsed on the next pass and accumulate correctly into
+            // a fresh pending; when their END marker eventually lands they
+            // commit cleanly without contamination from prior carry-over.
+            _pendingIdxs.Clear();
+
             var parsed = new Dictionary<int, string>();
             // Per-session diagnostic counters; aggregated at end for the
             // summary log line, but also emitted per-session below so
@@ -426,10 +501,120 @@ namespace MozaPlugin.Telemetry.Frames
                 //
                 // Catalog stored as List<string?> indexed by idx-1; nulls fill
                 // unannounced gaps. Merge writes URLs at canonical positions.
+                // Live-set commit helper. Called inline whenever the parse
+                // loop crosses an END marker (tag 0x06): the records BEFORE
+                // the marker belong to one generation, records AFTER belong
+                // to the next. By committing at boundaries we cleanly
+                // separate the wheel's keepalive re-announcements
+                // (back-refs → END → next keepalive) from a real dashboard
+                // switch's set, so post-switch live catalogs aren't
+                // polluted by stale prior-dash back-refs that landed in
+                // _pendingIdxs in the same parse pass.
+                // Commit live set for the just-walked END marker.
+                // `markerValue` is the u32 value of THIS END marker (taken
+                // from buffer[i+5..i+8] at the parse loop's current position),
+                // not _lastWheelEndMarker — which holds the LATEST end marker
+                // value in the buffer set by the pre-parse wire scan and is
+                // wrong for any non-final END in a multi-END buffer.
+                //
+                // Within a generation, the FIRST commit (markerValue differs
+                // from _committedEndMarker) defines that dashboard's channel
+                // set. Subsequent commits at the SAME markerValue are
+                // current-generation keepalive re-affirmation. Subsequent
+                // commits at a DIFFERENT-BUT-ALREADY-SEEN markerValue are
+                // PRIOR-GENERATION re-affirmation: the wheel re-declares
+                // older dashboards' full-URL mappings (so its back-ref table
+                // stays consistent on the host) terminated by the END
+                // marker of THAT older generation. Both cases must drop —
+                // commits at any previously-committed marker would let
+                // stale prior-dashboard idxs overwrite the current
+                // dashboard's _liveCatalog. The doc states "switch END
+                // markers bump to a new value", so a real switch always
+                // brings a markerValue not yet in _committedMarkers.
+                // Discarding same-marker bursts also implicitly preserves
+                // the FIRST commit's idxs against later subset bursts
+                // (e.g. wheel emitting {1,2,3} after first committing
+                // {1..9} would otherwise blank channels 4..9 — the
+                // dropped-Gear case).
+                void CommitLiveSet(uint markerValue)
+                {
+                    if (_pendingIdxs.Count == 0) return;
+
+                    if (_committedMarkers.Contains(markerValue))
+                    {
+                        // Either current-generation keepalive (markerValue
+                        // == _committedEndMarker) or prior-generation
+                        // re-affirmation (markerValue is some earlier
+                        // committed marker). Either way the first commit
+                        // at this markerValue was authoritative; drop.
+                        _pendingIdxs.Clear();
+                        return;
+                    }
+
+                    var targetIdxs = new HashSet<int>(_pendingIdxs);
+
+                    // Dedup: skip re-commit when set matches the last one.
+                    if (_lastCommittedIdxs != null && _lastCommittedIdxs.SetEquals(targetIdxs))
+                    {
+                        _pendingIdxs.Clear();
+                        return;
+                    }
+                    // Build masked positional catalog. URL at each idx
+                    // resolves from parsed (latest in this pass) first,
+                    // falling back to _catalog (prior generations).
+                    int maxIdx = 0;
+                    foreach (var ix in targetIdxs) if (ix > maxIdx) maxIdx = ix;
+                    int catCount = _catalog?.Count ?? 0;
+                    int size = Math.Max(maxIdx, catCount);
+                    var masked = new List<string>(size);
+                    for (int k = 0; k < size; k++)
+                    {
+                        int oneIdx = k + 1;
+                        if (targetIdxs.Contains(oneIdx))
+                        {
+                            if (parsed.TryGetValue(oneIdx, out var pu))
+                                masked.Add(pu);
+                            else if (_catalog != null && k < _catalog.Count)
+                                masked.Add(_catalog[k]);
+                            else
+                                masked.Add("");
+                        }
+                        else
+                        {
+                            masked.Add("");
+                        }
+                    }
+                    _liveCatalog = masked;
+                    MozaLog.Debug(
+                        $"[Moza] Live catalog committed: end={_committedEndMarker}→{markerValue} " +
+                        $"liveIdxs={{{string.Join(",", targetIdxs.OrderBy(x => x))}}}");
+                    _committedEndMarker = markerValue;
+                    _committedMarkers.Add(markerValue);
+                    _lastCommittedIdxs = targetIdxs;
+                    _pendingIdxs.Clear();
+                }
+
                 int i = 0;
                 while (i + 6 < buffer.Length)
                 {
                     byte tag = buffer[i];
+                    if (tag == 0x06)
+                    {
+                        // END marker: tag 0x06, size=4 (LE), u32 value.
+                        // Records BEFORE this byte belong to the now-ending
+                        // generation; records AFTER belong to the next.
+                        if (buffer[i + 1] == 0x04 && buffer[i + 2] == 0
+                            && buffer[i + 3] == 0 && buffer[i + 4] == 0)
+                        {
+                            uint markerValue = (uint)(buffer[i + 5]
+                                | (buffer[i + 6] << 8)
+                                | (buffer[i + 7] << 16)
+                                | (buffer[i + 8] << 24));
+                            CommitLiveSet(markerValue);
+                            i += 9;
+                            continue;
+                        }
+                    }
                     if (tag != 0x04) { i++; continue; }
                     uint param = (uint)(buffer[i + 1] | (buffer[i + 2] << 8) |
                                  (buffer[i + 3] << 16) | (buffer[i + 4] << 24));
@@ -447,6 +632,19 @@ namespace MozaPlugin.Telemetry.Frames
                         // Backref: payload is just the idx byte. Resolve URL from
                         // the existing catalog at this idx; record the same idx
                         // in our parse map so merge preserves the binding.
+                        //
+                        // Back-refs do NOT add to _pendingIdxs (the live set).
+                        // The wheel emits back-refs for every historical idx
+                        // it has ever announced as part of its periodic
+                        // keepalive — they're indistinguishable on the wire
+                        // from "this idx is part of the new dashboard". If
+                        // we credited back-refs to the live set, post-switch
+                        // commits would balloon with stale historical idxs
+                        // that aren't actually in the current dashboard.
+                        // Full URL records (handled below) ARE unambiguous:
+                        // the wheel only emits a full URL when the dashboard
+                        // declares that idx, so the live set is built solely
+                        // from full URLs (+ prefix/abbrev forms).
                         if (existingCatalog != null && idx >= 1 && idx <= existingCatalog.Count
                             && !string.IsNullOrEmpty(existingCatalog[idx - 1]))
                         {
@@ -461,6 +659,19 @@ namespace MozaPlugin.Telemetry.Frames
                         continue;
                     }
 
+                    // Accepted URL prefixes on the wire:
+                    //   "v1/"            literal (no abbreviation)
+                    //   0x01             abbreviation for "v1/gameData/"
+                    //   0x5C 0x31  "\1"  abbreviation for "v1/gameData/"
+                    //   0x5C 0x70  "\p"  abbreviation for "v1/gameData/patch/"
+                    // The `\p` form was missing — channels like
+                    // `patch/TrackPositionPercent` were emitted by the wheel
+                    // as `\pTrackPositionPercent` and rejected here, never
+                    // entered _pendingIdxs, and got blanked out of LiveCatalog
+                    // on the dashboard-switch commit (the slot was visible to
+                    // the wheel but invisible to host synth → channel missing
+                    // from the channel-mapping grid and from the live tier-
+                    // def we sub back).
                     bool plausible = urlLen >= 3
                         && ((buffer[urlStart] == (byte)'v'
                              && buffer[urlStart + 1] == (byte)'1'
@@ -468,7 +679,8 @@ namespace MozaPlugin.Telemetry.Frames
                             || buffer[urlStart] == 0x01
                             || (buffer[urlStart] == 0x5C
                                 && urlLen >= 4
-                                && buffer[urlStart + 1] == 0x31));
+                                && (buffer[urlStart + 1] == 0x31
+                                    || buffer[urlStart + 1] == 0x70)));
                     if (!plausible) { sPlausReject++; i++; continue; }
 
                     // Stricter check: validate every byte of the URL body is in
@@ -488,7 +700,9 @@ namespace MozaPlugin.Telemetry.Frames
                     {
                         scanStart = urlStart + 1; scanLen = urlLen - 1;
                     }
-                    else if (buffer[urlStart] == 0x5C && buffer[urlStart + 1] == 0x31)
+                    else if (buffer[urlStart] == 0x5C
+                             && (buffer[urlStart + 1] == 0x31
+                                 || buffer[urlStart + 1] == 0x70))
                     {
                         scanStart = urlStart + 2; scanLen = urlLen - 2;
                     }
@@ -522,12 +736,27 @@ namespace MozaPlugin.Telemetry.Frames
                         url = "v1/gameData/" + suffix;
                         sAbbr++;
                     }
+                    else if (buffer[urlStart] == 0x5C && buffer[urlStart + 1] == 0x70)
+                    {
+                        // \p (0x5C 0x70) abbreviation for "v1/gameData/patch/".
+                        // Observed for patch/TrackPositionPercent (track
+                        // completion %) and likely other patch/* channels that
+                        // Telemetry.json knows about — patch/TrackName,
+                        // patch/DisplayTrackName, patch/GameName, etc.
+                        url = "v1/gameData/patch/" + Encoding.ASCII.GetString(
+                            buffer, urlStart + 2, urlLen - 2);
+                        sAbbr++;
+                    }
                     else
                     {
                         url = Encoding.ASCII.GetString(buffer, urlStart, urlLen);
                         sFull++;
                     }
-                    if (idx >= 1) parsed[idx] = url;
+                    if (idx >= 1)
+                    {
+                        parsed[idx] = url;
+                        _pendingIdxs.Add(idx);
+                    }
                     i += 5 + (int)param;
                 }
 
@@ -595,6 +824,11 @@ namespace MozaPlugin.Telemetry.Frames
                         $"[Moza] Wheel channel catalog updated (size {prior?.Count ?? 0}→{merged.Count}):{diff}");
                 }
             }
+
+            // Live-set commits happen inline in the parse loop (CommitLiveSet
+            // helper above) at each tag-0x06 END marker. By the time we get
+            // here, every committed generation has already been published
+            // to _liveCatalog. No post-merge commit needed.
         }
 
         /// <summary>Compare two catalogs for value-equality. Helper used by

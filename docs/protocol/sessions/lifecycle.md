@@ -24,6 +24,56 @@ Port field duplicated (observed every device-initiated open across 4 captures). 
 
 Type=0x00 end marker: **6-byte payload**: `7C 00 [session] 00 [ack_lo] [ack_hi]` (ack_seq may be zero when reclaiming stale session). Length byte must equal 6. A 4-byte payload advertised as length 6 causes wheel (and `sim/wheel_sim.py`) to over-read into next frame and de-sync.
 
+### Host-side stale-session reclamation (cold start vs reload)
+
+The host emits a burst of type=0x00 close frames at startup to reclaim
+any sessions left open by a prior host process. Range depends on whether
+this is a **cold start in a fresh OS process** or a **plugin reload
+within the same SimHub process** (game-switch via the plugin's
+persistent-wire pattern):
+
+- **Cold start** → close `0x01..0x0A` (wide). Covers host-managed slots
+  PLUS the wheel-managed ones (`0x04..0x0A`). On CS-Pro / KS-Pro the
+  wheel was observed to silently swallow fresh session-open frames when
+  stale wheel-side session state from a prior SimHub process was still
+  live; manually toggling the plugin "Connection enabled" off and on
+  recovered the wedge (because that path closes the OS serial port and
+  forces the wheel to drop its sessions) but a SimHub restart alone did
+  not. The wide close emulates the off/on recovery proactively. The
+  configJson handshake re-runs on next connect anyway, so closing the
+  wheel-managed sessions on cold start doesn't break anything that
+  wasn't going to be re-established a few frames later.
+
+- **Plugin reload mid-SimHub** (persistent wire reuse) → close `0x01..0x03`
+  only. Wheel-managed `0x04..0x0A` are intentionally left intact so the
+  configJson handshake (sess=0x09 / 0x0a — see [`compressed-0x09-0x0a.md`](compressed-0x09-0x0a.md))
+  stays bound; if the host closed those on every game switch the wheel
+  would need to re-emit its full configJson burst and the dashboard
+  would re-render. PitHouse matches this pattern — captures show no
+  host close-burst on game switches.
+
+`TryCloseSession(session, 500ms)` waits up to 500 ms for the wheel's
+fc:00 close-ack before moving on; an ack timeout is non-fatal and the
+host proceeds to the open phase regardless. The wheel reliably acks
+close frames for sessions it considers open and silently ignores closes
+for sessions it considers closed.
+
+### Plugin-side gating: don't emit close frames at all if the dashboard
+pipeline never ran
+
+`CloseHostSessions()` (called from the plugin's `TelemetrySender.Stop()`
+to clean-close `0x01..0x03` on shutdown / reload) is additionally gated
+on `MozaPlugin.ShouldDriveDashboard()`. When the wheel is known to have
+no display (`WheelModelInfo.HasDisplay == false` — `CS V2.1`, `KS`,
+`GS V2P`, `TSW`, `RS V2`, original `CS`), the host never opened sessions
+`0x01..0x03` in the first place, and emitting closes for them just adds
+noise on group `0x43 dev=0x17`. The screenless wheel's command parser
+was observed to mis-handle the unexpected session-control frames and
+park into a half-engaged state where settings reads timed out — see the
+"Screenless wheel session traffic" note in
+[`../devices/wheel-0x17.md`](../devices/wheel-0x17.md) if added (or
+file under `findings/` per project convention).
+
 ### Port / session-byte allocation
 
 **2026-04 firmware (old):** global monotonic counter shared between host and wheel. Host picks low numbers (1, 2, 3...), wheel picks its own (6, 8, 9...). Next host allocation accounts for wheel-allocated ports. Counter resets on wheel power cycle.

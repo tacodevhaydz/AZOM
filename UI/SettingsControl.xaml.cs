@@ -1,4 +1,5 @@
 using System;
+using System.Collections.Generic;
 using System.Windows;
 using System.Windows.Controls;
 using System.Windows.Documents;
@@ -7,16 +8,23 @@ using System.Windows.Media;
 using System.Windows.Shapes;
 using System.Windows.Threading;
 using MozaPlugin.Devices;
+using MozaPlugin.Resources;
 using MozaPlugin.Telemetry;
 using MozaPlugin.Telemetry.Dashboard;
 using MozaPlugin.Telemetry.Era;
 using MozaPlugin.UI;
+using static MozaPlugin.UI.UiHelpers;
 using SerialTrafficCapture = MozaPlugin.Diagnostics.SerialTrafficCapture;
 
 namespace MozaPlugin
 {
     public partial class SettingsControl : UserControl
     {
+        // Static reference so per-device controls (e.g. MozaWheelSettingsControl's
+        // Inputs sub-tab) can forward user input back to the existing plugin-pane
+        // handlers + settings persistence path. Cleared in OnUnloadedStopTimers.
+        internal static SettingsControl? Instance { get; private set; }
+
         private readonly MozaPlugin _plugin;
         private readonly MozaDeviceManager _device;
         private readonly MozaData _data;
@@ -28,8 +36,27 @@ namespace MozaPlugin
         // Per-pedal Y-curve UI bindings, cached after InitializeComponent so
         // ApplyPedalCurvePreset can take an arrays pair instead of 10 args.
         private Slider[]? _throttleCurveSliders, _brakeCurveSliders, _clutchCurveSliders;
-        private TextBlock[]? _throttleCurveLabels, _brakeCurveLabels, _clutchCurveLabels;
+        private TextBox[]? _throttleCurveLabels, _brakeCurveLabels, _clutchCurveLabels;
         private readonly DateTime[] _buttonLastPressed = new DateTime[MozaData.MaxButtons];
+
+        // 500ms-refresh change-detection caches. RefreshDisplay walks every
+        // tab even when its visuals haven't changed, which lit up the UI thread
+        // and the GC. The fields below let the per-tab refresh short-circuit
+        // when nothing observable changed since the previous tick.
+        private byte[]? _md5CachedBytes;     // reference key (not contents)
+        private string? _md5CachedHex;
+        private DateTime _wheelFilesLastCapturedAt;
+        private string? _wheelFilesLastPickedName;
+        private int _wheelFilesLastRowCount = -1;
+        // Pre-allocated Run pool for UpdateActiveButtons. 30Hz cadence × N buttons
+        // would otherwise create N Runs/frame; we recycle them in place.
+        private Run[]? _activeButtonRuns;
+        private Run[]? _activeButtonSeparatorRuns;
+
+        // Cache of the previous tick's hint list so RefreshDisplay only assigns
+        // ItemsSource when the set genuinely changes. ItemsControl rebuilds its
+        // visual tree on every assignment; the diff keeps it stable at 2 Hz.
+        private IReadOnlyList<StatusHint>? _lastHints;
 
         public SettingsControl(MozaPlugin plugin)
         {
@@ -71,18 +98,22 @@ namespace MozaPlugin
                 }
                 DisableSerialProbeFallbackCheck.IsChecked = plugin.Settings.DisableSerialProbeFallback;
                 DisableAb9DetectionCheck.IsChecked = plugin.Settings.DisableAb9Detection;
-                StartCaptureOnNextLaunchCheck.IsChecked = plugin.Settings.StartCaptureOnNextLaunch;
-                // Reflect any in-flight capture (e.g. armed from a previous session
-                // and started in MozaPlugin.Init) so the user sees Stop instead of
-                // a stale Start button when they open the Diagnostics tab.
+                AlwaysCaptureOnStartupCheck.IsChecked = plugin.Settings.AlwaysCaptureOnStartup;
+                // Reflect any in-flight capture (auto-started by MozaPlugin.Init when
+                // AlwaysCaptureOnStartup is on) so the user sees Stop instead of a stale
+                // Start button when they open the Diagnostics tab.
                 if (SerialTrafficCapture.Instance.Enabled)
                 {
                     SerialCaptureToggleButton.Content = "Stop capture";
-                    SerialCaptureStatusText.Text = "capturing… (armed from prior session — click Stop when ready)";
+                    SerialCaptureStatusText.Text = "capturing… (always-capture is on — click Stop when ready)";
                 }
             }
 
             InitProfilesTab();
+            InitRedesignControls();
+            InitSdkTab();
+            InitLanguageCombo();
+            Instance = this;
 
             _refreshTimer = new DispatcherTimer { Interval = TimeSpan.FromMilliseconds(500) };
             _refreshTimer.Tick += RefreshDisplay;
@@ -108,18 +139,29 @@ namespace MozaPlugin
             // Calling Start() twice would double the tick rate.
             if (!_refreshTimer.IsEnabled) _refreshTimer.Start();
             if (!_steeringAngleTimer.IsEnabled) _steeringAngleTimer.Start();
+            if (_bandwidthTimer != null && !_bandwidthTimer.IsEnabled) _bandwidthTimer.Start();
         }
 
         private void OnUnloadedStopTimers(object sender, RoutedEventArgs e)
         {
             // Stop only — leave Tick handlers attached so a subsequent Loaded
             // re-Start picks up where it left off. Detaching here permanently
-            // killed the timers if the control was reloaded.
+            // killed the timers if the control was reloaded. The _bandwidthTimer
+            // MUST be stopped on Unload too: its Tick captures `this`, so a
+            // running DispatcherTimer roots the entire SettingsControl past
+            // panel-close. Across many open/close cycles this leaked one
+            // SettingsControl + _plugin/_data graph per cycle until process exit.
             _refreshTimer.Stop();
             _steeringAngleTimer.Stop();
+            _bandwidthTimer?.Stop();
+            // SDK CoAP server fires RecentRequestAppended on its receive
+            // thread; unsubscribe so a torn-down SettingsControl can be GC'd
+            // without the server's event list pinning it. Re-subscribe
+            // happens on the next refresh tick after Loaded fires.
+            UnsubscribeFromSdkServer();
+            if (ReferenceEquals(Instance, this)) Instance = null;
         }
 
-        private MozaPluginSettings _settings => _plugin.Settings;
 
         // ===== Refresh =====
 
@@ -141,8 +183,12 @@ namespace MozaPlugin
 
         private void RefreshDisplay(object sender, EventArgs e)
         {
-            RestartBanner.Visibility = _plugin.DeviceDefinitionDeployed
-                ? Visibility.Visible : Visibility.Collapsed;
+            var hints = StatusHintBuilder.Build(_plugin, DateTime.UtcNow);
+            if (!StatusHint.ListEquals(_lastHints, hints))
+            {
+                HintBanners.ItemsSource = hints;
+                _lastHints = hints;
+            }
 
             using (_suppressor.Begin())
             {
@@ -152,11 +198,11 @@ namespace MozaPlugin
                 RefreshPedalsTab();
                 RefreshHubTab();
                 RefreshAb9Tab();
+                RefreshMBoosterTab();
                 InitTelemetryTab();
-                RefreshExtendedLedGroups();
                 RefreshDashboardUploadTab();
                 RefreshWheelFilesTab();
-                RefreshDiagnosticsTab();
+                RefreshSdkTabTick();
             }
         }
 
@@ -169,10 +215,12 @@ namespace MozaPlugin
             {
                 double deg = hidReader!.GetCurrentAngleDegrees(_data.MaxAngle * 2);
                 SteeringAngleLabel.Text = $"{deg:0;-0;0}°";
+                UpdateRedesignSteeringAngle(deg, valid: true);
             }
             else
             {
                 SteeringAngleLabel.Text = "--";
+                UpdateRedesignSteeringAngle(0, valid: false);
             }
 
             if (connected)
@@ -198,6 +246,12 @@ namespace MozaPlugin
 
             UpdateActiveButtons(connected);
             UpdateHandbrakeButtonStatus(connected);
+
+            // Phase 6: fan out live HID data to the per-device wheel control's
+            // Inputs sub-tab so its paddle bars + active-button text update at
+            // the same 30 Hz cadence as the (now hidden) plugin-pane controls.
+            try { global::MozaPlugin.Devices.MozaWheelSettingsControl.Instance?.PushInputsLiveData(_data); }
+            catch { }
         }
 
         private void UpdateActiveButtons(bool connected)
@@ -209,9 +263,24 @@ namespace MozaPlugin
                 return;
             }
 
+            // Pool the Run objects so the 30Hz refresh doesn't allocate
+            // a fresh Run per visible button (~720 allocations/sec on a
+            // 24-button wheel). The pool sizes match MozaData.MaxButtons.
+            if (_activeButtonRuns == null)
+            {
+                _activeButtonRuns = new Run[MozaData.MaxButtons];
+                _activeButtonSeparatorRuns = new Run[MozaData.MaxButtons];
+                for (int i = 0; i < MozaData.MaxButtons; i++)
+                {
+                    _activeButtonRuns[i] = new Run((i + 1).ToString());
+                    _activeButtonSeparatorRuns[i] = new Run(", ");
+                }
+            }
+
             var now = DateTime.UtcNow;
-            var inlines = new System.Collections.Generic.List<Inline>();
             int count = _data.ButtonCount;
+            ActiveButtonsText.Inlines.Clear();
+            int emitted = 0;
             for (int i = 0; i < count; i++)
             {
                 bool pressed = _data.ButtonStates[i];
@@ -220,23 +289,28 @@ namespace MozaPlugin
 
                 if ((now - _buttonLastPressed[i]).TotalSeconds < 1.0)
                 {
-                    if (inlines.Count > 0)
-                        inlines.Add(new Run(", "));
+                    if (emitted > 0)
+                        ActiveButtonsText.Inlines.Add(_activeButtonSeparatorRuns![emitted - 1]);
 
-                    var run = new Run((i + 1).ToString());
+                    var run = _activeButtonRuns[i];
                     if (pressed)
                     {
                         run.FontWeight = FontWeights.Bold;
                         run.Foreground = Brushes.White;
                     }
-                    inlines.Add(run);
+                    else
+                    {
+                        // Revert to inherited TextBlock defaults so a fade-out
+                        // button doesn't keep the bold/white styling from its press.
+                        run.ClearValue(Run.FontWeightProperty);
+                        run.ClearValue(Run.ForegroundProperty);
+                    }
+                    ActiveButtonsText.Inlines.Add(run);
+                    emitted++;
                 }
             }
 
-            ActiveButtonsText.Inlines.Clear();
-            if (inlines.Count > 0)
-                ActiveButtonsText.Inlines.AddRange(inlines);
-            else
+            if (emitted == 0)
                 ActiveButtonsText.Inlines.Add(new Run("None"));
         }
 
@@ -254,6 +328,7 @@ namespace MozaPlugin
         {
             ConnectionIndicator.Fill = _data.IsConnected ? Brushes.LimeGreen : Brushes.Gray;
             ConnectionLabel.Text = _data.IsConnected ? "Connected" : "Disconnected";
+            UpdateRedesignLiveDisplays();
 
             string tempUnit = _data.UseFahrenheit ? "°F" : "°C";
             McuTempLabel.Text = _data.IsBaseConnected ? $"{ConvertTemp(_data.McuTemp):F0} {tempUnit}" : "--";
@@ -263,14 +338,14 @@ namespace MozaPlugin
             // Reverse expression: *2 (raw → display degrees)
             double rot = _data.Limit * 2.0;
             RotationSlider.Value = Clamp(rot, 90, 2700);
-            RotationValue.Text = $"{rot:F0}°";
+            SetValueText(RotationValue, $"{rot:F0}°");
 
             double ffb = _data.FfbStrength / 10.0;
             FfbStrengthSlider.Value = Clamp(ffb, 0, 100);
-            FfbStrengthValue.Text = $"{ffb:F0}%";
+            SetValueText(FfbStrengthValue, $"{ffb:F0}%");
 
             TorqueSlider.Value = Clamp(_data.Torque, 50, 100);
-            TorqueValue.Text = $"{_data.Torque}%";
+            SetValueText(TorqueValue, $"{_data.Torque}%");
 
             // Performance output (cmd 0x1E base = TempStrategy): 0 = Reserved, 1 = Full
             int perf = _data.TempStrategy;
@@ -281,16 +356,16 @@ namespace MozaPlugin
             if (gs < 0) gs = 0;
             if (gs > 5) gs = 5;
             GearshiftVibrationSlider.Value = gs;
-            GearshiftVibrationValue.Text = gs.ToString();
+            SetValueText(GearshiftVibrationValue, gs.ToString());
 
             double spd = _data.Speed / 10.0;
             SpeedSlider.Value = Clamp(spd, 0, 200);
-            SpeedValue.Text = $"{spd:F0}%";
+            SetValueText(SpeedValue, $"{spd:F0}%");
 
             SetSliderPercent(DamperSlider, DamperValue, _data.Damper / 10.0, 0, 100);
             SetSliderPercent(FrictionSlider, FrictionValue, _data.Friction / 10.0, 0, 100);
             InertiaSlider.Value = Clamp(_data.Inertia / 10.0, 100, 500);
-            InertiaValue.Text = $"{_data.Inertia / 10.0:F0}";
+            SetValueText(InertiaValue, $"{_data.Inertia / 10.0:F0}");
             SetSliderPercent(SpringSlider, SpringValue, _data.Spring / 10.0, 0, 100);
 
             FfbReverseCheck.IsChecked = _data.FfbReverse != 0;
@@ -301,18 +376,18 @@ namespace MozaPlugin
             SetSliderPercent(GameSpringSlider, GameSpringValue, _data.GameSpring / 2.55, 0, 100);
 
             SpeedDampingSlider.Value = Clamp(_data.SpeedDamping, 0, 100);
-            SpeedDampingValue.Text = $"{_data.SpeedDamping}%";
+            SetValueText(SpeedDampingValue, $"{_data.SpeedDamping}%");
             SpeedDampingPointSlider.Value = Clamp(_data.SpeedDampingPoint, 0, 400);
-            SpeedDampingPointValue.Text = $"{_data.SpeedDampingPoint} kph";
+            SetValueText(SpeedDampingPointValue, $"{_data.SpeedDampingPoint} kph");
 
             ProtectionCheck.IsChecked = _data.Protection != 0;
             NaturalInertiaSlider.Value = Clamp(_data.NaturalInertia, 100, 4000);
-            NaturalInertiaValue.Text = $"{_data.NaturalInertia}";
+            SetValueText(NaturalInertiaValue, $"{_data.NaturalInertia}");
 
             double stiff = (_data.SoftLimitStiffness / (400.0 / 9.0)) - 2.25 + 1.0;
             stiff = Math.Round(Clamp(stiff, 1, 10));
             SoftLimitStiffnessSlider.Value = stiff;
-            SoftLimitStiffnessValue.Text = $"{stiff:F0}";
+            SetValueText(SoftLimitStiffnessValue, $"{stiff:F0}");
             SoftLimitRetainCheck.IsChecked = _data.SoftLimitRetain != 0;
 
             StandbyCheck.IsChecked = _data.WorkMode != 0;
@@ -616,7 +691,7 @@ namespace MozaPlugin
             SetComboSafe(WheelPaddlesModeCombo, _data.WheelPaddlesMode);
             UpdatePaddlePanelVisibility(_data.WheelPaddlesMode);
             WheelClutchPointSlider.Value = Clamp(_data.WheelClutchPoint, 0, 100);
-            WheelClutchPointValue.Text = $"{_data.WheelClutchPoint}%";
+            SetValueText(WheelClutchPointValue, $"{_data.WheelClutchPoint}%");
 
             bool perKnob = _data.WheelKnobSignalModeSupported;
             KnobModeLegacyPanel.Visibility = perKnob ? Visibility.Collapsed : Visibility.Visible;
@@ -748,14 +823,14 @@ namespace MozaPlugin
             HandbrakeButtonStatus.Visibility = buttonMode ? Visibility.Visible : Visibility.Collapsed;
 
             HandbrakeThresholdSlider.Value = Clamp(_data.HandbrakeButtonThreshold, 0, 100);
-            HandbrakeThresholdValue.Text = $"{_data.HandbrakeButtonThreshold}%";
+            SetValueText(HandbrakeThresholdValue, $"{_data.HandbrakeButtonThreshold}%");
 
             HandbrakeDirectionCheck.IsChecked = _data.HandbrakeDirection != 0;
 
             HandbrakeMinSlider.Value = Clamp(_data.HandbrakeMin, 0, 100);
-            HandbrakeMinValue.Text = $"{_data.HandbrakeMin}%";
+            SetValueText(HandbrakeMinValue, $"{_data.HandbrakeMin}%");
             HandbrakeMaxSlider.Value = Clamp(_data.HandbrakeMax, 0, 100);
-            HandbrakeMaxValue.Text = $"{_data.HandbrakeMax}%";
+            SetValueText(HandbrakeMaxValue, $"{_data.HandbrakeMax}%");
 
             SetSliderRaw(HbY1Slider, HbY1Value, _data.HandbrakeCurve[0], 0, 100, "");
             SetSliderRaw(HbY2Slider, HbY2Value, _data.HandbrakeCurve[1], 0, 100, "");
@@ -809,37 +884,12 @@ namespace MozaPlugin
 
         // ===== Helpers =====
 
-        private void SetSliderPercent(Slider slider, TextBlock label, double value, double min, double max)
-        {
-            slider.Value = Clamp(value, min, max);
-            label.Text = $"{value:F0}%";
-        }
-
-        private static void SetComboSafe(ComboBox combo, int index)
-        {
-            if (index >= 0 && index < combo.Items.Count)
-                combo.SelectedIndex = index;
-        }
+        // SetSliderPercent, SetSliderRaw, SetComboSafe, Clamp moved to UI/UiHelpers.
 
         private double ConvertTemp(int raw)
         {
             double celsius = raw / 100.0;
             return _data.UseFahrenheit ? celsius * 9.0 / 5.0 + 32.0 : celsius;
-        }
-
-        private static double Clamp(double value, double min, double max)
-        {
-            if (value < min) return min;
-            if (value > max) return max;
-            return value;
-        }
-
-        // ===== Helpers (new) =====
-
-        private void SetSliderRaw(Slider slider, TextBlock label, int value, int min, int max, string suffix)
-        {
-            slider.Value = Clamp(value, min, max);
-            label.Text = $"{value}{suffix}";
         }
 
         // ===== Generic slider-handler helpers =====
@@ -848,7 +898,7 @@ namespace MozaPlugin
         // is mid-flight, round the new value, paint the label, commit it to the
         // data model + device, then queue a settings save. The per-slider commit
         // lambda captures which data field and which device command to use.
-        private void OnIntSliderChanged(double newValue, TextBlock label, string suffix,
+        private void OnIntSliderChanged(double newValue, TextBox label, string suffix,
             Action<int> commit)
         {
             if (_suppressEvents) return;
@@ -861,7 +911,7 @@ namespace MozaPlugin
         // Min/max pair sliders additionally clamp against the sibling bound and
         // bounce the slider back without re-firing this handler.
         private void OnMinMaxSliderChanged(double newValue, Slider self, int otherBound,
-            bool isMin, TextBlock label, Action<int> commit)
+            bool isMin, TextBox label, Action<int> commit)
         {
             if (_suppressEvents) return;
             int v = (int)Math.Round(newValue);
@@ -873,6 +923,103 @@ namespace MozaPlugin
             label.Text = $"{v}%";
             commit(v);
             _plugin.SaveSettings();
+        }
+
+        // ===== Slider value box (keyed entry) =====
+
+        // Enter inside KeyDown also moves focus off the box, which then fires
+        // LostFocus — we'd commit the same edit twice. Track the most-recent
+        // KeyDown-commit so the immediately-following LostFocus is a no-op.
+        private TextBox? _suppressLostFocusFor;
+
+        // GotFocus strips the unit suffix (e.g. "100%" → "100", "120 kph" →
+        // "120") and selects the digits so the user can only edit the numeric
+        // portion. The canonical "{value}{suffix}" form is restored by the
+        // slider's ValueChanged handler on commit.
+        private void SliderValueBox_GotFocus(object sender, RoutedEventArgs e)
+        {
+            if (sender is not TextBox box) return;
+            string raw = box.Text ?? string.Empty;
+            string numeric = ExtractNumericPrefix(raw);
+            if (numeric != raw) box.Text = numeric;
+            box.SelectAll();
+        }
+
+        // Pressing Enter while focused on a SliderValueEditBox parses the
+        // user's input and pushes it back to the paired slider — which then
+        // fires its existing ValueChanged → On*SliderChanged → hardware-write
+        // pipeline. Tag is bound (ElementName) to the matching Slider element.
+        private void SliderValueBox_KeyDown(object sender, KeyEventArgs e)
+        {
+            if (e.Key != Key.Enter && e.Key != Key.Return) return;
+            var box = sender as TextBox;
+            ApplyEditedSliderValue(box);
+            _suppressLostFocusFor = box;
+            // Move focus off so the user sees the canonical re-formatted text.
+            box?.MoveFocus(new TraversalRequest(FocusNavigationDirection.Next));
+            e.Handled = true;
+        }
+
+        private void SliderValueBox_LostFocus(object sender, RoutedEventArgs e)
+        {
+            var box = sender as TextBox;
+            if (box != null && box == _suppressLostFocusFor)
+            {
+                _suppressLostFocusFor = null;
+                return;
+            }
+            ApplyEditedSliderValue(box);
+        }
+
+        private void ApplyEditedSliderValue(TextBox? box)
+        {
+            if (box == null || box.Tag is not Slider slider) return;
+
+            string token = ExtractNumericPrefix(box.Text ?? string.Empty);
+            bool parsed = double.TryParse(token, System.Globalization.NumberStyles.Float,
+                                          System.Globalization.CultureInfo.InvariantCulture,
+                                          out double parsedValue);
+
+            // Target slider value:
+            //   • Valid input → clamped + integer-snapped parse result.
+            //   • Empty / invalid input → keep the current slider value; the
+            //     bump dance below still fires ValueChanged so the canonical
+            //     text gets repainted.
+            double target = parsed
+                ? Math.Round(Math.Max(slider.Minimum, Math.Min(slider.Maximum, parsedValue)))
+                : slider.Value;
+
+            // ValueChanged is only raised when Value actually changes. If our
+            // target matches the current value (same number re-typed or invalid
+            // input), force a fire via a tiny bump-and-snap with the event
+            // suppressor active for the bumped value — the snap-back assignment
+            // then runs the handler and repaints the canonical text.
+            if (slider.Value == target)
+            {
+                double offset = (target < slider.Maximum) ? target + 0.0001 : target - 0.0001;
+                using (_suppressor.Begin()) slider.Value = offset;
+            }
+            slider.Value = target;
+        }
+
+        // Leading numeric token — accepts an optional sign and a single
+        // decimal point, so "120 kph", "100%", " -3.5°", "1100" all parse to
+        // the digit portion. Empty string when no numeric prefix is present.
+        private static string ExtractNumericPrefix(string raw)
+        {
+            int i = 0, n = raw.Length;
+            while (i < n && char.IsWhiteSpace(raw[i])) i++;
+            int start = i;
+            if (i < n && (raw[i] == '-' || raw[i] == '+')) i++;
+            bool sawDot = false;
+            while (i < n)
+            {
+                char c = raw[i];
+                if (char.IsDigit(c)) { i++; continue; }
+                if (c == '.' && !sawDot) { sawDot = true; i++; continue; }
+                break;
+            }
+            return (i > start) ? raw.Substring(start, i - start) : string.Empty;
         }
 
         // ===== FFB Equalizer handlers =====
@@ -888,6 +1035,32 @@ namespace MozaPlugin
         private void Eq4Slider_ValueChanged(object s, RoutedPropertyChangedEventArgs<double> e) => OnIntSliderChanged(e.NewValue, Eq4Value, "%", v => { _data.Equalizer4 = v; _plugin.WriteIfBaseConnected(EqCommands[3], v); });
         private void Eq5Slider_ValueChanged(object s, RoutedPropertyChangedEventArgs<double> e) => OnIntSliderChanged(e.NewValue, Eq5Value, "%", v => { _data.Equalizer5 = v; _plugin.WriteIfBaseConnected(EqCommands[4], v); });
         private void Eq6Slider_ValueChanged(object s, RoutedPropertyChangedEventArgs<double> e) => OnIntSliderChanged(e.NewValue, Eq6Value, "%", v => { _data.Equalizer6 = v; _plugin.WriteIfBaseConnected(EqCommands[5], v); });
+
+        // Presets for the 6-band FFB equalizer. Bands are 10/15/25/40/60/100 Hz.
+        private static readonly int[][] FfbEqPresets =
+        {
+            new[] { 100, 100, 100, 100, 100, 100 }, // FLAT (neutral, 100% gain on every band)
+            new[] { 100, 100,  90,  70,  40,  20 }, // FALLOFF (steep cut from 40 Hz upward)
+        };
+
+        private void ApplyFfbEqPreset(int[] p)
+        {
+            using (_suppressor.Begin())
+            {
+                Eq1Slider.Value = p[0]; Eq1Value.Text = $"{p[0]}%"; _data.Equalizer1 = p[0];
+                Eq2Slider.Value = p[1]; Eq2Value.Text = $"{p[1]}%"; _data.Equalizer2 = p[1];
+                Eq3Slider.Value = p[2]; Eq3Value.Text = $"{p[2]}%"; _data.Equalizer3 = p[2];
+                Eq4Slider.Value = p[3]; Eq4Value.Text = $"{p[3]}%"; _data.Equalizer4 = p[3];
+                Eq5Slider.Value = p[4]; Eq5Value.Text = $"{p[4]}%"; _data.Equalizer5 = p[4];
+                Eq6Slider.Value = p[5]; Eq6Value.Text = $"{p[5]}%"; _data.Equalizer6 = p[5];
+            }
+            for (int i = 0; i < 6; i++)
+                _plugin.WriteIfBaseConnected(EqCommands[i], p[i]);
+            _plugin.SaveSettings();
+        }
+
+        private void FfbEqPreset_Flat(object s, RoutedEventArgs e)    => ApplyFfbEqPreset(FfbEqPresets[0]);
+        private void FfbEqPreset_Falloff(object s, RoutedEventArgs e) => ApplyFfbEqPreset(FfbEqPresets[1]);
 
         // ===== FFB Curve handlers =====
 
@@ -1022,9 +1195,9 @@ namespace MozaPlugin
 
             ThrottleDirCheck.IsChecked = _data.PedalsThrottleDir != 0;
             ThrottleMinSlider.Value = Clamp(_data.PedalsThrottleMin, 0, 100);
-            ThrottleMinValue.Text = $"{_data.PedalsThrottleMin}%";
+            SetValueText(ThrottleMinValue, $"{_data.PedalsThrottleMin}%");
             ThrottleMaxSlider.Value = Clamp(_data.PedalsThrottleMax, 0, 100);
-            ThrottleMaxValue.Text = $"{_data.PedalsThrottleMax}%";
+            SetValueText(ThrottleMaxValue, $"{_data.PedalsThrottleMax}%");
             SetSliderRaw(ThrottleY1Slider, ThrottleY1Value, _data.PedalsThrottleCurve[0], 0, 100, "");
             SetSliderRaw(ThrottleY2Slider, ThrottleY2Value, _data.PedalsThrottleCurve[1], 0, 100, "");
             SetSliderRaw(ThrottleY3Slider, ThrottleY3Value, _data.PedalsThrottleCurve[2], 0, 100, "");
@@ -1033,11 +1206,11 @@ namespace MozaPlugin
 
             BrakeDirCheck.IsChecked = _data.PedalsBrakeDir != 0;
             BrakeMinSlider.Value = Clamp(_data.PedalsBrakeMin, 0, 100);
-            BrakeMinValue.Text = $"{_data.PedalsBrakeMin}%";
+            SetValueText(BrakeMinValue, $"{_data.PedalsBrakeMin}%");
             BrakeMaxSlider.Value = Clamp(_data.PedalsBrakeMax, 0, 100);
-            BrakeMaxValue.Text = $"{_data.PedalsBrakeMax}%";
+            SetValueText(BrakeMaxValue, $"{_data.PedalsBrakeMax}%");
             BrakeAngleRatioSlider.Value = Clamp(_data.PedalsBrakeAngleRatio, 0, 100);
-            BrakeAngleRatioValue.Text = $"{_data.PedalsBrakeAngleRatio}%";
+            SetValueText(BrakeAngleRatioValue, $"{_data.PedalsBrakeAngleRatio}%");
             SetSliderRaw(BrakeY1Slider, BrakeY1Value, _data.PedalsBrakeCurve[0], 0, 100, "");
             SetSliderRaw(BrakeY2Slider, BrakeY2Value, _data.PedalsBrakeCurve[1], 0, 100, "");
             SetSliderRaw(BrakeY3Slider, BrakeY3Value, _data.PedalsBrakeCurve[2], 0, 100, "");
@@ -1046,9 +1219,9 @@ namespace MozaPlugin
 
             ClutchDirCheck.IsChecked = _data.PedalsClutchDir != 0;
             ClutchMinSlider.Value = Clamp(_data.PedalsClutchMin, 0, 100);
-            ClutchMinValue.Text = $"{_data.PedalsClutchMin}%";
+            SetValueText(ClutchMinValue, $"{_data.PedalsClutchMin}%");
             ClutchMaxSlider.Value = Clamp(_data.PedalsClutchMax, 0, 100);
-            ClutchMaxValue.Text = $"{_data.PedalsClutchMax}%";
+            SetValueText(ClutchMaxValue, $"{_data.PedalsClutchMax}%");
             SetSliderRaw(ClutchY1Slider, ClutchY1Value, _data.PedalsClutchCurve[0], 0, 100, "");
             SetSliderRaw(ClutchY2Slider, ClutchY2Value, _data.PedalsClutchCurve[1], 0, 100, "");
             SetSliderRaw(ClutchY3Slider, ClutchY3Value, _data.PedalsClutchCurve[2], 0, 100, "");
@@ -1088,7 +1261,7 @@ namespace MozaPlugin
         }
 
         private void ApplyPedalCurvePreset(string pedal, int[] curve, int[] dataArray,
-            Slider[] sliders, TextBlock[] labels)
+            Slider[] sliders, TextBox[] labels)
         {
             using (_suppressor.Begin())
             {
@@ -1283,359 +1456,38 @@ namespace MozaPlugin
         }
 
         // ── Diagnostics tab ─────────────────────────────────────────────
-        private void RefreshDiagnosticsTab()
+        // ===== About-tab link handlers =====
+
+        private const string AboutGitHubUrl  = "https://github.com/giantorth/moza-simhub-plugin";
+        private const string AboutDiscordUrl = "https://discord.gg/J4enw43e62";
+        private const string AboutSponsorUrl = "https://github.com/sponsors/giantorth";
+
+        private void AboutGitHubButton_Click(object sender, System.Windows.RoutedEventArgs e)  => OpenExternalUrl(AboutGitHubUrl);
+        private void AboutDiscordButton_Click(object sender, System.Windows.RoutedEventArgs e) => OpenExternalUrl(AboutDiscordUrl);
+        private void AboutSponsorButton_Click(object sender, System.Windows.RoutedEventArgs e) => OpenExternalUrl(AboutSponsorUrl);
+
+        // Open a URL via the OS shell. On Windows this hits the default
+        // browser; under Wine/Proton it routes through winebrowser which
+        // forwards to the host's xdg-open.
+        private static void OpenExternalUrl(string url)
         {
-            if (DiagWheelIdentityBox == null) return;
-            DiagPluginBox.Text = BuildPluginInfoText();
-            if (DiagUsbDetectionBox != null)
-                DiagUsbDetectionBox.Text = BuildUsbDetectionText();
-            DiagWheelIdentityBox.Text = BuildWheelIdentityText();
-            DiagDisplayIdentityBox.Text = BuildDisplayIdentityText();
-            DiagDashboardStateBox.Text = BuildDashboardStateText();
-            DiagTileServerBox.Text = BuildTileServerText();
-            DiagSessionBox.Text = BuildSessionStateText();
-            if (DiagWheelCatalogBox != null)
-                DiagWheelCatalogBox.Text = BuildWheelCatalogText();
-            if (DiagSubscriptionBox != null)
-                DiagSubscriptionBox.Text = BuildSubscriptionText();
-            if (DiagSubscriptionResponseBox != null)
-                DiagSubscriptionResponseBox.Text = BuildSubscriptionResponseText();
-        }
-
-        private string BuildPluginInfoText()
-        {
-            var sb = new System.Text.StringBuilder();
-            sb.Append($"Version:        {GetPluginVersion()}");
-            return sb.ToString();
-        }
-
-        private string BuildUsbDetectionText()
-        {
-            var sb = new System.Text.StringBuilder();
-
-            var ports = global::MozaPlugin.Protocol.MozaPortDiscovery.Instance.Enumerate();
-            string fallbackState;
-            if (_plugin.Settings.DisableSerialProbeFallback)
-                fallbackState = "DISABLED";
-            else if (ports.Count > 0)
-                fallbackState = "armed (probes only unclassified COM ports)";
-            else
-                fallbackState = "armed (active — registry empty)";
-            sb.AppendLine($"Source:         Registry  (probe fallback: {fallbackState})");
-
-            if (ports.Count == 0)
+            try
             {
-                sb.AppendLine("Discovered:     (no MOZA devices in registry)");
-            }
-            else
-            {
-                sb.AppendLine($"Discovered:     {ports.Count} device(s)");
-                for (int i = 0; i < ports.Count; i++)
+                System.Diagnostics.Process.Start(new System.Diagnostics.ProcessStartInfo
                 {
-                    var p = ports[i];
-                    sb.AppendLine($"  {p.PortName,-6} VID 0x{p.Vid:X4}  PID 0x{p.Pid:X4}  {p.FriendlyName}");
-                }
+                    FileName = url,
+                    UseShellExecute = true,
+                });
             }
-
-            // Per-connection assignment lines so the user can see which physical
-            // port the wheelbase pipe and the AB9 pipe (if any) are bound to.
-            string wheelbasePort = _plugin.Connection?.LastPortName ?? "";
-            sb.Append("Assignments:    Wheelbase ");
-            sb.Append(string.IsNullOrEmpty(wheelbasePort) ? "(disconnected)" : "→ " + wheelbasePort);
-            string ab9Port = _plugin.Ab9Manager?.Connection?.LastPortName ?? "";
-            sb.Append("  |  AB9 ");
-            sb.Append(string.IsNullOrEmpty(ab9Port) ? "(disconnected)" : "→ " + ab9Port);
-            sb.AppendLine();
-            return sb.ToString();
-        }
-
-        private string BuildWheelIdentityText()
-        {
-            var d = _data;
-            var sb = new System.Text.StringBuilder();
-            sb.AppendLine($"Model:          {Blank(d.WheelModelName)}");
-            sb.AppendLine($"FW (sw):        {Blank(d.WheelSwVersion)}");
-            sb.AppendLine($"HW version:     {Blank(d.WheelHwVersion)}");
-            sb.AppendLine($"HW sub:         {Blank(d.WheelHwSubVersion)}");
-            sb.AppendLine($"Serial:         {Redact(d.WheelSerialNumber)}");
-            sb.AppendLine($"Sub-devices:    {d.WheelSubDeviceCount}");
-            sb.AppendLine($"Device presence:0x{d.WheelDevicePresence:X2}");
-            sb.AppendLine($"Device type:    {Hex(d.WheelDeviceType)}");
-            sb.AppendLine($"Capabilities:   {Hex(d.WheelCapabilities)}");
-            sb.AppendLine($"MCU UID:        {RedactBytes(d.WheelMcuUid)}");
-            sb.Append    ($"Identity-11:    {Hex(d.WheelIdentity11)}");
-            return sb.ToString();
-        }
-
-        private string BuildDisplayIdentityText()
-        {
-            var d = _data;
-            if (string.IsNullOrEmpty(d.DisplayModelName) && d.DisplayMcuUid.Length == 0)
-                return "(display sub-device not probed or not present)";
-            var sb = new System.Text.StringBuilder();
-            sb.AppendLine($"Model:          {Blank(d.DisplayModelName)}");
-            sb.AppendLine($"FW (sw):        {Blank(d.DisplaySwVersion)}");
-            sb.AppendLine($"HW version:     {Blank(d.DisplayHwVersion)}");
-            sb.AppendLine($"Serial:         {Redact(d.DisplaySerialNumber)}");
-            sb.AppendLine($"Sub-devices:    {d.DisplaySubDeviceCount}");
-            sb.AppendLine($"Device presence:0x{d.DisplayDevicePresence:X2}");
-            sb.AppendLine($"Device type:    {Hex(d.DisplayDeviceType)}");
-            sb.AppendLine($"Capabilities:   {Hex(d.DisplayCapabilities)}");
-            sb.AppendLine($"MCU UID:        {RedactBytes(d.DisplayMcuUid)}");
-            sb.Append    ($"Identity-11:    {Hex(d.DisplayIdentity11)}");
-            return sb.ToString();
-        }
-
-        private string BuildDashboardStateText()
-        {
-            var ts = _plugin.TelemetrySender;
-            var state = _plugin.WheelStateForDiagnostics;
-            if (state == null) return "(no configJson state received yet)";
-            var sb = new System.Text.StringBuilder();
-            sb.AppendLine($"TitleId:        {state.TitleId}");
-            sb.AppendLine($"displayVersion: {state.DisplayVersion}");
-            sb.AppendLine($"resetVersion:   {state.ResetVersion}");
-            sb.AppendLine($"sortTag:        {state.SortTag}");
-            sb.AppendLine($"rootDirPath:    {Blank(state.RootDirPath)}");
-            sb.AppendLine($"rootPath:       {Blank(state.RootPath)}");
-            sb.AppendLine($"configJsonList ({state.ConfigJsonList.Count}): {JoinList(state.ConfigJsonList)}");
-            sb.AppendLine($"imageRefMap:    {state.ImageRefMap.Count} entries");
-            sb.AppendLine($"fontRefMap:     {state.FontRefMap.Count} entries");
-            sb.AppendLine($"imagePath:      {state.ImagePath.Count} entries");
-            sb.AppendLine($"captured at:    {state.CapturedAt:HH:mm:ss}");
-            sb.AppendLine(Build28xRawLine());
-            sb.AppendLine();
-            sb.AppendLine($"-- Enabled dashboards ({state.EnabledDashboards.Count}) --");
-            foreach (var d in state.EnabledDashboards)
+            catch (Exception ex)
             {
-                sb.AppendLine($"  • {d.Title} / dirName={d.DirName} / id={TruncateId(d.Id)}");
-                if (!string.IsNullOrEmpty(d.LastModified))
-                    sb.AppendLine($"      lastModified: {d.LastModified}");
-                if (d.IdealDeviceInfos.Count > 0)
-                {
-                    foreach (var info in d.IdealDeviceInfos)
-                        sb.AppendLine($"      device: id={info.DeviceId} hw={info.HardwareVersion} product={info.ProductType}");
-                }
+                MozaLog.Warn($"[About] failed to open {url}: {ex.Message}");
             }
-            sb.Append($"-- Disabled dashboards ({state.DisabledDashboards.Count}) --");
-            foreach (var d in state.DisabledDashboards)
-                sb.Append($"\n  • {d.Title} / {d.DirName}");
-            return sb.ToString();
         }
 
-        /// <summary>
-        /// Render the wheel's most recent 28:00 / 28:01 reply bytes raw,
-        /// with age in milliseconds. Semantics not decoded — captured for
-        /// offline correlation against game state. See plan
-        /// /home/rorth/.claude/plans/drifting-moseying-cook.md Phase 0.
-        /// </summary>
-        private string Build28xRawLine()
-        {
-            var d = _plugin.Data;
-            if (d == null) return "wheel 28:xx raw: (no data)";
-            string b00 = d.Last28x00ByteValid
-                ? $"0x{d.Last28x00Byte5:X2}" : "(none)";
-            string b01 = d.Last28x01BytesValid
-                ? $"0x{d.Last28x01Byte4:X2} 0x{d.Last28x01Byte5:X2}"
-                : "(none)";
-            string age;
-            if (d.Last28xReplyTickMs == 0)
-                age = "never";
-            else
-            {
-                int dt = unchecked(Environment.TickCount - d.Last28xReplyTickMs);
-                age = dt < 0 ? "?" : $"{dt} ms";
-            }
-            return $"wheel 28:xx raw: 28:00=[{b00}]  28:01=[{b01}]  age={age}";
-        }
-
-        private string BuildTileServerText()
-        {
-            var tile = _plugin.TileServerStateForDiagnostics;
-            if (tile == null)
-                return "(no inbound tile-server blob received — plugin PUSHES empty state on 0x03; wheel doesn't push back in current captures)";
-            var sb = new System.Text.StringBuilder();
-            sb.AppendLine($"root:          {Blank(tile.Root)}");
-            sb.AppendLine($"version:       {tile.Version}");
-            sb.AppendLine($"any populated: {tile.AnyPopulated}");
-            foreach (var kv in tile.Games)
-            {
-                var g = kv.Value;
-                sb.Append($"\n[{kv.Key}] populated={g.Populated} map_version={g.MapVersion} " +
-                          $"tile_size={g.TileSize} layers={g.LayersCount} name={Blank(g.Name)}");
-            }
-            return sb.ToString();
-        }
-
-        private string BuildSessionStateText()
-        {
-            var ts = _plugin.TelemetrySender;
-            if (ts == null && !_plugin.TelemetryEnabledForDiagnostics)
-                return "(telemetry not running)";
-            var sb = new System.Text.StringBuilder();
-            sb.AppendLine($"Enabled:            {_plugin.TelemetryEnabledForDiagnostics}");
-            sb.AppendLine($"FramesSent:         {_plugin.FramesSentForDiagnostics}");
-            var budget = _plugin.SerialBudgetForDiagnostics;
-            var errs = _plugin.SerialWireErrorsForDiagnostics;
-            int budgetTargetBytes = global::MozaPlugin.Protocol.WriteBudget.TargetBytesPerWindow;
-            sb.AppendLine(
-                $"Bandwidth:          out={budget.BytesLastSec,5} B/s ({budget.PercentBudget,3}% of {budgetTargetBytes}B target, peak={budget.PeakBurstBytes})");
-            sb.AppendLine(
-                $"WireErrors:         drops={errs.FramesDropped} cksumFail={errs.ChecksumFailures} resync={errs.FrameStartScanResyncs}");
-            sb.AppendLine($"DisplayDetected:    {(ts?.DisplayDetected ?? _plugin.IsDisplayDetected)}");
-            sb.AppendLine($"DisplayModelName:   {Blank(ts?.DisplayModelName ?? _plugin.DisplayModelName)}");
-            sb.AppendLine($"WheelEra:           {_plugin.ActiveTelemetryWheelEra}");
-            if (ts != null)
-            {
-                var p = ts.Policy;
-                sb.AppendLine($"PolicyEra:          {p.Era}{(p.IsAuto ? " (auto)" : "")}");
-                sb.AppendLine($"TierDefSession:     {p.TierDefSession}");
-                sb.AppendLine($"Encoding:           {p.Encoding}");
-                sb.AppendLine($"PreambleEverySend:  {p.SendV2PreambleEverySend}");
-                sb.AppendLine($"BlindRetransmit:    {p.BlindRetransmitTierDef}");
-                sb.AppendLine($"UploadWireFormat:   {p.UploadWireFormat}");
-                sb.AppendLine($"FlagByte:           0x{ts.FlagByte:X2}");
-                sb.AppendLine($"UploadDashboard:    {ts.UploadDashboard}");
-                sb.Append    ($"Profile:            {ts.Profile?.Name ?? "(none)"}");
-            }
-
-            // Per-session chunk counters
-            var counts = _plugin.SessionCountsForDiagnostics;
-            if (counts != null && counts.Count > 0)
-            {
-                sb.AppendLine();
-                sb.AppendLine();
-                sb.AppendLine("Session traffic (in/out chunks):");
-                var keys = new System.Collections.Generic.List<byte>(counts.Keys);
-                keys.Sort();
-                foreach (var k in keys)
-                {
-                    var v = counts[k];
-                    sb.AppendLine($"  0x{k:X2}:  in={v.In,-5} out={v.Out}");
-                }
-            }
-            return sb.ToString();
-        }
-
-        private string BuildWheelCatalogText()
-        {
-            var sb = new System.Text.StringBuilder();
-
-            // Parser internals — top-of-section so the cause of an empty catalog
-            // is visible at a glance. Buffer>0 + count=0 = chunks fed but no URL
-            // records found (wrong session? wrong record format?). CrcRejects>0
-            // + count=0 = chunks reaching us but failing CRC. ActivityMs<0 = no
-            // chunks ever delivered to parser.
-            var pd = _plugin.CatalogParserDiagnostics;
-            string activity = pd.LastActivityMsAgo < 0
-                ? "never"
-                : $"{pd.LastActivityMsAgo} ms ago";
-            sb.AppendLine(
-                $"Parser: buf={pd.BufferBytes}B (last parsed {pd.LastParsedBufferBytes}B) " +
-                $"crcRejects={pd.CrcRejects} lastActivity={activity}");
-
-            var catalog = _plugin.WheelChannelCatalogForDiagnostics;
-            if (catalog != null && catalog.Count > 0)
-            {
-                sb.AppendLine($"{catalog.Count} channels advertised by wheel:");
-                for (int i = 0; i < catalog.Count; i++)
-                {
-                    string url = catalog[i] ?? "";
-                    sb.AppendLine($"  [{i + 1,2}]  {url}");
-                }
-                return sb.ToString().TrimEnd();
-            }
-
-            // Fallback: derive the catalog from the active subscription's
-            // channel list. The subscription was built with the wheel's
-            // catalog at emit time, so its URLs reflect the mapping we sent —
-            // robust against the catalog parser losing its in-memory state
-            // mid-session for any reason.
-            //
-            // The subscription's diag.Channels uses a SEQUENTIAL idx (1..N
-            // across all tiers/buckets) rather than the wheel-catalog idx,
-            // so a single URL appears multiple times when the host duplicates
-            // channels across page-broadcast buckets (Grids = 4 buckets ×
-            // 20 channels = 80 entries). Dedup by URL preserving first-seen
-            // order so the listed catalog matches the wheel-side count.
-            var sub = _plugin.SubscriptionForDiagnostics;
-            if (sub != null && sub.Channels != null && sub.Channels.Count > 0)
-            {
-                var seen = new System.Collections.Generic.HashSet<string>(StringComparer.OrdinalIgnoreCase);
-                var ordered = new System.Collections.Generic.List<string>();
-                foreach (var ch in sub.Channels)
-                {
-                    if (string.IsNullOrEmpty(ch.Url)) continue;
-                    if (seen.Add(ch.Url)) ordered.Add(ch.Url);
-                }
-                if (ordered.Count > 0)
-                {
-                    sb.AppendLine($"{ordered.Count} channels (from last subscription — catalog parser empty):");
-                    for (int i = 0; i < ordered.Count; i++)
-                        sb.AppendLine($"  [{i + 1,2}]  {ordered[i]}");
-                    return sb.ToString().TrimEnd();
-                }
-            }
-
-            return "(no channel catalog received from wheel yet)";
-        }
-
-        private string BuildSubscriptionText()
-        {
-            var sub = _plugin.SubscriptionForDiagnostics;
-            if (sub == null) return "(no subscription sent yet)";
-            var sb = new System.Text.StringBuilder();
-            sb.AppendLine($"Sent on session {sub.SessionByte} format={sub.Format}  at {sub.CapturedAt:HH:mm:ss}");
-            if (sub.PreambleBytes.Length > 0)
-                sb.AppendLine($"Preamble ({sub.PreambleBytes.Length}B): {BitConverter.ToString(sub.PreambleBytes).Replace('-', ' ')}");
-            sb.AppendLine($"Body ({sub.BodyBytes.Length}B): {BitConverter.ToString(sub.BodyBytes).Replace('-', ' ')}");
-            if (sub.Channels.Count > 0)
-            {
-                sb.AppendLine();
-                sb.AppendLine($"Channels ({sub.Channels.Count}):");
-                foreach (var ch in sub.Channels)
-                    sb.AppendLine($"  idx={ch.Idx,2}  comp=0x{ch.Comp:X2}  width={ch.Width,3}  {ch.Url}");
-            }
-            return sb.ToString().TrimEnd();
-        }
-
-        private string BuildSubscriptionResponseText()
-        {
-            var chunks = _plugin.SubscriptionResponseForDiagnostics;
-            if (chunks == null || chunks.Count == 0)
-                return "(no inbound chunks captured on session 0x02 in 5s window after subscription)";
-            var sb = new System.Text.StringBuilder();
-            sb.AppendLine($"{chunks.Count} chunks captured on session 0x02 after most-recent subscription:");
-            int total = 0;
-            for (int i = 0; i < chunks.Count; i++)
-            {
-                var c = chunks[i];
-                total += c.Length;
-                int show = System.Math.Min(c.Length, 80);
-                string hex = BitConverter.ToString(c, 0, show).Replace('-', ' ');
-                string ellip = c.Length > show ? " …" : "";
-                sb.AppendLine($"  [{i,2}] {c.Length,3}B: {hex}{ellip}");
-            }
-            sb.AppendLine();
-            sb.AppendLine($"Concat ({total}B): {BuildConcatHex(chunks, 200)}");
-            return sb.ToString().TrimEnd();
-        }
-
-        private static string BuildConcatHex(System.Collections.Generic.IReadOnlyList<byte[]> chunks, int max)
-        {
-            var sb = new System.Text.StringBuilder();
-            int n = 0;
-            foreach (var c in chunks)
-            {
-                foreach (var b in c)
-                {
-                    if (n++ >= max) { sb.Append(" …"); return sb.ToString(); }
-                    sb.Append(b.ToString("X2"));
-                    sb.Append(' ');
-                }
-            }
-            return sb.ToString().TrimEnd();
-        }
+        // Live state TextBlocks were removed (the FULL DIAGNOSTIC REPORT expander
+        // shows the same content); BuildDiagnosticsDump now sources every line
+        // straight from DiagnosticsTextBuilder.
 
         private void DiagCopyAll_Click(object sender, System.Windows.RoutedEventArgs e)
         {
@@ -1647,34 +1499,40 @@ namespace MozaPlugin
         {
             var sb = new System.Text.StringBuilder();
             sb.AppendLine("=== Plugin ===");
-            sb.AppendLine(DiagPluginBox.Text);
+            sb.AppendLine(DiagnosticsTextBuilder.BuildPluginInfo());
             sb.AppendLine();
             sb.AppendLine("=== USB detection ===");
-            sb.AppendLine(BuildUsbDetectionText());
+            sb.AppendLine(DiagnosticsTextBuilder.BuildUsbDetection(_plugin));
+            sb.AppendLine();
+            sb.AppendLine("=== mBooster pedals ===");
+            sb.AppendLine(DiagnosticsTextBuilder.BuildMBoosterDevices(_plugin));
             sb.AppendLine();
             sb.AppendLine("=== Wheel identity ===");
-            sb.AppendLine(DiagWheelIdentityBox.Text);
+            sb.AppendLine(DiagnosticsTextBuilder.BuildWheelIdentity(_data));
             sb.AppendLine();
             sb.AppendLine("=== Display sub-device identity ===");
-            sb.AppendLine(DiagDisplayIdentityBox.Text);
+            sb.AppendLine(DiagnosticsTextBuilder.BuildDisplayIdentity(_data));
+            sb.AppendLine();
+            sb.AppendLine("=== Standalone dashboard ===");
+            sb.AppendLine(DiagnosticsTextBuilder.BuildStandaloneDashboardState(_plugin));
             sb.AppendLine();
             sb.AppendLine("=== Dashboard state ===");
-            sb.AppendLine(DiagDashboardStateBox.Text);
+            sb.AppendLine(DiagnosticsTextBuilder.BuildDashboardState(_plugin));
             sb.AppendLine();
             sb.AppendLine("=== Tile-server state ===");
-            sb.AppendLine(DiagTileServerBox.Text);
+            sb.AppendLine(DiagnosticsTextBuilder.BuildTileServer(_plugin));
             sb.AppendLine();
             sb.AppendLine("=== Session state ===");
-            sb.AppendLine(DiagSessionBox.Text);
+            sb.AppendLine(DiagnosticsTextBuilder.BuildSessionState(_plugin));
             sb.AppendLine();
             sb.AppendLine("=== Wheel channel catalog ===");
-            sb.AppendLine(BuildWheelCatalogText());
+            sb.AppendLine(DiagnosticsTextBuilder.BuildWheelCatalog(_plugin));
             sb.AppendLine();
             sb.AppendLine("=== Last subscription sent ===");
-            sb.AppendLine(BuildSubscriptionText());
+            sb.AppendLine(DiagnosticsTextBuilder.BuildSubscription(_plugin));
             sb.AppendLine();
             sb.AppendLine("=== Wheel response on 0x02 (post-subscription window) ===");
-            sb.AppendLine(BuildSubscriptionResponseText());
+            sb.AppendLine(DiagnosticsTextBuilder.BuildSubscriptionResponse(_plugin));
             return sb.ToString();
         }
 
@@ -1720,10 +1578,10 @@ namespace MozaPlugin
             catch { /* clipboard contested; ignore */ }
         }
 
-        private void StartCaptureOnNextLaunch_Click(object sender, System.Windows.RoutedEventArgs e)
+        private void AlwaysCaptureOnStartup_Click(object sender, System.Windows.RoutedEventArgs e)
         {
             if (_suppressEvents) return;
-            _plugin.Settings.StartCaptureOnNextLaunch = StartCaptureOnNextLaunchCheck.IsChecked == true;
+            _plugin.Settings.AlwaysCaptureOnStartup = AlwaysCaptureOnStartupCheck.IsChecked == true;
             _plugin.SaveSettings();
         }
 
@@ -1735,7 +1593,7 @@ namespace MozaPlugin
             if (SerialTrafficCapture.Instance.Enabled) return;
 
             var stamp = DateTime.Now.ToString("yyyyMMdd-HHmmss");
-            var modelSlug = BuildWheelModelFilenameSlug(_data?.WheelModelName);
+            var modelSlug = DiagnosticsBundleWriter.BuildWheelModelFilenameSlug(_data?.WheelModelName);
             var prefix = string.IsNullOrEmpty(modelSlug) ? "" : modelSlug + "-";
             var dlg = new Microsoft.Win32.SaveFileDialog
             {
@@ -1749,7 +1607,8 @@ namespace MozaPlugin
 
             try
             {
-                BuildAndWriteBundle(dlg.FileName);
+                var captureText = _serialCaptureRendered ?? "(no capture buffer — click Start, exercise the device, then Stop)\n";
+                DiagnosticsBundleWriter.Write(dlg.FileName, BuildDiagnosticsDump(), captureText, _serialCaptureSnapshot);
                 SerialCaptureStatusText.Text = $"exported to {dlg.FileName}";
             }
             catch (Exception ex)
@@ -1764,462 +1623,12 @@ namespace MozaPlugin
             }
         }
 
-        private void BuildAndWriteBundle(string zipPath)
-        {
-            var captureText = _serialCaptureRendered ?? "(no capture buffer — click Start, exercise the device, then Stop)\n";
-            var diagText = BuildDiagnosticsDump();
-
-            // [Moza] log lines come straight from MozaLog's in-process ring
-            // buffer — every plugin call site goes through that wrapper, so
-            // the snapshot is guaranteed current without depending on
-            // SimHub's rolling-file flush cadence or path layout.
-            var logText = MozaLog.Snapshot();
-            var logEntryCount = MozaLog.Count;
-
-            // Header gives the receiver a quick idea of what the bundle contains
-            // and when it was produced — saves a hunt through the files when a
-            // user e-mails just the zip with no description.
-            var manifest = new System.Text.StringBuilder();
-            manifest.AppendLine("MOZA Control diagnostics bundle");
-            manifest.AppendLine($"Created (local):     {DateTime.Now:yyyy-MM-dd HH:mm:ss zzz}");
-            manifest.AppendLine($"Plugin version:      {GetPluginVersion()}");
-            manifest.AppendLine($"OS:                  {Environment.OSVersion}");
-            manifest.AppendLine($"CLR:                 {Environment.Version}");
-            manifest.AppendLine();
-            manifest.AppendLine("Files:");
-            manifest.AppendLine("  serial-capture.txt   – TX/RX frames captured between Start/Stop (timestamps in local time)");
-            manifest.AppendLine("  diagnostics.txt      – snapshot of the Diagnostics tab text");
-            manifest.AppendLine($"  moza-log.txt         – [Moza] log lines from MozaLog ring buffer ({logEntryCount} entries)");
-            manifest.AppendLine();
-            manifest.AppendLine("Capture summary:");
-            if (_serialCaptureSnapshot != null)
-            {
-                manifest.AppendLine($"  Started (UTC):     {SerialTrafficCapture.Instance.StartedAtUtc:yyyy-MM-dd HH:mm:ss}");
-                manifest.AppendLine($"  Frames:            {_serialCaptureSnapshot.Count}");
-            }
-            else
-            {
-                manifest.AppendLine("  (no capture buffer was active when this bundle was produced)");
-            }
-
-            // Write to a sibling .tmp first then atomic-rename on success so a
-            // disk-full / permission failure mid-write doesn't leave a partial
-            // zip at the user-visible path. Bug-report uploads have ended up
-            // truncated this way before.
-            string tmpPath = zipPath + ".tmp";
-            try
-            {
-                using (var fs = new System.IO.FileStream(tmpPath, System.IO.FileMode.Create, System.IO.FileAccess.Write))
-                using (var zip = new System.IO.Compression.ZipArchive(fs, System.IO.Compression.ZipArchiveMode.Create))
-                {
-                    WriteZipEntry(zip, "manifest.txt", manifest.ToString());
-                    WriteZipEntry(zip, "serial-capture.txt", captureText);
-                    WriteZipEntry(zip, "diagnostics.txt", diagText);
-                    WriteZipEntry(zip, "moza-log.txt", logText);
-                }
-                if (System.IO.File.Exists(zipPath)) System.IO.File.Delete(zipPath);
-                System.IO.File.Move(tmpPath, zipPath);
-            }
-            catch
-            {
-                try { if (System.IO.File.Exists(tmpPath)) System.IO.File.Delete(tmpPath); } catch { }
-                throw;
-            }
-        }
-
-        private static void WriteZipEntry(System.IO.Compression.ZipArchive zip, string name, string content)
-        {
-            var entry = zip.CreateEntry(name, System.IO.Compression.CompressionLevel.Optimal);
-            using (var s = entry.Open())
-            using (var w = new System.IO.StreamWriter(s, new System.Text.UTF8Encoding(false)))
-                w.Write(content);
-        }
-
         // Build a filesystem-safe slug from the active wheel's firmware model name
         // for use as a filename prefix on diagnostics bundles. Prefers the curated
         // friendly name (e.g. "CS Pro" for firmware "W17"); falls back to the raw
         // prefix for unknown wheels. Returns "" when no model is known yet so the
         // caller can omit the prefix entirely rather than emit a leading dash.
-        private static string BuildWheelModelFilenameSlug(string? modelName)
-        {
-            if (string.IsNullOrWhiteSpace(modelName)) return "";
-            var friendly = WheelModelInfo.GetFriendlyName(WheelModelInfo.ExtractPrefix(modelName!));
-            if (string.IsNullOrWhiteSpace(friendly)) return "";
-
-            var sb = new System.Text.StringBuilder(friendly.Length);
-            foreach (var ch in friendly)
-            {
-                if (ch == ' ') sb.Append('-');
-                else if (char.IsLetterOrDigit(ch) || ch == '-' || ch == '_' || ch == '.') sb.Append(ch);
-                // anything else (path separators, punctuation, control chars) is dropped
-            }
-            return sb.ToString().Trim('-');
-        }
-
-        private static string GetPluginVersion()
-        {
-            // AssemblyInformationalVersion carries the full semver string set by
-            // CI via /p:Version=<x.y.z-dev.sha>, including the pre-release tag.
-            // AssemblyVersion is a System.Version (numeric only) and silently
-            // drops any -suffix, so we prefer informational here. SDK may append
-            // "+<git-sha>" via SourceRevisionId — strip it for display.
-            try
-            {
-                var asm = System.Reflection.Assembly.GetExecutingAssembly();
-                var info = (System.Reflection.AssemblyInformationalVersionAttribute?)Attribute
-                    .GetCustomAttribute(asm, typeof(System.Reflection.AssemblyInformationalVersionAttribute));
-                var s = info?.InformationalVersion;
-                if (!string.IsNullOrEmpty(s))
-                {
-                    int plus = s!.IndexOf('+');
-                    return plus >= 0 ? s.Substring(0, plus) : s;
-                }
-                return asm.GetName().Version?.ToString() ?? "unknown";
-            }
-            catch { return "unknown"; }
-        }
-
-
-        // ===== Experimental LED diagnostics (groups 2/3/4 + Meter flags) =====
-
-        private class DiagLedCfg
-        {
-            public int Slot;
-            public string Title = "";
-            public int MaxLeds;
-            public string ColorCmdPrefix = "";
-            public string BrightnessCmd = "";
-            public string? ModeCmd;
-            public string? LiveColorCmd;
-            public string? LiveBitmaskCmd;
-        }
-
-        private static readonly DiagLedCfg[] DiagLedCfgs =
-        {
-            new DiagLedCfg { Slot = 0, Title = "Group 0 — Shift/RPM", MaxLeds = 25, ColorCmdPrefix = "wheel-rpm-color",    BrightnessCmd = "wheel-rpm-brightness",     ModeCmd = null,
-                             LiveColorCmd = "wheel-telemetry-rpm-colors", LiveBitmaskCmd = "wheel-send-rpm-telemetry" },
-            new DiagLedCfg { Slot = 1, Title = "Group 1 — Button",   MaxLeds = 16, ColorCmdPrefix = "wheel-button-color", BrightnessCmd = "wheel-buttons-brightness", ModeCmd = null,
-                             LiveColorCmd = "wheel-telemetry-button-colors", LiveBitmaskCmd = "wheel-send-buttons-telemetry" },
-            new DiagLedCfg { Slot = 2, Title = "Group 2 — Single",   MaxLeds = 28, ColorCmdPrefix = "wheel-single-color",  BrightnessCmd = "wheel-single-brightness",  ModeCmd = "wheel-single-mode" },
-            new DiagLedCfg { Slot = 3, Title = "Group 3 — Knob ring", MaxLeds = 56, ColorCmdPrefix = "wheel-knob-bg-color", BrightnessCmd = "wheel-knob-brightness",    ModeCmd = "wheel-knob-led-mode" },
-            new DiagLedCfg { Slot = 4, Title = "Group 4 — Ambient",  MaxLeds = 12, ColorCmdPrefix = "wheel-ambient-color", BrightnessCmd = "wheel-ambient-brightness", ModeCmd = "wheel-ambient-mode" },
-            new DiagLedCfg { Slot = 5, Title = "Flags (Meter device)", MaxLeds = 6, ColorCmdPrefix = "dash-flag-color",   BrightnessCmd = "dash-flags-brightness",    ModeCmd = null },
-        };
-
-        private readonly bool[] _extLedPanelBuilt = new bool[6];
-        private readonly byte[] _extLedFillR = new byte[6];
-        private readonly byte[] _extLedFillG = new byte[6];
-        private readonly byte[] _extLedFillB = new byte[6];
-        private readonly Border[] _extLedSwatches = new Border[6];
-        private readonly int[] _extLedRangeMin = new int[6];
-        private readonly int[] _extLedRangeMax = new int[6];
-        private readonly TextBox?[] _extLedMinBoxes = new TextBox?[6];
-        private readonly TextBox?[] _extLedMaxBoxes = new TextBox?[6];
-
-        private void RefreshExtendedLedGroups()
-        {
-            bool any = false;
-            bool built = false;
-            foreach (var cfg in DiagLedCfgs)
-            {
-                bool present = IsDiagSlotPresent(cfg.Slot);
-                if (present && !_extLedPanelBuilt[cfg.Slot])
-                {
-                    BuildDiagLedPanel(cfg);
-                    _extLedPanelBuilt[cfg.Slot] = true;
-                    built = true;
-                }
-                var panel = GetDiagLedPanel(cfg.Slot);
-                if (panel != null)
-                    panel.Visibility = present ? Visibility.Visible : Visibility.Collapsed;
-                any |= present;
-            }
-            ExtLedSection.Visibility = any ? Visibility.Visible : Visibility.Collapsed;
-            if (built)
-                RefreshExtendedLedSummary();
-        }
-
-        private void RefreshExtendedLedSummary()
-        {
-            var sb = new System.Text.StringBuilder();
-            var info = _plugin.WheelModelInfo;
-            string modelName = _data?.WheelModelName ?? "";
-            string friendly = string.IsNullOrEmpty(modelName) ? "Unknown wheel"
-                : $"{WheelModelInfo.GetFriendlyName(WheelModelInfo.ExtractPrefix(modelName))} ({modelName})";
-            sb.AppendLine($"{friendly} — wheel LED support");
-            if (info != null)
-                sb.AppendLine($"  WheelModelInfo: rpm={info.RpmLedCount}, buttons={info.ButtonLedCount}, flags={info.HasFlagLeds}");
-            sb.AppendLine();
-
-            foreach (var cfg in DiagLedCfgs)
-            {
-                if (!_extLedPanelBuilt[cfg.Slot]) continue;
-                int min = _extLedRangeMin[cfg.Slot];
-                int max = _extLedRangeMax[cfg.Slot];
-                int count = max - min + 1;
-                sb.AppendLine($"  {cfg.Title,-28} : {count,3} LEDs (indices {min}-{max} of 0-{cfg.MaxLeds - 1})");
-            }
-            ExtLedSummaryBox.Text = sb.ToString();
-        }
-
-        private void ExtLedRangeMin_LostFocus(object sender, RoutedEventArgs e) =>
-            ExtLedRangeChanged((TextBox)sender, isMax: false);
-
-        private void ExtLedRangeMax_LostFocus(object sender, RoutedEventArgs e) =>
-            ExtLedRangeChanged((TextBox)sender, isMax: true);
-
-        private void ExtLedRangeChanged(TextBox box, bool isMax)
-        {
-            var cfg = (DiagLedCfg)box.Tag;
-            if (!int.TryParse(box.Text, out int v))
-                v = isMax ? cfg.MaxLeds - 1 : 0;
-            v = Math.Max(0, Math.Min(v, cfg.MaxLeds - 1));
-
-            if (isMax)
-            {
-                if (v < _extLedRangeMin[cfg.Slot]) v = _extLedRangeMin[cfg.Slot];
-                _extLedRangeMax[cfg.Slot] = v;
-            }
-            else
-            {
-                if (v > _extLedRangeMax[cfg.Slot]) v = _extLedRangeMax[cfg.Slot];
-                _extLedRangeMin[cfg.Slot] = v;
-            }
-            box.Text = v.ToString();
-
-            _settings.ExtLedDiagMin[cfg.Slot] = _extLedRangeMin[cfg.Slot];
-            _settings.ExtLedDiagMax[cfg.Slot] = _extLedRangeMax[cfg.Slot];
-            _plugin.SaveSettings();
-            RefreshExtendedLedSummary();
-        }
-
-        private bool IsDiagSlotPresent(int slot)
-        {
-            if (slot == 0 || slot == 1) return _plugin.IsNewWheelDetected;
-            if (slot >= 2 && slot <= 4) return _plugin.IsWheelLedGroupPresent(slot);
-            if (slot == 5) return _plugin.IsDashDetected;
-            return false;
-        }
-
-        private StackPanel? GetDiagLedPanel(int slot) => slot switch
-        {
-            0 => ExtLedGroup0Panel,
-            1 => ExtLedGroup1Panel,
-            2 => ExtLedGroup2Panel,
-            3 => ExtLedGroup3Panel,
-            4 => ExtLedGroup4Panel,
-            5 => ExtLedFlagsPanel,
-            _ => null,
-        };
-
-        private void BuildDiagLedPanel(DiagLedCfg cfg)
-        {
-            var panel = GetDiagLedPanel(cfg.Slot);
-            if (panel == null) return;
-
-            panel.Children.Clear();
-
-            panel.Children.Add(new TextBlock
-            {
-                Text = $"{cfg.Title} (up to {cfg.MaxLeds} LEDs)",
-                FontWeight = FontWeights.SemiBold,
-                Margin = new Thickness(0, 6, 0, 4),
-            });
-
-            int savedMin = _settings.ExtLedDiagMin.Length > cfg.Slot ? _settings.ExtLedDiagMin[cfg.Slot] : -1;
-            int savedMax = _settings.ExtLedDiagMax.Length > cfg.Slot ? _settings.ExtLedDiagMax[cfg.Slot] : -1;
-            _extLedRangeMin[cfg.Slot] = savedMin < 0 ? 0 : Math.Max(0, Math.Min(savedMin, cfg.MaxLeds - 1));
-            _extLedRangeMax[cfg.Slot] = savedMax < 0 ? cfg.MaxLeds - 1 : Math.Max(0, Math.Min(savedMax, cfg.MaxLeds - 1));
-            if (_extLedRangeMin[cfg.Slot] > _extLedRangeMax[cfg.Slot])
-                _extLedRangeMin[cfg.Slot] = _extLedRangeMax[cfg.Slot];
-
-            var row1 = new StackPanel { Orientation = Orientation.Horizontal, Margin = new Thickness(0, 2, 0, 2) };
-            row1.Children.Add(new TextBlock { Text = "Fill color:", Width = 80, VerticalAlignment = VerticalAlignment.Center });
-
-            _extLedFillR[cfg.Slot] = 255;
-            _extLedFillG[cfg.Slot] = 0;
-            _extLedFillB[cfg.Slot] = 0;
-            var swatch = new Border
-            {
-                Width = 28, Height = 28,
-                BorderBrush = new SolidColorBrush(Color.FromRgb(85, 85, 85)),
-                BorderThickness = new Thickness(1),
-                CornerRadius = new CornerRadius(3),
-                Margin = new Thickness(0, 0, 8, 0),
-                Cursor = Cursors.Hand,
-                Background = new SolidColorBrush(Color.FromRgb(255, 0, 0)),
-                Tag = cfg.Slot,
-            };
-            swatch.MouseLeftButtonUp += ExtLedSwatch_Click;
-            _extLedSwatches[cfg.Slot] = swatch;
-            row1.Children.Add(swatch);
-
-            row1.Children.Add(new TextBlock { Text = "Range:", VerticalAlignment = VerticalAlignment.Center, Margin = new Thickness(0, 0, 4, 0) });
-            var minBox = new TextBox { Width = 40, Text = _extLedRangeMin[cfg.Slot].ToString(), Margin = new Thickness(0, 0, 2, 0), Tag = cfg, VerticalAlignment = VerticalAlignment.Center };
-            minBox.LostFocus += ExtLedRangeMin_LostFocus;
-            _extLedMinBoxes[cfg.Slot] = minBox;
-            row1.Children.Add(minBox);
-            row1.Children.Add(new TextBlock { Text = "–", VerticalAlignment = VerticalAlignment.Center, Margin = new Thickness(2, 0, 2, 0) });
-            var maxBox = new TextBox { Width = 40, Text = _extLedRangeMax[cfg.Slot].ToString(), Margin = new Thickness(0, 0, 8, 0), Tag = cfg, VerticalAlignment = VerticalAlignment.Center };
-            maxBox.LostFocus += ExtLedRangeMax_LostFocus;
-            _extLedMaxBoxes[cfg.Slot] = maxBox;
-            row1.Children.Add(maxBox);
-
-            var fillBtn = new Button { Content = "Fill all", Padding = new Thickness(8, 2, 8, 2), Margin = new Thickness(0, 0, 6, 0), Tag = cfg };
-            fillBtn.Click += ExtLedFillAll_Click;
-            row1.Children.Add(fillBtn);
-
-            var clearBtn = new Button { Content = "All off", Padding = new Thickness(8, 2, 8, 2), Margin = new Thickness(0, 0, 6, 0), Tag = cfg };
-            clearBtn.Click += ExtLedClearAll_Click;
-            row1.Children.Add(clearBtn);
-            panel.Children.Add(row1);
-
-            var row2 = new StackPanel { Orientation = Orientation.Horizontal, Margin = new Thickness(0, 2, 0, 2) };
-            row2.Children.Add(new TextBlock { Text = "LED index:", Width = 80, VerticalAlignment = VerticalAlignment.Center });
-            var idxBox = new TextBox { Width = 50, Text = "0", Margin = new Thickness(0, 0, 8, 0) };
-            row2.Children.Add(idxBox);
-            var sendOneBtn = new Button { Content = "Send one", Padding = new Thickness(8, 2, 8, 2), Tag = (cfg, idxBox) };
-            sendOneBtn.Click += ExtLedSendOne_Click;
-            row2.Children.Add(sendOneBtn);
-            panel.Children.Add(row2);
-
-            var row3 = new StackPanel { Orientation = Orientation.Horizontal, Margin = new Thickness(0, 2, 0, 2) };
-            row3.Children.Add(new TextBlock { Text = "Brightness:", Width = 80, VerticalAlignment = VerticalAlignment.Center });
-            var brightSlider = new Slider { Minimum = 0, Maximum = 100, Value = 50, Width = 200, IsSnapToTickEnabled = true, TickFrequency = 1, VerticalAlignment = VerticalAlignment.Center };
-            row3.Children.Add(brightSlider);
-            var brightLabel = new TextBlock { Width = 40, TextAlignment = TextAlignment.Right, Margin = new Thickness(6, 0, 8, 0), Text = "50", VerticalAlignment = VerticalAlignment.Center };
-            brightSlider.ValueChanged += (s, e) => brightLabel.Text = ((int)brightSlider.Value).ToString();
-            row3.Children.Add(brightLabel);
-            var sendBrightBtn = new Button { Content = "Send", Padding = new Thickness(8, 2, 8, 2), Tag = (cfg, brightSlider) };
-            sendBrightBtn.Click += ExtLedSendBrightness_Click;
-            row3.Children.Add(sendBrightBtn);
-            panel.Children.Add(row3);
-
-            if (cfg.ModeCmd != null)
-            {
-                var row4 = new StackPanel { Orientation = Orientation.Horizontal, Margin = new Thickness(0, 2, 0, 2) };
-                row4.Children.Add(new TextBlock { Text = "Mode:", Width = 80, VerticalAlignment = VerticalAlignment.Center });
-                var modeCombo = new ComboBox { Width = 60, Margin = new Thickness(0, 0, 8, 0) };
-                modeCombo.Items.Add("0");
-                modeCombo.Items.Add("1");
-                modeCombo.Items.Add("2");
-                modeCombo.SelectedIndex = 0;
-                row4.Children.Add(modeCombo);
-                var sendModeBtn = new Button { Content = "Send", Padding = new Thickness(8, 2, 8, 2), Tag = (cfg, modeCombo) };
-                sendModeBtn.Click += ExtLedSendMode_Click;
-                row4.Children.Add(sendModeBtn);
-                panel.Children.Add(row4);
-            }
-        }
-
-        private void ExtLedSwatch_Click(object sender, MouseButtonEventArgs e)
-        {
-            var border = (Border)sender;
-            int slot = (int)border.Tag;
-            var dialog = new ColorPickerDialog(_extLedFillR[slot], _extLedFillG[slot], _extLedFillB[slot]);
-            dialog.Owner = Window.GetWindow(this);
-            if (dialog.ShowDialog() == true)
-            {
-                _extLedFillR[slot] = dialog.SelectedR;
-                _extLedFillG[slot] = dialog.SelectedG;
-                _extLedFillB[slot] = dialog.SelectedB;
-                border.Background = new SolidColorBrush(Color.FromRgb(dialog.SelectedR, dialog.SelectedG, dialog.SelectedB));
-            }
-        }
-
-        private void ExtLedFillAll_Click(object sender, RoutedEventArgs e)
-        {
-            var cfg = (DiagLedCfg)((Button)sender).Tag;
-            byte r = _extLedFillR[cfg.Slot], g = _extLedFillG[cfg.Slot], b = _extLedFillB[cfg.Slot];
-            int min = _extLedRangeMin[cfg.Slot], max = _extLedRangeMax[cfg.Slot];
-            if (cfg.LiveColorCmd != null)
-            {
-                int mask = RangeMask(min, max);
-                SendLiveFrame(cfg, fillColor: (r, g, b), activeMask: mask, rangeMin: min, rangeMax: max, onlyIdx: -1);
-                return;
-            }
-            for (int i = min; i <= max; i++)
-                _plugin.WriteColorIfWheelDetected($"{cfg.ColorCmdPrefix}{i + 1}", r, g, b);
-        }
-
-        private void ExtLedClearAll_Click(object sender, RoutedEventArgs e)
-        {
-            var cfg = (DiagLedCfg)((Button)sender).Tag;
-            int min = _extLedRangeMin[cfg.Slot], max = _extLedRangeMax[cfg.Slot];
-            if (cfg.LiveColorCmd != null)
-            {
-                SendLiveFrame(cfg, fillColor: (0, 0, 0), activeMask: 0, rangeMin: min, rangeMax: max, onlyIdx: -1);
-                return;
-            }
-            for (int i = min; i <= max; i++)
-                _plugin.WriteColorIfWheelDetected($"{cfg.ColorCmdPrefix}{i + 1}", 0, 0, 0);
-        }
-
-        private void ExtLedSendOne_Click(object sender, RoutedEventArgs e)
-        {
-            var (cfg, idxBox) = ((DiagLedCfg, TextBox))((Button)sender).Tag;
-            if (!int.TryParse(idxBox.Text, out int idx)) return;
-            if (idx < 0 || idx >= cfg.MaxLeds) return;
-            byte r = _extLedFillR[cfg.Slot], g = _extLedFillG[cfg.Slot], b = _extLedFillB[cfg.Slot];
-            if (cfg.LiveColorCmd != null)
-            {
-                SendLiveFrame(cfg, fillColor: (r, g, b), activeMask: 1 << idx, rangeMin: idx, rangeMax: idx, onlyIdx: idx);
-                return;
-            }
-            _plugin.WriteColorIfWheelDetected($"{cfg.ColorCmdPrefix}{idx + 1}", r, g, b);
-        }
-
-        private static int RangeMask(int min, int max)
-        {
-            int mask = 0;
-            for (int i = min; i <= max; i++)
-                mask |= 1 << i;
-            return mask;
-        }
-
-        private void SendLiveFrame(DiagLedCfg cfg, (byte r, byte g, byte b) fillColor,
-            int activeMask, int rangeMin, int rangeMax, int onlyIdx)
-        {
-            if (cfg.LiveColorCmd == null || cfg.LiveBitmaskCmd == null) return;
-
-            int n = cfg.MaxLeds;
-            var colors = new System.Drawing.Color[n];
-            var fill = System.Drawing.Color.FromArgb(fillColor.r, fillColor.g, fillColor.b);
-            for (int i = 0; i < n; i++)
-            {
-                bool paint = onlyIdx < 0
-                    ? (i >= rangeMin && i <= rangeMax)
-                    : i == onlyIdx;
-                colors[i] = paint ? fill : System.Drawing.Color.Black;
-            }
-
-            MozaLedDeviceManager.SendColorChunks(_plugin, colors, n, cfg.LiveColorCmd);
-
-            byte[] maskBytes = (cfg.LiveBitmaskCmd == "wheel-send-rpm-telemetry" && n > 16)
-                ? new byte[] {
-                    (byte)(activeMask & 0xFF),
-                    (byte)((activeMask >> 8) & 0xFF),
-                    (byte)((activeMask >> 16) & 0xFF),
-                    (byte)((activeMask >> 24) & 0xFF)
-                }
-                : new byte[] { (byte)(activeMask & 0xFF), (byte)((activeMask >> 8) & 0xFF) };
-            _plugin.WriteArrayIfWheelDetected(cfg.LiveBitmaskCmd, maskBytes);
-        }
-
-        private void ExtLedSendBrightness_Click(object sender, RoutedEventArgs e)
-        {
-            var (cfg, slider) = ((DiagLedCfg, Slider))((Button)sender).Tag;
-            _plugin.WriteIfWheelDetected(cfg.BrightnessCmd, (int)slider.Value);
-        }
-
-        private void ExtLedSendMode_Click(object sender, RoutedEventArgs e)
-        {
-            var (cfg, modeCombo) = ((DiagLedCfg, ComboBox))((Button)sender).Tag;
-            if (cfg.ModeCmd == null) return;
-            if (modeCombo.SelectedIndex < 0) return;
-            _plugin.WriteIfWheelDetected(cfg.ModeCmd, modeCombo.SelectedIndex);
-        }
-
+        
         // ── Dashboard Upload tab ─────────────────────────────────────────
         // Lets the user pick a .mzdash file (or a library entry) and push it
         // to the connected wheel via TelemetrySender.TriggerManualUpload.
@@ -2309,7 +1718,7 @@ namespace MozaPlugin
             if (_suppressEvents) return;
             if (UploadLibraryCombo?.SelectedItem is not string name || string.IsNullOrEmpty(name))
                 return;
-            byte[]? bytes = ResolveLibraryDashboardBytes(name);
+            byte[]? bytes = DashboardLibraryResolver.ResolveBytes(_plugin.DashCache, _plugin.DashProfileStore, name);
             if (bytes == null)
             {
                 _uploadPickedContent = null;
@@ -2326,47 +1735,9 @@ namespace MozaPlugin
             // Library/folder entries: try to resolve the source dir from
             // DashCache so widget PNG assets can be looked up. Builtins from
             // embedded resources have no dir → single-file upload.
-            _uploadPickedSourceDirectory = ResolveLibraryDashboardDirectory(name);
+            _uploadPickedSourceDirectory = DashboardLibraryResolver.ResolveDirectory(_plugin.DashCache, name);
             if (UploadStatusText != null && UploadStatusText.Text.StartsWith("Cannot resolve"))
                 UploadStatusText.Text = "idle";
-        }
-
-        /// <summary>
-        /// Resolve the on-disk directory for a library-picked dashboard so the
-        /// upload bundle can find sibling PNG widget assets at
-        /// <c>&lt;dir&gt;/Resource/MD5/&lt;hex&gt;.png</c>. Returns empty when
-        /// the dashboard came from the wheel cache or an embedded builtin
-        /// (no source directory) — the upload then ships single-file.
-        /// </summary>
-        private string ResolveLibraryDashboardDirectory(string name)
-        {
-            if (_plugin.DashCache == null) return "";
-            string? filePath = _plugin.DashCache.TryGetFolderFilePath(name);
-            if (string.IsNullOrEmpty(filePath)) return "";
-            return System.IO.Path.GetDirectoryName(filePath) ?? "";
-        }
-
-        private byte[]? ResolveLibraryDashboardBytes(string name)
-        {
-            if (_plugin.DashCache != null)
-            {
-                var bytes = _plugin.DashCache.TryGetRawContent(name);
-                if (bytes != null) return bytes;
-            }
-            // Builtins: read from the embedded resource (mirrors
-            // MozaPlugin.ApplyTelemetrySettings' builtin fallback).
-            foreach (var p in _plugin.DashProfileStore.BuiltinProfiles)
-            {
-                if (!string.Equals(p.Name, name, StringComparison.OrdinalIgnoreCase)) continue;
-                string resourceName = $"MozaPlugin.Data.Dashes.{p.Name.Replace(" ", "_")}.mzdash";
-                var assembly = System.Reflection.Assembly.GetExecutingAssembly();
-                using var stream = assembly.GetManifestResourceStream(resourceName);
-                if (stream == null) return null;
-                using var ms = new System.IO.MemoryStream();
-                stream.CopyTo(ms);
-                return ms.ToArray();
-            }
-            return null;
         }
 
         private void UploadNow_Click(object sender, RoutedEventArgs e)
@@ -2412,9 +1783,31 @@ namespace MozaPlugin
             UploadInfoRawSizeText.Text = rawSize > 0 ? $"{rawSize:N0} bytes" : "—";
 
             byte[]? bytes = _uploadPickedContent ?? ts?.MzdashContent;
-            UploadInfoMd5Text.Text = bytes != null && bytes.Length > 0
-                ? FileTransferBuilder.Md5Hex(FileTransferBuilder.ComputeMd5(bytes))
-                : "—";
+            // MD5 caching: this refresh runs every 500ms. Hashing the full
+            // mzdash (~50–500KB) on the UI thread twice a second is wasteful
+            // when the content reference hasn't changed. The cache key is the
+            // array reference, not its contents — both producers (the file
+            // picker and TelemetrySender.MzdashContent) replace the whole
+            // array when content changes, so reference identity matches the
+            // "content changed" notion exactly.
+            string md5Hex;
+            if (bytes == null || bytes.Length == 0)
+            {
+                md5Hex = "—";
+                _md5CachedBytes = null;
+                _md5CachedHex = null;
+            }
+            else if (ReferenceEquals(bytes, _md5CachedBytes) && _md5CachedHex != null)
+            {
+                md5Hex = _md5CachedHex;
+            }
+            else
+            {
+                md5Hex = FileTransferBuilder.Md5Hex(FileTransferBuilder.ComputeMd5(bytes));
+                _md5CachedBytes = bytes;
+                _md5CachedHex = md5Hex;
+            }
+            UploadInfoMd5Text.Text = md5Hex;
 
             bool inFlight = ts?.IsUploadInFlight ?? false;
             UploadInfoInFlightText.Text = inFlight ? "yes" : "no";
@@ -2471,6 +1864,24 @@ namespace MozaPlugin
             if (WheelFilesGrid == null) return;
             var ts = _plugin.TelemetrySender;
             var state = _plugin.WheelStateForDiagnostics;
+
+            // Change-detection gate: state.CapturedAt is bumped by the wheel
+            // every time a new configJson lands. _uploadPickedName changes
+            // when the user picks a different mzdash from the file picker.
+            // No new CapturedAt and no picker change → no point rebuilding
+            // the DataGrid (List<WheelFileRow> + selection re-application
+            // on every tick is the dominant cost).
+            DateTime currentCapturedAt = state?.CapturedAt ?? DateTime.MinValue;
+            if (state != null
+                && currentCapturedAt == _wheelFilesLastCapturedAt
+                && _wheelFilesLastPickedName == _uploadPickedName
+                && _wheelFilesLastRowCount >= 0)
+            {
+                return;
+            }
+            _wheelFilesLastCapturedAt = currentCapturedAt;
+            _wheelFilesLastPickedName = _uploadPickedName;
+
             var rows = new System.Collections.Generic.List<WheelFileRow>();
             if (state != null)
             {
@@ -2498,6 +1909,7 @@ namespace MozaPlugin
             // Preserve grid selection across refresh by DirName key.
             string? prevDir = (WheelFilesGrid.SelectedItem as WheelFileRow)?.DirName;
             WheelFilesGrid.ItemsSource = rows;
+            _wheelFilesLastRowCount = rows.Count;
             if (!string.IsNullOrEmpty(prevDir))
             {
                 foreach (var r in rows)
@@ -2601,13 +2013,22 @@ namespace MozaPlugin
                 SetAb9Slider(Ab9MaxTorqueSlider,         Ab9MaxTorqueValue,         ab9.MaxTorqueLimit);
                 SetAb9Slider(Ab9EngineVibIntensitySlider, Ab9EngineVibIntensityValue, ab9.EngineVibrationIntensity);
                 Ab9EngineVibFreqSlider.Value = ab9.EngineVibrationFrequency;
-                Ab9EngineVibFreqValue.Text = ab9.EngineVibrationFrequency + " Hz";
+                SetValueText(Ab9EngineVibFreqValue, ab9.EngineVibrationFrequency + " Hz");
                 SetAb9Slider(Ab9GearShiftVibSlider,       Ab9GearShiftVibValue,       ab9.GearShiftVibrationIntensity);
+                Ab9GearShiftVibrateOnNeutralCheck.IsChecked = ab9.GearShiftVibrateOnNeutral;
+                int ab9DbMs = ab9.GearShiftDebounceMs;
+                if (ab9DbMs < 0) ab9DbMs = 0;
+                if (ab9DbMs > 1000) ab9DbMs = 1000;
+                // Snap to 50 ms grid in case a persisted value came from a
+                // manual edit / older build before the slider enforced ticks.
+                ab9DbMs = ((ab9DbMs + 25) / 50) * 50;
+                Ab9GearShiftDebounceSlider.Value = ab9DbMs;
+                Ab9GearShiftDebounceValue.Text = $"{ab9DbMs} ms";
             }
             _ab9UiSeeded = true;
         }
 
-        private void SetAb9Slider(Slider slider, TextBlock value, byte v)
+        private void SetAb9Slider(Slider slider, TextBox value, byte v)
         {
             slider.Value = v;
             value.Text = v.ToString();
@@ -2662,7 +2083,7 @@ namespace MozaPlugin
         private void Ab9MaxTorqueSlider_ValueChanged(object s, RoutedPropertyChangedEventArgs<double> e)
             => HandleAb9SliderChanged(Ab9MaxTorqueSlider, Ab9MaxTorqueValue, Ab9Slider.MaxTorqueLimit, e.NewValue);
 
-        private void HandleAb9SliderChanged(Slider slider, TextBlock label, Ab9Slider which, double newValue)
+        private void HandleAb9SliderChanged(Slider slider, TextBox label, Ab9Slider which, double newValue)
         {
             if (_suppressEvents) return;
             byte v = (byte)Math.Max(0, Math.Min(100, (int)Math.Round(newValue)));
@@ -2693,13 +2114,13 @@ namespace MozaPlugin
             _plugin.SaveSettings();
         }
 
-        // Engine Vibration frequency slider — literal target Hz (0..300) of
+        // Engine Vibration frequency slider — literal target Hz (0..200) of
         // the AB9 oscillator. Host-rendered, no device-side write; the worker
         // thread picks up the new value on its next tick.
         private void Ab9EngineVibFreqSlider_ValueChanged(object s, RoutedPropertyChangedEventArgs<double> e)
         {
             if (_suppressEvents) return;
-            ushort v = (ushort)Math.Max(0, Math.Min(300, (int)Math.Round(e.NewValue)));
+            ushort v = (ushort)Math.Max(0, Math.Min(200, (int)Math.Round(e.NewValue)));
             Ab9EngineVibFreqValue.Text = v + " Hz";
             GetOrCreateAb9Profile().EngineVibrationFrequency = v;
             _plugin.SaveSettings();
@@ -2718,14 +2139,364 @@ namespace MozaPlugin
             _plugin.SaveSettings();
         }
 
-        private static string Blank(string s) => string.IsNullOrEmpty(s) ? "—" : s;
-        private static string Redact(string s) => MozaLog.RedactId(s);
-        private static string RedactBytes(byte[] b) => MozaLog.RedactBytesHex(b);
-        private static string Hex(byte[] b) => b == null || b.Length == 0 ? "—" : BitConverter.ToString(b);
-        private static string HexRaw(byte[] b) => b == null || b.Length == 0 ? "—" : BitConverter.ToString(b).Replace("-", "");
-        private static string JoinList(System.Collections.Generic.IReadOnlyList<string> l)
-            => l == null || l.Count == 0 ? "(empty)" : string.Join(", ", l);
-        private static string TruncateId(string id)
-            => string.IsNullOrEmpty(id) ? "—" : (id.Length > 40 ? id.Substring(0, 40) + "…" : id);
+        // AB9-only "vibrate on neutral" — gates whether the per-shift
+        // 0x0D 0x06 (Disengage) trigger fires on any-gear→neutral transitions.
+        // Independent from the wheelbase GearshiftVibrateOnNeutralCheck so the
+        // AB9 can pulse for downshifts into N while the wheelbase stays quiet.
+        private void Ab9GearShiftVibrateOnNeutralCheck_Changed(object sender, RoutedEventArgs e)
+        {
+            if (_suppressEvents) return;
+            bool on = Ab9GearShiftVibrateOnNeutralCheck.IsChecked == true;
+            GetOrCreateAb9Profile().GearShiftVibrateOnNeutral = on;
+            _plugin.SaveSettings();
+        }
+
+        // AB9-only shift debounce. Same 0..1000 ms range and 50 ms grid as
+        // the wheelbase slider, but stored on Ab9Settings so the two devices
+        // can be tuned independently.
+        private void Ab9GearShiftDebounceSlider_ValueChanged(object s, RoutedPropertyChangedEventArgs<double> e)
+        {
+            if (_suppressEvents) return;
+            int val = (int)Math.Round(e.NewValue);
+            val = ((val + 25) / 50) * 50;
+            if (val < 0) val = 0;
+            if (val > 1000) val = 1000;
+            Ab9GearShiftDebounceValue.Text = $"{val} ms";
+            GetOrCreateAb9Profile().GearShiftDebounceMs = val;
+            _plugin.SaveSettings();
+        }
+
+        // =====================================================================
+        // mBooster tab — multi-device. ComboBox selects the active device;
+        // settings panel below populates from the selection's per-device
+        // entry in MozaProfile.MBoosterSettings (lazily created).
+        // =====================================================================
+
+        private string? _mboosterSelectedIdentity;
+        private bool _mboosterUiSeeded;
+
+        private void RefreshMBoosterTab()
+        {
+            var registry = _plugin?.MBoosterRegistry;
+            if (registry == null) { MBoosterTab.Visibility = Visibility.Collapsed; return; }
+            var devices = registry.Devices;
+            if (devices.Count == 0)
+            {
+                MBoosterTab.Visibility = Visibility.Collapsed;
+                _mboosterUiSeeded = false;
+                return;
+            }
+            MBoosterTab.Visibility = Visibility.Visible;
+
+            // Rebuild the device combo if the list changed.
+            using (_suppressor.Begin())
+            {
+                int prevSelected = -1;
+                for (int i = 0; i < devices.Count; i++)
+                {
+                    if (string.Equals(devices[i].Identity, _mboosterSelectedIdentity, StringComparison.OrdinalIgnoreCase))
+                    {
+                        prevSelected = i;
+                        break;
+                    }
+                }
+                if (MBoosterDeviceCombo.Items.Count != devices.Count)
+                {
+                    MBoosterDeviceCombo.Items.Clear();
+                    for (int i = 0; i < devices.Count; i++)
+                    {
+                        var c = devices[i];
+                        var item = new ComboBoxItem
+                        {
+                            Content = $"{MBoosterDeviceController.ShortIdentity(c.Identity)} ({c.PortName})",
+                            Tag = c.Identity,
+                        };
+                        MBoosterDeviceCombo.Items.Add(item);
+                    }
+                }
+                if (prevSelected < 0) prevSelected = 0;
+                if (MBoosterDeviceCombo.SelectedIndex != prevSelected)
+                    MBoosterDeviceCombo.SelectedIndex = prevSelected;
+                _mboosterSelectedIdentity = devices[prevSelected].Identity;
+            }
+
+            var selected = registry.FindByIdentity(_mboosterSelectedIdentity ?? "");
+            if (selected == null)
+            {
+                MBoosterStatusDot.Fill = Brushes.Gray;
+                MBoosterStatusLabel.Text = "No mBooster selected";
+                MBoosterDevicePanel.Visibility = Visibility.Collapsed;
+                return;
+            }
+
+            MBoosterStatusDot.Fill = selected.Detected
+                ? Brushes.LimeGreen
+                : (selected.IsConnected ? Brushes.Goldenrod : Brushes.Gray);
+            MBoosterStatusLabel.Text = selected.Detected
+                ? $"Connected ({MBoosterDeviceController.ShortIdentity(selected.Identity)})"
+                : (selected.IsConnected ? "Probing…" : "Disconnected");
+            MBoosterDevicePanel.Visibility = Visibility.Visible;
+
+            // Live position bar — driven by the controller's latest HID position.
+            int pct = (int)Math.Round(selected.LastHidPosition * 100);
+            if (pct < 0) pct = 0; if (pct > 100) pct = 100;
+            MBoosterPositionBar.Value = pct;
+            MBoosterPositionLabel.Text = pct + " %";
+
+            if (_mboosterUiSeeded) return;
+            // Seed slider/checkbox values from the profile entry. _plugin is
+            // never null past Init (the constructor stores it); guard anyway.
+            if (_plugin == null) return;
+            var s = _plugin.GetOrCreateMBoosterSettings(selected.Identity);
+            using (_suppressor.Begin())
+            {
+                SetMBoosterRoleCombo(s.Role);
+                MBoosterAbsEnable.IsChecked       = s.Abs?.Enabled       ?? false;
+                MBoosterAbsIntensity.Value        = s.Abs?.IntensityPct  ?? 50;
+                SetValueText(MBoosterAbsIntensityValue, (s.Abs?.IntensityPct ?? 50).ToString());
+                MBoosterLockupEnable.IsChecked    = s.Lockup?.Enabled       ?? false;
+                MBoosterLockupIntensity.Value     = s.Lockup?.IntensityPct  ?? 50;
+                SetValueText(MBoosterLockupIntensityValue, (s.Lockup?.IntensityPct ?? 50).ToString());
+                MBoosterThresholdEnable.IsChecked    = s.Threshold?.Enabled       ?? false;
+                MBoosterThresholdIntensity.Value     = s.Threshold?.IntensityPct  ?? 50;
+                SetValueText(MBoosterThresholdIntensityValue, (s.Threshold?.IntensityPct ?? 50).ToString());
+                MBoosterEngineEnable.IsChecked    = s.Engine?.Enabled       ?? false;
+                MBoosterEngineIntensity.Value     = s.Engine?.IntensityPct  ?? 50;
+                SetValueText(MBoosterEngineIntensityValue, (s.Engine?.IntensityPct ?? 50).ToString());
+                MBoosterDirCheck.IsChecked = (s.Direction == 1);
+                MBoosterMinSlider.Value = s.Min >= 0 ? s.Min : 0;
+                SetValueText(MBoosterMinValue, MBoosterMinSlider.Value.ToString("F0"));
+                MBoosterMaxSlider.Value = s.Max >= 0 ? s.Max : 0;
+                SetValueText(MBoosterMaxValue, MBoosterMaxSlider.Value.ToString("F0"));
+            }
+            _mboosterUiSeeded = true;
+        }
+
+        private void SetMBoosterRoleCombo(MBoosterRole role)
+        {
+            for (int i = 0; i < MBoosterRoleCombo.Items.Count; i++)
+            {
+                if (MBoosterRoleCombo.Items[i] is ComboBoxItem ci
+                    && ci.Tag is string tag
+                    && int.TryParse(tag, out int v)
+                    && v == (int)role)
+                {
+                    MBoosterRoleCombo.SelectedIndex = i;
+                    return;
+                }
+            }
+            MBoosterRoleCombo.SelectedIndex = 0;
+        }
+
+        private MBoosterDeviceSettings? CurrentMBoosterSettings()
+        {
+            if (_mboosterSelectedIdentity == null) return null;
+            return _plugin.GetOrCreateMBoosterSettings(_mboosterSelectedIdentity);
+        }
+
+        private MBoosterDeviceController? CurrentMBoosterController()
+        {
+            return _plugin?.MBoosterRegistry?.FindByIdentity(_mboosterSelectedIdentity ?? "");
+        }
+
+        private void MBoosterDeviceCombo_Changed(object sender, SelectionChangedEventArgs e)
+        {
+            if (_suppressEvents) return;
+            if (MBoosterDeviceCombo.SelectedItem is not ComboBoxItem item) return;
+            if (item.Tag is not string identity) return;
+            if (string.Equals(identity, _mboosterSelectedIdentity, StringComparison.OrdinalIgnoreCase)) return;
+            _mboosterSelectedIdentity = identity;
+            _mboosterUiSeeded = false;
+            RefreshMBoosterTab();
+        }
+
+        private void MBoosterRoleCombo_Changed(object sender, SelectionChangedEventArgs e)
+        {
+            if (_suppressEvents) return;
+            var s = CurrentMBoosterSettings();
+            if (s == null) return;
+            if (MBoosterRoleCombo.SelectedItem is not ComboBoxItem ci) return;
+            if (ci.Tag is not string tag || !int.TryParse(tag, out int v)) return;
+            s.Role = (MBoosterRole)v;
+            _plugin.SaveSettings();
+        }
+
+        // ===== Effect handlers (4 × enable + slider + test button) ==========
+
+        private void MBoosterAbsEnable_Changed(object sender, RoutedEventArgs e)
+        {
+            if (_suppressEvents) return;
+            var s = CurrentMBoosterSettings();
+            if (s == null) return;
+            (s.Abs ??= new MBoosterEffectSettings()).Enabled = MBoosterAbsEnable.IsChecked == true;
+            _plugin.SaveSettings();
+        }
+        private void MBoosterAbsIntensity_ValueChanged(object sender, RoutedPropertyChangedEventArgs<double> e)
+        {
+            if (_suppressEvents) return;
+            int v = Math.Max(0, Math.Min(100, (int)Math.Round(e.NewValue)));
+            MBoosterAbsIntensityValue.Text = v.ToString();
+            var s = CurrentMBoosterSettings();
+            if (s == null) return;
+            (s.Abs ??= new MBoosterEffectSettings()).IntensityPct = v;
+            _plugin.SaveSettings();
+        }
+        private void MBoosterAbsTest_Click(object sender, RoutedEventArgs e)
+        {
+            CurrentMBoosterController()?.FireEffectTest(global::MozaPlugin.Protocol.MBoosterEffectId.Abs);
+        }
+
+        private void MBoosterLockupEnable_Changed(object sender, RoutedEventArgs e)
+        {
+            if (_suppressEvents) return;
+            var s = CurrentMBoosterSettings();
+            if (s == null) return;
+            (s.Lockup ??= new MBoosterEffectSettings()).Enabled = MBoosterLockupEnable.IsChecked == true;
+            _plugin.SaveSettings();
+        }
+        private void MBoosterLockupIntensity_ValueChanged(object sender, RoutedPropertyChangedEventArgs<double> e)
+        {
+            if (_suppressEvents) return;
+            int v = Math.Max(0, Math.Min(100, (int)Math.Round(e.NewValue)));
+            MBoosterLockupIntensityValue.Text = v.ToString();
+            var s = CurrentMBoosterSettings();
+            if (s == null) return;
+            (s.Lockup ??= new MBoosterEffectSettings()).IntensityPct = v;
+            _plugin.SaveSettings();
+        }
+        private void MBoosterLockupTest_Click(object sender, RoutedEventArgs e)
+        {
+            CurrentMBoosterController()?.FireEffectTest(global::MozaPlugin.Protocol.MBoosterEffectId.Lockup);
+        }
+
+        private void MBoosterThresholdEnable_Changed(object sender, RoutedEventArgs e)
+        {
+            if (_suppressEvents) return;
+            var s = CurrentMBoosterSettings();
+            if (s == null) return;
+            (s.Threshold ??= new MBoosterEffectSettings()).Enabled = MBoosterThresholdEnable.IsChecked == true;
+            _plugin.SaveSettings();
+        }
+        private void MBoosterThresholdIntensity_ValueChanged(object sender, RoutedPropertyChangedEventArgs<double> e)
+        {
+            if (_suppressEvents) return;
+            int v = Math.Max(0, Math.Min(100, (int)Math.Round(e.NewValue)));
+            MBoosterThresholdIntensityValue.Text = v.ToString();
+            var s = CurrentMBoosterSettings();
+            if (s == null) return;
+            (s.Threshold ??= new MBoosterEffectSettings()).IntensityPct = v;
+            _plugin.SaveSettings();
+        }
+        private void MBoosterThresholdTest_Click(object sender, RoutedEventArgs e)
+        {
+            CurrentMBoosterController()?.FireEffectTest(global::MozaPlugin.Protocol.MBoosterEffectId.Threshold);
+        }
+
+        private void MBoosterEngineEnable_Changed(object sender, RoutedEventArgs e)
+        {
+            if (_suppressEvents) return;
+            var s = CurrentMBoosterSettings();
+            if (s == null) return;
+            (s.Engine ??= new MBoosterEffectSettings()).Enabled = MBoosterEngineEnable.IsChecked == true;
+            _plugin.SaveSettings();
+        }
+        private void MBoosterEngineIntensity_ValueChanged(object sender, RoutedPropertyChangedEventArgs<double> e)
+        {
+            if (_suppressEvents) return;
+            int v = Math.Max(0, Math.Min(100, (int)Math.Round(e.NewValue)));
+            MBoosterEngineIntensityValue.Text = v.ToString();
+            var s = CurrentMBoosterSettings();
+            if (s == null) return;
+            (s.Engine ??= new MBoosterEffectSettings()).IntensityPct = v;
+            _plugin.SaveSettings();
+        }
+        private void MBoosterEngineTest_Click(object sender, RoutedEventArgs e)
+        {
+            CurrentMBoosterController()?.FireEffectTest(global::MozaPlugin.Protocol.MBoosterEffectId.Engine);
+        }
+
+        // ===== Calibration (experimental) ===================================
+
+        private void MBoosterDirCheck_Changed(object sender, RoutedEventArgs e)
+        {
+            if (_suppressEvents) return;
+            var s = CurrentMBoosterSettings();
+            if (s == null) return;
+            s.Direction = MBoosterDirCheck.IsChecked == true ? 1 : 0;
+            _plugin.SaveSettings();
+        }
+        private void MBoosterMinSlider_ValueChanged(object sender, RoutedPropertyChangedEventArgs<double> e)
+        {
+            if (_suppressEvents) return;
+            int v = (int)Math.Round(e.NewValue);
+            MBoosterMinValue.Text = v.ToString();
+            var s = CurrentMBoosterSettings();
+            if (s == null) return;
+            s.Min = v;
+            _plugin.SaveSettings();
+        }
+        private void MBoosterMaxSlider_ValueChanged(object sender, RoutedPropertyChangedEventArgs<double> e)
+        {
+            if (_suppressEvents) return;
+            int v = (int)Math.Round(e.NewValue);
+            MBoosterMaxValue.Text = v.ToString();
+            var s = CurrentMBoosterSettings();
+            if (s == null) return;
+            s.Max = v;
+            _plugin.SaveSettings();
+        }
+        private void MBoosterReadCalButton_Click(object sender, RoutedEventArgs e)
+        {
+            CurrentMBoosterController()?.RequestCalibrationReads();
+        }
+        private void MBoosterApplyCalButton_Click(object sender, RoutedEventArgs e)
+        {
+            var c = CurrentMBoosterController();
+            var s = CurrentMBoosterSettings();
+            if (c == null || s == null) return;
+            _plugin.ApplyMBoosterToHardware(c, s);
+        }
+
+        // ------- Language picker (Options tab) -------
+        // null Culture = "Auto" row; otherwise a BCP-47 tag the user picked
+        // explicitly. Display is the language's own name so a user who can't
+        // read the current UI can still find theirs.
+        private sealed class LanguageOption
+        {
+            public string? Culture { get; set; }
+            public string Display { get; set; } = "";
+            public override string ToString() => Display;
+        }
+
+        private void InitLanguageCombo()
+        {
+            using (_suppressor.Begin())
+            {
+                var items = new List<LanguageOption>
+                {
+                    new LanguageOption { Culture = null, Display = "Auto" },
+                };
+                foreach (var code in LanguageResolver.SupportedCultures)
+                {
+                    var display = LanguageResolver.DisplayNames.TryGetValue(code, out var name) ? name : code;
+                    items.Add(new LanguageOption { Culture = code, Display = display });
+                }
+                LanguageCombo.ItemsSource = items;
+
+                var current = _plugin.Settings.PreferredLanguage;
+                LanguageCombo.SelectedItem = items.Find(i =>
+                    string.Equals(i.Culture ?? "", current ?? "", StringComparison.OrdinalIgnoreCase))
+                    ?? items[0];
+            }
+        }
+
+        private void LanguageCombo_Changed(object sender, SelectionChangedEventArgs e)
+        {
+            if (_suppressEvents) return;
+            if (LanguageCombo.SelectedItem is not LanguageOption opt) return;
+            _plugin.Settings.PreferredLanguage = opt.Culture; // null = Auto
+            _plugin.SaveSettings();
+        }
+
     }
 }

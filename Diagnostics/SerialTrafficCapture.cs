@@ -11,8 +11,11 @@ namespace MozaPlugin.Diagnostics
     /// Process-wide ring buffer of timestamped serial frames in both directions,
     /// plus an optional always-on JSONL sink that mirrors the layout produced by
     /// <c>sim/bridge.py</c> so capture-comparison tooling works on either source.
-    /// In-memory ring is cleared on every Start(); file sink (when enabled) keeps
-    /// growing until plugin unload.
+    /// In-memory ring is cleared on every Start() (user-initiated capture);
+    /// EnsureRunning() enables capture without clearing, used by the
+    /// AlwaysCaptureOnStartup auto-start path so the buffer survives plugin
+    /// reload across game switches. File sink (when enabled) keeps growing
+    /// until StopFileSink() or plugin unload.
     /// </summary>
     public sealed class SerialTrafficCapture
     {
@@ -43,11 +46,25 @@ namespace MozaPlugin.Diagnostics
         private StreamWriter? _fileSink;
         private string? _fileSinkPath;
         private int _fileSinkLineCount;
+        // Lock-free fast path for the common case where the file sink is
+        // closed. RecordTx/RecordRx fires on every serial frame (~250-1000Hz);
+        // taking _fileLock just to read a null pointer is wasteful contention.
+        // The flag is written under _fileLock so it stays consistent with
+        // _fileSink, but read without it on the hot path.
+        private volatile bool _fileSinkEnabled;
 
         public bool Enabled => _enabled;
         public int Count => Volatile.Read(ref _count);
         public DateTime StartedAtUtc => _startedAtUtc;
         public string? FileSinkPath => _fileSinkPath;
+
+        // Always-on cumulative byte counters — incremented on every RecordTx /
+        // RecordRx regardless of whether the in-memory ring is enabled. Powers
+        // the Diagnostics-tab bandwidth sparklines.
+        private long _totalRxBytes;
+        private long _totalTxBytes;
+        public long TotalRxBytes => Volatile.Read(ref _totalRxBytes);
+        public long TotalTxBytes => Volatile.Read(ref _totalTxBytes);
 
         private SerialTrafficCapture() { }
 
@@ -55,6 +72,19 @@ namespace MozaPlugin.Diagnostics
         {
             Clear();
             _startedAtUtc = DateTime.UtcNow;
+            _enabled = true;
+        }
+
+        /// <summary>
+        /// Idempotent enable: turns capture on without clearing the buffer or
+        /// resetting StartedAtUtc. No-op when already enabled. Use this from
+        /// auto-start paths (AlwaysCaptureOnStartup) so accumulated frames
+        /// survive plugin reload on game switches.
+        /// </summary>
+        public void EnsureRunning()
+        {
+            if (_enabled) return;
+            if (_startedAtUtc == default) _startedAtUtc = DateTime.UtcNow;
             _enabled = true;
         }
 
@@ -83,6 +113,7 @@ namespace MozaPlugin.Diagnostics
                 };
                 _fileSinkPath = path;
                 _fileSinkLineCount = 0;
+                _fileSinkEnabled = true;
             }
         }
 
@@ -97,6 +128,7 @@ namespace MozaPlugin.Diagnostics
             try { _fileSink?.Dispose(); } catch { }
             _fileSink = null;
             _fileSinkPath = null;
+            _fileSinkEnabled = false;
         }
 
         /// <summary>Stop capture and return a snapshot of the recorded entries in order.</summary>
@@ -121,8 +153,16 @@ namespace MozaPlugin.Diagnostics
         private void Record(Direction dir, string source, byte[] frame)
         {
             if (frame == null || frame.Length == 0) return;
+            // Cumulative byte counters — always-on, drives the Diagnostics-tab
+            // bandwidth sparklines independent of the ring buffer enable state.
+            if (dir == Direction.Rx) Interlocked.Add(ref _totalRxBytes, frame.Length);
+            else                     Interlocked.Add(ref _totalTxBytes, frame.Length);
+
             // File sink — always writes when open, even if ring is off.
-            WriteFileSinkLine(dir, frame);
+            // Lock-free gate: skip the entire StringBuilder + JSON serialise
+            // when no sink is open (the common case).
+            if (_fileSinkEnabled)
+                WriteFileSinkLine(dir, frame);
 
             if (!_enabled) return;
             // Copy — caller buffers (e.g. read-loop tmp buffer) get reused.
@@ -148,9 +188,10 @@ namespace MozaPlugin.Diagnostics
             //                            "hex":"...", "grp":..., "dev":..., "payload":"..."}
             // Tx (host→device) = h2b; Rx (device→host) = b2h.
             // Frame layout: 7E [N] grp dev payload[N] cs. Skip when frame is too short.
-            StreamWriter? sink;
-            lock (_fileLock) sink = _fileSink;
-            if (sink == null) return;
+            // Caller is expected to have checked _fileSinkEnabled before calling
+            // (saves the redundant lock on the closed-sink hot path); we still
+            // re-check sink != null after the lock below to cover the race
+            // where Close happens between the volatile check and acquiring the lock.
 
             var sb = new StringBuilder(frame.Length * 2 + 96);
             double t = (DateTime.UtcNow - _epoch).TotalSeconds;
@@ -208,12 +249,15 @@ namespace MozaPlugin.Diagnostics
                 sb.Append('"');
             }
             sb.Append('}');
+            string line = sb.ToString();
             try
             {
                 lock (_fileLock)
                 {
-                    sink.WriteLine(sb.ToString());
-                    if ((++_fileSinkLineCount & 63) == 0) sink.Flush();
+                    var s = _fileSink;
+                    if (s == null) return;
+                    s.WriteLine(line);
+                    if ((++_fileSinkLineCount & 63) == 0) s.Flush();
                 }
             }
             catch { /* sink may have been closed concurrently — silent drop */ }

@@ -16,11 +16,20 @@
     <Copyright>Copyright 2026</Copyright>
     <UseWPF>true</UseWPF>
     <ImportWindowsDesktopTargets>true</ImportWindowsDesktopTargets>
-    <!-- Force Platform=x86 so csproj-only builds (no sln) emit to bin\x86\<Config>\
-         — matches the path sln-driven Release|x86 builds use, which the deploy
-         scripts hard-code. Without this, `dotnet build MozaPlugin.csproj` defaults
-         to Platform=AnyCPU and lands in bin\Release\, silently producing a stale
-         deploy. Sln-level Release|x86 still wins because it sets Platform up front. -->
+    <!-- dotnet SDK 10.x + WPF emits duplicate AssemblyAttribute (CS0579) in
+         the markup-compile temp project. Turn off SDK auto-generation and
+         re-emit the version attributes ourselves in WriteVersionInfo below.
+         See dotnet/wpf#93 and dotnet/sdk#7207. -->
+    <GenerateAssemblyInfo>false</GenerateAssemblyInfo>
+    <GenerateTargetFrameworkAttribute>false</GenerateTargetFrameworkAttribute>
+    <IncludePackageReferencesDuringMarkupCompilation>true</IncludePackageReferencesDuringMarkupCompilation>
+    <!-- CoapStub is nested under this csproj's directory, so the SDK's
+         default `**\*.cs` Compile glob would sweep its sources in.
+         Exclude the whole subtree; the stub exe still gets embedded
+         via the explicit EmbeddedResource Include below. -->
+    <DefaultItemExcludes>$(DefaultItemExcludes);CoapStub\**</DefaultItemExcludes>
+    <!-- Force Platform=x86 so csproj-only builds match the path the
+         sln-driven Release|x86 build uses (bin\x86\Release\). -->
     <Platform Condition="'$(Platform)' == '' or '$(Platform)' == 'AnyCPU'">x86</Platform>
   </PropertyGroup>
 
@@ -51,14 +60,42 @@
     </Reference>
     <Reference Include="System.IO.Compression" />
     <Reference Include="System.IO.Compression.FileSystem" />
+    <Reference Include="System.Net.Http" />
     <Reference Include="System.Windows.Forms" />
   </ItemGroup>
 
   <ItemGroup>
+    <!-- i18n resources. Every locale is embedded directly into the main DLL
+         (no per-culture satellite assemblies) so deployment is a single file.
+         WithCulture=false tells MSBuild "this filename has a .<culture>. in it
+         but don't route it to a satellite" — the .resources blob gets bundled
+         in MozaPlugin.dll under the ManifestResourceName below. The custom
+         accessor in Resources/Strings.Designer.cs reads them via a per-culture
+         ResourceManager, so we don't depend on .NET's satellite resolver. -->
+    <EmbeddedResource Update="Resources\Strings.resx">
+      <ManifestResourceName>MozaPlugin.Resources.Strings</ManifestResourceName>
+    </EmbeddedResource>
+    <EmbeddedResource Update="Resources\Strings.es.resx">
+      <WithCulture>false</WithCulture>
+      <ManifestResourceName>MozaPlugin.Resources.Strings.es</ManifestResourceName>
+    </EmbeddedResource>
+    <EmbeddedResource Update="Resources\Strings.fr.resx">
+      <WithCulture>false</WithCulture>
+      <ManifestResourceName>MozaPlugin.Resources.Strings.fr</ManifestResourceName>
+    </EmbeddedResource>
+    <EmbeddedResource Update="Resources\Strings.ru.resx">
+      <WithCulture>false</WithCulture>
+      <ManifestResourceName>MozaPlugin.Resources.Strings.ru</ManifestResourceName>
+    </EmbeddedResource>
+    <EmbeddedResource Update="Resources\Strings.vi.resx">
+      <WithCulture>false</WithCulture>
+      <ManifestResourceName>MozaPlugin.Resources.Strings.vi</ManifestResourceName>
+    </EmbeddedResource>
     <EmbeddedResource Include="Data\Telemetry.json" LogicalName="MozaPlugin.Data.Telemetry.json" />
     <EmbeddedResource Include="DeviceTemplates\MozaWheelGeneric\MOZA Racing Wheel\device.json" LogicalName="MozaPlugin.Devices.WheelGeneric.device.json" />
     <EmbeddedResource Include="DeviceTemplates\MozaWheelOldProto\MOZA Old Protocol Wheel\device.json" LogicalName="MozaPlugin.Devices.WheelOldProto.device.json" />
     <EmbeddedResource Include="DeviceTemplates\MozaDashShdp\MOZA Dashboard\device.json" LogicalName="MozaPlugin.Devices.Dash.device.json" />
+    <EmbeddedResource Include="DeviceTemplates\MozaDashCm2\MOZA CM2 Racing Dash\device.json" LogicalName="MozaPlugin.Devices.DashCm2.device.json" />
     <EmbeddedResource Include="DeviceTemplates\MozaWheelBase\MOZA Wheel Base\device.json" LogicalName="MozaPlugin.Devices.WheelBase.device.json" />
     <!-- Factory dashboards shipped with MOZA wheel firmware. Copied verbatim
          from PitHouse `bin/dashes/<Name>/<Name>.mzdash`. Name underscores in
@@ -70,6 +107,35 @@
       <LogicalName>MozaPlugin.Data.Dashes.%(Filename).mzdash</LogicalName>
     </EmbeddedResource>
   </ItemGroup>
+
+  <!-- Build CoapStub before this project. Do NOT add UndefineProperties
+       here: MSBuild keys project-instance cache by (path + global props),
+       so any divergence from the sln-driven build's properties causes a
+       second concurrent build of CoapStub — which fails on Windows
+       (CS2012, exe write-locked by VBCSCompiler). -->
+  <ItemGroup>
+    <ProjectReference Include="CoapStub\CoapStub.csproj">
+      <ReferenceOutputAssembly>false</ReferenceOutputAssembly>
+      <Private>false</Private>
+    </ProjectReference>
+  </ItemGroup>
+
+  <ItemGroup>
+    <!-- Embed the CoapStub output exe so CoapStubManager can extract it
+         at runtime. AssemblyName stays "MOZA Pit House" because the stub's
+         purpose is to impersonate that process name. -->
+    <EmbeddedResource Include="CoapStub\bin\x86\$(Configuration)\MOZA Pit House.exe"
+                      LogicalName="MozaPlugin.Sdk.CoapStub.exe"
+                      Visible="false" />
+  </ItemGroup>
+
+  <!-- Fail with a clear message if someone builds this csproj directly
+       without first building CoapStub. Sln-driven builds satisfy this
+       via the ProjectReference above. -->
+  <Target Name="VerifyCoapStubBuilt" BeforeTargets="GenerateResourceMain">
+    <Error Condition="!Exists('CoapStub\bin\x86\$(Configuration)\MOZA Pit House.exe')"
+           Text="CoapStub output not found at 'CoapStub\bin\x86\$(Configuration)\MOZA Pit House.exe'. Build the sln (or `dotnet build CoapStub/CoapStub.csproj -c $(Configuration)` first)." />
+  </Target>
 
   <ItemGroup>
     <PackageReference Include="Microsoft.NETFramework.ReferenceAssemblies.net48" Version="1.0.3">
@@ -84,10 +150,48 @@
     </PackageReference>
   </ItemGroup>
 
-  <!-- Copy output DLL to SimHub folder on build -->
+  <!-- Copy output DLL to SimHub folder on build. All localized resources are
+       embedded inside MozaPlugin.dll (see i18n resource group above), so a
+       single file is the full deployment — no per-culture satellite folders. -->
   <Target Name="CopyToSimHub" AfterTargets="Build" Condition="'$(SIMHUB_PATH)' != ''">
     <Copy SourceFiles="$(OutputPath)$(AssemblyName).dll" DestinationFolder="$(SIMHUB_PATH)" />
   </Target>
 
+  <!-- Re-emit version attributes since GenerateAssemblyInfo is off. CI
+       passes /p:Version=...; without this target the value never reaches
+       the DLL and DiagnosticsTextBuilder.GetPluginVersion falls back to
+       1.0.0.0. AssemblyVersion / AssemblyFileVersion require 4-part
+       numeric form, so we strip any SemVer suffix and pad. The full
+       $(Version) goes into AssemblyInformationalVersion. -->
+  <Target Name="WriteVersionInfo" BeforeTargets="CoreCompile">
+    <PropertyGroup>
+      <_VersionNumeric>$(Version)</_VersionNumeric>
+      <_VersionNumeric Condition="$(_VersionNumeric.Contains('-'))">$(_VersionNumeric.Substring(0, $(_VersionNumeric.IndexOf('-'))))</_VersionNumeric>
+      <_VersionNumeric Condition="$(_VersionNumeric.Contains('+'))">$(_VersionNumeric.Substring(0, $(_VersionNumeric.IndexOf('+'))))</_VersionNumeric>
+      <_VersionDotCount>$([MSBuild]::Subtract($(_VersionNumeric.Length), $(_VersionNumeric.Replace('.', '').Length)))</_VersionDotCount>
+      <_VersionNumeric Condition="'$(_VersionDotCount)' == '0'">$(_VersionNumeric).0.0.0</_VersionNumeric>
+      <_VersionNumeric Condition="'$(_VersionDotCount)' == '1'">$(_VersionNumeric).0.0</_VersionNumeric>
+      <_VersionNumeric Condition="'$(_VersionDotCount)' == '2'">$(_VersionNumeric).0</_VersionNumeric>
+    </PropertyGroup>
+    <ItemGroup>
+      <_PluginVersionAttr Include="System.Reflection.AssemblyVersionAttribute">
+        <_Parameter1>$(_VersionNumeric)</_Parameter1>
+      </_PluginVersionAttr>
+      <_PluginVersionAttr Include="System.Reflection.AssemblyFileVersionAttribute">
+        <_Parameter1>$(_VersionNumeric)</_Parameter1>
+      </_PluginVersionAttr>
+      <_PluginVersionAttr Include="System.Reflection.AssemblyInformationalVersionAttribute">
+        <_Parameter1>$(Version)</_Parameter1>
+      </_PluginVersionAttr>
+    </ItemGroup>
+    <WriteCodeFragment
+        AssemblyAttributes="@(_PluginVersionAttr)"
+        Language="C#"
+        OutputDirectory="$(IntermediateOutputPath)"
+        OutputFile="VersionInfo.cs">
+      <Output TaskParameter="OutputFile" ItemName="Compile" />
+      <Output TaskParameter="OutputFile" ItemName="FileWrites" />
+    </WriteCodeFragment>
+  </Target>
 
 </Project>

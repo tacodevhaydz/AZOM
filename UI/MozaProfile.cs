@@ -28,18 +28,17 @@ namespace MozaPlugin
 
         // LED / mode
         public int WheelTelemetryMode { get; set; } = -1;
-        public int WheelIdleEffect { get; set; } = -1;
-        public int WheelButtonsIdleEffect { get; set; } = -1;
-        public int WheelKnobIdleEffect { get; set; } = -1;
         public int WheelKnobLedMode { get; set; } = -1;
         public int WheelButtonsLedMode { get; set; } = -1;
-        public int WheelTelemetryIdleSpeedMs { get; set; } = -1;
-        public int WheelButtonsIdleSpeedMs { get; set; } = -1;
-        public int WheelKnobIdleSpeedMs { get; set; } = -1;
         // NOTE: WheelSleep* (mode / timeout / speed / color) moved to
         // MozaPluginSettings.WheelSleepByPageGuid in schema v8 — sleep is a
         // firmware preference, not a per-game-per-wheel decision. Legacy
         // values get drained via LegacyJsonFields during migration.
+        // NOTE: WheelIdleEffect / WheelButtonsIdleEffect / WheelKnobIdleEffect
+        // / WheelTelemetryIdleSpeedMs / WheelButtonsIdleSpeedMs / WheelKnobIdleSpeedMs
+        // moved to MozaPluginSettings.WheelIdleByPageGuid in schema v9 — same
+        // wheel-level reasoning as sleep. Legacy values are drained via
+        // LegacyJsonFields during migration.
 
         // Brightness (-1 = use profile baseline)
         public int WheelRpmBrightness { get; set; } = -1;
@@ -82,14 +81,8 @@ namespace MozaPlugin
             return new WheelOverride
             {
                 WheelTelemetryMode = WheelTelemetryMode,
-                WheelIdleEffect = WheelIdleEffect,
-                WheelButtonsIdleEffect = WheelButtonsIdleEffect,
-                WheelKnobIdleEffect = WheelKnobIdleEffect,
                 WheelKnobLedMode = WheelKnobLedMode,
                 WheelButtonsLedMode = WheelButtonsLedMode,
-                WheelTelemetryIdleSpeedMs = WheelTelemetryIdleSpeedMs,
-                WheelButtonsIdleSpeedMs = WheelButtonsIdleSpeedMs,
-                WheelKnobIdleSpeedMs = WheelKnobIdleSpeedMs,
                 WheelRpmBrightness = WheelRpmBrightness,
                 WheelButtonsBrightness = WheelButtonsBrightness,
                 WheelFlagsBrightness = WheelFlagsBrightness,
@@ -135,12 +128,15 @@ namespace MozaPlugin
         public byte NaturalFriction { get; set; }     = 50;
         public byte MaxTorqueLimit { get; set; }      = 50;
 
-        // Host-rendered engine vibration. Intensity (0..100 %) gates the
-        // 0x0A 0x05 stream's slot ID (0 = silent slot 0x0000). Frequency is
-        // the literal target Hz (0..300) of the oscillator the AB9 firmware
-        // runs from the streamed period field. Neither value is pushed as a
-        // stored device setting — they modulate the SimHub plugin's host-side
-        // stream generator only.
+        // Host-rendered engine vibration. Intensity (0..100 %) linearly scales
+        // the 0x0B 0x02/03 engine-pulse-pair amp16 (full scale 0x2328); the
+        // 0x0A 0x05 stream's slot ID stays at 0x1996 the whole time the
+        // engine is "on" — see Ab9EngineVibrationWorker for why earlier
+        // slot-toggle duty-cycle schemes produced an audible LF rumble.
+        // Frequency is the literal target Hz (0..200) of the oscillator the
+        // AB9 firmware runs from the streamed period field. Neither value is
+        // pushed as a stored device setting — they modulate the SimHub
+        // plugin's host-side stream generator only.
         public byte EngineVibrationIntensity { get; set; } = 0;
         public ushort EngineVibrationFrequency { get; set; } = 100;
 
@@ -148,6 +144,16 @@ namespace MozaPlugin
         // push when the user moves this slider; AB9 firmware then fires the rumble
         // pattern autonomously on every HID-detected gear engagement.
         public byte GearShiftVibrationIntensity { get; set; } = 0;
+
+        // AB9-specific gear-shift event tuning. Independent of the wheelbase
+        // GearshiftVibrateOnNeutral / GearshiftDebounceMs (which gate the
+        // base-gearshift-event push), since the AB9 path fires per-shift
+        // triggers (0x0D 0x01 + 0x04/0x06) through a different device and
+        // users want to tune the two devices separately — e.g. heavier
+        // debounce on the wheelbase to avoid double-kicks on H-pattern, but
+        // tighter on the AB9 to feel every gate engagement.
+        public bool GearShiftVibrateOnNeutral { get; set; } = false;
+        public int GearShiftDebounceMs { get; set; } = 500;
 
         public Ab9Settings Clone()
         {
@@ -162,6 +168,8 @@ namespace MozaPlugin
                 EngineVibrationIntensity = EngineVibrationIntensity,
                 EngineVibrationFrequency = EngineVibrationFrequency,
                 GearShiftVibrationIntensity = GearShiftVibrationIntensity,
+                GearShiftVibrateOnNeutral = GearShiftVibrateOnNeutral,
+                GearShiftDebounceMs = GearShiftDebounceMs,
             };
         }
     }
@@ -213,17 +221,16 @@ namespace MozaPlugin
 
         // ===== Wheel LED settings =====
         public int WheelTelemetryMode { get; set; } = -1;
-        public int WheelIdleEffect { get; set; } = -1;
-        public int WheelButtonsIdleEffect { get; set; } = -1;
-        public int WheelKnobIdleEffect { get; set; } = -1;
         public int WheelKnobLedMode { get; set; } = -1;
         public int WheelButtonsLedMode { get; set; } = -1;
-        public int WheelTelemetryIdleSpeedMs { get; set; } = -1;
-        public int WheelButtonsIdleSpeedMs { get; set; } = -1;
-        public int WheelKnobIdleSpeedMs { get; set; } = -1;
         // NOTE: WheelSleep* (mode / timeout / speed / color) moved to
         // MozaPluginSettings.WheelSleepByPageGuid in schema v8 — see the
         // baseline-shared LegacyJsonFields capture above.
+        // NOTE: WheelIdleEffect / WheelButtonsIdleEffect / WheelKnobIdleEffect
+        // / WheelTelemetryIdleSpeedMs / WheelButtonsIdleSpeedMs / WheelKnobIdleSpeedMs
+        // moved to MozaPluginSettings.WheelIdleByPageGuid in schema v9. Legacy
+        // baseline values get drained via the per-profile LegacyJsonFields
+        // capture above.
         public int WheelRpmBrightness { get; set; } = -1;
         public int WheelButtonsBrightness { get; set; } = -1;
         public int WheelFlagsBrightness { get; set; } = -1;
@@ -292,6 +299,14 @@ namespace MozaPlugin
         // values to a device that isn't attached.
         public Ab9Settings? Ab9 { get; set; }
 
+        // ===== mBooster Pedals (per-device) =====
+        // Per-device settings keyed by USB device instance ID (stable across
+        // reconnects). One entry per physical mBooster the user has touched
+        // settings for. Dict starts empty; mBooster detection populates it
+        // lazily via the UI when the user first opens the device's tab.
+        public Dictionary<string, MBoosterDeviceSettings> MBoosterSettings { get; set; }
+            = new Dictionary<string, MBoosterDeviceSettings>(StringComparer.OrdinalIgnoreCase);
+
         // ===== Active dashboard for this game profile =====
         // Stable key in the same format MozaPlugin.GetActiveDashboardKeyCandidates() emits:
         //   "wheel:<configJsonId>"     — wheel-resident dashboard, stable across re-uploads
@@ -357,14 +372,11 @@ namespace MozaPlugin
             WorkMode = p.WorkMode;
 
             // Wheel LED
-            WheelTelemetryMode = p.WheelTelemetryMode; WheelIdleEffect = p.WheelIdleEffect;
-            WheelButtonsIdleEffect = p.WheelButtonsIdleEffect;
-            WheelKnobIdleEffect = p.WheelKnobIdleEffect;
+            WheelTelemetryMode = p.WheelTelemetryMode;
             WheelKnobLedMode = p.WheelKnobLedMode;
             WheelButtonsLedMode = p.WheelButtonsLedMode;
-            WheelTelemetryIdleSpeedMs = p.WheelTelemetryIdleSpeedMs;
-            WheelButtonsIdleSpeedMs = p.WheelButtonsIdleSpeedMs;
-            WheelKnobIdleSpeedMs = p.WheelKnobIdleSpeedMs;
+            // Idle effect/speed moved to per-wheel-page MozaPluginSettings.WheelIdleByPageGuid
+            // in schema v9 — not copied per profile.
             // WheelSleep* now lives on MozaPluginSettings.WheelSleepByPageGuid
             // (per-wheel, shared across profiles) — not copied here.
             WheelRpmBrightness = p.WheelRpmBrightness; WheelButtonsBrightness = p.WheelButtonsBrightness;
@@ -417,6 +429,17 @@ namespace MozaPlugin
             DashFlagColors = CloneArray(p.DashFlagColors);
 
             Ab9 = p.Ab9?.Clone();
+
+            // mBooster — deep-copy each per-device settings entry.
+            MBoosterSettings = new Dictionary<string, MBoosterDeviceSettings>(StringComparer.OrdinalIgnoreCase);
+            if (p.MBoosterSettings != null)
+            {
+                foreach (var kvp in p.MBoosterSettings)
+                {
+                    if (kvp.Value != null)
+                        MBoosterSettings[kvp.Key] = kvp.Value.Clone();
+                }
+            }
 
             TelemetryDashboardKey = p.TelemetryDashboardKey;
 

@@ -1,11 +1,11 @@
 {
   "mcpServers": {
-    "wheel-sim-windows": {
+    "wheel-sim-pithouse": {
       "command": ".venv/bin/python3",
       "args": ["sim/wheel_sim.py", "--mcp", "/dev/ttyGS0"],
       "cwd": "."
     },
-    "wheel-sim-linux": {
+    "wheel-sim-simhub": {
       "command": ".venv/bin/python3",
       "args": ["sim/wheel_sim.py", "--mcp", "/dev/tnt0"],
       "cwd": "."
@@ -15,12 +15,12 @@
       "args": ["sim/simhub_mcp.py"],
       "cwd": "."
     },
-    "bridge-linux": {
+    "bridge-real-wheel-to-pithouse": {
       "command": ".venv/bin/python3",
       "args": ["sim/bridge.py", "--mcp", "/dev/ttyACM0", "/dev/ttyGS0"],
       "cwd": "."
     },
-    "ab9-sim-linux": {
+    "ab9-sim-pithouse": {
       "command": ".venv/bin/python3",
       "args": ["sim/ab9_sim.py", "--mcp", "/dev/ttyGS1"],
       "cwd": "."
