@@ -41,6 +41,7 @@ namespace MozaPlugin.Protocol
         public const string PidShifterHgp      = "0x001E";
         public const string PidHandbrakeHbp    = "0x001F";
         public const string PidHub             = "0x0020";
+        public const string PidShifterSgp      = "0x0023";
         public const string PidStalks          = "0x0024";
         public const string PidDashboardCm2    = "0x0025";
 
@@ -62,6 +63,7 @@ namespace MozaPlugin.Protocol
                 [0x001E] = new InventoryEntry(MozaDeviceCategory.Shifter,   "HGP shifter (unconfirmed)"),
                 [0x001F] = new InventoryEntry(MozaDeviceCategory.Handbrake, "HBP handbrake (unconfirmed)"),
                 [0x0020] = new InventoryEntry(MozaDeviceCategory.Hub,       "Universal HUB"),
+                [0x0023] = new InventoryEntry(MozaDeviceCategory.Shifter,   "SGP shifter"),
                 [0x0024] = new InventoryEntry(MozaDeviceCategory.Stalks,    "MOZA Stalks"),
                 [0x0025] = new InventoryEntry(MozaDeviceCategory.Dashboard, "CM2 Racing Dash"),
                 [0x1000] = new InventoryEntry(MozaDeviceCategory.Ab9,       "AB9 active shifter"),
