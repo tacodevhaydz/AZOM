@@ -45,8 +45,6 @@ Download the latest `MozaPlugin_v*.zip` from the [Releases](https://github.com/g
 
 Restart SimHub — the plugin appears under Settings > Plugins as "MOZA Control".
 
-> If you previously installed a build that shipped `es/`, `fr/`, `ru/` subfolders under your SimHub directory, delete those — they're stale satellite assemblies that the current build no longer produces.
-
 **Development builds.** The latest in-progress build from the `dev` branch is published as a pre-release: [MozaPlugin_dev.zip](https://github.com/giantorth/moza-simhub-plugin/releases/download/dev-latest/MozaPlugin_dev.zip). Expect bugs or broken features — use the stable release above if you need something reliable.
 
 **Device setup:** Connect your hardware and restart SimHub. The plugin auto-detects connected devices (wheel model, dashboard) and deploys matching device definitions. A banner in the plugin settings panel will prompt you to restart SimHub, after which the devices appear under Devices ready to add. Requires SimHub 9.11+.
