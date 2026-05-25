@@ -22,7 +22,17 @@ namespace MozaPlugin.Devices
         private MozaWheelExtensionSettings _settings = new MozaWheelExtensionSettings();
         private MozaLedDeviceManager? _ledDriver;
         private bool _driverInjected;
-        private bool _buttonsCountSet;
+        // Last applied button count, used to detect when the source-of-truth
+        // WheelModelInfo has changed and a fresh apply is needed. -1 = never
+        // applied. Replaces a prior bool latch that one-shot-set the count
+        // from whatever wheel happened to be attached during the first
+        // injection, then never updated — produced cross-wheel-extension
+        // pollution: the KS extension would latch with the W17's 8-button
+        // count if the W17 happened to be attached at that moment, and a
+        // later hot-swap to a KS left the SimHub effects pipeline pushing
+        // 8 button updates to a 10-button wheel.
+        private int _lastAppliedButtonsCount = -1;
+        private int _lastAppliedEncodersCount = -1;
 
         /// <summary>
         /// Expected wheel model prefix resolved from the DeviceTypeID.
@@ -88,16 +98,14 @@ namespace MozaPlugin.Devices
                             prop.GetSetMethod(nonPublic: true)!.Invoke(lmd.ledModuleSettings, new object[] { _ledDriver });
                             _driverInjected = true;
 
-                            // Expose button LEDs — count depends on wheel model (set later when model name arrives)
-                            var plugin = MozaPlugin.Instance;
-                            if (plugin?.WheelModelInfo is { } modelInfo)
-                            {
-                                lmd.ledModuleSettings.ButtonsCount = modelInfo.ButtonLedCount;
-                                if (modelInfo.KnobCount > 0)
-                                    SetEncodersCount(lmd.ledModuleSettings, modelInfo.KnobCount);
-                                _buttonsCountSet = true;
-                            }
+                            // Expose button LEDs — count is THIS extension's model
+                            // (resolved from DeviceTypeID), not whichever wheel happens
+                            // to be attached right now. See ResolveModelInfo().
+                            var modelInfoNow = ResolveModelInfo();
+                            if (modelInfoNow != null)
+                                ApplyCounts(lmd.ledModuleSettings, modelInfoNow);
 
+                            var plugin = MozaPlugin.Instance;
                             if (plugin != null)
                                 plugin.DeviceExtensionActive = true;
 
@@ -145,22 +153,74 @@ namespace MozaPlugin.Devices
             // Notify SimHub when detection state changes so it resumes/pauses Display() calls
             _ledDriver?.UpdateConnectionState();
 
-            // Set ButtonsCount once wheel model is identified (may happen after injection)
-            if (_driverInjected && !_buttonsCountSet && MozaPlugin.Instance?.WheelModelInfo is { } modelInfo)
+            // Re-apply counts whenever the resolved WheelModelInfo's layout
+            // changes. For known-model extensions the resolved info is fixed
+            // (so this is at most a single apply per session). For generic /
+            // __old__ extensions the resolved info changes with the currently
+            // attached wheel, so this loop handles wheel hot-swap re-binding
+            // without a separate watchdog.
+            if (_driverInjected)
             {
-                foreach (var instance in LinkedDevice.GetInstances())
+                var modelInfo = ResolveModelInfo();
+                if (modelInfo != null
+                    && (_lastAppliedButtonsCount != modelInfo.ButtonLedCount
+                        || _lastAppliedEncodersCount != modelInfo.KnobCount))
                 {
-                    if (instance is LedModuleDevice lmd && lmd.ledModuleSettings != null)
+                    foreach (var instance in LinkedDevice.GetInstances())
                     {
-                        lmd.ledModuleSettings.ButtonsCount = modelInfo.ButtonLedCount;
-                        if (modelInfo.KnobCount > 0)
-                            SetEncodersCount(lmd.ledModuleSettings, modelInfo.KnobCount);
-                        _buttonsCountSet = true;
-                        MozaLog.Debug($"[Moza] Set ButtonsCount={modelInfo.ButtonLedCount}, EncodersCount={modelInfo.KnobCount} for {MozaPlugin.Instance!.Data.WheelModelName}");
-                        break;
+                        if (instance is LedModuleDevice lmd && lmd.ledModuleSettings != null)
+                        {
+                            ApplyCounts(lmd.ledModuleSettings, modelInfo);
+                            break;
+                        }
                     }
                 }
             }
+        }
+
+        /// <summary>
+        /// Pick the right <see cref="WheelModelInfo"/> for this extension:
+        /// for known-model extensions (DeviceTypeID resolves to a wheel
+        /// prefix in <see cref="WheelModelInfo.KnownModels"/>) resolve
+        /// statically from the prefix so the per-model extension always
+        /// reflects ITS model's layout regardless of which wheel is
+        /// currently attached. For generic / <c>__old__</c> extensions
+        /// (prefix is null, empty, or the old-protocol marker), defer to
+        /// the plugin's currently-detected wheel — that's the only signal
+        /// we have for those device types.
+        /// </summary>
+        private WheelModelInfo? ResolveModelInfo()
+        {
+            if (!string.IsNullOrEmpty(_expectedModelPrefix)
+                && _expectedModelPrefix != MozaDeviceConstants.OldProtocolMarker)
+            {
+                var info = WheelModelInfo.FromModelName(_expectedModelPrefix!);
+                // FromModelName returns Default for unrecognized prefixes —
+                // treat that as "no static match" and fall through to the
+                // plugin's runtime info so we still get a reasonable layout.
+                if (!ReferenceEquals(info, WheelModelInfo.Default))
+                    return info;
+            }
+            return MozaPlugin.Instance?.WheelModelInfo;
+        }
+
+        /// <summary>
+        /// Apply ButtonsCount + EncodersCount to the LedModuleSettings and
+        /// stamp the per-extension trackers so DataUpdate can detect later
+        /// changes (only meaningful for the deferred-resolution case where
+        /// the plugin's WheelModelInfo can change across a wheel hot-swap).
+        /// </summary>
+        private void ApplyCounts(LedModuleSettings lmd, WheelModelInfo modelInfo)
+        {
+            lmd.ButtonsCount = modelInfo.ButtonLedCount;
+            if (modelInfo.KnobCount > 0)
+                SetEncodersCount(lmd, modelInfo.KnobCount);
+            _lastAppliedButtonsCount = modelInfo.ButtonLedCount;
+            _lastAppliedEncodersCount = modelInfo.KnobCount;
+            MozaLog.Debug(
+                $"[Moza] Set ButtonsCount={modelInfo.ButtonLedCount}, " +
+                $"EncodersCount={modelInfo.KnobCount} for " +
+                $"{(string.IsNullOrEmpty(_expectedModelPrefix) ? "(generic)" : _expectedModelPrefix)}");
         }
 
         public override void LoadDefaultSettings()

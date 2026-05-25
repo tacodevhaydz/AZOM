@@ -121,6 +121,49 @@ namespace MozaPlugin
 
         // ===== DashboardBindingCoordinator shims (external API surface) =====
         internal void ApplyTelemetrySettings() => _dashboardBindingCoordinator.ApplyTelemetrySettings();
+
+        /// <summary>
+        /// Queue a re-apply of the current profile's saved
+        /// <c>TelemetryDashboardKey</c> against the currently-attached
+        /// wheel. Called from the wheel-hot-swap path so the new wheel ends
+        /// up bound to the user's saved choice instead of whatever slot it
+        /// boots to. Tries the apply immediately; if the wheel state isn't
+        /// ready yet (configJsonList empty), sets the dashboard-binding
+        /// coordinator's pending key so the next PollStatus tick retries.
+        /// </summary>
+        internal void RequestSavedDashboardReapply()
+        {
+            try
+            {
+                var profile = _settings?.ProfileStore?.CurrentProfile;
+                if (profile == null) return;
+                if (string.IsNullOrEmpty(profile.TelemetryDashboardKey)) return;
+                bool applied = false;
+                try { applied = ApplyTelemetryDashboardFromProfile(profile); }
+                catch (Exception ex)
+                {
+                    MozaLog.Warn(
+                        $"[Moza] RequestSavedDashboardReapply: apply threw — {ex.Message}");
+                    return;
+                }
+                if (!applied)
+                {
+                    _dashboardBindingCoordinator.SetPendingDashboardKey(profile.TelemetryDashboardKey!);
+                    MozaLog.Debug(
+                        $"[Moza] RequestSavedDashboardReapply: deferred " +
+                        $"(key={profile.TelemetryDashboardKey}) — PollStatus retry will fire " +
+                        "once wheel state is ready");
+                }
+                else
+                {
+                    _dashboardBindingCoordinator.ClearPendingDashboardKey();
+                }
+            }
+            catch (Exception ex)
+            {
+                MozaLog.Warn($"[Moza] RequestSavedDashboardReapply: outer error — {ex.Message}");
+            }
+        }
         internal void RestartTelemetry() => _dashboardBindingCoordinator.RestartTelemetry();
         internal bool ApplyTelemetryDashboardFromProfile(MozaProfile profile) => _dashboardBindingCoordinator.ApplyTelemetryDashboardFromProfile(profile);
         internal void OnDashboardSwitched(uint slot) => _dashboardBindingCoordinator.OnDashboardSwitched(slot);
@@ -396,6 +439,37 @@ namespace MozaPlugin
             || !string.IsNullOrEmpty(_data?.DisplaySwVersion)
             || (_data?.DisplayMcuUid?.Length ?? 0) > 0
             || (_telemetrySender?.DisplayDetected ?? false);
+
+        // UtcTicks at which the wheel was first detected (wheel-telemetry-mode or
+        // wheel-rpm-value1 response). 0 = no wheel detected. Read by PollStatus's
+        // display-wedge watchdog to bound how long we'll wait for the display
+        // sub-device to come up after wheel-MCU detection. Cleared on
+        // ResetWheelDetection.
+        private long _wheelDetectedUtcTicks;
+        internal long WheelDetectedUtcTicks => Interlocked.Read(ref _wheelDetectedUtcTicks);
+
+        // One-shot latch: true once the display-wedge watchdog has forced a
+        // serial reconnect. Stays true until a future successful display
+        // detection re-arms it — so a permanently-wedged display can't loop
+        // the connection. ResetWheelDetection does NOT clear this; only
+        // ClearDisplayWedgeRecovery (called from DeviceProber's
+        // display-model-name handler) does. SetConnectionEnabled(true) also
+        // clears it so the user can manually retry from the UI.
+        internal volatile bool DisplayWedgeRecoveryFired;
+
+        /// <summary>Stamp the wheel-detection timestamp for the wedge watchdog.
+        /// Idempotent — multiple calls leave the first-detect timestamp in
+        /// place so the watchdog measures elapsed time since the rising edge,
+        /// not since the most recent probe response.</summary>
+        internal void NoteWheelDetected()
+        {
+            Interlocked.CompareExchange(ref _wheelDetectedUtcTicks, DateTime.UtcNow.Ticks, 0);
+        }
+
+        /// <summary>Clear the wedge-recovery one-shot after a successful display
+        /// detection. Subsequent wedges (e.g., on a future wheel hot-swap) can
+        /// then trigger recovery again.</summary>
+        internal void ClearDisplayWedgeRecovery() => DisplayWedgeRecoveryFired = false;
 
         /// <summary>
         /// Whether the plugin should drive the dashboard telemetry pipeline for the
@@ -1693,6 +1767,10 @@ namespace MozaPlugin
             if (enabled)
             {
                 _reconnectTimer.Start();
+                // Manual re-enable re-arms the display-wedge recovery one-shot
+                // so a user who toggled Connection off then on after a wedge
+                // gets a fresh recovery attempt.
+                DisplayWedgeRecoveryFired = false;
                 MozaLog.Info("[Moza] Connection enabled");
             }
             else
@@ -2174,6 +2252,20 @@ namespace MozaPlugin
                 DetectionState.DashDetected = true;
             WheelModelInfo = null;
             _data.ClearWheelIdentity();
+            // ClearWheelIdentity above blanks _data.Display* fields, but
+            // TelemetrySender keeps its own _displayDetected / _displayModelName
+            // latch (see SetDisplayDetected) — clear that too so the next
+            // wheel's StartTelemetryIfReady display gate doesn't read stale
+            // detection and bypass the ~20 s display-boot wait.
+            _telemetrySender?.ResetDisplayDetection();
+            // Clear the wedge-watchdog timestamp so elapsed-since-detect is
+            // measured against the NEXT wheel's rising edge, not a stale one
+            // from the wheel we just disconnected. DisplayWedgeRecoveryFired
+            // intentionally NOT reset here — only cleared on a successful
+            // display detection (or manual Connection-enable toggle), which
+            // is what prevents the auto-recovery from looping when the
+            // display is permanently wedged.
+            Interlocked.Exchange(ref _wheelDetectedUtcTicks, 0);
             _deviceManager.ResetWheelDetection();
             if (_telemetrySender != null)
                 _telemetrySender.DetectedDeviceMask = 0;
@@ -2261,6 +2353,47 @@ namespace MozaPlugin
                 && !IsDisplayDetected
                 && WheelModelInfo?.HasDisplay != false)
                 _deviceManager.SendDisplayProbe();
+
+            // Display-boot wedge watchdog. The W17 (CS Pro) takes ~20 s for its
+            // display sub-device to come up after a hot-attach; KS Pro and other
+            // displayed wheels are similar. StartTelemetryIfReady's
+            // display-detected gate (DashboardBindingCoordinator.cs) defers
+            // pipeline start until the display probe answers — correct under
+            // normal conditions, but if the display sub-device is genuinely
+            // stuck (firmware wedge, mid-USB-enumeration glitch) the gate would
+            // sit forever and the user has no signal that anything's wrong.
+            // After DisplayWedgeTimeoutMs of waiting we treat the wheel as
+            // wedged and force a serial disconnect; the 5 s reconnect timer
+            // reopens the port, which gives the wheel's USB stack a chance to
+            // re-enumerate and the display a fresh boot. One-shot per attach:
+            // DisplayWedgeRecoveryFired stays set until the next successful
+            // display detection (cleared in DeviceProber's display-model-name
+            // case) or a manual Connection-enable toggle, so a permanently
+            // wedged display can't loop the connection.
+            const long DisplayWedgeTimeoutMs = 60_000;
+            if (!DisplayWedgeRecoveryFired
+                && (DetectionState.NewWheelDetected || DetectionState.OldWheelDetected)
+                && WheelModelInfo?.HasDisplay != false
+                && !IsDisplayDetected
+                && _wheelDetectedUtcTicks != 0)
+            {
+                long elapsedMs = (DateTime.UtcNow.Ticks - _wheelDetectedUtcTicks)
+                    / TimeSpan.TicksPerMillisecond;
+                if (elapsedMs >= DisplayWedgeTimeoutMs)
+                {
+                    DisplayWedgeRecoveryFired = true;
+                    var hasDisplayStr = WheelModelInfo?.HasDisplay?.ToString() ?? "unknown";
+                    MozaLog.Warn(
+                        $"[Moza] Display sub-device wedge: wheel detected " +
+                        $"{elapsedMs}ms ago (HasDisplay={hasDisplayStr}) but " +
+                        "display has not responded. Forcing serial disconnect — " +
+                        "reconnect timer (5 s) will reopen the port and give the " +
+                        "wheel's USB stack a chance to re-enumerate. " +
+                        "If this recurs, the display firmware is likely stuck; " +
+                        "physically detaching the wheel and reattaching is the next step.");
+                    try { _connection?.Disconnect(); } catch { }
+                }
+            }
 
             // Read Group 3 ring LED colors once after group detected + model resolved
             if (!DetectionState.Group3ColorsRead && DetectionState.NewWheelDetected && IsWheelLedGroupPresent(3))

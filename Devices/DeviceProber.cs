@@ -344,6 +344,9 @@ namespace MozaPlugin.Devices
                     if (!_detectionState.NewWheelDetected && !_detectionState.OldWheelDetected)
                     {
                         _detectionState.NewWheelDetected = true;
+                        // Stamp first-detect time for the display-wedge watchdog
+                        // (PollStatus bounds the post-detect display-boot wait).
+                        _plugin.NoteWheelDetected();
                         _deviceManager.LockWheelId(deviceId);
                         // Don't apply here — page GUID isn't resolvable until
                         // wheel-model-name arrives. Apply runs in the
@@ -447,6 +450,21 @@ namespace MozaPlugin.Devices
                                 MozaLog.Warn($"[Moza] ApplyTelemetrySettings after wheel-model-name failed: {ex.Message}");
                             }
 
+                            // Wheel hot-swap path: the saved profile's dashboard
+                            // preference (TelemetryDashboardKey) needs to be
+                            // re-asserted against the freshly-attached wheel.
+                            // Without this the wheel sits on whatever slot it
+                            // boots to (typically its persisted "last-used"
+                            // dashboard, NOT the host's saved choice), so the
+                            // host's tier-def emissions target one slot while
+                            // the wheel renders another. ApplyProfile already
+                            // does this on game-switch; queue the same retry
+                            // path here so PollStatus's TickPendingDashboardRetry
+                            // picks it up once configJson state arrives (~200 ms
+                            // post-detect on healthy connect, can be later on
+                            // hot-attach).
+                            _plugin.RequestSavedDashboardReapply();
+
                             // ShouldDriveDashboard now has real input — make the keep/skip decision.
                             _plugin.StartTelemetryIfReady();
                         }
@@ -505,6 +523,10 @@ namespace MozaPlugin.Devices
                     if (!string.IsNullOrEmpty(_data.DisplayModelName))
                     {
                         MozaLog.Debug($"[Moza] Display model: {_data.DisplayModelName}");
+                        // Re-arm the wedge-recovery one-shot now that we know
+                        // a display is responsive — a future wheel hot-swap
+                        // that wedges should get its own recovery attempt.
+                        _plugin.ClearDisplayWedgeRecovery();
                         // Wheels not in KnownModels (HasDisplay==null) get their
                         // authoritative "has display" signal from this probe;
                         // trigger StartTelemetryIfReady so the fallback path
@@ -550,6 +572,11 @@ namespace MozaPlugin.Devices
                     if (!_detectionState.NewWheelDetected && !_detectionState.OldWheelDetected)
                     {
                         _detectionState.OldWheelDetected = true;
+                        // Stamp first-detect time (mirror of new-protocol path).
+                        // Old-protocol wheels are always HasDisplay=false so the
+                        // wedge watchdog never actually fires for them, but the
+                        // timestamp is cheap and keeps both branches symmetric.
+                        _plugin.NoteWheelDetected();
                         _deviceManager.LockWheelId(deviceId);
                         _plugin.ApplyWheelToHardware(_plugin.Settings?.ProfileStore?.CurrentProfile);
                         _deviceManager.ReadSetting("wheel-model-name");

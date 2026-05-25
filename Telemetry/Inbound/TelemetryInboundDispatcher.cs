@@ -248,6 +248,17 @@ namespace MozaPlugin.Telemetry.Inbound
                     {
                         _sender.MaybeSendConfigJsonReplyInternal(state, session);
                         _sender.MaybeTriggerDashboardDownloadInternal(state);
+                        // The wheel's catalog burst on sess=0x02 (type-04 slot
+                        // record) lands ~180 ms before the sess=0x09 state
+                        // burst — so WheelSlotTracker may have buffered a
+                        // wheel-initiated slot change that couldn't validate
+                        // against the (then-empty) configJsonList. Replay it
+                        // now that the list is available; without this,
+                        // post-hot-swap slot changes the wheel makes on its
+                        // own (e.g., auto-loading its persisted last-used
+                        // dashboard) silently drop and the host keeps emitting
+                        // tier-defs for the prior slot's channel catalog.
+                        _sender.SlotTracker.ReplayPendingSwitchIfReady();
                     }
                 }
                 else if (result == ConfigJsonClient.ChunkResult.GapDetected)

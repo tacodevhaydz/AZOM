@@ -1769,6 +1769,21 @@ namespace MozaPlugin.Telemetry
             _displayModelName = modelName;
             _displayDetected = true;
         }
+
+        /// <summary>Clear the display-detected latch on wheel hot-swap /
+        /// disconnect. Without this, the next wheel's
+        /// <c>StartTelemetryIfReady</c> gate (which keys on
+        /// <c>MozaPlugin.IsDisplayDetected</c>) reads the prior wheel's stale
+        /// detection and starts the session pipeline before the new wheel's
+        /// display sub-device has finished booting — re-creating the original
+        /// hot-attach failure mode. Not called from <c>Stop()</c> directly:
+        /// game-switch / dashboard-switch cycles reuse the same wheel and
+        /// must NOT re-pay the ~20 s display-probe wait every time.</summary>
+        internal void ResetDisplayDetection()
+        {
+            _displayDetected = false;
+            _displayModelName = "";
+        }
         // Promote ack/seq fields to internal so dispatcher can read/write directly.
         // (These map to the existing _lastAckedSession etc. — see field declarations below.)
 
