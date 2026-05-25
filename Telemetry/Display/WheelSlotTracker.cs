@@ -21,6 +21,13 @@ namespace MozaPlugin.Telemetry.Display
         private int _wheelReportedSlot = -1;
         public int WheelReportedSlot => _wheelReportedSlot;
 
+        // Buffered "wheel-initiated switch" event that arrived before the
+        // wheel's configJsonList was available (the sess=0x02 type-04 slot
+        // record races the sess=0x09 configJson state burst by ~180 ms on
+        // hot-swap captures). Replayed by ReplayPendingSwitchIfReady() once
+        // ConfigJsonLastState is non-null. -1 = nothing pending.
+        private int _pendingSwitchSlot = -1;
+
         // Last slot the host emitted FF kind=4 to. STATIC: survives plugin
         // instance recycle within a single SimHub process (game-switch path)
         // so the new game's profile-apply can skip the always-spurious 11 s
@@ -42,6 +49,42 @@ namespace MozaPlugin.Telemetry.Display
         {
             _lastEmittedKind4Slot = -1;
             _wheelReportedSlot = -1;
+            _pendingSwitchSlot = -1;
+        }
+
+        /// <summary>
+        /// Called by <see cref="TelemetrySender"/> after a configJson state
+        /// blob has been parsed and <see cref="TelemetrySender.ConfigJsonLastState"/>
+        /// is non-null. If a slot change was observed before the list arrived,
+        /// re-validate against the now-available bounds and raise the deferred
+        /// WheelInitiatedSwitch event. No-op when no pending switch exists.
+        /// </summary>
+        public void ReplayPendingSwitchIfReady()
+        {
+            if (_pendingSwitchSlot < 0) return;
+            int slot = _pendingSwitchSlot;
+            _pendingSwitchSlot = -1;
+
+            if (slot == _lastEmittedKind4Slot) return;       // it was an echo after all
+            if (!_sender.EnableHotRenegotiation) return;
+
+            var state = _sender.ConfigJsonLastState;
+            int listCount = state?.ConfigJsonList?.Count ?? 0;
+            if (listCount == 0 || slot >= listCount)
+            {
+                MozaLog.Debug(
+                    $"[Moza] WheelSlotTracker: deferred slot={slot} still out of " +
+                    $"configJsonList range (count={listCount}) after replay — dropping");
+                return;
+            }
+
+            MozaLog.Info(
+                $"[Moza] Wheel-initiated switch (deferred replay): slot={slot} " +
+                $"(lastEmitted={_lastEmittedKind4Slot}). Arming hot-reneg burst; " +
+                "raising WheelInitiatedSwitch event.");
+            _lastEmittedKind4Slot = slot;
+            _sender.ArmHotSwitchBurst();
+            _sender.RaiseWheelInitiatedSwitch(slot);
         }
 
         /// <summary>
@@ -89,14 +132,30 @@ namespace MozaPlugin.Telemetry.Display
             if (!_sender.EnableHotRenegotiation) return;
 
             // Second-tier validation: slot must be in current configJsonList range.
+            // Distinguish two cases:
+            //   listCount == 0  → configJson state hasn't arrived yet (sess=0x09
+            //                     state burst races the sess=0x02 type-04 slot
+            //                     record by ~180 ms on hot-swap). Buffer the
+            //                     switch for replay once state lands; KEEP
+            //                     _wheelReportedSlot at the new value so the
+            //                     tracker reflects ground truth.
+            //   slot >= count   → genuine out-of-range; roll back so the next
+            //                     legitimate record is recognised as a change.
             var stateForBounds = _sender.ConfigJsonLastState;
             int listCount = stateForBounds?.ConfigJsonList?.Count ?? 0;
-            if (listCount == 0 || slot >= listCount)
+            if (listCount == 0)
+            {
+                _pendingSwitchSlot = slot;
+                MozaLog.Debug(
+                    $"[Moza] WheelSlotTracker: slot={slot} change observed before " +
+                    "configJsonList arrived — buffering for replay when state lands");
+                return;
+            }
+            if (slot >= listCount)
             {
                 MozaLog.Debug(
                     $"[Moza] WheelSlotTracker: slot={slot} out of " +
                     $"configJsonList range (count={listCount}) — not arming wheel-init burst");
-                // Roll back so the next legitimate record is recognised as a change.
                 _wheelReportedSlot = prevSlot;
                 return;
             }

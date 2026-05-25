@@ -40,6 +40,49 @@ namespace MozaPlugin.Telemetry
     }
 
     /// <summary>
+    /// Read-only flattened view of pipeline status for UI / coordinator
+    /// consumers. <see cref="TelemetryState"/> only covers the core
+    /// lifecycle (Idle/Starting/Preamble/Active); this enum extends it with
+    /// the orthogonal sub-states UI/dispatchers actually care about
+    /// (silence cooldown, hot-switch burst in flight, recovery restart in
+    /// flight, post-rate-limit park).
+    ///
+    /// Callers should read this single property instead of stitching their
+    /// own predicate from <c>IsActive</c> / <c>IsInSilenceCooldown</c> /
+    /// <c>HotSwitchBurstPending</c> / etc., so that the combinations stay
+    /// consistent across consumers. Derived; no separate state to maintain.
+    /// </summary>
+    public enum PipelinePhase
+    {
+        /// <summary>Telemetry sender not started, no recovery in flight,
+        /// silence gate not active. UI shows "disabled".</summary>
+        Idle,
+        /// <summary>Stopped but inside the wheel's ~11 s sess=0x09 settle
+        /// window. UI should reflect "waiting to reconnect" and disable
+        /// switch controls.</summary>
+        SilenceWait,
+        /// <summary>Mid-StartInner: opening sessions, emitting preamble.
+        /// UI shows "connecting".</summary>
+        Starting,
+        /// <summary>Steady state — value frames flowing, watchdogs armed,
+        /// no recovery in flight. UI shows "connected".</summary>
+        Active,
+        /// <summary>Active and a hot-switch tier-def burst is mid-flight.
+        /// UI may want to keep dashboard switch affordances disabled
+        /// until the burst completes (~3-8 s) so the user can't trigger
+        /// a second switch that races the first.</summary>
+        HotSwitchBurst,
+        /// <summary>A watchdog escalation has queued a full Stop+Start
+        /// cycle and the debounce window is still active. UI shows
+        /// "recovering".</summary>
+        Recovery,
+        /// <summary>Recovery rate-limit hit (3 restarts in 5 min) or
+        /// sess=0x09 retry budget exhausted. Pipeline won't auto-recover;
+        /// UI should surface "parked — toggle telemetry to retry".</summary>
+        Parked,
+    }
+
+    /// <summary>
     /// Periodically encodes game data and sends telemetry frames to the wheel.
     /// See docs/protocol/plugin/startup-phases.md for the startup sequence and
     /// docs/protocol/sessions/lifecycle.md for session allocation.
@@ -64,7 +107,14 @@ namespace MozaPlugin.Telemetry
         private volatile TelemetryState _state = TelemetryState.Idle;
         private int _tickCounter;
         private int _slowCounter;
-        private int _baseTickMs;  // Timer period derived from fastest tier's package_level
+        // Timer period derived from fastest tier's package_level. Default 33 ms
+        // (~30 Hz) covers the no-profile and empty-profile branches in the Profile
+        // setter, and — critically — also covers the case where the setter's
+        // idempotency short-circuit returns before the null-branch assignment
+        // runs (first Profile=null on a fresh sender). InitTickStateAndTransitionToStarting
+        // and StartTickTimer both depend on this being non-zero (1000 / _baseTickMs;
+        // new Timer(_baseTickMs)).
+        private int _baseTickMs = 33;
         private byte _sequenceCounter;
         private int _displayConfigPage;
 
@@ -77,6 +127,16 @@ namespace MozaPlugin.Telemetry
         internal volatile byte _lastAckedSession;
         internal volatile int _lastAckedSeq = -1;
         private readonly ManualResetEventSlim _ackReceived = new ManualResetEventSlim(false);
+
+        // Wheel session-layer readiness latch. Set by TelemetryInboundDispatcher
+        // when the wheel pushes its first spontaneous sess=0x09 device-init
+        // (type=0x81) — the most reliable "I'm alive and ready for session-level
+        // traffic" signal the wheel emits during a slow hot-attach boot
+        // (~20s after wheel-telemetry-mode reads first succeed). Consumed by
+        // ProbeAndOpenSessions to retry sess=0x01/0x02 opens that timed out
+        // while the wheel was still booting.
+        internal volatile bool _wheelReadyObserved;
+
 
         // Upload handshake state.
         internal int _mgmtAckSeq;
@@ -131,6 +191,14 @@ namespace MozaPlugin.Telemetry
         // SilenceGate class doc-comment.
         private readonly Lifecycle.SilenceGate _silenceGate;
 
+        // Single funnel for all watchdog-driven RestartForSwitch escalations.
+        // Debounces near-simultaneous escalations from multiple watchdogs
+        // (sess=0x01 + sess=0x02 + configJson-gap can all fire in the same
+        // tick) and rate-limits so an escalation storm parks the pipeline
+        // instead of looping forever. See RecoveryDispatcher class doc.
+        private readonly Lifecycle.RecoveryDispatcher _recovery;
+        internal Lifecycle.RecoveryDispatcher Recovery => _recovery;
+
         // Hot-renegotiation burst state machine. When Enabled, SwitchToProfile
         // keeps sessions 0x01/0x02/0x03 open and re-emits tier-def in place
         // instead of Stop+11s+Start. See docs/protocol/tier-definition/hot-switch.md.
@@ -162,6 +230,10 @@ namespace MozaPlugin.Telemetry
             _slotTracker.Reset();
             // Hot-swap may target a different wheel with a different ConfigJsonList.
             try { _configJson.HardReset(); } catch { }
+            // Fresh hardware = fresh restart budget; clear any park state so
+            // the new wheel gets a clean engagement attempt rather than
+            // inheriting the prior wheel's exhausted budget.
+            try { _recovery.Reset(); } catch { }
         }
 
         /// <summary>
@@ -715,6 +787,21 @@ namespace MozaPlugin.Telemetry
             get => _profile;
             set
             {
+                // Idempotency guard. Callers (ApplyTelemetrySettings,
+                // OnWheelInitiatedSwitch, OnDashboardSwitched,
+                // MaybeSwapProfileForCatalog) can fire this setter several
+                // times in close succession with the same source profile —
+                // e.g. UI combo click → ApplyTelemetrySettings → next tick
+                // MaybeSwapProfileForCatalog sees catalog unchanged but
+                // assigns the cached synthesised profile back in. Each
+                // re-assignment re-runs the multi-broadcast expansion (~N
+                // new DashboardProfile allocations), rebuilds every per-
+                // tier FrameBuilder, and resets the OriginalChannels
+                // pristine snapshot. Reference-compare so the same input
+                // → no-op; null-to-null also short-circuits cleanly.
+                if (ReferenceEquals(value, _lastProfileSourceRef)) return;
+                _lastProfileSourceRef = value;
+
                 if (value != null && value.Tiers.Count > 0)
                 {
                     // Multi-broadcast: replicate each sub-tier 3-N+1 times with
@@ -847,6 +934,13 @@ namespace MozaPlugin.Telemetry
             }
         }
         private MultiStreamProfile? _profile;
+        // Last UNEXPANDED profile reference passed to the Profile setter.
+        // Used for the idempotency short-circuit at the top of the setter so
+        // repeat calls with the same source don't re-expand. Tracked separately
+        // from _profile because the setter mutates value (multi-broadcast
+        // expansion) before assigning to _profile, so we'd never match the
+        // original input against the post-expansion stored profile.
+        private MultiStreamProfile? _lastProfileSourceRef;
 
         // Per-string-channel emission state: last-sent value and tick timestamp.
         // Keyed by channel URL (case-insensitive). The wheel re-indexes URLs per
@@ -911,6 +1005,7 @@ namespace MozaPlugin.Telemetry
         {
             _connection = connection;
             _silenceGate = new Lifecycle.SilenceGate(() => EnableHotRenegotiation);
+            _recovery = new Lifecycle.RecoveryDispatcher(this);
             _watchdog = new SessionWatchdogManager(this);
             _slotTracker = new Display.WheelSlotTracker(this);
             _propertyPushQueue = new PropertyPushQueue(this);
@@ -1495,6 +1590,49 @@ namespace MozaPlugin.Telemetry
         /// the channel catalog and the switch would be silently lost.</summary>
         public bool IsActive => _state == TelemetryState.Active;
 
+        /// <summary>
+        /// Read-only flattened pipeline status — see <see cref="PipelinePhase"/>.
+        /// Derived from <see cref="_state"/>, <see cref="_recovery"/>,
+        /// <see cref="_hotSwitch"/>, and <see cref="_silenceGate"/>; no separate
+        /// state is maintained. Callers should prefer this over stitching
+        /// their own predicate from <c>IsActive</c> / <c>IsInSilenceCooldown</c>
+        /// / <c>HotSwitchBurstPending</c> so all consumers agree on the same
+        /// flattened status.
+        /// </summary>
+        public PipelinePhase Phase
+        {
+            get
+            {
+                // Park beats everything — recovery rate-limit exhausted /
+                // sess=0x09 retry exhausted both land here, and the pipeline
+                // won't auto-recover until the user toggles telemetry or hot-
+                // swaps the wheel.
+                if (_recovery.IsParked) return PipelinePhase.Parked;
+
+                // Recovery debounce window — a watchdog has queued a Stop+Start;
+                // the actual state may still be Active for a few ticks until
+                // the worker thread lands.
+                if (_recovery.IsRecoveryInFlight) return PipelinePhase.Recovery;
+
+                // Steady-state sub-cases.
+                if (_state == TelemetryState.Active)
+                {
+                    return _hotSwitch.IsBurstPending
+                        ? PipelinePhase.HotSwitchBurst
+                        : PipelinePhase.Active;
+                }
+                if (_state == TelemetryState.Starting
+                    || _state == TelemetryState.Preamble)
+                    return PipelinePhase.Starting;
+
+                // Idle — distinguish "in silence wait" from "fully idle"
+                // so UI can show "waiting for wheel to reconnect" vs.
+                // "telemetry disabled".
+                if (_silenceGate.IsInSilenceCooldown) return PipelinePhase.SilenceWait;
+                return PipelinePhase.Idle;
+            }
+        }
+
         // ===== Internal accessors for SessionWatchdogManager =====
         internal bool StateIsIdle => _state == TelemetryState.Idle;
         internal bool StateIsActive => _state == TelemetryState.Active;
@@ -1594,6 +1732,24 @@ namespace MozaPlugin.Telemetry
         internal TileServerStateParser TileServerParser => _tileServerParser;
         internal ManualResetEventSlim AckReceived => _ackReceived;
         internal ManualResetEventSlim MgmtResponseEvent => _mgmtResponseEvent;
+
+        /// <summary>Latch set by <see cref="Inbound.TelemetryInboundDispatcher"/>
+        /// the first time the wheel pushes a spontaneous sess=0x09 device-init
+        /// (type=0x81). Consumed by <see cref="ProbeAndOpenSessions"/> to detect
+        /// the slow-bring-up hot-attach case where the wheel's session layer
+        /// comes online after the initial 500 ms open-ack budget but before the
+        /// 20 s extended-wait timeout. Also wakes <see cref="_ackReceived"/> so
+        /// the extended wait returns immediately.</summary>
+        internal void MarkWheelReadyObserved()
+        {
+            _wheelReadyObserved = true;
+            _ackReceived.Set();
+        }
+
+        /// <summary>Clear the wheel-ready latch — called at Start/Stop
+        /// boundaries via <see cref="Watchdog.SessionWatchdogManager.Reset"/>
+        /// so a subsequent reconnect re-arms detection from a clean slate.</summary>
+        internal void ResetWheelReadyObserved() => _wheelReadyObserved = false;
         internal long SubscriptionResponseDeadlineTicksField
         {
             get => _subscriptionResponseDeadlineTicks;
@@ -1612,6 +1768,21 @@ namespace MozaPlugin.Telemetry
         {
             _displayModelName = modelName;
             _displayDetected = true;
+        }
+
+        /// <summary>Clear the display-detected latch on wheel hot-swap /
+        /// disconnect. Without this, the next wheel's
+        /// <c>StartTelemetryIfReady</c> gate (which keys on
+        /// <c>MozaPlugin.IsDisplayDetected</c>) reads the prior wheel's stale
+        /// detection and starts the session pipeline before the new wheel's
+        /// display sub-device has finished booting — re-creating the original
+        /// hot-attach failure mode. Not called from <c>Stop()</c> directly:
+        /// game-switch / dashboard-switch cycles reuse the same wheel and
+        /// must NOT re-pay the ~20 s display-probe wait every time.</summary>
+        internal void ResetDisplayDetection()
+        {
+            _displayDetected = false;
+            _displayModelName = "";
         }
         // Promote ack/seq fields to internal so dispatcher can read/write directly.
         // (These map to the existing _lastAckedSession etc. — see field declarations below.)
@@ -1694,8 +1865,9 @@ namespace MozaPlugin.Telemetry
                 _hotSwitch.ArmBurst();
                 MozaLog.Info(
                     $"[Moza] SwitchToProfile slot={slotIndex}: HOT path — " +
-                    $"{Lifecycle.HotSwitchCoordinator.EmissionCount} tier-def emissions queued " +
-                    $"~{Lifecycle.HotSwitchCoordinator.EmissionSpacingMs}ms apart");
+                    $"{Lifecycle.HotSwitchCoordinator.MinEmissions}-" +
+                    $"{Lifecycle.HotSwitchCoordinator.MaxEmissions} tier-def emissions queued " +
+                    $"~{Lifecycle.HotSwitchCoordinator.EmissionSpacingMs}ms apart (adaptive on bind state)");
             }
             else
             {
@@ -1881,14 +2053,42 @@ namespace MozaPlugin.Telemetry
                     $"{OpenAckTimeoutMs}ms — waiting up to {ExtendedAckWaitMs}ms for slow-bring-up " +
                     "wheel (CS-Pro on Universal Hub takes ~14 s)");
                 bool gotLateAck;
+                _wheelReadyObserved = false;
                 try { _ackReceived.Reset(); }
                 catch (ObjectDisposedException) { return; }
                 try { gotLateAck = _ackReceived.Wait(ExtendedAckWaitMs); }
                 catch (ObjectDisposedException) { return; }
                 if (_state == TelemetryState.Idle || !_connection.IsConnected) return;
-                if (gotLateAck)
+                // Belt-and-suspenders: even if the Wait timed out, the
+                // dispatcher may have flipped _wheelReadyObserved in the
+                // microseconds between timeout-fire and our read. Honour it.
+                byte ackedSession = _lastAckedSession;
+                bool wheelReadyWake = _wheelReadyObserved
+                    && ackedSession != MgmtSession
+                    && ackedSession != TelemSession;
+                if (wheelReadyWake)
                 {
-                    byte ackedSession = _lastAckedSession;
+                    // Wheel just came online via sess=0x09 device-init in
+                    // response to our nudge. Its initial sess=0x01/0x02 opens
+                    // (sent before the wheel's session layer was up) were
+                    // dropped on the wheel side — re-issue both with a wider
+                    // budget now that the wheel is demonstrably listening.
+                    // Verified 2026-05-25 W17 hot-attach: first fc:00 on
+                    // sess=0x02 follows within ~1 s of a fresh open frame
+                    // from the wheel-ready point.
+                    const int WheelReadyRetryMs = 2_000;
+                    MozaLog.Info(
+                        "[Moza] Wheel session-layer ready observed (sess=0x09 device-init) — " +
+                        $"retrying sess=0x{MgmtSession:X2}/0x{TelemSession:X2} opens with " +
+                        $"{WheelReadyRetryMs}ms budget");
+                    if (_connection.IsConnected)
+                        mgmtPort = TryOpenSession(MgmtSession, WheelReadyRetryMs);
+                    if (_state == TelemetryState.Idle || !_connection.IsConnected) return;
+                    if (_connection.IsConnected)
+                        telemetryPort = TryOpenSession(TelemSession, WheelReadyRetryMs);
+                }
+                else if (gotLateAck)
+                {
                     MozaLog.Info(
                         $"[Moza] Late ack on sess=0x{ackedSession:X2} after extended wait " +
                         "— wheel is alive, proceeding with cold-start");
@@ -3183,23 +3383,30 @@ namespace MozaPlugin.Telemetry
                 int sinceArm = now - _hotSwitch.ArmTickMs;
                 bool isFirstEmission = _hotSwitch.LastEmissionTickMs == 0;
                 int prev = _catalogCountAtLastSubscription;
-                int remaining = _hotSwitch.RemainingEmissions;
-                int emissionIdx = Lifecycle.HotSwitchCoordinator.EmissionCount - remaining + 1;
+                int emissionIdx = _hotSwitch.EmissionsSent + 1;
                 MozaLog.Debug(
                     $"[Moza] Re-applying tier-def (hot-switch burst " +
-                    $"{emissionIdx}/{Lifecycle.HotSwitchCoordinator.EmissionCount}): " +
+                    $"#{emissionIdx}, cap {Lifecycle.HotSwitchCoordinator.MinEmissions}-" +
+                    $"{Lifecycle.HotSwitchCoordinator.MaxEmissions}): " +
                     $"catalog {prev}→{cur}, wheel END={_catalogParser.LastWheelEndMarker}, " +
                     $"sinceArm={sinceArm}ms, sinceLast={(isFirstEmission ? -1 : now - _hotSwitch.LastEmissionTickMs)}ms");
                 try
                 {
                     ApplySubscription(force: true);
                     _catalogCountAtLastSubscription = _catalogParser.Count;
-                    int newRemaining = _hotSwitch.MarkEmission();
+                    // Pass bind info from the most-recent emission. Total>0
+                    // means cspIdx ran (Type02); for older eras LastTierDefTotalCount
+                    // stays at -1 → pass null and the coordinator keeps the
+                    // legacy fixed-length cap.
+                    bool? boundComplete = (_tierDefEmitter.LastTierDefTotalCount > 0)
+                        ? (bool?)_tierDefEmitter.IsTierDefFullyBound
+                        : null;
+                    int newRemaining = _hotSwitch.MarkEmission(boundComplete);
                     if (newRemaining == 0)
                     {
                         MozaLog.Debug(
                             $"[Moza] Hot-switch burst complete after " +
-                            $"{Lifecycle.HotSwitchCoordinator.EmissionCount} emissions");
+                            $"{_hotSwitch.EmissionsSent} emissions (boundComplete={boundComplete?.ToString() ?? "n/a"})");
                     }
                 }
                 catch (Exception ex)

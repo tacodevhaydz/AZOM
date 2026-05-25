@@ -38,6 +38,20 @@ namespace MozaPlugin
         private static MozaSerialConnection? s_persistentConnection;
         private static TelemetrySender? s_persistentTelemetrySender;
 
+        // CoAP stub child-process manager. Persistent for the same reason the
+        // wire is: stopping and restarting the stub on every plugin reload is
+        // wasted work (the stub is a long-lived "PitHouse impersonator" child
+        // process with no per-plugin-instance state) AND under Wine/Proton the
+        // teardown path (Process.Kill + JobObject.Dispose) intermittently
+        // hangs — observed 2026-05-25: End() on the SECOND game switch wedged
+        // in CoapStubManager.Stop() between RestoreRegistryRedirect (logged)
+        // and the "CoAP stub stopped" line (never logged). Leaving the stub
+        // alive across reloads avoids the unsafe teardown path entirely.
+        //
+        // Disposed on full process exit (OnAppDomainProcessExit) AND on cold-
+        // start re-entry when SdkEmulationEnabled was toggled off.
+        private static Sdk.CoapStubManager? s_persistentSdkStubManager;
+
         // AppDomain.ProcessExit registration is one-shot per process. End()
         // intentionally leaves the persistent wire alive across plugin
         // reloads (game switches) — the wheel never sees the 10–14 s
@@ -107,6 +121,49 @@ namespace MozaPlugin
 
         // ===== DashboardBindingCoordinator shims (external API surface) =====
         internal void ApplyTelemetrySettings() => _dashboardBindingCoordinator.ApplyTelemetrySettings();
+
+        /// <summary>
+        /// Queue a re-apply of the current profile's saved
+        /// <c>TelemetryDashboardKey</c> against the currently-attached
+        /// wheel. Called from the wheel-hot-swap path so the new wheel ends
+        /// up bound to the user's saved choice instead of whatever slot it
+        /// boots to. Tries the apply immediately; if the wheel state isn't
+        /// ready yet (configJsonList empty), sets the dashboard-binding
+        /// coordinator's pending key so the next PollStatus tick retries.
+        /// </summary>
+        internal void RequestSavedDashboardReapply()
+        {
+            try
+            {
+                var profile = _settings?.ProfileStore?.CurrentProfile;
+                if (profile == null) return;
+                if (string.IsNullOrEmpty(profile.TelemetryDashboardKey)) return;
+                bool applied = false;
+                try { applied = ApplyTelemetryDashboardFromProfile(profile); }
+                catch (Exception ex)
+                {
+                    MozaLog.Warn(
+                        $"[Moza] RequestSavedDashboardReapply: apply threw — {ex.Message}");
+                    return;
+                }
+                if (!applied)
+                {
+                    _dashboardBindingCoordinator.SetPendingDashboardKey(profile.TelemetryDashboardKey!);
+                    MozaLog.Debug(
+                        $"[Moza] RequestSavedDashboardReapply: deferred " +
+                        $"(key={profile.TelemetryDashboardKey}) — PollStatus retry will fire " +
+                        "once wheel state is ready");
+                }
+                else
+                {
+                    _dashboardBindingCoordinator.ClearPendingDashboardKey();
+                }
+            }
+            catch (Exception ex)
+            {
+                MozaLog.Warn($"[Moza] RequestSavedDashboardReapply: outer error — {ex.Message}");
+            }
+        }
         internal void RestartTelemetry() => _dashboardBindingCoordinator.RestartTelemetry();
         internal bool ApplyTelemetryDashboardFromProfile(MozaProfile profile) => _dashboardBindingCoordinator.ApplyTelemetryDashboardFromProfile(profile);
         internal void OnDashboardSwitched(uint slot) => _dashboardBindingCoordinator.OnDashboardSwitched(slot);
@@ -382,6 +439,37 @@ namespace MozaPlugin
             || !string.IsNullOrEmpty(_data?.DisplaySwVersion)
             || (_data?.DisplayMcuUid?.Length ?? 0) > 0
             || (_telemetrySender?.DisplayDetected ?? false);
+
+        // UtcTicks at which the wheel was first detected (wheel-telemetry-mode or
+        // wheel-rpm-value1 response). 0 = no wheel detected. Read by PollStatus's
+        // display-wedge watchdog to bound how long we'll wait for the display
+        // sub-device to come up after wheel-MCU detection. Cleared on
+        // ResetWheelDetection.
+        private long _wheelDetectedUtcTicks;
+        internal long WheelDetectedUtcTicks => Interlocked.Read(ref _wheelDetectedUtcTicks);
+
+        // One-shot latch: true once the display-wedge watchdog has forced a
+        // serial reconnect. Stays true until a future successful display
+        // detection re-arms it — so a permanently-wedged display can't loop
+        // the connection. ResetWheelDetection does NOT clear this; only
+        // ClearDisplayWedgeRecovery (called from DeviceProber's
+        // display-model-name handler) does. SetConnectionEnabled(true) also
+        // clears it so the user can manually retry from the UI.
+        internal volatile bool DisplayWedgeRecoveryFired;
+
+        /// <summary>Stamp the wheel-detection timestamp for the wedge watchdog.
+        /// Idempotent — multiple calls leave the first-detect timestamp in
+        /// place so the watchdog measures elapsed time since the rising edge,
+        /// not since the most recent probe response.</summary>
+        internal void NoteWheelDetected()
+        {
+            Interlocked.CompareExchange(ref _wheelDetectedUtcTicks, DateTime.UtcNow.Ticks, 0);
+        }
+
+        /// <summary>Clear the wedge-recovery one-shot after a successful display
+        /// detection. Subsequent wedges (e.g., on a future wheel hot-swap) can
+        /// then trigger recovery again.</summary>
+        internal void ClearDisplayWedgeRecovery() => DisplayWedgeRecoveryFired = false;
 
         /// <summary>
         /// Whether the plugin should drive the dashboard telemetry pipeline for the
@@ -835,8 +923,40 @@ namespace MozaPlugin
                 {
                     try
                     {
-                        _sdkStubManager = new Sdk.CoapStubManager();
-                        _sdkStubManager.Start();
+                        // Reuse the persistent stub manager from a prior
+                        // plugin instance if its child process is still
+                        // alive. Avoids Stop+Restart thrash (registry
+                        // re-redirect, CreateProcess, AssignProcessToJobObject)
+                        // on every game switch — and sidesteps the Wine/Proton
+                        // teardown hang that wedges Stop() between registry
+                        // restore and Process.Kill / JobObject.Dispose.
+                        if (s_persistentSdkStubManager != null
+                            && s_persistentSdkStubManager.IsRunning)
+                        {
+                            _sdkStubManager = s_persistentSdkStubManager;
+                            MozaLog.Info(
+                                "[Sdk] Reusing persistent CoAP stub from prior plugin instance " +
+                                $"(status={_sdkStubManager.Status})");
+                        }
+                        else
+                        {
+                            // Persistent reference exists but the child is gone
+                            // (crashed / killed externally). Tear down the husk
+                            // before allocating a fresh manager so its job-handle
+                            // / process-handle don't leak. Bounded so a Wine-side
+                            // JobObject.Dispose wedge can't block Init.
+                            if (s_persistentSdkStubManager != null)
+                            {
+                                try { s_persistentSdkStubManager.TryStop(1500); } catch { }
+                                s_persistentSdkStubManager = null;
+                            }
+                            _sdkStubManager = new Sdk.CoapStubManager();
+                            _sdkStubManager.Start();
+                            s_persistentSdkStubManager = _sdkStubManager;
+                        }
+                        // SDK server holds refs to _data + _hardwareApplier
+                        // (both per-instance), so it MUST be recreated each
+                        // Init — it cannot be persistent like the stub manager.
                         _sdkServer = new Sdk.MozaSdkCoapServer(_data, _hardwareApplier);
                         _sdkServer.Start();
                         MozaLog.Info("[Sdk] CoAP SDK server enabled");
@@ -845,9 +965,26 @@ namespace MozaPlugin
                     {
                         MozaLog.Error($"[Sdk] Failed to start CoAP SDK server: {ex.Message}");
                         try { _sdkServer?.Stop(); } catch { /* swallow */ }
-                        try { _sdkStubManager?.Stop(); } catch { /* swallow */ }
+                        // Don't Stop() the stub manager from this catch — it
+                        // may be the persistent one and a Wine-side Stop()
+                        // hang is exactly the failure we're avoiding. Leave
+                        // it running; the next Init re-evaluates via IsRunning.
                         _sdkServer = null;
                         _sdkStubManager = null;
+                    }
+                }
+                else
+                {
+                    // SDK emulation toggled OFF. If a prior session left a
+                    // persistent stub running, stop it now so the registry
+                    // redirect doesn't outlive the user's intent. Bounded —
+                    // a Wine-side wedge in Stop()/JobObject.Dispose can't
+                    // block Init; JobObject's KILL_ON_JOB_CLOSE backstops
+                    // the child cleanup on process exit if Stop() times out.
+                    if (s_persistentSdkStubManager != null)
+                    {
+                        try { s_persistentSdkStubManager.TryStop(1500); } catch { }
+                        s_persistentSdkStubManager = null;
                     }
                 }
 
@@ -913,8 +1050,19 @@ namespace MozaPlugin
             catch (Exception ex) { MozaLog.Warn($"[Sdk] server stop: {ex.Message}"); }
             try { _controlUdpServer?.Stop(); _controlUdpServer?.Dispose(); _controlUdpServer = null; }
             catch (Exception ex) { MozaLog.Warn($"[PitHouseUdp] server stop: {ex.Message}"); }
-            try { _sdkStubManager?.Stop(); _sdkStubManager = null; }
-            catch (Exception ex) { MozaLog.Warn($"[Sdk] stub stop: {ex.Message}"); }
+            // Mirror End()'s persistent-stub policy: if this Init reused the
+            // persistent stub, do NOT Stop it here — the next Init expects to
+            // inherit it. Only drop our local ref. Disposal gated on
+            // !ReferenceEquals matches the connection/sender pattern above.
+            // Bounded TryStop so a Wine-side wedge can't block CleanupPartialInit.
+            bool ownStubManager = _sdkStubManager != null
+                && !ReferenceEquals(_sdkStubManager, s_persistentSdkStubManager);
+            if (ownStubManager)
+            {
+                try { _sdkStubManager?.TryStop(1500); }
+                catch (Exception ex) { MozaLog.Warn($"[Sdk] stub stop: {ex.Message}"); }
+            }
+            _sdkStubManager = null;
 
             try
             {
@@ -1264,17 +1412,45 @@ namespace MozaPlugin
             catch (Exception ex) { MozaLog.Warn($"[Sdk] server stop: {ex.Message}"); }
             try { _controlUdpServer?.Stop(); _controlUdpServer?.Dispose(); _controlUdpServer = null; }
             catch (Exception ex) { MozaLog.Warn($"[PitHouseUdp] server stop: {ex.Message}"); }
-            try { _sdkStubManager?.Stop(); _sdkStubManager = null; }
-            catch (Exception ex) { MozaLog.Warn($"[Sdk] stub stop: {ex.Message}"); }
 
             // Decide up-front whether the persistent wire will survive this
             // teardown — same condition the dispose step below uses. We need
             // it now so detection state can be captured (vs. wiped) in lock-
-            // step with the wire.
+            // step with the wire AND so the CoAP stub manager teardown below
+            // can match the wire's persistence decision.
             bool keepWireAlive = _usingPersistentWire
                                  || (_connection != null && _connection == s_persistentConnection
                                      && _telemetrySender != null
                                      && _telemetrySender == s_persistentTelemetrySender);
+
+            // CoAP stub manager: persist across game-switch reloads alongside
+            // the wire. Stopping the stub on every End()+Init() cycle (a) is
+            // wasted work (the stub holds no per-plugin-instance state) and
+            // (b) intermittently HANGS under Wine/Proton — Stop() wedged on
+            // the 2026-05-25 second-game-switch path between the registry
+            // restore log and the Process.Kill / JobObject.Dispose call.
+            //
+            // When keepWireAlive=true we just drop the instance ref; the
+            // persistent static keeps the child process alive for the next
+            // plugin instance to reuse via the IsRunning check in Init.
+            // When the wire is being torn down (true cold-start reset, not a
+            // game switch), stop the stub too and clear the static.
+            if (keepWireAlive)
+            {
+                _sdkStubManager = null;
+            }
+            else
+            {
+                // Bounded so the End() flow (often runs on the SimHub UI
+                // thread) can't get pinned by a Wine-side wedge in
+                // Process.Kill / JobObject.Dispose.
+                try { _sdkStubManager?.TryStop(1500); }
+                catch (Exception ex) { MozaLog.Warn($"[Sdk] stub stop: {ex.Message}"); }
+                if (_sdkStubManager != null
+                    && ReferenceEquals(_sdkStubManager, s_persistentSdkStubManager))
+                    s_persistentSdkStubManager = null;
+                _sdkStubManager = null;
+            }
 
             if (keepWireAlive)
             {
@@ -1433,6 +1609,16 @@ namespace MozaPlugin
                 conn?.Dispose();
             }
             catch { }
+            // Stop the persistent CoAP stub on full process exit so its child
+            // process (and the registry redirect) don't outlive SimHub.
+            // TryStop bounds the call at 1.5 s — well inside the ~2 s
+            // ProcessExit budget — so a Wine-side wedge in Process.Kill or
+            // JobObject.Dispose can't keep us from returning. If TryStop
+            // times out the JobObject's KILL_ON_JOB_CLOSE backstops the
+            // child cleanup on process exit, and the next launch's
+            // orphan sweep handles the case where even that didn't fire.
+            try { s_persistentSdkStubManager?.TryStop(1500); }
+            catch { }
         }
 
         internal MozaHidReader HidReader => _hidReader;
@@ -1581,6 +1767,10 @@ namespace MozaPlugin
             if (enabled)
             {
                 _reconnectTimer.Start();
+                // Manual re-enable re-arms the display-wedge recovery one-shot
+                // so a user who toggled Connection off then on after a wedge
+                // gets a fresh recovery attempt.
+                DisplayWedgeRecoveryFired = false;
                 MozaLog.Info("[Moza] Connection enabled");
             }
             else
@@ -2062,6 +2252,20 @@ namespace MozaPlugin
                 DetectionState.DashDetected = true;
             WheelModelInfo = null;
             _data.ClearWheelIdentity();
+            // ClearWheelIdentity above blanks _data.Display* fields, but
+            // TelemetrySender keeps its own _displayDetected / _displayModelName
+            // latch (see SetDisplayDetected) — clear that too so the next
+            // wheel's StartTelemetryIfReady display gate doesn't read stale
+            // detection and bypass the ~20 s display-boot wait.
+            _telemetrySender?.ResetDisplayDetection();
+            // Clear the wedge-watchdog timestamp so elapsed-since-detect is
+            // measured against the NEXT wheel's rising edge, not a stale one
+            // from the wheel we just disconnected. DisplayWedgeRecoveryFired
+            // intentionally NOT reset here — only cleared on a successful
+            // display detection (or manual Connection-enable toggle), which
+            // is what prevents the auto-recovery from looping when the
+            // display is permanently wedged.
+            Interlocked.Exchange(ref _wheelDetectedUtcTicks, 0);
             _deviceManager.ResetWheelDetection();
             if (_telemetrySender != null)
                 _telemetrySender.DetectedDeviceMask = 0;
@@ -2149,6 +2353,47 @@ namespace MozaPlugin
                 && !IsDisplayDetected
                 && WheelModelInfo?.HasDisplay != false)
                 _deviceManager.SendDisplayProbe();
+
+            // Display-boot wedge watchdog. The W17 (CS Pro) takes ~20 s for its
+            // display sub-device to come up after a hot-attach; KS Pro and other
+            // displayed wheels are similar. StartTelemetryIfReady's
+            // display-detected gate (DashboardBindingCoordinator.cs) defers
+            // pipeline start until the display probe answers — correct under
+            // normal conditions, but if the display sub-device is genuinely
+            // stuck (firmware wedge, mid-USB-enumeration glitch) the gate would
+            // sit forever and the user has no signal that anything's wrong.
+            // After DisplayWedgeTimeoutMs of waiting we treat the wheel as
+            // wedged and force a serial disconnect; the 5 s reconnect timer
+            // reopens the port, which gives the wheel's USB stack a chance to
+            // re-enumerate and the display a fresh boot. One-shot per attach:
+            // DisplayWedgeRecoveryFired stays set until the next successful
+            // display detection (cleared in DeviceProber's display-model-name
+            // case) or a manual Connection-enable toggle, so a permanently
+            // wedged display can't loop the connection.
+            const long DisplayWedgeTimeoutMs = 60_000;
+            if (!DisplayWedgeRecoveryFired
+                && (DetectionState.NewWheelDetected || DetectionState.OldWheelDetected)
+                && WheelModelInfo?.HasDisplay != false
+                && !IsDisplayDetected
+                && _wheelDetectedUtcTicks != 0)
+            {
+                long elapsedMs = (DateTime.UtcNow.Ticks - _wheelDetectedUtcTicks)
+                    / TimeSpan.TicksPerMillisecond;
+                if (elapsedMs >= DisplayWedgeTimeoutMs)
+                {
+                    DisplayWedgeRecoveryFired = true;
+                    var hasDisplayStr = WheelModelInfo?.HasDisplay?.ToString() ?? "unknown";
+                    MozaLog.Warn(
+                        $"[Moza] Display sub-device wedge: wheel detected " +
+                        $"{elapsedMs}ms ago (HasDisplay={hasDisplayStr}) but " +
+                        "display has not responded. Forcing serial disconnect — " +
+                        "reconnect timer (5 s) will reopen the port and give the " +
+                        "wheel's USB stack a chance to re-enumerate. " +
+                        "If this recurs, the display firmware is likely stuck; " +
+                        "physically detaching the wheel and reattaching is the next step.");
+                    try { _connection?.Disconnect(); } catch { }
+                }
+            }
 
             // Read Group 3 ring LED colors once after group detected + model resolved
             if (!DetectionState.Group3ColorsRead && DetectionState.NewWheelDetected && IsWheelLedGroupPresent(3))

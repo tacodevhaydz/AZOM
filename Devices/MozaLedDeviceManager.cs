@@ -316,6 +316,20 @@ namespace MozaPlugin.Devices
                 if (plugin == null || !plugin.Data.IsConnected)
                     return;
 
+                // Model-match gate: only the extension whose ExpectedModelPrefix
+                // matches the currently-attached wheel writes to the hardware.
+                // The existing isNewWheel / isOldWheel check below only confirms
+                // SOME wheel is detected, not THIS extension's wheel — so without
+                // this guard a stale extension (e.g. the W17 extension after the
+                // user hot-swapped to a KS) would happily push 16-RPM-shaped
+                // frames at a 10-LED wheel, painting the first 10 LEDs with the
+                // wrong colours and leaving stale tail-LED state on the wire.
+                // Runs AFTER _lastState assignment above so SimHub's UI preview
+                // for the inactive extension still reflects whatever SimHub
+                // computed for it; only the hardware write is suppressed.
+                if (!IsConnected())
+                    return;
+
                 bool isOldWheel = ExpectedModelPrefix == MozaDeviceConstants.OldProtocolMarker
                     && plugin.IsOldWheelDetected;
                 bool isNewWheel = !isOldWheel && plugin.IsNewWheelDetected;

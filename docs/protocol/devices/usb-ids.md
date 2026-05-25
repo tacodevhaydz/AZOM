@@ -25,6 +25,7 @@ expected to stay in sync.
 | `0x001E` | Shifter     | HGP                           | unconfirmed |
 | `0x001F` | Handbrake   | HBP                           | unconfirmed |
 | `0x0020` | Hub         | Universal HUB                 | confirmed   |
+| `0x0023` | Shifter     | SGP                           | confirmed   |
 | `0x0024` | Stalks      | MOZA Stalks                   | confirmed   |
 | `0x0025` | Dashboard   | CM2 Racing Dash               | confirmed   |
 | `0x1000` | Ab9         | AB9 active shifter            | confirmed   |

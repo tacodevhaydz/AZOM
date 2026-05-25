@@ -133,6 +133,16 @@ namespace MozaPlugin.Telemetry.Inbound
             {
                 _sender.Uploader.NoteDeviceInit(session);
             }
+            // sess=0x09 device-init is the wheel's first reliable
+            // "session-layer ready" signal during a slow hot-attach boot —
+            // wakes ProbeAndOpenSessions's 20 s extended wait so the host can
+            // retry the sess=0x01/0x02 opens that timed out while the wheel
+            // was still booting. Constrained to 0x09 because in every wire
+            // trace the wheel opens 0x09 first; broadening this would risk
+            // false-positives from upload / RPC sessions later in the
+            // pipeline.
+            if (session == 0x09)
+                _sender.MarkWheelReadyObserved();
         }
 
         private void HandleSessionData(byte[] data, byte session)
@@ -238,6 +248,17 @@ namespace MozaPlugin.Telemetry.Inbound
                     {
                         _sender.MaybeSendConfigJsonReplyInternal(state, session);
                         _sender.MaybeTriggerDashboardDownloadInternal(state);
+                        // The wheel's catalog burst on sess=0x02 (type-04 slot
+                        // record) lands ~180 ms before the sess=0x09 state
+                        // burst — so WheelSlotTracker may have buffered a
+                        // wheel-initiated slot change that couldn't validate
+                        // against the (then-empty) configJsonList. Replay it
+                        // now that the list is available; without this,
+                        // post-hot-swap slot changes the wheel makes on its
+                        // own (e.g., auto-loading its persisted last-used
+                        // dashboard) silently drop and the host keeps emitting
+                        // tier-defs for the prior slot's channel catalog.
+                        _sender.SlotTracker.ReplayPendingSwitchIfReady();
                     }
                 }
                 else if (result == ConfigJsonClient.ChunkResult.GapDetected)
