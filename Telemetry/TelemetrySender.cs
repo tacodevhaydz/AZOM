@@ -290,6 +290,15 @@ namespace MozaPlugin.Telemetry
         private readonly Lifecycle.CatalogResyncProbe _catalogResyncProbe
             = new Lifecycle.CatalogResyncProbe();
 
+        // Post-switch catalog convergence watcher. Armed by every committed
+        // dashboard switch; polls the host's catalog view and nudges the
+        // wheel with kind=4 re-emits until N consecutive identical
+        // signatures arrive. Belt-and-suspenders against a missed catalog
+        // chunk leaving the host with an incomplete URL set the rest of
+        // the static defences would never notice on their own.
+        private readonly Lifecycle.PostSwitchCatalogConvergence _postSwitchConvergence
+            = new Lifecycle.PostSwitchCatalogConvergence();
+
         /// <summary>Drain window for queued kind=4 / one-shot frames before
         /// Stop's FlushPendingWrites discards the queue.</summary>
         private const int PreStopDrainMs = 300;
@@ -1414,6 +1423,9 @@ namespace MozaPlugin.Telemetry
 
             try { _ackReceived.Reset(); } catch (ObjectDisposedException) { }
             try { _mgmtResponseEvent.Reset(); } catch (ObjectDisposedException) { }
+            // Disarm convergence — a torn-down pipeline shouldn't keep
+            // firing kind=4 nudges into a session being closed.
+            _postSwitchConvergence.Disarm();
             try { _uploader?.Reset(); } catch { }
             _sessions.Reset();
             _dispatcher.Reset();
@@ -1833,6 +1845,11 @@ namespace MozaPlugin.Telemetry
 
         internal void RaiseWheelInitiatedSwitch(int slot)
         {
+            // Same convergence cycle as host-initiated switches — the wheel
+            // pushes its post-switch catalog identically whether the trigger
+            // came from us or from a wheel-side button, and we want the same
+            // "ensure host catalog matches wheel catalog" post-condition.
+            ArmPostSwitchConvergence(slot);
             try { WheelInitiatedSwitch?.Invoke(slot); }
             catch (Exception ex)
             {
@@ -1904,6 +1921,11 @@ namespace MozaPlugin.Telemetry
                     $"{Lifecycle.HotSwitchCoordinator.MinEmissions}-" +
                     $"{Lifecycle.HotSwitchCoordinator.MaxEmissions} tier-def emissions queued " +
                     $"~{Lifecycle.HotSwitchCoordinator.EmissionSpacingMs}ms apart (adaptive on bind state)");
+                // Also arm the convergence watcher so we keep verifying the
+                // catalog converges post-burst even if no chunks were
+                // missed. Cheap when everything is healthy — the first
+                // sample matches the next two and we disarm in ~6 s.
+                ArmPostSwitchConvergence((int)slotIndex);
             }
             else
             {
@@ -2927,6 +2949,7 @@ namespace MozaPlugin.Telemetry
                 _watchdog.TickSession02EngagementWatchdog();
                 _watchdog.TickSession01EngagementWatchdog();
                 TickGrowSubscriptionIfCatalogStable();
+                TickPostSwitchCatalogConvergence();
 
                 _tickCounter++;
 
@@ -3522,6 +3545,125 @@ namespace MozaPlugin.Telemetry
             {
                 MozaLog.Warn($"[Moza] Tier-def re-apply (catalog growth) failed: {ex.Message}");
             }
+        }
+
+        /// <summary>
+        /// Post-switch catalog convergence tick. While armed (by a recent
+        /// dashboard switch — see <see cref="ArmPostSwitchConvergence"/>),
+        /// periodically sample the host's catalog signature and emit kind=4
+        /// nudges to the wheel's target slot until N consecutive samples
+        /// agree. Bypasses the wheel-on-target shortcut so the nudge fires
+        /// even when slot already matches — some firmwares re-run their
+        /// dashboard-load on every kind=4 and re-publish the catalog, which
+        /// is exactly the "ask wheel to confirm we have the full set" signal
+        /// we want.
+        /// </summary>
+        private void TickPostSwitchCatalogConvergence()
+        {
+            if (_state != TelemetryState.Active) return;
+            if (!_connection.IsConnected) return;
+            if (!_postSwitchConvergence.IsArmed) return;
+            // While HOT burst is pending, defer — its emissions own the
+            // wire and would race a nudge. The watcher's TickIfArmed slides
+            // its sample timestamp forward in this case so the post-burst
+            // gap is measured from now.
+            bool busy = _hotSwitch.IsBurstPending;
+
+            int sig = ComputeCatalogSignature();
+            long now = DateTime.UtcNow.Ticks;
+            int targetSlot = _postSwitchConvergence.TargetSlot;
+            int matchCountBefore = _postSwitchConvergence.MatchCount;
+            int nudgesSentBefore = _postSwitchConvergence.NudgesSent;
+
+            var decision = _postSwitchConvergence.TickIfArmed(now, sig, busy);
+            switch (decision)
+            {
+                case Lifecycle.PostSwitchCatalogConvergence.TickDecision.EmitNudge:
+                    MozaLog.Debug(
+                        $"[Moza] Post-switch convergence nudge #{_postSwitchConvergence.NudgesSent}: " +
+                        $"slot={targetSlot} sig=0x{sig:X8} matchStreak={_postSwitchConvergence.MatchCount}/" +
+                        $"{Lifecycle.PostSwitchCatalogConvergence.StableSampleThreshold}");
+                    try
+                    {
+                        // Bypass wheel-on-target shortcut by calling
+                        // SendDashboardSwitch directly. SendDashboardSwitch
+                        // gates on state/cooldown only; it has no slot-equality
+                        // check.
+                        SendDashboardSwitch((uint)targetSlot);
+                    }
+                    catch (Exception ex)
+                    {
+                        MozaLog.Warn($"[Moza] Post-switch convergence nudge failed: {ex.Message}");
+                    }
+                    break;
+                case Lifecycle.PostSwitchCatalogConvergence.TickDecision.Converged:
+                    MozaLog.Info(
+                        $"[Moza] Post-switch catalog convergence reached: slot={targetSlot} " +
+                        $"after {nudgesSentBefore} nudge(s), final sig=0x{sig:X8} " +
+                        $"(stable for {Lifecycle.PostSwitchCatalogConvergence.StableSampleThreshold} samples)");
+                    break;
+                case Lifecycle.PostSwitchCatalogConvergence.TickDecision.DeadlineExpired:
+                    MozaLog.Warn(
+                        $"[Moza] Post-switch catalog convergence deadline expired " +
+                        $"after {Lifecycle.PostSwitchCatalogConvergence.DeadlineMs}ms / " +
+                        $"{nudgesSentBefore} nudge(s) — disarming; reactive watchdogs take over.");
+                    break;
+                case Lifecycle.PostSwitchCatalogConvergence.TickDecision.MaxNudgesReached:
+                    MozaLog.Warn(
+                        $"[Moza] Post-switch catalog convergence nudge cap " +
+                        $"({Lifecycle.PostSwitchCatalogConvergence.MaxNudges}) reached " +
+                        $"with streak {matchCountBefore}/" +
+                        $"{Lifecycle.PostSwitchCatalogConvergence.StableSampleThreshold} — " +
+                        "disarming; catalog state may still be inconsistent.");
+                    break;
+                case Lifecycle.PostSwitchCatalogConvergence.TickDecision.NoAction:
+                default:
+                    break;
+            }
+        }
+
+        /// <summary>
+        /// Compute a stable hash of the host's current view of the wheel's
+        /// channel catalog. Uses <see cref="ChannelCatalogParser.LiveCatalog"/>
+        /// when available (only the current dashboard's URLs) and falls back
+        /// to the full catalog otherwise. Order matters — a re-shuffled
+        /// catalog (different idx → URL mapping) hashes differently from
+        /// the original, which is exactly the change we want
+        /// PostSwitchCatalogConvergence to notice.
+        /// </summary>
+        private int ComputeCatalogSignature()
+        {
+            var live = _catalogParser.LiveCatalog ?? _catalogParser.Catalog;
+            if (live == null || live.Count == 0) return 0;
+            unchecked
+            {
+                int hash = 17;
+                for (int i = 0; i < live.Count; i++)
+                {
+                    string s = live[i] ?? string.Empty;
+                    hash = hash * 31 + s.GetHashCode();
+                }
+                return hash;
+            }
+        }
+
+        /// <summary>
+        /// Arm the post-switch catalog convergence watcher. Called from
+        /// every committed dashboard switch site: host-initiated
+        /// <see cref="SwitchToProfile"/>, the wheel-initiated path in
+        /// <see cref="RaiseWheelInitiatedSwitch"/>, and the deferred replay
+        /// in <see cref="Display.WheelSlotTracker.ReplayPendingSwitchIfReady"/>.
+        /// Idempotent — a new arm cancels any in-flight cycle.
+        /// </summary>
+        internal void ArmPostSwitchConvergence(int slot)
+        {
+            _postSwitchConvergence.Arm(slot, DateTime.UtcNow.Ticks);
+            MozaLog.Debug(
+                $"[Moza] Post-switch catalog convergence armed: slot={slot} " +
+                $"(spacing {Lifecycle.PostSwitchCatalogConvergence.SampleIntervalMs}ms, " +
+                $"threshold {Lifecycle.PostSwitchCatalogConvergence.StableSampleThreshold} samples, " +
+                $"deadline {Lifecycle.PostSwitchCatalogConvergence.DeadlineMs}ms, " +
+                $"max nudges {Lifecycle.PostSwitchCatalogConvergence.MaxNudges})");
         }
 
         /// <summary>

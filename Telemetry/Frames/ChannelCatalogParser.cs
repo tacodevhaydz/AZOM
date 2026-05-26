@@ -261,20 +261,36 @@ namespace MozaPlugin.Telemetry.Frames
                 // the END marker may straddle chunk boundaries) for the
                 // most recent tag 0x06 size=4 record and capture its u32
                 // value. Iterate forward so the LAST seen wins.
+                //
+                // Compute the scan's final value FIRST, then compare against
+                // the prior _lastWheelEndMarker once. The old in-place mutate
+                // (set _lastWheelEndMarker inside the loop, stamp the tick
+                // on every difference) caused spurious tick updates whenever
+                // the buffer contained multiple historical END markers from
+                // re-affirmation pushes (e.g., 340 earlier, 416 later, both
+                // already seen). Each visit alternated _lastWheelEndMarker
+                // between values, so even though the final value was
+                // unchanged, the tick stamped at scan time — defeating the
+                // HotSwitchCoordinator's "newEndSinceArm" gate (verified
+                // 2026-05-25: first hot-switch emission fired at sinceArm=232ms
+                // with END value unchanged because the in-loop update
+                // re-stamped the tick on the historical 340→416 transition
+                // inside one scan).
+                uint scanFinalEnd = _lastWheelEndMarker;
                 int bcnt = buf.Count;
                 for (int ci = 0; ci + 8 < bcnt; ci++)
                 {
                     if (buf[ci] != 0x06) continue;
                     if (buf[ci + 1] != 0x04 || buf[ci + 2] != 0 || buf[ci + 3] != 0 || buf[ci + 4] != 0) continue;
-                    uint val = (uint)(buf[ci + 5]
+                    scanFinalEnd = (uint)(buf[ci + 5]
                         | (buf[ci + 6] << 8)
                         | (buf[ci + 7] << 16)
                         | (buf[ci + 8] << 24));
-                    if (val != _lastWheelEndMarker)
-                    {
-                        _lastWheelEndMarker = val;
-                        _lastWheelEndMarkerTickMs = Environment.TickCount;
-                    }
+                }
+                if (scanFinalEnd != _lastWheelEndMarker)
+                {
+                    _lastWheelEndMarker = scanFinalEnd;
+                    _lastWheelEndMarkerTickMs = Environment.TickCount;
                 }
             }
             _lastActivityMs = Environment.TickCount;
