@@ -47,6 +47,18 @@ namespace MozaPlugin.Telemetry.Lifecycle
         /// already on).</summary>
         public const int FirstEmissionFallbackMs = 1500;
 
+        /// <summary>After the wheel's END marker has advanced past the
+        /// pre-switch generation, wait this many ms of catalog quiet
+        /// (no fresh chunks) before firing the first emission. Lets the
+        /// wheel finish pushing the rest of its new-dashboard URL set
+        /// after the END handshake — without this, emission #1 can race
+        /// the URL push by ~750 ms and emit a tier-def shaped for a
+        /// partial catalog (verified 2026-05-25: post-switch the wheel
+        /// pushes its END marker before all URLs have landed, so a
+        /// catalog-quiet wait is the only reliable "fully published"
+        /// signal).</summary>
+        public const int FirstEmissionQuietMs = 200;
+
         // ── State ─────────────────────────────────────────────────────────
         // Pending count is the residual emission budget. Arm sets it to
         // MaxEmissions; the adaptive logic in MarkEmission clamps to MinEmissions
@@ -104,29 +116,40 @@ namespace MozaPlugin.Telemetry.Lifecycle
 
             if (isFirstEmission)
             {
-                // First-emission gate: wait for the wheel's END marker
-                // handshake before firing. The END u32 the host echoes on
-                // every tier-def emission must match what the wheel just
-                // pushed; firing too early means the first emission
-                // echoes a stale END the wheel rejects.
+                // Hard cap fallback: regardless of state, we never wait
+                // longer than this. Covers wheels that skip the post-switch
+                // catalog push entirely (e.g., switching to a slot the
+                // wheel was already on) or stay quiet because their
+                // catalog is already consistent with what the host had.
+                int sinceArm = now - _armTickMs;
+                if (sinceArm >= FirstEmissionFallbackMs) return true;
+
+                // END-advance gate: the wheel's END marker u32 must have
+                // advanced PAST the pre-switch generation. The END u32 the
+                // host echoes on every tier-def emission must match what
+                // the wheel just pushed; emitting before END advances
+                // means we'd echo the OLD generation and the wheel
+                // rejects the binding. (Buffer-scan-based detection lives
+                // in ChannelCatalogParser; this gate just consumes the
+                // tick stamp.)
                 bool newEndSinceArm = catalogWheelEndMarkerTickMs != 0
                     && (catalogWheelEndMarkerTickMs - _armTickMs) > 0;
-                if (newEndSinceArm) return true;
+                if (!newEndSinceArm) return false;
 
-                // Wheel pushing catalog but hasn't sent END yet — no
-                // timeout while valid traffic is in flight.
-                bool newActivitySinceArm = catalogLastActivityTickMs != 0
-                    && (catalogLastActivityTickMs - _armTickMs) > 0;
-                if (newActivitySinceArm) return false;
-
-                // No activity at all yet; wait the fallback window.
-                int sinceArm = now - _armTickMs;
-                if (sinceArm < FirstEmissionFallbackMs) return false;
-
-                // Fallback window elapsed with no wheel activity — fire
-                // anyway so we don't deadlock on a wheel that skipped its
-                // post-switch push.
-                return true;
+                // END advanced — but the wheel often pushes more URL
+                // records AFTER the END marker as part of finishing the
+                // generation (verified 2026-05-25 W17 capture: END
+                // bumped at +185 ms post-arm, URL stream continued to
+                // +957 ms). Wait for catalog activity to be quiet for
+                // FirstEmissionQuietMs before emitting so the tier-def
+                // is shaped for the FINAL channel set, not a partial
+                // mid-stream snapshot. catalogLastActivityTickMs == 0
+                // means the parser hasn't seen any activity at all —
+                // treat as quiet so the END-without-activity edge
+                // (unusual but possible) still fires.
+                if (catalogLastActivityTickMs == 0) return true;
+                int sinceActivity = now - catalogLastActivityTickMs;
+                return sinceActivity >= FirstEmissionQuietMs;
             }
 
             // Subsequent emissions: pace ~1 s apart.

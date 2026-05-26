@@ -290,6 +290,15 @@ namespace MozaPlugin.Telemetry
         private readonly Lifecycle.CatalogResyncProbe _catalogResyncProbe
             = new Lifecycle.CatalogResyncProbe();
 
+        // Post-switch catalog convergence watcher. Armed by every committed
+        // dashboard switch; polls the host's catalog view and nudges the
+        // wheel with kind=4 re-emits until N consecutive identical
+        // signatures arrive. Belt-and-suspenders against a missed catalog
+        // chunk leaving the host with an incomplete URL set the rest of
+        // the static defences would never notice on their own.
+        private readonly Lifecycle.PostSwitchCatalogConvergence _postSwitchConvergence
+            = new Lifecycle.PostSwitchCatalogConvergence();
+
         /// <summary>Drain window for queued kind=4 / one-shot frames before
         /// Stop's FlushPendingWrites discards the queue.</summary>
         private const int PreStopDrainMs = 300;
@@ -787,11 +796,12 @@ namespace MozaPlugin.Telemetry
             get => _profile;
             set
             {
-                // Idempotency guard. Callers (ApplyTelemetrySettings,
-                // OnWheelInitiatedSwitch, OnDashboardSwitched,
-                // MaybeSwapProfileForCatalog) can fire this setter several
-                // times in close succession with the same source profile —
-                // e.g. UI combo click → ApplyTelemetrySettings → next tick
+                // Idempotency guard, layer 1 — reference identity. Callers
+                // (ApplyTelemetrySettings, OnWheelInitiatedSwitch,
+                // OnDashboardSwitched, MaybeSwapProfileForCatalog) can fire
+                // this setter several times in close succession with the
+                // same source profile — e.g. UI combo click →
+                // ApplyTelemetrySettings → next tick
                 // MaybeSwapProfileForCatalog sees catalog unchanged but
                 // assigns the cached synthesised profile back in. Each
                 // re-assignment re-runs the multi-broadcast expansion (~N
@@ -800,6 +810,48 @@ namespace MozaPlugin.Telemetry
                 // pristine snapshot. Reference-compare so the same input
                 // → no-op; null-to-null also short-circuits cleanly.
                 if (ReferenceEquals(value, _lastProfileSourceRef)) return;
+
+                // Idempotency guard, layer 2 — content equality. The
+                // catalog-synthesis path (MaybeSwapProfileForCatalog) builds
+                // a fresh MultiStreamProfile instance every call from the
+                // wheel's current catalog. If catalog content hasn't
+                // changed, the new instance is byte-equivalent to the
+                // previously-assigned one even though their object refs
+                // differ — and that triggers the same full FrameBuilder
+                // rebuild + tier-def re-emission as a real change. The
+                // wheel firmware has been observed (2026-05-26
+                // moza-wire-...-043633) to wedge sess=0x01 into a close-
+                // reopen loop when bombarded with 9 functionally-identical
+                // tier-defs in a few seconds. Catching content-equivalent
+                // assignments here means downstream rebuild + emission
+                // only fires on actual change. Hot-switch / cold-start
+                // emissions still work because they call
+                // ApplySubscription which sends tier-def directly, not via
+                // the Profile setter side effect.
+                //
+                // Gate on _profile being live too. If _profile was cleared
+                // (Stop/Reset path) but _lastProfileSourceRef still points
+                // at the prior assignment, the content match would no-op
+                // away the rebuild we actually need to bring _profile back.
+                if (value != null && _profile != null && _lastProfileSourceRef != null
+                    && AreProfileContentsEquivalent(value, _lastProfileSourceRef))
+                {
+                    // Swap the source ref to the latest instance so
+                    // ReferenceEquals catches further repeats at layer 1.
+                    _lastProfileSourceRef = value;
+                    return;
+                }
+                // Off→on transition (telemetry was disabled, user re-enabled
+                // it / selected a profile from the empty state): treat as an
+                // explicit "fresh attempt" signal and forgive any prior
+                // recovery-budget exhaustion so the new attempt starts with a
+                // clean budget. The existing wheel-hot-swap path covers the
+                // hardware-change case (ResetBindingTracking); this covers
+                // the user-driven case.
+                if (value != null && _lastProfileSourceRef == null)
+                {
+                    try { _recovery.Reset(); } catch { }
+                }
                 _lastProfileSourceRef = value;
 
                 if (value != null && value.Tiers.Count > 0)
@@ -942,6 +994,53 @@ namespace MozaPlugin.Telemetry
         // original input against the post-expansion stored profile.
         private MultiStreamProfile? _lastProfileSourceRef;
 
+        /// <summary>Structural equality check for two MultiStreamProfile
+        /// instances. Returns true iff the wire shape they would produce
+        /// (tier count, per-tier channel set + bit widths, string channel
+        /// URLs) is identical. Used by the Profile setter to no-op
+        /// content-equivalent re-assignments — different instance, same
+        /// payload from the wheel's perspective.
+        ///
+        /// Intentionally compares only the fields that affect the emitted
+        /// tier-def + value-frame layout. Fields like SimHubProperty and
+        /// SimHubPropertyScale are NOT compared because user-mapping
+        /// changes mutate them in-place on the existing profile (rebinding
+        /// the host's value source without changing the wire format) —
+        /// see ChannelDefinition.SimHubProperty's class doc for the
+        /// invariant.</summary>
+        private static bool AreProfileContentsEquivalent(
+            MultiStreamProfile a,
+            MultiStreamProfile b)
+        {
+            if (!string.Equals(a.Name, b.Name, System.StringComparison.Ordinal)) return false;
+            if (a.Tiers.Count != b.Tiers.Count) return false;
+            for (int i = 0; i < a.Tiers.Count; i++)
+            {
+                var ta = a.Tiers[i];
+                var tb = b.Tiers[i];
+                if (ta.PackageLevel != tb.PackageLevel) return false;
+                if (ta.TotalBits != tb.TotalBits) return false;
+                if (ta.FlagByte != tb.FlagByte) return false;
+                if (ta.Channels.Count != tb.Channels.Count) return false;
+                for (int j = 0; j < ta.Channels.Count; j++)
+                {
+                    var ca = ta.Channels[j];
+                    var cb = tb.Channels[j];
+                    if (ca.BitWidth != cb.BitWidth) return false;
+                    if (!string.Equals(ca.Url, cb.Url, System.StringComparison.OrdinalIgnoreCase)) return false;
+                    if (!string.Equals(ca.Compression, cb.Compression, System.StringComparison.OrdinalIgnoreCase)) return false;
+                }
+            }
+            if (a.StringChannels.Count != b.StringChannels.Count) return false;
+            for (int i = 0; i < a.StringChannels.Count; i++)
+            {
+                if (!string.Equals(a.StringChannels[i].Url, b.StringChannels[i].Url,
+                                   System.StringComparison.OrdinalIgnoreCase))
+                    return false;
+            }
+            return true;
+        }
+
         // Per-string-channel emission state: last-sent value and tick timestamp.
         // Keyed by channel URL (case-insensitive). The wheel re-indexes URLs per
         // dashboard so idx is volatile, but the URL string is stable across
@@ -1023,6 +1122,31 @@ namespace MozaPlugin.Telemetry
                 sendSessionEnd: SendSessionEnd,
                 sendAndTrackChunk: SendAndTrackChunk,
                 sendSessionOpen: SendSessionOpen);
+
+            // Single-line outcome log per upload attempt. Without this, a
+            // silent failure (e.g. NoFtSession) only shows up as a Warn deep
+            // in the worker thread and is easy to miss in the diagnostics
+            // bundle. Logged at Info for Succeeded/Skipped (visible at the
+            // default level) and Warn for everything else.
+            _uploader.UploadCompleted += outcome =>
+            {
+                string name = string.IsNullOrEmpty(_uploader.MzdashName) ? "dashboard" : _uploader.MzdashName;
+                switch (outcome)
+                {
+                    case WheelUploadCoordinator.UploadOutcome.Succeeded:
+                        MozaLog.Info($"[Moza] Dashboard upload \"{name}\": Succeeded");
+                        break;
+                    case WheelUploadCoordinator.UploadOutcome.SkippedHashMatch:
+                        MozaLog.Info($"[Moza] Dashboard upload \"{name}\": SkippedHashMatch");
+                        break;
+                    case WheelUploadCoordinator.UploadOutcome.Aborted:
+                        MozaLog.Debug($"[Moza] Dashboard upload \"{name}\": Aborted");
+                        break;
+                    default:
+                        MozaLog.Warn($"[Moza] Dashboard upload \"{name}\": {outcome}");
+                        break;
+                }
+            };
         }
 
         // Caller passes the MozaPlugin instance directly because Init may call
@@ -1378,6 +1502,9 @@ namespace MozaPlugin.Telemetry
 
             try { _ackReceived.Reset(); } catch (ObjectDisposedException) { }
             try { _mgmtResponseEvent.Reset(); } catch (ObjectDisposedException) { }
+            // Disarm convergence — a torn-down pipeline shouldn't keep
+            // firing kind=4 nudges into a session being closed.
+            _postSwitchConvergence.Disarm();
             try { _uploader?.Reset(); } catch { }
             _sessions.Reset();
             _dispatcher.Reset();
@@ -1797,6 +1924,11 @@ namespace MozaPlugin.Telemetry
 
         internal void RaiseWheelInitiatedSwitch(int slot)
         {
+            // Same convergence cycle as host-initiated switches — the wheel
+            // pushes its post-switch catalog identically whether the trigger
+            // came from us or from a wheel-side button, and we want the same
+            // "ensure host catalog matches wheel catalog" post-condition.
+            ArmPostSwitchConvergence(slot);
             try { WheelInitiatedSwitch?.Invoke(slot); }
             catch (Exception ex)
             {
@@ -1868,6 +2000,11 @@ namespace MozaPlugin.Telemetry
                     $"{Lifecycle.HotSwitchCoordinator.MinEmissions}-" +
                     $"{Lifecycle.HotSwitchCoordinator.MaxEmissions} tier-def emissions queued " +
                     $"~{Lifecycle.HotSwitchCoordinator.EmissionSpacingMs}ms apart (adaptive on bind state)");
+                // Also arm the convergence watcher so we keep verifying the
+                // catalog converges post-burst even if no chunks were
+                // missed. Cheap when everything is healthy — the first
+                // sample matches the next two and we disarm in ~6 s.
+                ArmPostSwitchConvergence((int)slotIndex);
             }
             else
             {
@@ -2788,6 +2925,24 @@ namespace MozaPlugin.Telemetry
         // snapshot via the latest-wins stream slots.
         private int _tickInProgress;
 
+        // Frame-build / tick failure escalation. The outer catch in
+        // OnTimerElapsedInner used to swallow every exception as Warn — a
+        // repeatable bug (null resolver entry, malformed channel def, …)
+        // would freeze the dashboard with no recovery attempt. Streak counter
+        // resets on the first successful tick body; once it hits the
+        // threshold we hand off to RecoveryDispatcher (which has its own
+        // debounce + rate-cap + park) and reset the counter so the same
+        // flap doesn't immediately re-escalate inside the debounce window.
+        private int _consecutiveTickFailures;
+        private const int TickFailureRestartThreshold = 10;
+
+        // Tracks whether the previous tick observed a live connection.
+        // Used to detect the disconnected→connected transition so we can
+        // forgive any prior recovery-budget exhaustion: a wheel that just
+        // came back is observably a different situation than the one whose
+        // earlier failures parked the pipeline.
+        private bool _lastTickSawConnected;
+
         private void OnTimerElapsed(object sender, ElapsedEventArgs e)
         {
             if (Interlocked.CompareExchange(ref _tickInProgress, 1, 0) != 0)
@@ -2804,7 +2959,19 @@ namespace MozaPlugin.Telemetry
 
         private void OnTimerElapsedInner()
         {
-            if (_state == TelemetryState.Idle || !_connection.IsConnected)
+            bool currentlyConnected = _connection.IsConnected;
+            bool wasConnected = _lastTickSawConnected;
+            _lastTickSawConnected = currentlyConnected;
+            if (currentlyConnected && !wasConnected)
+            {
+                // Reconnect transition: forgive any prior restart-budget
+                // exhaustion / park. The wheel is observably back; if the
+                // root cause is still present the watchdogs will re-escalate
+                // from a clean budget.
+                try { _recovery.Reset(); } catch { }
+            }
+
+            if (_state == TelemetryState.Idle || !currentlyConnected)
                 return;
 
             try
@@ -2861,15 +3028,41 @@ namespace MozaPlugin.Telemetry
                 _watchdog.TickSession02EngagementWatchdog();
                 _watchdog.TickSession01EngagementWatchdog();
                 TickGrowSubscriptionIfCatalogStable();
+                TickPostSwitchCatalogConvergence();
 
                 _tickCounter++;
 
                 TickEmitWidgetPoll();
                 TickEmitSlowPath();
+
+                // Successful tick — clear the failure streak so a single
+                // transient throw doesn't add to a stale earlier streak.
+                _consecutiveTickFailures = 0;
             }
             catch (Exception ex)
             {
-                MozaLog.Warn($"[Moza] Telemetry send error: {ex.Message}");
+                _consecutiveTickFailures++;
+                // First throw of a streak: include the full stack so
+                // post-mortem analysis has something to bite into. Later
+                // throws in the same streak log only the message to keep
+                // the ring buffer / log file from drowning.
+                if (_consecutiveTickFailures == 1)
+                    MozaLog.Warn($"[Moza] Telemetry send error: {ex.GetType().Name}: {ex}");
+                else
+                    MozaLog.Warn(
+                        $"[Moza] Telemetry send error #{_consecutiveTickFailures}: " +
+                        $"{ex.GetType().Name}: {ex.Message}");
+
+                if (_consecutiveTickFailures >= TickFailureRestartThreshold)
+                {
+                    // Hand the restart decision to RecoveryDispatcher — its
+                    // debounce + rate-cap keep this from looping forever if
+                    // the bug is persistent (parks the pipeline instead).
+                    _recovery.RequestRestart(
+                        $"tick body threw {_consecutiveTickFailures} times in a row " +
+                        $"({ex.GetType().Name}: {ex.Message})");
+                    _consecutiveTickFailures = 0;
+                }
             }
         }
 
@@ -2946,15 +3139,18 @@ namespace MozaPlugin.Telemetry
             int curLen = _catalogParser.BufferLength;
             if (curLen > _catalogParser.LastParsedBufferLen)
             {
+                // TryParse internally trims bytes up to the last committed
+                // END marker, so in normal operation buffers stay bounded
+                // to in-flight content (typically a few hundred bytes per
+                // dashboard switch). The hard-limit wipe below only fires
+                // when the wheel has gone N kB without an END marker the
+                // parser could trim against (e.g. wheel keeps re-sending
+                // back-refs without bounding them with a new END value).
                 _catalogParser.TryParse();
-                // Buffer-overrun guard: post-renegotiate noise can fill a
-                // session's buffer with redundant end-marker bytes; drop only
-                // the overflowing session(s) since the parser keeps the merged
-                // catalog cached. Per-session so end-marker spam on one
-                // session can't wipe another session's still-unparsed records.
-                if (_catalogParser.MaxSessionBufferLength > 4096)
+                const int HardLimitBytes = 65536;
+                if (_catalogParser.MaxSessionBufferLength > HardLimitBytes)
                 {
-                    _catalogParser.ClearOverflowingSessions(4096);
+                    _catalogParser.ClearOverflowingSessions(HardLimitBytes);
                 }
             }
         }
@@ -3431,6 +3627,125 @@ namespace MozaPlugin.Telemetry
             {
                 MozaLog.Warn($"[Moza] Tier-def re-apply (catalog growth) failed: {ex.Message}");
             }
+        }
+
+        /// <summary>
+        /// Post-switch catalog convergence tick. While armed (by a recent
+        /// dashboard switch — see <see cref="ArmPostSwitchConvergence"/>),
+        /// periodically sample the host's catalog signature and emit kind=4
+        /// nudges to the wheel's target slot until N consecutive samples
+        /// agree. Bypasses the wheel-on-target shortcut so the nudge fires
+        /// even when slot already matches — some firmwares re-run their
+        /// dashboard-load on every kind=4 and re-publish the catalog, which
+        /// is exactly the "ask wheel to confirm we have the full set" signal
+        /// we want.
+        /// </summary>
+        private void TickPostSwitchCatalogConvergence()
+        {
+            if (_state != TelemetryState.Active) return;
+            if (!_connection.IsConnected) return;
+            if (!_postSwitchConvergence.IsArmed) return;
+            // While HOT burst is pending, defer — its emissions own the
+            // wire and would race a nudge. The watcher's TickIfArmed slides
+            // its sample timestamp forward in this case so the post-burst
+            // gap is measured from now.
+            bool busy = _hotSwitch.IsBurstPending;
+
+            int sig = ComputeCatalogSignature();
+            long now = DateTime.UtcNow.Ticks;
+            int targetSlot = _postSwitchConvergence.TargetSlot;
+            int matchCountBefore = _postSwitchConvergence.MatchCount;
+            int nudgesSentBefore = _postSwitchConvergence.NudgesSent;
+
+            var decision = _postSwitchConvergence.TickIfArmed(now, sig, busy);
+            switch (decision)
+            {
+                case Lifecycle.PostSwitchCatalogConvergence.TickDecision.EmitNudge:
+                    MozaLog.Debug(
+                        $"[Moza] Post-switch convergence nudge #{_postSwitchConvergence.NudgesSent}: " +
+                        $"slot={targetSlot} sig=0x{sig:X8} matchStreak={_postSwitchConvergence.MatchCount}/" +
+                        $"{Lifecycle.PostSwitchCatalogConvergence.StableSampleThreshold}");
+                    try
+                    {
+                        // Bypass wheel-on-target shortcut by calling
+                        // SendDashboardSwitch directly. SendDashboardSwitch
+                        // gates on state/cooldown only; it has no slot-equality
+                        // check.
+                        SendDashboardSwitch((uint)targetSlot);
+                    }
+                    catch (Exception ex)
+                    {
+                        MozaLog.Warn($"[Moza] Post-switch convergence nudge failed: {ex.Message}");
+                    }
+                    break;
+                case Lifecycle.PostSwitchCatalogConvergence.TickDecision.Converged:
+                    MozaLog.Info(
+                        $"[Moza] Post-switch catalog convergence reached: slot={targetSlot} " +
+                        $"after {nudgesSentBefore} nudge(s), final sig=0x{sig:X8} " +
+                        $"(stable for {Lifecycle.PostSwitchCatalogConvergence.StableSampleThreshold} samples)");
+                    break;
+                case Lifecycle.PostSwitchCatalogConvergence.TickDecision.DeadlineExpired:
+                    MozaLog.Warn(
+                        $"[Moza] Post-switch catalog convergence deadline expired " +
+                        $"after {Lifecycle.PostSwitchCatalogConvergence.DeadlineMs}ms / " +
+                        $"{nudgesSentBefore} nudge(s) — disarming; reactive watchdogs take over.");
+                    break;
+                case Lifecycle.PostSwitchCatalogConvergence.TickDecision.MaxNudgesReached:
+                    MozaLog.Warn(
+                        $"[Moza] Post-switch catalog convergence nudge cap " +
+                        $"({Lifecycle.PostSwitchCatalogConvergence.MaxNudges}) reached " +
+                        $"with streak {matchCountBefore}/" +
+                        $"{Lifecycle.PostSwitchCatalogConvergence.StableSampleThreshold} — " +
+                        "disarming; catalog state may still be inconsistent.");
+                    break;
+                case Lifecycle.PostSwitchCatalogConvergence.TickDecision.NoAction:
+                default:
+                    break;
+            }
+        }
+
+        /// <summary>
+        /// Compute a stable hash of the host's current view of the wheel's
+        /// channel catalog. Uses <see cref="ChannelCatalogParser.LiveCatalog"/>
+        /// when available (only the current dashboard's URLs) and falls back
+        /// to the full catalog otherwise. Order matters — a re-shuffled
+        /// catalog (different idx → URL mapping) hashes differently from
+        /// the original, which is exactly the change we want
+        /// PostSwitchCatalogConvergence to notice.
+        /// </summary>
+        private int ComputeCatalogSignature()
+        {
+            var live = _catalogParser.LiveCatalog ?? _catalogParser.Catalog;
+            if (live == null || live.Count == 0) return 0;
+            unchecked
+            {
+                int hash = 17;
+                for (int i = 0; i < live.Count; i++)
+                {
+                    string s = live[i] ?? string.Empty;
+                    hash = hash * 31 + s.GetHashCode();
+                }
+                return hash;
+            }
+        }
+
+        /// <summary>
+        /// Arm the post-switch catalog convergence watcher. Called from
+        /// every committed dashboard switch site: host-initiated
+        /// <see cref="SwitchToProfile"/>, the wheel-initiated path in
+        /// <see cref="RaiseWheelInitiatedSwitch"/>, and the deferred replay
+        /// in <see cref="Display.WheelSlotTracker.ReplayPendingSwitchIfReady"/>.
+        /// Idempotent — a new arm cancels any in-flight cycle.
+        /// </summary>
+        internal void ArmPostSwitchConvergence(int slot)
+        {
+            _postSwitchConvergence.Arm(slot, DateTime.UtcNow.Ticks);
+            MozaLog.Debug(
+                $"[Moza] Post-switch catalog convergence armed: slot={slot} " +
+                $"(spacing {Lifecycle.PostSwitchCatalogConvergence.SampleIntervalMs}ms, " +
+                $"threshold {Lifecycle.PostSwitchCatalogConvergence.StableSampleThreshold} samples, " +
+                $"deadline {Lifecycle.PostSwitchCatalogConvergence.DeadlineMs}ms, " +
+                $"max nudges {Lifecycle.PostSwitchCatalogConvergence.MaxNudges})");
         }
 
         /// <summary>

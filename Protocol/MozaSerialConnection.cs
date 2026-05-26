@@ -79,6 +79,20 @@ namespace MozaPlugin.Protocol
         private int _framesDropped;
         private int _checksumFailures;
         private int _frameStartScanResyncs;
+        // Resync histogram by skip-byte count. Buckets [0]=1B, [1]=2B,
+        // [2]=3-4B, [3]=5-8B, [4]=9-16B, [5]=17-32B, [6]=33-64B, [7]=>64B.
+        // Lets diagnostics show "are resyncs single stray bytes (USB padding)
+        // or multi-byte gaps (real wire corruption)?" without surfacing every
+        // individual resync as a log line.
+        private readonly int[] _resyncSkipBucket = new int[8];
+        // Last-N skipped-byte samples (hex) for diagnostics. Newest-first
+        // ring under a tiny lock — appended at every resync. Cap at 16 so
+        // the tab shows enough variety to spot patterns (e.g. always 0x00,
+        // always firmware-debug header bytes) without bloating the buffer.
+        private const int ResyncSampleCapacity = 16;
+        private readonly object _resyncSampleLock = new object();
+        private readonly System.Collections.Generic.LinkedList<string> _resyncSamples
+            = new System.Collections.Generic.LinkedList<string>();
         private volatile bool _running;
         private readonly object _lock = new object();
         private string? _lastPortName;
@@ -143,22 +157,51 @@ namespace MozaPlugin.Protocol
         /// <summary>Wire-error counters surfaced together — drops on write,
         /// checksum mismatches on read, and frame-start resyncs (junk bytes
         /// skipped between frames).</summary>
-        public WireErrorCounters WireErrors => new WireErrorCounters(
-            Interlocked.CompareExchange(ref _framesDropped, 0, 0),
-            Interlocked.CompareExchange(ref _checksumFailures, 0, 0),
-            Interlocked.CompareExchange(ref _frameStartScanResyncs, 0, 0));
+        public WireErrorCounters WireErrors
+        {
+            get
+            {
+                int[] histo = new int[_resyncSkipBucket.Length];
+                for (int i = 0; i < histo.Length; i++)
+                    histo[i] = Interlocked.CompareExchange(ref _resyncSkipBucket[i], 0, 0);
+                string[] samples;
+                lock (_resyncSampleLock)
+                {
+                    samples = new string[_resyncSamples.Count];
+                    int j = 0;
+                    foreach (var s in _resyncSamples) samples[j++] = s;
+                }
+                return new WireErrorCounters(
+                    Interlocked.CompareExchange(ref _framesDropped, 0, 0),
+                    Interlocked.CompareExchange(ref _checksumFailures, 0, 0),
+                    Interlocked.CompareExchange(ref _frameStartScanResyncs, 0, 0),
+                    histo,
+                    samples);
+            }
+        }
 
         public readonly struct WireErrorCounters
         {
             public readonly int FramesDropped;
             public readonly int ChecksumFailures;
             public readonly int FrameStartScanResyncs;
+            /// <summary>Distribution of bytes-skipped at each resync. Buckets:
+            /// [0]=1B, [1]=2B, [2]=3-4B, [3]=5-8B, [4]=9-16B, [5]=17-32B,
+            /// [6]=33-64B, [7]=>64B. Total across buckets ==
+            /// <see cref="FrameStartScanResyncs"/>.</summary>
+            public readonly int[] ResyncSkipHistogram;
+            /// <summary>Most recent skipped-byte samples, hex-formatted
+            /// ("3B: 00 41 0B"). Oldest first, newest last. Capped to 16.</summary>
+            public readonly string[] RecentResyncSamples;
 
-            public WireErrorCounters(int dropped, int cksum, int resync)
+            public WireErrorCounters(int dropped, int cksum, int resync,
+                int[] histo, string[] samples)
             {
                 FramesDropped = dropped;
                 ChecksumFailures = cksum;
                 FrameStartScanResyncs = resync;
+                ResyncSkipHistogram = histo;
+                RecentResyncSamples = samples;
             }
         }
 
@@ -546,7 +589,43 @@ namespace MozaPlugin.Protocol
                         while (frameStart < rx.Count && rx[frameStart] != MozaProtocol.MessageStart)
                             frameStart++;
                         if (frameStart > cursor)
+                        {
+                            int skipped = frameStart - cursor;
                             Interlocked.Increment(ref _frameStartScanResyncs);
+                            // Histogram bucket (cheap — no allocation):
+                            int b;
+                            if (skipped <= 1) b = 0;
+                            else if (skipped == 2) b = 1;
+                            else if (skipped <= 4) b = 2;
+                            else if (skipped <= 8) b = 3;
+                            else if (skipped <= 16) b = 4;
+                            else if (skipped <= 32) b = 5;
+                            else if (skipped <= 64) b = 6;
+                            else b = 7;
+                            Interlocked.Increment(ref _resyncSkipBucket[b]);
+                            // Sample the actual skipped bytes (capped to
+                            // 24 hex chars) so the diagnostics tab can
+                            // show what's between frames. Newest-first
+                            // ring buffer with a tiny lock — hits at most
+                            // a few thousand times per session.
+                            int sampleLen = Math.Min(skipped, 12);
+                            var sb = new System.Text.StringBuilder(2 + sampleLen * 3);
+                            sb.Append(skipped);
+                            sb.Append("B:");
+                            for (int k = 0; k < sampleLen; k++)
+                            {
+                                sb.Append(' ');
+                                sb.Append(rx[cursor + k].ToString("X2"));
+                            }
+                            if (sampleLen < skipped) sb.Append(" …");
+                            string sample = sb.ToString();
+                            lock (_resyncSampleLock)
+                            {
+                                _resyncSamples.AddLast(sample);
+                                while (_resyncSamples.Count > ResyncSampleCapacity)
+                                    _resyncSamples.RemoveFirst();
+                            }
+                        }
                         if (frameStart >= rx.Count)
                         {
                             // No start byte found at all — discard junk.
@@ -560,7 +639,32 @@ namespace MozaPlugin.Protocol
                             break;
                         }
                         int payloadLength = rx[frameStart + 1];
-                        if (payloadLength < 2 || payloadLength > 64)
+                        // LEN field counts CMD bytes only (group + dev + chk
+                        // are framing). The lower bound was historically `< 2`
+                        // as defensive noise rejection, but that silently
+                        // dropped legitimate short wheel responses:
+                        //   LEN=0  → `7E 00 [group] [dev] [chk]` — presence-
+                        //            probe ACKs (e.g. `7E 00 80 dev_swap chk`),
+                        //            simple polled-status responses (e.g.
+                        //            `7E 00 C0 31 7C` channel-cfg response
+                        //            from base, `7E 00 A2 21 4E` from main).
+                        //   LEN=1  → `7E 01 [group] [dev] [cmd] [chk]` — minimal
+                        //            session-mgmt responses (e.g. `7E 01 C3 71
+                        //            80 40` SerialStream wheel response).
+                        // Rejecting these produced silent resyncs (no DROP log,
+                        // since neither frameError nor cksumFail fired) at
+                        // ~3/s steady-state, and the rest of the plugin never
+                        // got to see these frames — including `MozaPlugin
+                        // .OnMessageReceived`'s `data.Length == 2 && data[0]
+                        // == 0x80` presence-probe ACK handler, which was
+                        // unreachable in practice. Accept any non-negative LEN;
+                        // the checksum still has to validate, so a stray byte
+                        // run that happens to look like `7E N` only survives if
+                        // its checksum byte also coincidentally matches (1/256).
+                        // Upper bound raised to 200 — larger than any observed
+                        // wheel frame, matches the catalog parser's record-size
+                        // ceiling for symmetric framing assumptions.
+                        if (payloadLength > 200)
                         {
                             // Invalid length — skip this start byte and resync on
                             // the next 0x7E. Common at connect when junk precedes

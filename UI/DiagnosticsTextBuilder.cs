@@ -289,6 +289,32 @@ namespace MozaPlugin.UI
                 $"Bandwidth:          out={budget.BytesLastSec,5} B/s ({budget.PercentBudget,3}% of {budgetTargetBytes}B target, peak={budget.PeakBurstBytes})");
             sb.AppendLine(
                 $"WireErrors:         drops={errs.FramesDropped} cksumFail={errs.ChecksumFailures} resync={errs.FrameStartScanResyncs}");
+            // Resync skip-size distribution. Helps tell single-byte stray
+            // padding (USB / driver idle bytes — harmless) from multi-byte
+            // gaps (wire corruption — worth investigating). drops=0
+            // cksumFail=0 with a 1B-dominated histogram means the wire is
+            // healthy and the resync count is just inter-frame noise.
+            if (errs.FrameStartScanResyncs > 0 && errs.ResyncSkipHistogram != null)
+            {
+                var h = errs.ResyncSkipHistogram;
+                string[] labels = { "1B", "2B", "3-4B", "5-8B", "9-16B", "17-32B", "33-64B", ">64B" };
+                var hsb = new StringBuilder();
+                bool first = true;
+                for (int i = 0; i < h.Length; i++)
+                {
+                    if (h[i] == 0) continue;
+                    if (!first) hsb.Append("  ");
+                    hsb.Append(labels[i]).Append('=').Append(h[i]);
+                    first = false;
+                }
+                sb.AppendLine($"  ResyncSkipDist:   {hsb}");
+                if (errs.RecentResyncSamples != null && errs.RecentResyncSamples.Length > 0)
+                {
+                    sb.AppendLine($"  RecentResyncs:    (last {errs.RecentResyncSamples.Length}, newest first)");
+                    for (int i = errs.RecentResyncSamples.Length - 1; i >= 0; i--)
+                        sb.AppendLine($"    {errs.RecentResyncSamples[i]}");
+                }
+            }
             sb.AppendLine($"DisplayDetected:    {(ts?.DisplayDetected ?? plugin.IsDisplayDetected)}");
             sb.AppendLine($"DisplayModelName:   {Blank(ts?.DisplayModelName ?? plugin.DisplayModelName)}");
             sb.AppendLine($"WheelEra:           {plugin.ActiveTelemetryWheelEra}");
@@ -388,6 +414,45 @@ namespace MozaPlugin.UI
                 sb.AppendLine($"Channels ({sub.Channels.Count}):");
                 foreach (var ch in sub.Channels)
                     sb.AppendLine($"  idx={ch.Idx,2}  comp=0x{ch.Comp:X2}  width={ch.Width,3}  {ch.Url}");
+            }
+            return sb.ToString().TrimEnd();
+        }
+
+        /// <summary>Render the most recent unsolicited firmware-debug frames
+        /// (raw wire group 0x0E, subtype 0x05). These are ASCII log lines the
+        /// wheel-bus firmware emits during normal operation — parameter
+        /// writes, init traces, occasional warnings — captured by
+        /// <see cref="FirmwareDebugLog"/> for visibility. Empty by default
+        /// because nothing else in the plugin acts on these; when present
+        /// they're useful for understanding what the firmware is doing
+        /// across init / dashboard switches / setting writes.</summary>
+        public static string BuildFirmwareDebug(MozaPlugin plugin)
+        {
+            var log = plugin.FirmwareDebugLogForDiagnostics;
+            var entries = log.Snapshot();
+            if (entries.Length == 0)
+                return $"(no firmware-debug frames captured; total received={log.TotalReceived})";
+
+            var sb = new StringBuilder();
+            sb.AppendLine($"Recent frames: {entries.Length} shown / {log.TotalReceived} total received");
+            // Render newest first so the most recent activity is at the top
+            // of the section (and the oldest, least relevant lines slide off
+            // the visible area first on long scrolls). Limit to last 64 so a
+            // burst doesn't dominate the diagnostics view.
+            int limit = Math.Min(entries.Length, 64);
+            for (int i = entries.Length - 1; i >= entries.Length - limit; i--)
+            {
+                var e = entries[i];
+                // Local-time stamp keeps the format consistent with the rest
+                // of the diagnostics tab (manifest already shows UTC).
+                string ts = e.TimestampUtc.ToLocalTime().ToString("HH:mm:ss.fff");
+                // Empty lines are continuation fragments (the firmware
+                // sometimes splits a single log line across two 0x0E
+                // frames); skip rendering them to keep the section readable
+                // — they're still in the bundle's moza-log.txt for full
+                // forensic context.
+                if (e.Text.Length == 0) continue;
+                sb.AppendLine($"  {ts} [{e.SourceName,-7}] {e.Text}");
             }
             return sb.ToString().TrimEnd();
         }
