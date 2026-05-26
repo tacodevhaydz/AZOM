@@ -32,10 +32,12 @@ namespace MozaPlugin.Resources
             new Dictionary<string, ResourceManager>(System.StringComparer.OrdinalIgnoreCase)
             {
                 { "",   new ResourceManager("MozaPlugin.Resources.Strings",    typeof(Strings).Assembly) },
+                { "de", new ResourceManager("MozaPlugin.Resources.Strings.de", typeof(Strings).Assembly) },
                 { "es", new ResourceManager("MozaPlugin.Resources.Strings.es", typeof(Strings).Assembly) },
                 { "fr", new ResourceManager("MozaPlugin.Resources.Strings.fr", typeof(Strings).Assembly) },
                 { "ru", new ResourceManager("MozaPlugin.Resources.Strings.ru", typeof(Strings).Assembly) },
                 { "vi", new ResourceManager("MozaPlugin.Resources.Strings.vi", typeof(Strings).Assembly) },
+                { "zh-Hans", new ResourceManager("MozaPlugin.Resources.Strings.zh-Hans", typeof(Strings).Assembly) },
             };
 
         private static string Get(string key)
