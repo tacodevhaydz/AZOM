@@ -475,17 +475,23 @@ namespace MozaPlugin.Telemetry.Frames
                     // Snapshot catalog size for grow-subscription detection.
                     _sender.CatalogCountAtLastSubscription = _sender.CatalogParser.Count;
 
-                    // Tier-def binding completeness check. For Type02 this means
-                    // "wheel knows about every URL we sent" — channels with URLs
-                    // not in the wheel catalog get chIndex=0 and W17 silently
-                    // rejects the whole tier-def. For V2Compact (VGS) the wheel
-                    // doesn't index by catalog position, but the wheel's known
-                    // channel pool IS bounded by what it advertised at cold-start;
-                    // an "unbound" URL still indicates a dashboard asking for a
-                    // channel the wheel can't render. Both eras: report unbound
-                    // and schedule a kind=4 re-emit to nudge the wheel to
-                    // re-advertise its catalog. Also feeds the HotSwitchCoordinator
-                    // adaptive burst length via LastTierDefTotalCount.
+                    // Tier-def binding completeness check.
+                    //
+                    // Type02 (cspIdx): wheel indexes channels by catalog position;
+                    // URLs not in the wheel's catalog resolve to chIndex=0 and W17
+                    // silently rejects the entire tier-def. We schedule a kind=4
+                    // probe to nudge Type02 firmware to re-publish its catalog —
+                    // verified to actually re-burst on Type02 captures.
+                    //
+                    // V2Compact (VGS): wheel doesn't index by catalog position, so
+                    // an "unbound" URL is informational only — the tier-def still
+                    // emits the URL with an alphabetic chIdx and the wheel either
+                    // accepts or ignores per its own dashboard JSON. We log the
+                    // count for diagnostics and feed it to LastTierDefTotalCount /
+                    // HotSwitchCoordinator.MarkEmission adaptive burst, but do NOT
+                    // fire the kind=4 probe — VGS response to kind=4 is unverified,
+                    // and an over-eager probe causes sess=0x09 state-push storms
+                    // that overwhelm the serial reassembler.
                     var catalogSnapshot = _sender.CatalogParser.Catalog;
                     if (catalogSnapshot != null && catalogSnapshot.Count > 0)
                     {
@@ -507,12 +513,22 @@ namespace MozaPlugin.Telemetry.Frames
                         _lastTierDefTotalCount = total;
                         if (unbound > 0)
                         {
-                            MozaLog.Warn(
-                                $"[Moza] Tier-def has {unbound}/{total} unbound channels " +
-                                $"(URL not in wheel catalog of {catalogSnapshot.Count} entries). " +
-                                $"First unbound: {firstUnboundUrl ?? "(null)"}. " +
-                                "Scheduling kind=4 re-emit to nudge wheel re-advertise.");
-                            _sender.ScheduleCatalogResyncProbeInternal();
+                            if (cspIdx)
+                            {
+                                MozaLog.Warn(
+                                    $"[Moza] Tier-def has {unbound}/{total} unbound channels " +
+                                    $"(chIndex=0; wheel catalog has {catalogSnapshot.Count} entries). " +
+                                    $"First unbound: {firstUnboundUrl ?? "(null)"}. " +
+                                    "Scheduling kind=4 re-emit to nudge wheel re-advertise.");
+                                _sender.ScheduleCatalogResyncProbeInternal();
+                            }
+                            else
+                            {
+                                MozaLog.Debug(
+                                    $"[Moza] Tier-def has {unbound}/{total} URLs absent from " +
+                                    $"wheel catalog ({catalogSnapshot.Count} entries; alphabetic " +
+                                    $"indexing in use). First absent: {firstUnboundUrl ?? "(null)"}.");
+                            }
                         }
                     }
 

@@ -77,25 +77,11 @@ namespace MozaPlugin
                 AutoApplyProfileCheck.IsChecked = plugin.Settings.AutoApplyProfileOnLaunch;
                 LimitWheelUpdatesCheck.IsChecked = plugin.Settings.LimitWheelUpdates;
                 AlwaysResendBitmaskCheck.IsChecked = plugin.Settings.AlwaysResendBitmask;
-                {
-                    // Source from the active profile (single source of truth). Falls
-                    // back to plugin-global flat fields for legacy data that hasn't
-                    // been promoted into a profile yet on this launch.
-                    var gsProfile = plugin.Settings.ProfileStore?.CurrentProfile;
-                    bool von = gsProfile?.GearshiftVibrateOnNeutral == 1
-                        || (gsProfile?.GearshiftVibrateOnNeutral == -1 && plugin.Settings.GearshiftVibrateOnNeutral);
-                    GearshiftVibrateOnNeutralCheck.IsChecked = von;
-
-                    int dbMs = gsProfile?.GearshiftDebounceMs ?? -1;
-                    if (dbMs < 0) dbMs = plugin.Settings.GearshiftDebounceMs;
-                    if (dbMs < 0) dbMs = 500;
-                    if (dbMs > 1000) dbMs = 1000;
-                    // Snap to 50 ms grid so the slider thumb sits on a tick when the
-                    // persisted value came from an older build / a manual edit.
-                    dbMs = ((dbMs + 25) / 50) * 50;
-                    GearshiftDebounceSlider.Value = dbMs;
-                    GearshiftDebounceValue.Text = $"{dbMs} ms";
-                }
+                // Gearshift coalescing controls (GearshiftVibrateOnNeutralCheck,
+                // GearshiftDebounceSlider) are profile-sourced — populated by
+                // RefreshBaseTab on every 500 ms tick so a profile switch with
+                // the panel open tracks the new game's values. See the comment
+                // in RefreshBaseTab for why the constructor copy was removed.
                 DisableSerialProbeFallbackCheck.IsChecked = plugin.Settings.DisableSerialProbeFallback;
                 DisableAb9DetectionCheck.IsChecked = plugin.Settings.DisableAb9Detection;
                 AlwaysCaptureOnStartupCheck.IsChecked = plugin.Settings.AlwaysCaptureOnStartup;
@@ -358,6 +344,26 @@ namespace MozaPlugin
             GearshiftVibrationSlider.Value = gs;
             SetValueText(GearshiftVibrationValue, gs.ToString());
 
+            // Plugin-side gearshift event coalescing — per-profile (so each
+            // game can pick its own tuning) with flat-field fallback. Refreshed
+            // on every tick so a profile-switch with the settings tab open
+            // pulls the new game's values; without this, the controls held
+            // stale values from the previous profile and any user edit
+            // silently overwrote the new active profile's stored values.
+            // Suppressor on the surrounding RefreshDisplay scope swallows the
+            // ValueChanged events these assignments raise.
+            var gsProfile = _plugin.Settings.ProfileStore?.CurrentProfile;
+            bool von = gsProfile?.GearshiftVibrateOnNeutral == 1
+                || (gsProfile?.GearshiftVibrateOnNeutral == -1 && _plugin.Settings.GearshiftVibrateOnNeutral);
+            GearshiftVibrateOnNeutralCheck.IsChecked = von;
+            int dbMs = gsProfile?.GearshiftDebounceMs ?? -1;
+            if (dbMs < 0) dbMs = _plugin.Settings.GearshiftDebounceMs;
+            if (dbMs < 0) dbMs = 500;
+            if (dbMs > 1000) dbMs = 1000;
+            dbMs = ((dbMs + 25) / 50) * 50;
+            GearshiftDebounceSlider.Value = dbMs;
+            GearshiftDebounceValue.Text = $"{dbMs} ms";
+
             double spd = _data.Speed / 10.0;
             SpeedSlider.Value = Clamp(spd, 0, 200);
             SetValueText(SpeedValue, $"{spd:F0}%");
@@ -425,6 +431,20 @@ namespace MozaPlugin
             _plugin.WriteIfBaseConnected("base-limit", raw);
             _plugin.WriteIfBaseConnected("base-max-angle", raw);
             _plugin.SaveSettings();
+
+            // Diagnostic — confirms the value reached the active profile.
+            // CaptureFromCurrent inside SaveSettings should have set
+            // profile.Limit from _data.Limit; the post-capture value lets us
+            // verify the persist path on future bug reports. Debug-level so
+            // it doesn't spam SimHub.txt during slider drags (~100 ticks per
+            // full sweep with the 10° snap); the in-process MozaLog ring
+            // buffer still records it for the Diagnostics export bundle.
+            var profile = _plugin.Settings?.ProfileStore?.CurrentProfile;
+            MozaLog.Debug(
+                $"[Moza] Rotation slider → {deg}° (raw={raw}); " +
+                $"active profile='{profile?.Name ?? "(none)"}', " +
+                $"profile.Limit={profile?.Limit.ToString() ?? "n/a"}, " +
+                $"baseConnected={_data.IsBaseConnected}");
         }
 
         private void FfbStrengthSlider_ValueChanged(object sender, RoutedPropertyChangedEventArgs<double> e)

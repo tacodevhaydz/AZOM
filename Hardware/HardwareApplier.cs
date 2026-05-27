@@ -486,33 +486,129 @@ namespace MozaPlugin.Hardware
         {
             if (profile == null) return;
 
-            ApplyBaseSettingIfSet(profile.Limit, v => { _data.Limit = v; _data.MaxAngle = v; }, "base-limit", "base-max-angle");
-            ApplyBaseSettingIfSet(profile.FfbStrength, v => _data.FfbStrength = v, "base-ffb-strength");
-            ApplyBaseSettingIfSet(profile.Torque, v => _data.Torque = v, "base-torque");
-            ApplyBaseSettingIfSet(profile.Speed, v => _data.Speed = v, "base-speed");
-            ApplyBaseSettingIfSet(profile.Damper, v => _data.Damper = v, "base-damper");
-            ApplyBaseSettingIfSet(profile.Friction, v => _data.Friction = v, "base-friction");
-            ApplyBaseSettingIfSet(profile.Inertia, v => _data.Inertia = v, "base-inertia");
-            ApplyBaseSettingIfSet(profile.Spring, v => _data.Spring = v, "base-spring");
-            ApplyBaseSettingIfSet(profile.SpeedDamping, v => _data.SpeedDamping = v, "base-speed-damping");
-            ApplyBaseSettingIfSet(profile.SpeedDampingPoint, v => _data.SpeedDampingPoint = v, "base-speed-damping-point");
-            ApplyBaseSettingIfSet(profile.NaturalInertia, v => _data.NaturalInertia = v, "base-natural-inertia");
-            ApplyBaseSettingIfSet(profile.SoftLimitStiffness, v => _data.SoftLimitStiffness = v, "base-soft-limit-stiffness");
-            ApplyBaseSettingIfSet(profile.SoftLimitRetain, v => _data.SoftLimitRetain = v, "base-soft-limit-retain");
-            ApplyBaseSettingIfSet(profile.FfbReverse, v => _data.FfbReverse = v, "base-ffb-reverse");
-            ApplyBaseSettingIfSet(profile.Protection, v => _data.Protection = v, "base-protection");
-            ApplyBaseSettingIfSet(profile.GameDamper, v => _data.GameDamper = v, "main-set-damper-gain");
-            ApplyBaseSettingIfSet(profile.GameFriction, v => _data.GameFriction = v, "main-set-friction-gain");
-            ApplyBaseSettingIfSet(profile.GameInertia, v => _data.GameInertia = v, "main-set-inertia-gain");
-            ApplyBaseSettingIfSet(profile.GameSpring, v => _data.GameSpring = v, "main-set-spring-gain");
-            ApplyBaseSettingIfSet(profile.WorkMode, v => _data.WorkMode = v, "main-set-work-mode");
+            // Debug-level — fires on every game switch / wheel-detect /
+            // dashboard re-apply, which is too noisy for SimHub.txt. The
+            // in-process MozaLog ring buffer still records it so future bug
+            // reports can pull it from the Diagnostics tab export.
+            // Show both the persisted BaseDetected (the actual gate) and the
+            // volatile IsBaseConnected (which is false on the hot-reload that
+            // ate the writes before the 2026-05-27 gate fix).
+            MozaLog.Debug(
+                $"[Moza] ApplyBaseToHardware '{profile.Name}': " +
+                $"Limit={profile.Limit} ({(profile.Limit >= 0 ? (profile.Limit * 2) + "°" : "skip")}), " +
+                $"FfbStrength={profile.FfbStrength}, Torque={profile.Torque}, Speed={profile.Speed}, " +
+                $"BaseDetected={_detectionState.BaseDetected}, " +
+                $"_data.IsBaseConnected={_data.IsBaseConnected}, baseSettingsRead={_data.BaseSettingsRead}");
+
+            // Each call below is the SOLE site that names a base/motor field
+            // in this method. The helper handles the full lifecycle in one
+            // pass: sentinel→seed-from-_data (so SimHub-auto-created profiles
+            // inherit current device state instead of silently skipping the
+            // write — the 2026-05-27 "rotation angle carries over to new
+            // profile" pattern) → mirror to _data → write to the wire when
+            // BaseDetected (persisted across plugin reloads). Adding a new
+            // base/motor setting requires one line here, one line each in
+            // MozaProfile.CopyProfilePropertiesFrom and CaptureFromCurrent,
+            // and the field declaration itself — no parallel seed list to
+            // drift out of sync.
+            Apply(() => profile.Limit,              v => profile.Limit              = v,
+                  () => _data.Limit,                v => { _data.Limit = v; _data.MaxAngle = v; },
+                  "base-limit", "base-max-angle");
+            Apply(() => profile.FfbStrength,        v => profile.FfbStrength        = v,
+                  () => _data.FfbStrength,          v => _data.FfbStrength          = v,
+                  "base-ffb-strength");
+            Apply(() => profile.Torque,             v => profile.Torque             = v,
+                  () => _data.Torque,               v => _data.Torque               = v,
+                  "base-torque");
+            Apply(() => profile.Speed,              v => profile.Speed              = v,
+                  () => _data.Speed,                v => _data.Speed                = v,
+                  "base-speed");
+            Apply(() => profile.Damper,             v => profile.Damper             = v,
+                  () => _data.Damper,               v => _data.Damper               = v,
+                  "base-damper");
+            Apply(() => profile.Friction,           v => profile.Friction           = v,
+                  () => _data.Friction,             v => _data.Friction             = v,
+                  "base-friction");
+            Apply(() => profile.Inertia,            v => profile.Inertia            = v,
+                  () => _data.Inertia,              v => _data.Inertia              = v,
+                  "base-inertia");
+            Apply(() => profile.Spring,             v => profile.Spring             = v,
+                  () => _data.Spring,               v => _data.Spring               = v,
+                  "base-spring");
+            Apply(() => profile.SpeedDamping,       v => profile.SpeedDamping       = v,
+                  () => _data.SpeedDamping,         v => _data.SpeedDamping         = v,
+                  "base-speed-damping");
+            Apply(() => profile.SpeedDampingPoint,  v => profile.SpeedDampingPoint  = v,
+                  () => _data.SpeedDampingPoint,    v => _data.SpeedDampingPoint    = v,
+                  "base-speed-damping-point");
+            Apply(() => profile.NaturalInertia,     v => profile.NaturalInertia     = v,
+                  () => _data.NaturalInertia,       v => _data.NaturalInertia       = v,
+                  "base-natural-inertia");
+            Apply(() => profile.SoftLimitStiffness, v => profile.SoftLimitStiffness = v,
+                  () => _data.SoftLimitStiffness,   v => _data.SoftLimitStiffness   = v,
+                  "base-soft-limit-stiffness");
+            Apply(() => profile.SoftLimitRetain,    v => profile.SoftLimitRetain    = v,
+                  () => _data.SoftLimitRetain,      v => _data.SoftLimitRetain      = v,
+                  "base-soft-limit-retain");
+            Apply(() => profile.FfbReverse,         v => profile.FfbReverse         = v,
+                  () => _data.FfbReverse,           v => _data.FfbReverse           = v,
+                  "base-ffb-reverse");
+            Apply(() => profile.Protection,         v => profile.Protection         = v,
+                  () => _data.Protection,           v => _data.Protection           = v,
+                  "base-protection");
+            Apply(() => profile.GameDamper,         v => profile.GameDamper         = v,
+                  () => _data.GameDamper,           v => _data.GameDamper           = v,
+                  "main-set-damper-gain");
+            Apply(() => profile.GameFriction,       v => profile.GameFriction       = v,
+                  () => _data.GameFriction,         v => _data.GameFriction         = v,
+                  "main-set-friction-gain");
+            Apply(() => profile.GameInertia,        v => profile.GameInertia        = v,
+                  () => _data.GameInertia,          v => _data.GameInertia          = v,
+                  "main-set-inertia-gain");
+            Apply(() => profile.GameSpring,         v => profile.GameSpring         = v,
+                  () => _data.GameSpring,           v => _data.GameSpring           = v,
+                  "main-set-spring-gain");
+            Apply(() => profile.WorkMode,           v => profile.WorkMode           = v,
+                  () => _data.WorkMode,             v => _data.WorkMode             = v,
+                  "main-set-work-mode");
+            Apply(() => profile.GearshiftVibration, v => profile.GearshiftVibration = v,
+                  () => _data.GearshiftVibration,   v => _data.GearshiftVibration   = v,
+                  "base-gearshift-vibration");
+
+            // Local helper — does seed + mirror + write in one pass. Closes
+            // over `profile` and `_data` via the enclosing scope so callers
+            // only need to provide the field accessors and command names.
+            void Apply(
+                Func<int> profileGet, Action<int> profileSet,
+                Func<int> dataGet,    Action<int> dataSet,
+                params string[] commands)
+            {
+                int val = profileGet();
+                if (val < 0)
+                {
+                    // Profile field at sentinel — seed from current device state.
+                    // Requires BaseSettingsRead so we don't propagate uninitialized
+                    // zeros from a fresh MozaData (hot-reload before first echo).
+                    if (!_data.BaseSettingsRead) return;
+                    int seed = dataGet();
+                    if (seed < 0) return;  // _data sentinel too — nothing to apply
+                    val = seed;
+                    profileSet(val);
+                }
+                dataSet(val);
+                if (_detectionState.BaseDetected)
+                    foreach (var cmd in commands)
+                        _deviceManager.WriteSetting(cmd, val);
+            }
 
             // FFB Equalizer (sentinel = -1000): mirror always, write when live.
+            // Gate on the persisted BaseDetected (not volatile _data.IsBaseConnected)
+            // for the same reason as ApplyBaseSettingIfSet — see the comment there.
             void ApplyEq(int val, Action<int> setData, string cmd)
             {
                 if (val <= -1000) return;
                 setData(val);
-                if (_data.IsBaseConnected) _deviceManager.WriteSetting(cmd, val);
+                if (_detectionState.BaseDetected) _deviceManager.WriteSetting(cmd, val);
             }
             ApplyEq(profile.Equalizer1, v => _data.Equalizer1 = v, "base-equalizer1");
             ApplyEq(profile.Equalizer2, v => _data.Equalizer2 = v, "base-equalizer2");
@@ -527,7 +623,8 @@ namespace MozaPlugin.Hardware
             if (profile.FfbCurveY3 >= 0) _data.FfbCurveY3 = profile.FfbCurveY3;
             if (profile.FfbCurveY4 >= 0) _data.FfbCurveY4 = profile.FfbCurveY4;
             if (profile.FfbCurveY5 >= 0) _data.FfbCurveY5 = profile.FfbCurveY5;
-            if (!_data.IsBaseConnected) return;
+            // Persisted BaseDetected gate (see ApplyBaseSettingIfSet comment).
+            if (!_detectionState.BaseDetected) return;
             // X breakpoints always written when live (device doesn't persist them).
             _deviceManager.WriteSetting("base-ffb-curve-x1", 20);
             _deviceManager.WriteSetting("base-ffb-curve-x2", 40);
@@ -672,15 +769,21 @@ namespace MozaPlugin.Hardware
             if (value < 0) return;
             if (_detectionState.DashDetected) _deviceManager.WriteSetting(command, value);
         }
+        // The "base connected" gate uses the persisted DetectionState flag
+        // (set on first base-mcu-temp echo and preserved across SimHub plugin
+        // reloads via s_persistentDetectionState), not the volatile
+        // _data.IsBaseConnected — see the ApplyBaseSettingIfSet comment for
+        // the hot-reload rationale. _deviceManager.WriteSetting still bails
+        // on a dead wire, so this is correct even mid-reconnect.
         public void WriteIfBaseConnected(string command, int value)
         {
             if (value < 0) return;
-            if (_data.IsBaseConnected) _deviceManager.WriteSetting(command, value);
+            if (_detectionState.BaseDetected) _deviceManager.WriteSetting(command, value);
         }
         public void WriteFloatIfBaseConnected(string command, int value)
         {
             if (value < 0) return;
-            if (_data.IsBaseConnected) _deviceManager.WriteFloat(command, value);
+            if (_detectionState.BaseDetected) _deviceManager.WriteFloat(command, value);
         }
         public void WriteIfHandbrakeDetected(string command, int value)
         {
@@ -859,17 +962,13 @@ namespace MozaPlugin.Hardware
         }
 
         // ===== Per-cluster sentinel-guarded helpers =====
-
-        public void ApplyBaseSettingIfSet(int value, Action<int> setData, params string[] commands)
-        {
-            if (value < 0) return;
-            setData(value);
-            if (_data.IsBaseConnected)
-            {
-                foreach (var cmd in commands)
-                    _deviceManager.WriteSetting(cmd, value);
-            }
-        }
+        //
+        // Base/motor settings used to live in a public ApplyBaseSettingIfSet
+        // here, called once per field from ApplyBaseToHardware alongside a
+        // parallel seed-from-_data block. Those merged into the local `Apply`
+        // helper inside ApplyBaseToHardware (one call site per field, seed +
+        // mirror + write in one pass) — single source of truth, no parallel
+        // list to drift out of sync. See the comment block above the helper.
 
         public void ApplyHandbrakeSettingIfSet(int value, Action<int> setData, string command)
         {
