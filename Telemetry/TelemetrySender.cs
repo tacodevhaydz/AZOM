@@ -1107,6 +1107,12 @@ namespace MozaPlugin.Telemetry
             _recovery = new Lifecycle.RecoveryDispatcher(this);
             _watchdog = new SessionWatchdogManager(this);
             _slotTracker = new Display.WheelSlotTracker(this);
+            // Wire the catalog parser to HotSwitchCoordinator's arm count.
+            // This is the switch-boundary signal that gates REPLACE vs UNION
+            // in CommitLiveSet — see ChannelCatalogParser._getArmCount field
+            // docs. Every ArmBurst (host- or wheel-initiated switch) bumps
+            // the count, so even rapid-fire switches get clean boundaries.
+            _catalogParser.SetArmCountProvider(() => _hotSwitch.ArmCount);
             _propertyPushQueue = new PropertyPushQueue(this);
             _tierDefEmitter = new Frames.TierDefinitionEmitter(this);
             _inboundDispatcher = new Inbound.TelemetryInboundDispatcher(this);
@@ -2790,7 +2796,12 @@ namespace MozaPlugin.Telemetry
                         _session09OutboundSeq = seq;
                         return;
                     }
-                    _connection.Send(frame);
+                    // SendAndTrackChunk: PH bridge captures show wheel acks
+                    // sess=0x09 chunks at ~62% rate, so retransmit protection
+                    // recovers the ~38% that get dropped. configJson reply
+                    // is the source of the wheel's dashboard library list —
+                    // losing it leaves the wheel's UI showing stale entries.
+                    SendAndTrackChunk(frame);
                 }
                 _session09OutboundSeq = seq;
             }
@@ -3340,8 +3351,16 @@ namespace MozaPlugin.Telemetry
             {
                 var frames = Frames.TierDefinitionBuilder.ChunkMessage(
                     msg, session: 0x01, seq: ref _session01OutboundSeq, deviceId: _targetDeviceId);
+                // SendAndTrackChunk instead of Send: strings ride sess=0x01 just
+                // like tier-def and FF-record property pushes (PropertyPushQueue
+                // already uses Track), so a lost string chunk gets retransmitted
+                // until acked instead of waiting for the 15 s keepalive to
+                // re-send a fresh value. Wheel acks sess=0x01 chunks at 10-90%
+                // across PH bridge captures, so most strings will be acked-and-
+                // dropped from the retransmit queue on the first send; the
+                // protection only fires when one actually gets lost.
                 foreach (var f in frames)
-                    _connection.Send(f);
+                    SendAndTrackChunk(f);
             }
         }
 

@@ -121,6 +121,24 @@ namespace MozaPlugin.Telemetry.Frames
         private volatile List<string>? _liveCatalog;
         // END-marker value at last commit. Diagnostic only (used in log).
         private uint _committedEndMarker;
+        // Switch-boundary signal: arm-count from HotSwitchCoordinator. Every
+        // ArmBurst (host-initiated OR wheel-initiated switch) increments the
+        // counter. CommitLiveSet REPLACES _liveCatalog on the first commit
+        // observing a new arm count (real switch boundary — clears stale
+        // entries from prior dashboard), then UNIONs subsequent commits at
+        // the same arm count (multi-batch publication of the same dashboard's
+        // catalog — preserves entries across all batches in the burst).
+        //
+        // Replaces an earlier time-based gate that assumed users wouldn't
+        // switch dashboards within 10 s of each other — wrong, rapid-fire
+        // dashboard switching is a normal user pattern. Arm-count is an
+        // event-driven signal that fires exactly on real switch boundaries
+        // regardless of timing. Callback because the parser doesn't directly
+        // depend on HotSwitchCoordinator; TelemetrySender wires it at
+        // construction.
+        private Func<int>? _getArmCount;
+        private int _lastSeenArmCount = -1;
+        public void SetArmCountProvider(Func<int>? getArmCount) => _getArmCount = getArmCount;
         // Set of every markerValue that has already triggered a commit
         // since session start. Per the docs (session-02-channel-catalog.md
         // §"Back-references and END-marker generations"), the wheel emits:
@@ -464,6 +482,7 @@ namespace MozaPlugin.Telemetry.Frames
             _committedEndMarker = 0;
             _committedMarkers.Clear();
             _pendingIdxs.Clear();
+            _lastSeenArmCount = -1;
         }
 
         /// <summary>Returns the total buffer length (across sessions) the last
@@ -695,6 +714,23 @@ namespace MozaPlugin.Telemetry.Frames
 
                     var targetIdxs = new HashSet<int>(_pendingIdxs);
 
+                    // Switch-boundary detection via HotSwitchCoordinator arm
+                    // count. The first commit observed after a new arm count
+                    // (a real switch event — host-initiated SwitchToProfile or
+                    // wheel-initiated slot-record) REPLACES _liveCatalog.
+                    // Subsequent commits at the same arm count UNION with
+                    // prior _liveCatalog — these are continuation batches of
+                    // the same publication burst (CS-Pro W17 sends 3-4 END
+                    // markers within ~5 s during a single switch, each carrying
+                    // a different idx subset; UNION preserves the full set).
+                    // Rapid-fire user switches each bump the arm count, so a
+                    // back-to-back A→B→C sequence correctly REPLACES on each
+                    // boundary regardless of timing.
+                    int currentArmCount = _getArmCount?.Invoke() ?? 0;
+                    bool firstSinceArm = currentArmCount != _lastSeenArmCount;
+                    bool useUnion = !firstSinceArm && _liveCatalog != null;
+                    _lastSeenArmCount = currentArmCount;
+
                     // No SetEquals dedup here: two real switches CAN produce
                     // identical idx sets with different URL content (e.g.,
                     // dash A uses idxs 1-5 with URLs {Speed, RPM, Gear, Lap,
@@ -714,7 +750,8 @@ namespace MozaPlugin.Telemetry.Frames
                     int maxIdx = 0;
                     foreach (var ix in targetIdxs) if (ix > maxIdx) maxIdx = ix;
                     int catCount = _catalog?.Count ?? 0;
-                    int size = Math.Max(maxIdx, catCount);
+                    int liveCount = useUnion ? (_liveCatalog?.Count ?? 0) : 0;
+                    int size = Math.Max(Math.Max(maxIdx, catCount), liveCount);
                     var masked = new List<string>(size);
                     for (int k = 0; k < size; k++)
                     {
@@ -728,15 +765,35 @@ namespace MozaPlugin.Telemetry.Frames
                             else
                                 masked.Add("");
                         }
+                        else if (useUnion
+                                 && _liveCatalog != null
+                                 && k < _liveCatalog.Count
+                                 && !string.IsNullOrEmpty(_liveCatalog[k]))
+                        {
+                            // Same-burst UNION: preserve idxs from prior
+                            // commits in this same publication burst (same
+                            // arm count). Wheel emits the post-switch catalog
+                            // in multiple END-marker batches; without this
+                            // union the last batch's idx subset would blank
+                            // everything else (observed CS-Pro W17 8→6→4 ch
+                            // shrinkage across a single switch's batches).
+                            masked.Add(_liveCatalog[k]);
+                        }
                         else
                         {
                             masked.Add("");
                         }
                     }
                     _liveCatalog = masked;
+                    int liveNonEmpty = 0;
+                    for (int k = 0; k < masked.Count; k++)
+                        if (!string.IsNullOrEmpty(masked[k])) liveNonEmpty++;
                     MozaLog.Debug(
                         $"[Moza] Live catalog committed: end={_committedEndMarker}→{markerValue} " +
-                        $"liveIdxs={{{string.Join(",", targetIdxs.OrderBy(x => x))}}}");
+                        $"liveIdxs={{{string.Join(",", targetIdxs.OrderBy(x => x))}}} " +
+                        (useUnion
+                            ? $"(same-burst UNION arm={currentArmCount}, total live={liveNonEmpty})"
+                            : $"(replace arm={currentArmCount})"));
                     _committedEndMarker = markerValue;
                     _committedMarkers.Add(markerValue);
                     _pendingIdxs.Clear();
