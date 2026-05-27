@@ -9,6 +9,8 @@
 > [!NOTE]
 > MOZA is a registered trademark of Gudsen Technology Co., Ltd. This project is not affiliated with, endorsed by, or sponsored by MOZA or Gudsen Technology. All trademarks are the property of their respective owners.
 
+![Wheel Startup](docs/examples/IMG_7111.gif)
+
 A SimHub plugin that provides complete replacement software for your MOZA hardware.
 
 Built using the amazing work of [Boxflat](https://github.com/Lawstorant/boxflat), Linux MOZA control software.
@@ -110,6 +112,8 @@ TBD:
 - Older generation wheels not in the list below
 
 ### Dashboard Support
+
+<img src="docs/examples/IMG_7105.gif" alt="Custom Displays" width="320" align="left" style="margin: 0 10 1em 1em;" />
 
 Wheels with an LCD dashboard (Vision GS, CS Pro, KS Pro, and FSR V2 confirmed; others likely work) can receive live telemetry from SimHub — speed, RPM, gear, lap times, fuel, tyre wear, and so on — streamed via MOZA's multi-tier binary telemetry protocol.
 
