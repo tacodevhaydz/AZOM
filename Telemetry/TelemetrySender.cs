@@ -3904,7 +3904,15 @@ namespace MozaPlugin.Telemetry
                 0x00
             };
             frame[9] = MozaProtocol.CalculateWireChecksum(frame);
-            _connection.Send(frame);
+            // Priority lane: acks must not get buried behind tier-def bursts in
+            // the one-shot FIFO. Wheel times out sessions whose acks lag past
+            // ~1 s and silently drops them (observed root cause of issue #43
+            // "telemetry dies after dashboard switch"): during the switch, the
+            // ~1300-frame tier-def burst stalled sess=0x02 acks behind 4ms-paced
+            // FIFO, wheel concluded sess=0x02 was dead, telemetry never recovered
+            // until full handshake reset. PH wire traces show sess=0x02 ack-lag
+            // stays ≤ 870 ms even under heavy h2b load.
+            _connection.SendPriority(frame);
         }
 
         /// <summary>
