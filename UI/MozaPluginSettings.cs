@@ -175,6 +175,14 @@ namespace MozaPlugin
         // arm in time). Stays on across launches until the user toggles it off.
         public bool AlwaysCaptureOnStartup { get; set; } = false;
 
+        // Register a Control Mapper IVariantProvider so SimHub can key per-wheel
+        // button mappings off (VID, PID, friendly-wheel-name) instead of treating
+        // every MOZA wheel as the same wheelbase controller. Default-on; hidden
+        // escape hatch for the rare case where a future SimHub assembly change
+        // breaks the reflection-based registration — flip to false in
+        // MozaPluginSettings.json to disable. See docs/controlmapper.md.
+        public bool EnableControlMapperVariants { get; set; } = true;
+
         // Bridge-format JSONL wire trace at SimHub/Logs/moza-wire-*.jsonl.
         // Code-only toggle — not serialized so changing the default here
         // is the only way to flip it. Avoids stale persisted values.
@@ -287,6 +295,13 @@ namespace MozaPlugin
         // explicitly. When false, no UDP listener binds and clients on
         // 40288 silently fail to connect.
         public bool UdpControlEnabled { get; set; } = true;
+
+        // Custom path for the PitHouse Presets folder used by the
+        // "Import Profile" feature. Empty = auto-discover from
+        // %USERPROFILE%\Documents\MOZA Pit House\Presets. Surface for Wine /
+        // multi-drive setups where PitHouse's preset folder lives outside
+        // the SimHub user's Documents (e.g. mounted Windows partition).
+        public string PitHousePresetsPathOverride { get; set; } = "";
 
         // ===== Profile system (SimHub native) =====
         public MozaProfileStore ProfileStore { get; set; } = new MozaProfileStore();
