@@ -452,12 +452,13 @@ namespace MozaPlugin
         }
 
         /// <summary>
-        /// Target dev_id for screen telemetry / session-control frames when
-        /// driving a standalone dashboard. Pinned to <see cref="MozaProtocol.DeviceMain"/>
-        /// (0x12 = CM2 bridge/main) — the verified target for CM2; a future
-        /// second standalone dash model can override here.
+        /// Target dev_id for screen telemetry / session-control frames. A
+        /// standalone-USB CM2 bridges as 0x12; a CM2 behind the wheelbase is the
+        /// meter at 0x14 (0x12 there is the base main, which rejects the session
+        /// layer), so target 0x14 in that topology.
         /// </summary>
-        internal byte PreferredStandaloneDashboardTargetDeviceId => MozaProtocol.DeviceMain;
+        internal byte PreferredStandaloneDashboardTargetDeviceId =>
+            IsCm2BehindBaseCandidate ? MozaProtocol.DeviceDash : MozaProtocol.DeviceMain;
 
         internal bool IsBaseAmbientLedSupported => DetectionState.BaseAmbientLedSupported;
         internal bool IsHandbrakeDetected => DetectionState.HandbrakeDetected;

@@ -215,11 +215,12 @@ namespace MozaPlugin.Devices
             if (_detectionState.DashDetected) return;
             _detectionState.DashDetected = true;
 
-            // CM2 reached through the wheelbase: deploy the CM2 profile and
-            // confirm via a display-identity probe at 0x12.
+            // CM2 reached through the wheelbase lives at the meter id 0x14
+            // (0x12 is the base main). Deploy the CM2 profile and probe its
+            // display identity at 0x14.
             bool cm2BehindBase = _plugin.IsCm2BehindBaseCandidate;
             if (cm2BehindBase)
-                _deviceManager.SendDisplayProbe(MozaProtocol.DeviceMain);
+                _deviceManager.SendDisplayProbe(MozaProtocol.DeviceDash);
 
             if (DeviceDefinitionDeployer.DeployDashboard(
                     _connection.DiscoveredPid, forceCm2: cm2BehindBase ? true : (bool?)null))
