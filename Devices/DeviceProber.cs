@@ -226,7 +226,11 @@ namespace MozaPlugin.Devices
                     _connection.DiscoveredPid, forceCm2: cm2BehindBase ? true : (bool?)null))
                 _plugin.DeviceDefinitionDeployed = true;
             _plugin.ApplyDashToHardware(_plugin.Settings?.ProfileStore?.CurrentProfile);
-            _deviceManager.ReadSettings(DashSettingsReadCommands);
+            // DashSettingsReadCommands are legacy SHDP dash registers (group 0x33).
+            // A CM2 is driven by the 0x43 telemetry path, not these — sending them
+            // to the CM2 is pointless bleedthrough, so only read them for a legacy dash.
+            if (!cm2BehindBase)
+                _deviceManager.ReadSettings(DashSettingsReadCommands);
             MozaLog.Info(cm2BehindBase
                 ? "[Moza] Dashboard detected (CM2 on wheelbase bus — deployed CM2 profile, probing display identity at 0x12)"
                 : "[Moza] Dashboard detected");

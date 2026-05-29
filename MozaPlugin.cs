@@ -444,10 +444,12 @@ namespace MozaPlugin
         /// </summary>
         internal bool ShouldUseStandaloneDashboardTarget()
         {
-            if (!DetectionState.DashDetected && !IsStandaloneDashboardUsbConnection) return false;
+            // Standalone-USB CM2 on its own connection drives the dashboard
+            // target even when a wheel is also present on the base.
+            if (DashboardUsbConnected) return true;
+            // CM2 bridged through the base bus (screenless wheel) → dev 0x14.
             if (IsCm2BehindBaseCandidate) return true;
-            if (DetectionState.NewWheelDetected || DetectionState.OldWheelDetected) return false;
-            return DashboardUsbConnected;
+            return false;
         }
 
         /// <summary>
@@ -2314,8 +2316,8 @@ namespace MozaPlugin
                 MozaLog.Info(
                     $"[Moza] Standalone dashboard detected from USB PID " +
                     $"{dashPid} ({MozaUsbIds.Describe(dashPid)}; {reason})");
-                try { _dashboardManager.ReadSettings(Devices.DeviceProber.DashSettingsReadCommands); }
-                catch (Exception ex) { MozaLog.Debug($"[Moza] Standalone dashboard settings probe skipped: {ex.Message}"); }
+                // Skip the legacy SHDP group-0x33 dash reads — a CM2 is driven by
+                // the 0x43 telemetry path, so those reads are pointless bleedthrough.
             }
 
             try { ApplyDashToHardware(_settings?.ProfileStore?.CurrentProfile); }

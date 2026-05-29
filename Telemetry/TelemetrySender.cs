@@ -4004,7 +4004,10 @@ namespace MozaPlugin.Telemetry
             var frame = new byte[]
             {
                 MozaProtocol.MessageStart, 0x06,
-                MozaProtocol.TelemetrySendGroup, MozaProtocol.DeviceWheel,
+                // Target the active dashboard device (wheel 0x17 / CM2 0x14|0x12),
+                // matching SendSessionOpen — closing on the wheel left a CM2's
+                // stale sessions open and spammed the wheel with rejected cmds.
+                MozaProtocol.TelemetrySendGroup, _targetDeviceId,
                 0x7C, 0x00,
                 session, 0x00,          // type=0x00 (end marker)
                 0x00, 0x00,             // ack_seq = 0 (LE)
