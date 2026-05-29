@@ -93,7 +93,7 @@ namespace MozaPlugin.Telemetry
     /// </summary>
     public class TelemetrySender : IDisposable
     {
-        private readonly MozaSerialConnection _connection;
+        private MozaSerialConnection _connection;
         private Timer? _sendTimer;
         private TierState[]? _tiers;
         private volatile StatusDataBase? _latestGameData;
@@ -1200,6 +1200,26 @@ namespace MozaPlugin.Telemetry
                         break;
                 }
             };
+        }
+
+        /// <summary>
+        /// Repoint the sender at a different serial connection — used when the
+        /// active dashboard sink moves between the wheelbase connection
+        /// (wheel-hosted 0x17 / base-bridged CM2 0x14) and a dedicated
+        /// standalone-USB dashboard connection (CM2 0x12). MUST be called while
+        /// Idle (no live session on the old connection); the caller checks
+        /// <see cref="StateIsIdle"/>. The inbound-dispatcher subscription is
+        /// (re)attached on the next Start; defensively detach from the old
+        /// connection here in case one lingers.
+        /// </summary>
+        internal void Rebind(MozaSerialConnection connection)
+        {
+            if (ReferenceEquals(connection, _connection)) return;
+            try { _connection.MessageReceived -= _inboundDispatcher.OnMessageDuringPreamble; } catch { }
+            _connection = connection;
+            _rpc.Rebind(connection);
+            _uploader.Rebind(connection);
+            MozaLog.Debug($"[Moza] TelemetrySender rebound to {connection.CaptureLabel} connection");
         }
 
         // Caller passes the MozaPlugin instance directly because Init may call

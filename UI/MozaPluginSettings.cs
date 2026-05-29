@@ -116,6 +116,7 @@ namespace MozaPlugin
         // to skip re-probing. Empty = no saved port.
         public string LastWheelbasePort { get; set; } = "";
         public string LastAb9Port { get; set; } = "";
+        public string LastDashboardPort { get; set; } = "";
 
         // Hard opt-out of the serial-probe fallback. Default behaviour
         // (false) is registry-first: if the registry-based MOZA USB

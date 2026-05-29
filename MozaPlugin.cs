@@ -91,6 +91,7 @@ namespace MozaPlugin
         private MozaData _data = null!;
         private MozaDeviceManager _deviceManager = null!;
         private MozaAb9DeviceManager _ab9Manager = null!;
+        private MozaDashboardDeviceManager _dashboardManager = null!;
         private MozaMBoosterRegistry? _mboosterRegistry;
 
         // Captures unsolicited firmware-debug frames (raw wire group 0x0E,
@@ -415,13 +416,11 @@ namespace MozaPlugin
         internal DateTime StartupUtc { get; private set; } = DateTime.UtcNow;
 
         /// <summary>
-        /// True when the open serial port belongs to a Moza dashboard PID
-        /// (CM2 = 0x0025). Lets dashboard detection flip on USB PID alone,
-        /// without waiting for a wheelbase relay or wheel-side ack.
+        /// True when a standalone-USB dashboard (CM2 = 0x0025) is connected on
+        /// its own dedicated port. Lets dashboard detection flip on USB PID
+        /// alone, without waiting for a wheelbase relay or wheel-side ack.
         /// </summary>
-        private bool IsStandaloneDashboardUsbConnection =>
-            _connection?.IsConnected == true
-            && MozaUsbIds.IsDashboardPid(_connection.DiscoveredPid);
+        private bool IsStandaloneDashboardUsbConnection => DashboardUsbConnected;
 
         internal bool IsDashDetected =>
             DetectionState.DashDetected || IsStandaloneDashboardUsbConnection;
@@ -448,7 +447,7 @@ namespace MozaPlugin
             if (!DetectionState.DashDetected && !IsStandaloneDashboardUsbConnection) return false;
             if (IsCm2BehindBaseCandidate) return true;
             if (DetectionState.NewWheelDetected || DetectionState.OldWheelDetected) return false;
-            return MozaUsbIds.IsDashboardPid(_connection?.DiscoveredPid);
+            return DashboardUsbConnected;
         }
 
         /// <summary>
@@ -468,6 +467,14 @@ namespace MozaPlugin
         internal MozaAb9DeviceManager Ab9Manager => _ab9Manager;
         internal MozaMBoosterRegistry? MBoosterRegistry => _mboosterRegistry;
         internal MozaSerialConnection Connection => _connection;
+
+        /// <summary>The standalone-USB dashboard connection (CM2 on its own cable), or null.</summary>
+        internal MozaSerialConnection? DashboardConnection => _dashboardManager?.Connection;
+
+        /// <summary>True when a standalone-USB dashboard (CM2, PID 0x0025) is connected on its own port.</summary>
+        internal bool DashboardUsbConnected =>
+            _dashboardManager?.IsConnected == true
+            && MozaUsbIds.IsDashboardPid(_dashboardManager.Connection.DiscoveredPid);
 
         /// <summary>
         /// Live SDK CoAP server when emulation is enabled; null otherwise.
@@ -779,9 +786,11 @@ namespace MozaPlugin
                     // (the device may have changed during the gap).
                     s_persistentDetectionState = null;
                     _connection = new MozaSerialConnection(
+                        // Dashboard PIDs (CM2 0x0025) are claimed by the dedicated
+                        // _dashboardManager connection so a standalone CM2 works
+                        // alongside a base; the wheelbase no longer admits them.
                         pid => MozaUsbIds.IsWheelbasePid(pid)
                                || MozaUsbIds.IsHubPid(pid)
-                               || MozaUsbIds.IsDashboardPid(pid)
                                || !MozaUsbIds.IsKnownMozaPid(pid),
                         MozaProbeTarget.BaseAndHub,
                         disableProbeFallback);
@@ -798,6 +807,14 @@ namespace MozaPlugin
                 if (!string.IsNullOrEmpty(_settings.LastAb9Port))
                     _ab9Manager.Connection.LastPortName = _settings.LastAb9Port;
                 _ab9Manager.MessageReceived += OnAb9MessageReceived;
+
+                // Dedicated connection for a standalone-USB CM2 (PID 0x0025), so it
+                // works even when a base holds the wheelbase connection.
+                _dashboardManager = new MozaDashboardDeviceManager();
+                if (!string.IsNullOrEmpty(_settings.LastDashboardPort))
+                    _dashboardManager.Connection.LastPortName = _settings.LastDashboardPort;
+                _dashboardManager.MessageReceived += OnDashboardMessageReceived;
+                _dashboardManager.Connection.Disconnected += OnDashboardDisconnected;
 
                 // AB9 engine-vibration worker — tick gates on connection/detection state.
                 _ab9Worker = new Ab9EngineVibrationWorker(
@@ -856,6 +873,10 @@ namespace MozaPlugin
                         && registryHasMoza
                         && !_ab9Manager.IsConnected)
                         TryConnectAb9();
+
+                    // Standalone-USB CM2 on its own port (0x0025) — same Wine guard.
+                    if (registryHasMoza && !_dashboardManager.IsConnected)
+                        TryConnectDashboard();
 
                     // Slice I: reconnect-timer mBooster Refresh re-enabled.
                     try { _mboosterRegistry?.Refresh(); }
@@ -1208,6 +1229,7 @@ namespace MozaPlugin
             }
             catch { }
             try { _ab9Manager?.Dispose(); } catch { }
+            try { _dashboardManager?.Dispose(); } catch { }
             try { _pollTimer?.Dispose(); } catch { }
             try { _retryTimer?.Dispose(); } catch { }
             try { _reconnectTimer?.Dispose(); } catch { }
@@ -1678,6 +1700,17 @@ namespace MozaPlugin
             }
             catch { }
             _ab9Manager?.Dispose();
+
+            try
+            {
+                if (_dashboardManager != null)
+                {
+                    _dashboardManager.MessageReceived -= OnDashboardMessageReceived;
+                    _dashboardManager.Connection.Disconnected -= OnDashboardDisconnected;
+                }
+            }
+            catch { }
+            _dashboardManager?.Dispose();
 
             // 7. Dispose timers after I/O is gone.
             _saveDebounceTimer?.Dispose();
@@ -2272,15 +2305,16 @@ namespace MozaPlugin
             DetectionState.DashDetected = true;
             _data.IsDashboardConnected = true;
 
-            if (DeviceDefinitionDeployer.DeployDashboard(_connection.DiscoveredPid))
+            string? dashPid = _dashboardManager.Connection.DiscoveredPid;
+            if (DeviceDefinitionDeployer.DeployDashboard(dashPid))
                 DeviceDefinitionDeployed = true;
 
             if (rising)
             {
                 MozaLog.Info(
                     $"[Moza] Standalone dashboard detected from USB PID " +
-                    $"{_connection.DiscoveredPid} ({MozaUsbIds.Describe(_connection.DiscoveredPid)}; {reason})");
-                try { _deviceManager.ReadSettings(Devices.DeviceProber.DashSettingsReadCommands); }
+                    $"{dashPid} ({MozaUsbIds.Describe(dashPid)}; {reason})");
+                try { _dashboardManager.ReadSettings(Devices.DeviceProber.DashSettingsReadCommands); }
                 catch (Exception ex) { MozaLog.Debug($"[Moza] Standalone dashboard settings probe skipped: {ex.Message}"); }
             }
 
@@ -2331,6 +2365,46 @@ namespace MozaPlugin
                 _settings.LastAb9Port = "";
                 ScheduleSave();
             }
+        }
+
+        /// <summary>Open the standalone CM2's dedicated port (PID 0x0025) and, on the
+        /// rising edge, run the standalone-dashboard detection (deploy + reads +
+        /// retarget the sender to this connection).</summary>
+        private void TryConnectDashboard()
+        {
+            if (_dashboardManager == null) return;
+            if (_dashboardManager.TryConnect())
+            {
+                MarkStandaloneDashboardDetectedFromUsb("dashboard USB connect");
+                var port = _dashboardManager.Connection.LastPortName;
+                if (!string.IsNullOrEmpty(port) && _settings.LastDashboardPort != port)
+                {
+                    _settings.LastDashboardPort = port!;
+                    ScheduleSave();
+                }
+            }
+            else if (!string.IsNullOrEmpty(_settings.LastDashboardPort)
+                     && string.IsNullOrEmpty(_dashboardManager.Connection.LastPortName))
+            {
+                MozaLog.Info($"[Moza] Cleared stale saved dashboard port {_settings.LastDashboardPort}");
+                _settings.LastDashboardPort = "";
+                ScheduleSave();
+            }
+        }
+
+        /// <summary>Inbound from the dashboard connection — same command-parse path as
+        /// the wheelbase. (The telemetry inbound dispatcher follows the sender's
+        /// Rebind, so dashboard session frames reach it once the sender is bound here.)</summary>
+        private void OnDashboardMessageReceived(byte[] data) => OnMessageReceived(data);
+
+        /// <summary>Dashboard USB unplugged — pause the sender so the next tick rebinds
+        /// it back to the wheelbase (and the base-bridged 0x14 path takes over if present).</summary>
+        private void OnDashboardDisconnected()
+        {
+            if (IsShuttingDown) return;
+            try { _telemetrySender?.Pause(); } catch { }
+            DetectionState.DashDetected = false;
+            _data.IsDashboardConnected = false;
         }
 
         private const int WheelMissThreshold = 3;

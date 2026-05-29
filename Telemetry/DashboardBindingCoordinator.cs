@@ -177,6 +177,18 @@ namespace MozaPlugin.Telemetry
             byte targetDeviceId = standaloneDashboard
                 ? _plugin.PreferredStandaloneDashboardTargetDeviceId
                 : MozaProtocol.DeviceWheel;
+
+            // Point the sender at the connection that owns the screen: the
+            // dedicated dashboard connection for a standalone-USB CM2, else the
+            // wheelbase connection (wheel-hosted 0x17 / base-bridged CM2 0x14).
+            // Rebinding requires Idle; if the sender is mid-session, defer to the
+            // next apply (a connection swap mid-stream isn't safe anyway).
+            var desired = _plugin.DashboardUsbConnected
+                ? _plugin.DashboardConnection
+                : _plugin.Connection;
+            if (desired != null && sender.StateIsIdle)
+                sender.Rebind(desired);
+
             sender.StandaloneDashboardMode = standaloneDashboard;
             sender.TargetDeviceId = targetDeviceId;
 
@@ -722,7 +734,9 @@ namespace MozaPlugin.Telemetry
             var t = _plugin.TelemetrySender;
             if (t == null) return;
             if (!_plugin.ActiveTelemetryEnabled) return;
-            if (!_connection.IsConnected) return;
+            // A standalone-USB CM2 streams over its own connection while the
+            // wheelbase connection may be absent (no base), so accept either.
+            if (!_connection.IsConnected && !_plugin.DashboardUsbConnected) return;
             // Standalone dashboard (CM2) drives the pipeline without any wheel
             // attached. Allow start as long as either a wheel detected OR a
             // standalone dashboard is the connection target.

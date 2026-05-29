@@ -164,17 +164,24 @@ namespace MozaPlugin.UI
             if (conn == null) return "(no MOZA serial connection)";
             string pid = conn.DiscoveredPid ?? "(unknown)";
             string pidDesc = Protocol.MozaUsbIds.Describe(conn.DiscoveredPid);
-            bool isDashPid = Protocol.MozaUsbIds.IsDashboardPid(conn.DiscoveredPid);
             bool standalone = plugin?.ShouldUseStandaloneDashboardTarget() ?? false;
             byte target = plugin?.TelemetrySender?.TargetDeviceId ?? Protocol.MozaProtocol.DeviceWheel;
             string targetDesc = plugin?.TelemetrySender?.TargetDescription ?? $"0x{target:X2}";
 
+            // Dedicated standalone-USB dashboard connection (CM2 0x0025 on its own port).
+            var dashConn = plugin?.DashboardConnection;
+            bool dashUsb = plugin?.DashboardUsbConnected ?? false;
+            string dashLine = dashConn != null && dashConn.IsConnected
+                ? $"{dashConn.LastPortName} {dashConn.DiscoveredPid} ({Protocol.MozaUsbIds.Describe(dashConn.DiscoveredPid)})"
+                : "(not connected)";
+
             var sb = new StringBuilder();
-            sb.AppendLine($"USB PID:        {pid} ({pidDesc})");
-            sb.AppendLine($"Dashboard PID:  {(isDashPid ? "yes" : "no")}");
-            sb.AppendLine($"DashDetected:   {plugin?.IsDashDetected ?? false}");
-            sb.AppendLine($"Standalone:     {standalone}");
-            sb.Append    ($"Target dev_id:  {targetDesc}");
+            sb.AppendLine($"Wheelbase USB PID: {pid} ({pidDesc})");
+            sb.AppendLine($"Dashboard conn:    {dashLine}");
+            sb.AppendLine($"Dashboard USB:     {(dashUsb ? "yes" : "no")}");
+            sb.AppendLine($"DashDetected:      {plugin?.IsDashDetected ?? false}");
+            sb.AppendLine($"Standalone:        {standalone}");
+            sb.Append    ($"Target dev_id:     {targetDesc}");
             return sb.ToString();
         }
 
