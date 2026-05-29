@@ -22,6 +22,7 @@ expected to stay in sync.
 | `0x0005` | Wheelbase   | R3                            | unconfirmed |
 | `0x0006` | Wheelbase   | R12, R12v2                    | confirmed   |
 | `0x0008` | MBooster    | mBooster Pedals               | confirmed   |
+| `0x0012` | Wheelbase   | R9 (variant)                  | confirmed   |
 | `0x001E` | Shifter     | HGP                           | unconfirmed |
 | `0x001F` | Handbrake   | HBP                           | unconfirmed |
 | `0x0020` | Hub         | Universal HUB                 | confirmed   |
@@ -51,7 +52,7 @@ CDC device.
 | `Handbrake` | *(none yet — placeholder for HBP CDC traffic)*                            | *(none)*                                                              |
 | `Stalks`    | *(none — recognised so neither wheelbase nor AB9 probes it; no CDC traffic yet)* | *(none)*                                                       |
 | `Hub`       | Same `MozaSerialConnection` instance as `Wheelbase` (the wheelbase filter admits hub PIDs) | `MozaProbeTarget.BaseAndHub` — registry direct-claims the hub port without re-probing; the post-session `0xE4` reply from `hub-port1-power` calls `MarkHubDetected()` to set `HubProbeSucceeded` for [`TelemetrySender`](../../../Telemetry/TelemetrySender.cs)'s 5-slot enumeration burst |
-| `Dashboard` | Same `MozaSerialConnection` instance as `Wheelbase` (the wheelbase filter admits dashboard PIDs) | Registry direct-claims the dashboard port; dashboard presence is confirmed from the USB PID itself (no wheelbase relay required), and screen telemetry / config writes address `dev_id=0x12` (CM2 bridge/main) instead of `0x14` |
+| `Dashboard` | Dedicated `MozaSerialConnection` filtered to dashboard PIDs only (`0x0025`), separate from the wheelbase connection so a standalone CM2 works alongside a base | Registry direct-claims the dashboard port by PID (no probe scan); screen telemetry / config writes address `dev_id=0x12` (CM2 bridge/main). A CM2 *behind* a wheelbase has no own port and is the dash sub-device at `dev_id=0x14` on the wheelbase connection. |
 | `Unknown`   | Both `Wheelbase` and `Ab9` connections accept unknown PIDs as fallback    | Each runs its own probe; the first matching response wins             |
 
 ## Discovery path

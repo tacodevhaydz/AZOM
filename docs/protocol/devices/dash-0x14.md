@@ -1,10 +1,36 @@
-## Standalone Dash Display — MDD (Device `0x14` / 20)
+## Dash / meter (Device `0x14` / 20)
 
-> **This device is the external Moza MDD peripheral** — a separate physical unit, distinct from steering wheels with integrated display screens (device `0x17`). All captured live telemetry targets device `0x17`, not the MDD; whether the MDD uses the same protocol is unknown.
+Device `0x14` is the dashboard/meter address on the internal serial bus. Two
+physical peripherals use it: the legacy Moza MDD display, and the CM2 Racing
+Dash when attached behind a wheelbase. Steering wheels with integrated display
+screens are a separate device at `0x17`.
 
-> **CM2 standalone dashboard is a different device.** The CM2 Racing Dash (USB PID `0x0025`) does NOT respond to the legacy MDD command surface at dev=`0x14` for live LED telemetry — `usb-capture/CM2.md` lab tests (2026-05-21) confirmed the `0x41 FD DE` bitmask path at dev=`0x14` has no visible effect on CM2 LEDs. CM2 accepts meter-config writes on its bridge/main at dev=`0x12` under group `0x32` instead (brightness `17 00 FF`, stored colors `1B 00 FF <idx>`, mode/threshold family `18`/`19`/`11`/`0D`/`0E`/`05`). See [`main-hub-0x12.md`](main-hub-0x12.md) § "CM2 bridge/main routing".
+### CM2 Racing Dash
 
-### Group `0x32` / `0x33` (50 / 51) — Settings
+The CM2 (USB PID `0x0025`) connects in one of two topologies:
+
+| Topology | Transport | Screen-telemetry target dev |
+|----------|-----------|-----------------------------|
+| Standalone USB | Own USB CDC device on its own COM port | `0x12` (CM2 bridge/main) |
+| Behind the wheelbase | Bridged on the wheelbase serial bus as the meter at `0x14` | `0x14` (`0x12` there is the base main) |
+
+- **Detection is by USB PID enumeration** (registry / `usbser`); no COM-port
+  scanning. A standalone CM2 is claimed on a dedicated dashboard connection
+  filtered to PID `0x0025`. A base-bridged CM2 has no own USB port and is the
+  dash sub-device at `0x14` on the wheelbase connection.
+- **Identity:** the CM2 answers the group-`0x43` identity probe with display
+  model `S09 Display` (HW/SW `RS21-W08`, device type `01-02-08-06`).
+- **The CM2 is driven by the group-`0x43` telemetry session pipeline** — tier
+  definitions on session `0x01`, value frames on session `0x02`, routed by
+  FlagByte. It acks host session opens with `fc:00` on sessions `0x01`/`0x02`.
+- **The legacy group-`0x33` dash-LED surface below does not drive the CM2** — its
+  per-LED RPM/flag colour and indicator-mode writes have no visible effect on a
+  CM2, so they are not sent to a CM2 device. CM2 stored-LED config uses group
+  `0x32` on the bridge/main at `0x12` (brightness `17 00 FF`, stored colors
+  `1B 00 FF <idx>`, mode/threshold family `18`/`19`/`11`/`0D`/`0E`/`05`); see
+  [`main-hub-0x12.md`](main-hub-0x12.md) § "CM2 bridge/main routing".
+
+### Group `0x32` / `0x33` (50 / 51) — Settings (legacy MDD / wheel-dash)
 
 | Command | ID | Bytes | Type | Notes |
 |---------|----|-------|------|-------|

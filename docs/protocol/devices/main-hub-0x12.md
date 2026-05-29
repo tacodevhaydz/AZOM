@@ -4,9 +4,12 @@
 
 ### CM2 bridge/main routing
 
-The CM2 Racing Dash (USB PID `0x0025`, plugin-side category `Dashboard`) addresses its meter-config and LED writes at dev=`0x12` under group `0x32` — distinct from legacy MDD-style dashboards which use dev=`0x14` under group `0x32`/`0x33`. Lab-verified working commands (per `usb-capture/CM2.md` 2026-05-21):
+A standalone-USB CM2 (PID `0x0025`) addresses its stored meter/LED config at
+dev=`0x12` under group `0x32` — distinct from legacy MDD-style dashboards which
+use dev=`0x14` under group `0x32`/`0x33`. (A CM2 behind a wheelbase addresses
+the meter at dev=`0x14` instead — `0x12` there is the base main.)
 
-| Command intent | Sub-cmd | Payload | Verified visible effect |
+| Command intent | Sub-cmd | Payload | Effect |
 |---|---|---|---|
 | Indicator brightness | `17 00 FF` | int | ✓ brightness changes |
 | Normal mode | `18 00` | int (0=off, 1=telemetry, 2=forced-on) | mode 1/2 visually similar in lab |
@@ -20,9 +23,15 @@ The CM2 Racing Dash (USB PID `0x0025`, plugin-side category `Dashboard`) address
 
 CM2 has 16 physical RPM LEDs (no buttons, no separate flag strip per user-confirmed hardware layout). Physical order: logical 1–3 left side bottom-to-top, 4–13 top row left-to-right, 14–16 right side top-to-bottom.
 
-The legacy dashboard `0x41 FD DE` bitmask path (dev=`0x14`) does NOT visibly drive CM2 LEDs in lab tests. The plugin's CM2 path uses the wheel's RPM-bar live commands (`wheel-telemetry-rpm-colors` cmd `25 00`, `wheel-send-rpm-telemetry` cmd `26 00`) under group `0x3F` retargeted to dev=`0x12` as the working hypothesis for live LED telemetry — **unverified by capture**; needs confirmation against a real CM2 wire-trace.
+Per-LED stored colors via group `0x32` persist across replug; the legacy
+dashboard `0x41 FD DE` bitmask path (dev=`0x14`) has no visible effect on CM2
+LEDs. A host-driven live physical-LED path is not confirmed.
 
-Screen widget value frames go to dev=`0x12` (CM2 bridge/main) for CM2; wheel-resident displays use dev=`0x17`. See [`../telemetry/live-stream.md`](../telemetry/live-stream.md) § Target device id.
+Screen telemetry is the standard group-`0x43` tier-def / value-frame pipeline,
+targeted at dev=`0x12` for a standalone-USB CM2, dev=`0x14` for a base-bridged
+CM2, and dev=`0x17` for a wheel-resident display. See
+[`../telemetry/live-stream.md`](../telemetry/live-stream.md) § Target device id
+and [`dash-0x14.md`](dash-0x14.md).
 
 Plugin implementation: `MozaPlugin.ShouldUseStandaloneDashboardTarget()` returns true when the open USB port has a Dashboard-category PID and no wheel is detected; the dashboard binding coordinator then pins `TelemetrySender.TargetDeviceId = 0x12`.
 
