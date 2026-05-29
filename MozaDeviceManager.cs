@@ -108,10 +108,19 @@ namespace MozaPlugin
         /// section on detection, and the user can't pick a profile until that
         /// section is visible.
         /// </summary>
-        public void SendDisplayProbe()
+        public void SendDisplayProbe() => SendDisplayProbe(MozaProtocol.DeviceWheel);
+
+        /// <summary>
+        /// Same identity cascade as <see cref="SendDisplayProbe()"/> but aimed at
+        /// an explicit device id. A CM2 wired through the wheelbase answers the
+        /// display identity at the CM2 bridge/main id (0x12 = <see cref="MozaProtocol.DeviceMain"/>)
+        /// rather than the wheel's 0x17 — see <see cref="MozaPlugin.IsCm2BehindBaseCandidate"/>.
+        /// Targeting 0x12 also keeps these 11 frames off a screenless wheel at
+        /// 0x17, which would otherwise stop servicing settings reads.
+        /// </summary>
+        public void SendDisplayProbe(byte dev)
         {
             if (!_connection.IsConnected) return;
-            byte dev = MozaProtocol.DeviceWheel;
             byte g = MozaProtocol.TelemetrySendGroup; // 0x43
             // Heartbeat
             SendRawProbe(g, dev, new byte[] { 0x00 });

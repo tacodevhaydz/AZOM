@@ -427,14 +427,40 @@ namespace MozaPlugin
             DetectionState.DashDetected || IsStandaloneDashboardUsbConnection;
 
         /// <summary>
-        /// True iff the active dashboard pipeline must address a standalone
-        /// dashboard (CM2 bridge/main at dev=0x12) rather than a wheel-hosted
-        /// display at dev=0x17. Requires: dashboard detected, no wheel detected,
-        /// and the open USB PID classified as Dashboard.
+        /// Prototype (2026-05): a CM2 (or other external display) wired to the
+        /// wheelbase presents as a dash sub-device on the base bus, not as its
+        /// own 0x0025 USB port — the base owns the COM port, so we never see the
+        /// CM2's PID. Recognise that case as: a dash sub-device was detected, a
+        /// base is present, the connection is NOT a standalone dashboard PID, and
+        /// the attached wheel has no display of its own (screenless wheels like
+        /// KS report <see cref="WheelModelInfo.HasDisplay"/> == false; an unknown
+        /// wheel reports null and is treated as a candidate so the display probe
+        /// can settle it). A displayed wheel (HasDisplay == true) is excluded —
+        /// its dash IS the wheel's own display and uses the 0x17 path.
+        ///
+        /// On a candidate we deploy the CM2 device profile and route screen
+        /// telemetry to 0x12 (see <see cref="ShouldUseStandaloneDashboardTarget"/>).
+        /// </summary>
+        internal bool IsCm2BehindBaseCandidate =>
+            _connection?.IsConnected == true
+            && DetectionState.BaseDetected
+            && DetectionState.DashDetected
+            && !IsStandaloneDashboardUsbConnection
+            && WheelModelInfo?.HasDisplay != true;
+
+        /// <summary>
+        /// True iff the active dashboard pipeline must address a dashboard at
+        /// dev=0x12 (CM2 bridge/main) rather than a wheel-hosted display at
+        /// dev=0x17. Two cases: a standalone-USB CM2 (Dashboard PID, no wheel),
+        /// or a CM2 wired through the wheelbase (<see cref="IsCm2BehindBaseCandidate"/>,
+        /// which may have a screenless wheel present on the same bus).
         /// </summary>
         internal bool ShouldUseStandaloneDashboardTarget()
         {
             if (!DetectionState.DashDetected && !IsStandaloneDashboardUsbConnection) return false;
+            // CM2 on the wheelbase bus: route to 0x12 even though a (screenless)
+            // wheel is present — its own RPM/button LEDs are driven separately.
+            if (IsCm2BehindBaseCandidate) return true;
             if (DetectionState.NewWheelDetected || DetectionState.OldWheelDetected) return false;
             return MozaUsbIds.IsDashboardPid(_connection?.DiscoveredPid);
         }

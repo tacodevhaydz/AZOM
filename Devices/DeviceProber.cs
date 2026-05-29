@@ -214,11 +214,35 @@ namespace MozaPlugin.Devices
         {
             if (_detectionState.DashDetected) return;
             _detectionState.DashDetected = true;
-            if (DeviceDefinitionDeployer.DeployDashboard(_connection.DiscoveredPid))
+
+            // Prototype (2026-05): a dash sub-device on the wheelbase bus paired
+            // with a wheel that has no display of its own is an external CM2-class
+            // dashboard reached through the base, not the legacy wheel meter. The
+            // base owns the COM port so we can't read the CM2's USB PID — instead
+            // deploy the CM2 profile and confirm via a display-identity probe at
+            // 0x12 (CM2 bridge/main). See MozaPlugin.IsCm2BehindBaseCandidate.
+            bool cm2BehindBase = _plugin.IsCm2BehindBaseCandidate;
+            if (cm2BehindBase)
+                _deviceManager.SendDisplayProbe(MozaProtocol.DeviceMain);
+
+            if (DeviceDefinitionDeployer.DeployDashboard(
+                    _connection.DiscoveredPid, forceCm2: cm2BehindBase ? true : (bool?)null))
                 _plugin.DeviceDefinitionDeployed = true;
             _plugin.ApplyDashToHardware(_plugin.Settings?.ProfileStore?.CurrentProfile);
             _deviceManager.ReadSettings(DashSettingsReadCommands);
-            MozaLog.Info("[Moza] Dashboard detected");
+            MozaLog.Info(cm2BehindBase
+                ? "[Moza] Dashboard detected (CM2 on wheelbase bus — deployed CM2 profile, probing display identity at 0x12)"
+                : "[Moza] Dashboard detected");
+
+            // CM2-on-base: re-apply telemetry settings now that the candidate
+            // condition holds so the sender retargets screen telemetry to 0x12,
+            // then start it. Mirrors the standalone-USB CM2 path. Wrapped so a
+            // failed phase doesn't abort detection.
+            if (cm2BehindBase)
+            {
+                try { _plugin.ApplyTelemetrySettings(); _plugin.StartTelemetryIfReady(); }
+                catch (Exception ex) { MozaLog.Debug($"[Moza] CM2-on-base telemetry start skipped: {ex.Message}"); }
+            }
         }
 
         /// <summary>First-sight detection cascade for the handbrake sub-device.</summary>
@@ -537,6 +561,19 @@ namespace MozaPlugin.Devices
                     if (!string.IsNullOrEmpty(_data.DisplayModelName))
                     {
                         MozaLog.Debug($"[Moza] Display model: {_data.DisplayModelName}");
+                        // Prototype: a display answering on the wheelbase bus
+                        // (screenless/displayless wheel, no standalone-USB CM2)
+                        // confirms the CM2-on-base case. The CM2 profile was
+                        // already deployed at MarkDashDetected; re-assert the
+                        // 0x12 telemetry routing now that identity is in hand.
+                        if (_plugin.IsCm2BehindBaseCandidate)
+                        {
+                            MozaLog.Info($"[Moza] CM2-on-base display confirmed: {_data.DisplayModelName} — routing screen telemetry to 0x12");
+                            if (DeviceDefinitionDeployer.DeployDashboard(_connection.DiscoveredPid, forceCm2: true))
+                                _plugin.DeviceDefinitionDeployed = true;
+                            try { _plugin.ApplyTelemetrySettings(); }
+                            catch (Exception ex) { MozaLog.Debug($"[Moza] CM2-on-base ApplyTelemetrySettings skipped: {ex.Message}"); }
+                        }
                         // Re-arm the wedge-recovery one-shot now that we know
                         // a display is responsive — a future wheel hot-swap
                         // that wedges should get its own recovery attempt.
