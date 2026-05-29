@@ -117,6 +117,7 @@ namespace MozaPlugin
         public string LastWheelbasePort { get; set; } = "";
         public string LastAb9Port { get; set; } = "";
         public string LastDashboardPort { get; set; } = "";
+        public string LastHubPort { get; set; } = "";
 
         // Hard opt-out of the serial-probe fallback. Default behaviour
         // (false) is registry-first: if the registry-based MOZA USB

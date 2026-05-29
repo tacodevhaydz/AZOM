@@ -92,6 +92,9 @@ namespace MozaPlugin
         private MozaDeviceManager _deviceManager = null!;
         private MozaAb9DeviceManager _ab9Manager = null!;
         private MozaDashboardDeviceManager _dashboardManager = null!;
+        // Dedicated connection for a Universal Hub when a wheelbase is also
+        // present (base = primary, hub enumerates its own peripherals).
+        private MozaHubDeviceManager _hubManager = null!;
         private MozaMBoosterRegistry? _mboosterRegistry;
 
         // Captures unsolicited firmware-debug frames (raw wire group 0x0E,
@@ -144,6 +147,10 @@ namespace MozaPlugin
         internal HardwareApplier HardwareApplier => _hardwareApplier;
         private DeviceProber _deviceProber = null!;
         internal DeviceProber DeviceProber => _deviceProber;
+        // Peripheral-enumeration prober for the dedicated hub pipe. Shares
+        // _data + DetectionState with the primary prober; drivesTelemetry:false
+        // so it never touches the singular TelemetrySender.
+        private DeviceProber _hubDeviceProber = null!;
         private DashboardBindingCoordinator _dashboardBindingCoordinator = null!;
         internal DashboardBindingCoordinator DashboardBindingCoordinator => _dashboardBindingCoordinator;
 
@@ -472,6 +479,9 @@ namespace MozaPlugin
 
         /// <summary>The standalone-USB dashboard connection (CM2 on its own cable), or null.</summary>
         internal MozaSerialConnection? DashboardConnection => _dashboardManager?.Connection;
+
+        /// <summary>The dedicated Universal Hub connection (present when a base + hub coexist), or null.</summary>
+        internal MozaSerialConnection? HubConnection => _hubManager?.Connection;
 
         /// <summary>True when a standalone-USB dashboard (CM2, PID 0x0025) is connected on its own port.</summary>
         internal bool DashboardUsbConnected =>
@@ -818,6 +828,18 @@ namespace MozaPlugin
                 _dashboardManager.MessageReceived += OnDashboardMessageReceived;
                 _dashboardManager.Connection.Disconnected += OnDashboardDisconnected;
 
+                // Dedicated connection for a Universal Hub (PID 0x0020) on its
+                // own COM port. Brought up alongside the wheelbase so a base with
+                // no pedal port + a hub-for-pedals enumerates the hub's peripherals
+                // (pedals / handbrake / port-power) in parallel. Like the dashboard
+                // manager it's a fresh instance each Init (not part of the
+                // persistent-connection reuse, which is wheel-session-scoped).
+                _hubManager = new MozaHubDeviceManager();
+                if (!string.IsNullOrEmpty(_settings.LastHubPort))
+                    _hubManager.Connection.LastPortName = _settings.LastHubPort;
+                _hubManager.MessageReceived += OnHubMessageReceived;
+                _hubManager.Connection.Disconnected += OnHubDisconnected;
+
                 // AB9 engine-vibration worker — tick gates on connection/detection state.
                 _ab9Worker = new Ab9EngineVibrationWorker(
                     _ab9Manager,
@@ -852,9 +874,20 @@ namespace MozaPlugin
                 _retryTimer.Elapsed += (s, e) =>
                 {
                     if (IsShuttingDown) return;
-                    if (!_connection.IsConnected) return;
-                    try { PendingResponses.TickRetransmits(_connection.Send); }
-                    catch (Exception ex) { MozaLog.Warn($"[Moza] PendingResponseTracker tick failed: {ex.Message}"); }
+                    // Each pipe retransmits its own tracked reads on its own Send,
+                    // independently — the hub's reads must NOT go out on the base
+                    // port and vice versa. Ticked separately so one pipe being
+                    // down doesn't stall the other's retransmits.
+                    if (_connection.IsConnected)
+                    {
+                        try { PendingResponses.TickRetransmits(_connection.Send); }
+                        catch (Exception ex) { MozaLog.Warn($"[Moza] PendingResponseTracker tick failed: {ex.Message}"); }
+                    }
+                    if (_hubManager != null && _hubManager.IsConnected)
+                    {
+                        try { _hubManager.PendingResponses?.TickRetransmits(_hubManager.Connection.Send); }
+                        catch (Exception ex) { MozaLog.Warn($"[Moza] Hub PendingResponseTracker tick failed: {ex.Message}"); }
+                    }
                 };
                 _retryTimer.AutoReset = true;
                 _retryTimer.Start();
@@ -880,6 +913,14 @@ namespace MozaPlugin
                     if (registryHasMoza && !_dashboardManager.IsConnected)
                         TryConnectDashboard();
 
+                    // Universal Hub on its own port (0x0020) — registry-only, same
+                    // Wine guard. The hub-only case is handled by the primary
+                    // (BaseAndHub) connection; this dedicated connection only takes
+                    // a hub the primary didn't claim (i.e. a base is the primary),
+                    // and no-ops when the hub port is already held by the primary.
+                    if (registryHasMoza && !_hubManager.IsConnected)
+                        TryConnectHub();
+
                     // Slice I: reconnect-timer mBooster Refresh re-enabled.
                     try { _mboosterRegistry?.Refresh(); }
                     catch (Exception ex) { MozaLog.Debug($"[Moza/mBooster] Refresh: {ex.Message}"); }
@@ -902,6 +943,13 @@ namespace MozaPlugin
                 _propertyResolver = new SimHubPropertyResolver(_pluginManager, _data, _hidReader);
                 _hardwareApplier = new HardwareApplier(this, _data, _deviceManager, _ab9Manager, DetectionState);
                 _deviceProber = new DeviceProber(this, _connection, _deviceManager, _data, DetectionState);
+                // Hub-pipe peripheral prober: same _data + DetectionState, but
+                // bound to the hub connection + hub device manager so its reads
+                // and Mark*Detected ownership go out on the hub pipe.
+                // drivesTelemetry:false keeps it off the primary TelemetrySender.
+                _hubDeviceProber = new DeviceProber(
+                    this, _hubManager.Connection, _hubManager.DeviceManager, _data, DetectionState,
+                    drivesTelemetry: false);
                 _dashboardBindingCoordinator = new DashboardBindingCoordinator(this, _data, _connection, DetectionState);
 
                 // Control Mapper variant-provider integration. Construction is in
@@ -1232,6 +1280,16 @@ namespace MozaPlugin
             catch { }
             try { _ab9Manager?.Dispose(); } catch { }
             try { _dashboardManager?.Dispose(); } catch { }
+            try
+            {
+                if (_hubManager != null)
+                {
+                    _hubManager.MessageReceived -= OnHubMessageReceived;
+                    _hubManager.Connection.Disconnected -= OnHubDisconnected;
+                }
+            }
+            catch { }
+            try { _hubManager?.Dispose(); } catch { }
             try { _pollTimer?.Dispose(); } catch { }
             try { _retryTimer?.Dispose(); } catch { }
             try { _reconnectTimer?.Dispose(); } catch { }
@@ -1714,6 +1772,17 @@ namespace MozaPlugin
             catch { }
             _dashboardManager?.Dispose();
 
+            try
+            {
+                if (_hubManager != null)
+                {
+                    _hubManager.MessageReceived -= OnHubMessageReceived;
+                    _hubManager.Connection.Disconnected -= OnHubDisconnected;
+                }
+            }
+            catch { }
+            _hubManager?.Dispose();
+
             // 7. Dispose timers after I/O is gone.
             _saveDebounceTimer?.Dispose();
             _saveDebounceTimer = null;
@@ -1962,7 +2031,10 @@ namespace MozaPlugin
                 DetectionState.PedalsDetected = false;
                 DetectionState.HubDetected = false;
                 DetectionState.Ab9Detected = false;
+                DetectionState.PedalsOwner = null;
+                DetectionState.HandbrakeOwner = null;
                 _ab9Manager?.Disconnect();
+                _hubManager?.Disconnect();
                 if (_telemetrySender != null)
                 {
                     _telemetrySender.DetectedDeviceMask = 0;
@@ -2409,6 +2481,127 @@ namespace MozaPlugin
             _data.IsDashboardConnected = false;
         }
 
+        /// <summary>
+        /// Open the Universal Hub's COM port (dedicated connection used when a
+        /// wheelbase is also present). On success, persist the port and kick off
+        /// peripheral enumeration immediately rather than waiting for the next
+        /// poll tick. Clears a stale saved port on definitive open-failure.
+        /// </summary>
+        private void TryConnectHub()
+        {
+            if (_hubManager == null) return;
+            if (_hubManager.TryConnect())
+            {
+                var port = _hubManager.Connection.LastPortName;
+                if (!string.IsNullOrEmpty(port) && _settings.LastHubPort != port)
+                {
+                    _settings.LastHubPort = port!;
+                    ScheduleSave();
+                }
+                PollHubPeripherals();
+            }
+            else if (!string.IsNullOrEmpty(_settings.LastHubPort)
+                     && string.IsNullOrEmpty(_hubManager.Connection.LastPortName))
+            {
+                MozaLog.Info($"[Moza] Cleared stale saved hub port {_settings.LastHubPort}");
+                _settings.LastHubPort = "";
+                ScheduleSave();
+            }
+        }
+
+        /// <summary>
+        /// Probe the hub pipe for its attached peripherals + port-power status.
+        /// Pedals/handbrake presence probes fire on BOTH the base and hub pipes
+        /// until detected (shared flags); first responder wins and records the
+        /// owning pipe (DeviceProber.Mark*Detected). No-op unless the hub is up.
+        /// </summary>
+        private void PollHubPeripherals()
+        {
+            if (_hubManager == null || !_hubManager.IsConnected) return;
+            var dm = _hubManager.DeviceManager;
+            if (!DetectionState.PedalsDetected)
+                dm.SendPresenceProbe(MozaProtocol.DevicePedals);
+            if (!DetectionState.HandbrakeDetected)
+                dm.SendPresenceProbe(MozaProtocol.DeviceHandbrake);
+            // hub-port1-power is the hub-presence trigger (first 0xE4 reply sets
+            // HubDetected). Once detected, read the full set so every Hub-tab
+            // port-power indicator populates.
+            if (!DetectionState.HubDetected)
+                dm.ReadSetting("hub-port1-power");
+            else
+                dm.ReadSettings(Devices.DeviceProber.HubReadCommands);
+        }
+
+        /// <summary>Universal Hub unplugged — drop hub state and re-route any
+        /// peripherals that were owned by the hub pipe so they re-detect on
+        /// whichever pipe answers next.</summary>
+        private void OnHubDisconnected()
+        {
+            if (IsShuttingDown) return;
+            DetectionState.HubDetected = false;
+            _data.IsHubConnected = false;
+            var hubDm = _hubManager?.DeviceManager;
+            if (hubDm != null && ReferenceEquals(DetectionState.PedalsOwner, hubDm))
+            {
+                DetectionState.PedalsDetected = false;
+                DetectionState.PedalsOwner = null;
+            }
+            if (hubDm != null && ReferenceEquals(DetectionState.HandbrakeOwner, hubDm))
+            {
+                DetectionState.HandbrakeDetected = false;
+                DetectionState.HandbrakeOwner = null;
+            }
+            // The hub's tracked reads will never be answered now — drop them so
+            // they don't retransmit against a reconnected (possibly different) hub.
+            try { _hubManager?.PendingResponses?.Clear(); } catch { }
+        }
+
+        /// <summary>
+        /// Inbound from the dedicated hub connection. Only peripheral (pedals /
+        /// handbrake) and hub port-power frames are routed here — wheel / base /
+        /// dash / session frames are dropped so the wheel/telemetry pipeline stays
+        /// exclusively on the primary (base) connection. Detection is dispatched
+        /// to the hub prober so ownership lands on the hub pipe.
+        /// </summary>
+        private void OnHubMessageReceived(byte[] data)
+        {
+            if (IsShuttingDown) return;
+            if (data == null || data.Length < 2) return;
+
+            // Firmware debug noise.
+            if (data[0] == MozaProtocol.FirmwareDebugGroup) return;
+
+            // Empty presence-probe ACK: 7e 00 80 swap(dev) chk → data = {0x80, dev}.
+            // Only pedals / handbrake are probed on the hub pipe.
+            if (data.Length == 2 && data[0] == 0x80)
+            {
+                byte deviceId = MozaProtocol.SwapNibbles(data[1]);
+                if (deviceId == MozaProtocol.DevicePedals)
+                    _hubDeviceProber.MarkPedalsDetected();
+                else if (deviceId == MozaProtocol.DeviceHandbrake)
+                    _hubDeviceProber.MarkHandbrakeDetected();
+                return;
+            }
+
+            var result = MozaResponseParser.Parse(data);
+            if (!result.HasValue) return;
+            var r = result.Value;
+            if (r.Name == null) return;
+
+            // Scope to peripherals + hub status. Anything else (wheel/base/dash)
+            // belongs to the primary pipe and is ignored here.
+            if (!(r.Name.StartsWith("pedals-", StringComparison.Ordinal)
+                  || r.Name.StartsWith("handbrake-", StringComparison.Ordinal)
+                  || r.Name.StartsWith("hub-", StringComparison.Ordinal)))
+                return;
+
+            _hubManager.PendingResponses?.NoteResponse(r.Name);
+            _data.UpdateFromCommand(r.Name, r.IntValue);
+            if (r.ArrayValue != null)
+                _data.UpdateFromArray(r.Name, r.ArrayValue);
+            _hubDeviceProber.DetectDevices(r.Name, r.IntValue, r.DeviceId);
+        }
+
         private const int WheelMissThreshold = 3;
 
         // Fires from MozaSerialConnection.HandleIoFailure on the read or
@@ -2493,6 +2686,12 @@ namespace MozaPlugin
         private void PollStatus(object sender, ElapsedEventArgs e)
         {
             if (IsShuttingDown) return;
+
+            // The dedicated hub pipe is polled independently of the primary
+            // (base) connection — a Universal Hub can be present with the base
+            // unplugged, or vice versa. No-op when the hub isn't connected.
+            PollHubPeripherals();
+
             if (!_connection.IsConnected) return;
 
             _dashboardBindingCoordinator?.TickPendingDashboardRetry();

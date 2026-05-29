@@ -31,6 +31,15 @@ namespace MozaPlugin.Hardware
             _detectionState = detectionState;
         }
 
+        // Resolve the pipe that owns pedals / handbrake. Pedals or a handbrake
+        // can be attached to the base OR to a dedicated Universal Hub pipe, so
+        // settings reads and calibration writes must target whichever connection
+        // detected the device (recorded owner-before-flag by DeviceProber). Null
+        // owner → no opinion → fall back to the primary manager (today's behavior
+        // for base-attached peripherals).
+        private MozaDeviceManager PedalsManager => _detectionState.PedalsOwner ?? _deviceManager;
+        private MozaDeviceManager HandbrakeManager => _detectionState.HandbrakeOwner ?? _deviceManager;
+
         private static int Eff(int overlayVal, int baselineVal) =>
             overlayVal >= 0 ? overlayVal : baselineVal;
 
@@ -432,15 +441,16 @@ namespace MozaPlugin.Hardware
             }
 
             if (!_detectionState.HandbrakeDetected) return;
-            if (profile.HandbrakeMode            >= 0) _deviceManager.WriteSetting("handbrake-mode", profile.HandbrakeMode);
-            if (profile.HandbrakeButtonThreshold >= 0) _deviceManager.WriteSetting("handbrake-button-threshold", profile.HandbrakeButtonThreshold);
-            if (profile.HandbrakeDirection       >= 0) _deviceManager.WriteSetting("handbrake-direction", profile.HandbrakeDirection);
-            if (profile.HandbrakeMin             >= 0) _deviceManager.WriteSetting("handbrake-min", profile.HandbrakeMin);
-            if (profile.HandbrakeMax             >= 0) _deviceManager.WriteSetting("handbrake-max", profile.HandbrakeMax);
+            var dm = HandbrakeManager;
+            if (profile.HandbrakeMode            >= 0) dm.WriteSetting("handbrake-mode", profile.HandbrakeMode);
+            if (profile.HandbrakeButtonThreshold >= 0) dm.WriteSetting("handbrake-button-threshold", profile.HandbrakeButtonThreshold);
+            if (profile.HandbrakeDirection       >= 0) dm.WriteSetting("handbrake-direction", profile.HandbrakeDirection);
+            if (profile.HandbrakeMin             >= 0) dm.WriteSetting("handbrake-min", profile.HandbrakeMin);
+            if (profile.HandbrakeMax             >= 0) dm.WriteSetting("handbrake-max", profile.HandbrakeMax);
             if (profile.HandbrakeCurve != null)
             {
                 for (int i = 0; i < Math.Min(5, profile.HandbrakeCurve.Length); i++)
-                    _deviceManager.WriteFloat($"handbrake-y{i + 1}", profile.HandbrakeCurve[i]);
+                    dm.WriteFloat($"handbrake-y{i + 1}", profile.HandbrakeCurve[i]);
             }
         }
 
@@ -464,19 +474,20 @@ namespace MozaPlugin.Hardware
                     _data.PedalsClutchCurve[i] = profile.PedalsClutchCurve[i];
 
             if (!_detectionState.PedalsDetected) return;
-            if (profile.PedalsThrottleDir      >= 0) _deviceManager.WriteSetting("pedals-throttle-dir", profile.PedalsThrottleDir);
-            if (profile.PedalsBrakeDir         >= 0) _deviceManager.WriteSetting("pedals-brake-dir", profile.PedalsBrakeDir);
-            if (profile.PedalsClutchDir        >= 0) _deviceManager.WriteSetting("pedals-clutch-dir", profile.PedalsClutchDir);
-            if (profile.PedalsBrakeAngleRatio  >= 0) _deviceManager.WriteFloat("pedals-brake-angle-ratio", profile.PedalsBrakeAngleRatio);
+            var dm = PedalsManager;
+            if (profile.PedalsThrottleDir      >= 0) dm.WriteSetting("pedals-throttle-dir", profile.PedalsThrottleDir);
+            if (profile.PedalsBrakeDir         >= 0) dm.WriteSetting("pedals-brake-dir", profile.PedalsBrakeDir);
+            if (profile.PedalsClutchDir        >= 0) dm.WriteSetting("pedals-clutch-dir", profile.PedalsClutchDir);
+            if (profile.PedalsBrakeAngleRatio  >= 0) dm.WriteFloat("pedals-brake-angle-ratio", profile.PedalsBrakeAngleRatio);
             if (profile.PedalsThrottleCurve != null)
                 for (int i = 0; i < Math.Min(5, profile.PedalsThrottleCurve.Length); i++)
-                    _deviceManager.WriteFloat($"pedals-throttle-y{i + 1}", profile.PedalsThrottleCurve[i]);
+                    dm.WriteFloat($"pedals-throttle-y{i + 1}", profile.PedalsThrottleCurve[i]);
             if (profile.PedalsBrakeCurve != null)
                 for (int i = 0; i < Math.Min(5, profile.PedalsBrakeCurve.Length); i++)
-                    _deviceManager.WriteFloat($"pedals-brake-y{i + 1}", profile.PedalsBrakeCurve[i]);
+                    dm.WriteFloat($"pedals-brake-y{i + 1}", profile.PedalsBrakeCurve[i]);
             if (profile.PedalsClutchCurve != null)
                 for (int i = 0; i < Math.Min(5, profile.PedalsClutchCurve.Length); i++)
-                    _deviceManager.WriteFloat($"pedals-clutch-y{i + 1}", profile.PedalsClutchCurve[i]);
+                    dm.WriteFloat($"pedals-clutch-y{i + 1}", profile.PedalsClutchCurve[i]);
         }
 
         /// <summary>
@@ -789,22 +800,22 @@ namespace MozaPlugin.Hardware
         public void WriteIfHandbrakeDetected(string command, int value)
         {
             if (value < 0) return;
-            if (_detectionState.HandbrakeDetected) _deviceManager.WriteSetting(command, value);
+            if (_detectionState.HandbrakeDetected) HandbrakeManager.WriteSetting(command, value);
         }
         public void WriteFloatIfHandbrakeDetected(string command, int value)
         {
             if (value < 0) return;
-            if (_detectionState.HandbrakeDetected) _deviceManager.WriteFloat(command, value);
+            if (_detectionState.HandbrakeDetected) HandbrakeManager.WriteFloat(command, value);
         }
         public void WriteIfPedalsDetected(string command, int value)
         {
             if (value < 0) return;
-            if (_detectionState.PedalsDetected) _deviceManager.WriteSetting(command, value);
+            if (_detectionState.PedalsDetected) PedalsManager.WriteSetting(command, value);
         }
         public void WriteFloatIfPedalsDetected(string command, int value)
         {
             if (value < 0) return;
-            if (_detectionState.PedalsDetected) _deviceManager.WriteFloat(command, value);
+            if (_detectionState.PedalsDetected) PedalsManager.WriteFloat(command, value);
         }
         public void WriteIfBaseAmbientSupported(string command, int value)
         {

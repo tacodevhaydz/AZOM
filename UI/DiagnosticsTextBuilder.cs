@@ -79,6 +79,10 @@ namespace MozaPlugin.UI
             string ab9Port = plugin.Ab9Manager?.Connection?.LastPortName ?? "";
             sb.Append("  |  AB9 ");
             sb.Append(string.IsNullOrEmpty(ab9Port) ? "(disconnected)" : "→ " + ab9Port);
+            string hubPort = plugin.HubConnection?.IsConnected == true
+                ? plugin.HubConnection.LastPortName ?? "" : "";
+            sb.Append("  |  Hub ");
+            sb.Append(string.IsNullOrEmpty(hubPort) ? "(disconnected)" : "→ " + hubPort);
             sb.AppendLine();
 
             // Classified open-failure surface. AccessDenied here is the

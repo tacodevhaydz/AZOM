@@ -51,6 +51,14 @@ namespace MozaPlugin.Protocol
         // to write at every COM port to find a unit, which we deliberately
         // skip to keep the per-port probe surface minimal. See FindMozaPort.
         MBooster,
+        // Universal Hub on its OWN dedicated connection (PID 0x0020), used when
+        // a wheelbase is also present so the base stays the telemetry-driving
+        // primary and the hub is enumerated in parallel. Probe fallback issues
+        // only the hub probe (0x64/0x12/0x03), a single pass. The hub-ONLY case
+        // (no base) is still handled by the BaseAndHub primary, which falls back
+        // to the hub when no wheelbase port exists — so this target never claims
+        // a hub the primary already holds (the _activePorts guard enforces it).
+        HubOnly,
     }
 
     public class MozaSerialConnection : IDisposable
@@ -996,20 +1004,46 @@ namespace MozaPlugin.Protocol
                 registryByPort[allRegistryPorts[i].PortName] = allRegistryPorts[i];
 
             // Filter through the existing string-based pidFilter contract.
-            var matchingPorts = pidFilter == null
-                ? allRegistryPorts
-                : (IReadOnlyList<MozaPortDiscovery.PortInfo>)allRegistryPorts
-                    .Where(p => pidFilter(FormatPid(p.Pid))).ToList();
+            // Also drop ports already held by a sibling connection in this
+            // process: the cached-port path in Connect() honours _activePorts,
+            // but this registry walk did not — so the dedicated hub connection
+            // could otherwise try to re-open the port the primary already claimed
+            // (the hub-only case, where the BaseAndHub primary took the hub).
+            var matchingPorts = (pidFilter == null
+                    ? (IEnumerable<MozaPortDiscovery.PortInfo>)allRegistryPorts
+                    : allRegistryPorts.Where(p => pidFilter(FormatPid(p.Pid))))
+                .Where(p => !_activePorts.ContainsKey(p.PortName))
+                .ToList();
 
             if (matchingPorts.Count > 0)
             {
                 MozaPortDiscovery.PortInfo chosen = matchingPorts[0];
+                bool matchedPreferred = false;
                 if (!string.IsNullOrEmpty(preferredPort))
                 {
                     for (int i = 0; i < matchingPorts.Count; i++)
                     {
                         if (string.Equals(matchingPorts[i].PortName, preferredPort,
                                           StringComparison.OrdinalIgnoreCase))
+                        {
+                            chosen = matchingPorts[i];
+                            matchedPreferred = true;
+                            break;
+                        }
+                    }
+                }
+                // Wheel-location rule: when a wheelbase is present it must be the
+                // telemetry-driving primary, so the BaseAndHub connection prefers a
+                // Wheelbase-category port over a Hub/unknown one. Falls back to
+                // matchingPorts[0] when no wheelbase exists — that's the hub-only
+                // case, where the primary correctly binds to the hub and runs the
+                // full wheel/session/telemetry pipeline. Only applied when the
+                // saved preferred port didn't already pin the choice.
+                if (!matchedPreferred && probeTarget == MozaProbeTarget.BaseAndHub)
+                {
+                    for (int i = 0; i < matchingPorts.Count; i++)
+                    {
+                        if (matchingPorts[i].Category == MozaDeviceCategory.Wheelbase)
                         {
                             chosen = matchingPorts[i];
                             break;
@@ -1139,6 +1173,34 @@ namespace MozaPlugin.Protocol
                 }
 
                 MozaLog.Debug("[Moza] No AB9 device found on any COM port");
+                return (null, null, false);
+            }
+
+            if (probeTarget == MozaProbeTarget.HubOnly)
+            {
+                // Dedicated hub connection (base also present). Single hub-probe
+                // pass; never sends the base probe, so it can't claim a wheelbase
+                // port. Held ports (the primary's) are skipped via IsHeldByPeer,
+                // and registry-classified non-hub ports via RegistrySaysSkip.
+                foreach (var port in ports)
+                {
+                    if (cancel?.Invoke() == true) return (null, null, false);
+                    if (IsHeldByPeer(port)) continue;
+                    if (RegistrySaysSkip(port, out var decided))
+                    {
+                        if (decided.Item1 != null) return decided;
+                        continue;
+                    }
+
+                    var (responded, _) = ProbeWithTimeout(port, 600, ProbeKind.Hub);
+                    if (responded)
+                    {
+                        MozaLog.Info($"[Moza] Found Moza hub on {port} (probe, dedicated hub connection)");
+                        return (port, null, true);
+                    }
+                }
+
+                MozaLog.Debug("[Moza] No Moza hub found on any COM port (dedicated hub connection)");
                 return (null, null, false);
             }
 

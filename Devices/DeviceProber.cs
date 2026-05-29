@@ -188,19 +188,26 @@ namespace MozaPlugin.Devices
         private readonly MozaDeviceManager _deviceManager;
         private readonly MozaData _data;
         private readonly DeviceDetectionState _detectionState;
+        // True for the primary (base/hub) prober, which drives the singular
+        // TelemetrySender; false for the dedicated Universal Hub prober, which
+        // only enumerates peripherals and must not touch the primary sender's
+        // heartbeat mask.
+        private readonly bool _drivesTelemetry;
 
         public DeviceProber(
             MozaPlugin plugin,
             MozaSerialConnection connection,
             MozaDeviceManager deviceManager,
             MozaData data,
-            DeviceDetectionState detectionState)
+            DeviceDetectionState detectionState,
+            bool drivesTelemetry = true)
         {
             _plugin = plugin;
             _connection = connection;
             _deviceManager = deviceManager;
             _data = data;
             _detectionState = detectionState;
+            _drivesTelemetry = drivesTelemetry;
         }
 
         /// <summary>
@@ -247,6 +254,10 @@ namespace MozaPlugin.Devices
         public void MarkHandbrakeDetected()
         {
             if (_detectionState.HandbrakeDetected) return;
+            // Record the owning pipe BEFORE flipping the flag so HardwareApplier
+            // (which reads flag-then-owner) never sees detected==true paired with
+            // a null/stale owner. First responder across the base + hub pipes wins.
+            _detectionState.HandbrakeOwner = _deviceManager;
             _detectionState.HandbrakeDetected = true;
             _plugin.ApplyHandbrakeToHardware(_plugin.Settings?.ProfileStore?.CurrentProfile);
             _deviceManager.ReadSettings(HandbrakeSettingsReadCommands);
@@ -257,6 +268,10 @@ namespace MozaPlugin.Devices
         public void MarkPedalsDetected()
         {
             if (_detectionState.PedalsDetected) return;
+            // Owner first, then flag (see MarkHandbrakeDetected). The owning
+            // MozaDeviceManager is this prober's — base pipe for the primary
+            // prober, hub pipe for the dedicated hub prober.
+            _detectionState.PedalsOwner = _deviceManager;
             _detectionState.PedalsDetected = true;
             _plugin.ApplyPedalsToHardware(_plugin.Settings?.ProfileStore?.CurrentProfile);
             _deviceManager.ReadSettings(PedalsSettingsReadCommands);
@@ -291,9 +306,15 @@ namespace MozaPlugin.Devices
             if (value < 0) return;
 
             // TelemetrySender's heartbeat mask: only ping detected devices.
-            var sender = _plugin.TelemetrySender;
-            if (deviceId >= 18 && deviceId <= 30 && sender != null)
-                sender.DetectedDeviceMask |= (1 << (deviceId - 18));
+            // Only the primary prober drives the singular sender; the dedicated
+            // hub prober enumerates peripherals on its own pipe and must not
+            // toggle heartbeats on the primary (base) pipe.
+            if (_drivesTelemetry)
+            {
+                var sender = _plugin.TelemetrySender;
+                if (deviceId >= 18 && deviceId <= 30 && sender != null)
+                    sender.DetectedDeviceMask |= (1 << (deviceId - 18));
+            }
 
             // Base detection — IsBaseConnected was just set by UpdateFromCommand;
             // re-apply the profile so base settings get pushed.
