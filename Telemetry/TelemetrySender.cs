@@ -903,16 +903,15 @@ namespace MozaPlugin.Telemetry
 
                 if (value != null && value.Tiers.Count > 0)
                 {
-                    // Multi-broadcast: replicate each sub-tier 3-N+1 times with
-                    // consecutive flag bytes. Without this, slow-pkg tiers
-                    // (pkg=500, pkg=2000) only fire at their nominal rate (2Hz,
-                    // 0.5Hz) → visible test-mode lag for slow-tier channels.
-                    // Replication forces every channel to update at the fast
-                    // base tick rate via parallel flag bytes.
+                    // Single broadcast: each tier fires at its own package rate.
+                    // The prior strategy replicated every sub-tier into max(4, N+1)
+                    // copies with parallel flag bytes to push slow-pkg channels at
+                    // the base rate, but it also replicated the already-fast tier,
+                    // multiplying wire load ~4× and saturating the shared base wire.
                     var subTiers = new System.Collections.Generic.List<DashboardProfile>(value.Tiers);
                     subTiers.Sort((a, b) => a.PackageLevel.CompareTo(b.PackageLevel));
                     int subCount = subTiers.Count;
-                    int broadcasts = subCount == 1 ? 3 : System.Math.Max(4, subCount + 1);
+                    int broadcasts = 1;
                     var expanded = new System.Collections.Generic.List<DashboardProfile>(subCount * broadcasts);
                     // One Channels copy per source sub-tier, shared across
                     // its broadcast replicas. COPY so the in-place mutate in
@@ -2655,7 +2654,7 @@ namespace MozaPlugin.Telemetry
                 newPolicy.AutoFallbackUploadWireFormat = true;
 
             _policy = newPolicy;
-            MozaLog.Info($"[Moza] Auto era resolved → {resolved} ({reason})");
+            MozaLog.Debug($"[Moza] Auto era resolved → {resolved} ({reason})");
         }
 
         /// <summary>
@@ -2774,7 +2773,7 @@ namespace MozaPlugin.Telemetry
 
             int chCount = 0;
             foreach (var t in synthesised.Tiers) chCount += t.Channels.Count;
-            MozaLog.Info(
+            MozaLog.Debug(
                 $"[Moza] Synthesised catalog-only profile: {chCount}ch in {synthesised.Tiers.Count}t " +
                 $"+ {synthesised.StringChannels.Count} strings (catalog={catalog.Count}, " +
                 $"endMarker={_catalogParser.LastWheelEndMarker}, userMappings={mappedCount})");
@@ -3819,7 +3818,7 @@ namespace MozaPlugin.Telemetry
                     }
                     break;
                 case Lifecycle.PostSwitchCatalogConvergence.TickDecision.Converged:
-                    MozaLog.Info(
+                    MozaLog.Debug(
                         $"[Moza] Post-switch catalog convergence reached: slot={targetSlot} " +
                         $"after {nudgesSentBefore} nudge(s), final sig=0x{sig:X8} " +
                         $"(stable for {Lifecycle.PostSwitchCatalogConvergence.StableSampleThreshold} samples)");
