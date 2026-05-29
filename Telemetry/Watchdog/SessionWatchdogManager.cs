@@ -1,4 +1,5 @@
 using System;
+using System.Threading;
 using MozaPlugin.Protocol;
 
 namespace MozaPlugin.Telemetry.Watchdog
@@ -11,6 +12,14 @@ namespace MozaPlugin.Telemetry.Watchdog
     internal sealed class SessionWatchdogManager
     {
         private readonly TelemetrySender _sender;
+
+        // Watchdog state is touched from the serial-read thread (Note*/Handle*),
+        // the tick-timer ThreadPool thread (Tick*), and the Stop thread (Reset).
+        // The int counters and TickCount stamps are atomic on the x86 build; the
+        // 64-bit *UtcTicks timestamp fields are NOT, so every read/write of those
+        // goes through Interlocked.Read/Exchange to avoid torn reads. (A lock is
+        // not used here because the Tick* call-outs block on acks delivered by the
+        // read thread, so holding a lock across them would stall that thread.)
 
         // ── sess=0x09 retry ───────────────────────────────────────────────
         private int _s09RetryRounds;
@@ -190,9 +199,9 @@ namespace MozaPlugin.Telemetry.Watchdog
         public void NoteSession02FirstInbound()
         {
             long now = DateTime.UtcNow.Ticks;
-            if (_session02FirstInboundUtcTicks == 0)
-                _session02FirstInboundUtcTicks = now;
-            _session02LastInboundUtcTicks = now;
+            if (Interlocked.Read(ref _session02FirstInboundUtcTicks) == 0)
+                Interlocked.Exchange(ref _session02FirstInboundUtcTicks, now);
+            Interlocked.Exchange(ref _session02LastInboundUtcTicks, now);
         }
 
         /// <summary>Called when sess=MgmtPort receives an fc:00 ack or any 7c:00
@@ -204,9 +213,9 @@ namespace MozaPlugin.Telemetry.Watchdog
         public void NoteSession01Engaged()
         {
             long now = DateTime.UtcNow.Ticks;
-            if (_session01EngagedUtcTicks == 0)
-                _session01EngagedUtcTicks = now;
-            _session01LastInboundUtcTicks = now;
+            if (Interlocked.Read(ref _session01EngagedUtcTicks) == 0)
+                Interlocked.Exchange(ref _session01EngagedUtcTicks, now);
+            Interlocked.Exchange(ref _session01LastInboundUtcTicks, now);
         }
 
         /// <summary>Called from the inbound dispatcher when the wheel sends a
@@ -240,10 +249,10 @@ namespace MozaPlugin.Telemetry.Watchdog
             // CLOSE, not just storms: a single wheel-initiated CLOSE on a
             // session we believe is engaged is already a contradiction the
             // watchdog should resolve.
-            if (session == _sender.MgmtPort && _session01EngagedUtcTicks != 0)
+            if (session == _sender.MgmtPort && Interlocked.Read(ref _session01EngagedUtcTicks) != 0)
             {
-                _session01EngagedUtcTicks = 0;
-                _session01LastInboundUtcTicks = 0;
+                Interlocked.Exchange(ref _session01EngagedUtcTicks, 0);
+                Interlocked.Exchange(ref _session01LastInboundUtcTicks, 0);
                 // Reset the re-arm budget so an already-exhausted watchdog can
                 // actually re-arm (matches the stall-revoke path); the != 0 gate
                 // means this fires once per engagement cycle, not per close.
@@ -255,10 +264,10 @@ namespace MozaPlugin.Telemetry.Watchdog
             }
             // sess=0x02 has its own engagement signal (first-inbound) which
             // is also useful to revoke on close.
-            if (session == _sender.FlagByte && _session02FirstInboundUtcTicks != 0)
+            if (session == _sender.FlagByte && Interlocked.Read(ref _session02FirstInboundUtcTicks) != 0)
             {
-                _session02FirstInboundUtcTicks = 0;
-                _session02LastInboundUtcTicks = 0;
+                Interlocked.Exchange(ref _session02FirstInboundUtcTicks, 0);
+                Interlocked.Exchange(ref _session02LastInboundUtcTicks, 0);
                 _s02ReArmRounds = 0;
                 _s02ReArmLastTickCount = 0;
                 MozaLog.Debug(
@@ -318,7 +327,7 @@ namespace MozaPlugin.Telemetry.Watchdog
 
         public void NoteConfigJsonChunkArrived()
         {
-            _configJsonLastChunkUtcTicks = DateTime.UtcNow.Ticks;
+            Interlocked.Exchange(ref _configJsonLastChunkUtcTicks, DateTime.UtcNow.Ticks);
             // Real progress: forgive the tick-path escalation streak so the
             // cap counts only consecutive un-acked nudges.
             _configJsonGapTickEscalations = 0;
@@ -327,7 +336,7 @@ namespace MozaPlugin.Telemetry.Watchdog
         public void ResetConfigJsonGapTracking()
         {
             _configJsonGapCount = 0;
-            _configJsonLastPrimeRetryUtcTicks = 0;
+            Interlocked.Exchange(ref _configJsonLastPrimeRetryUtcTicks, 0);
             _configJsonGapTickEscalations = 0;
         }
 
@@ -338,18 +347,18 @@ namespace MozaPlugin.Telemetry.Watchdog
         {
             _s09RetryRounds = 0;
             _s09RetryLastTickCount = 0;
-            _session02FirstInboundUtcTicks = 0;
-            _session02LastInboundUtcTicks = 0;
+            Interlocked.Exchange(ref _session02FirstInboundUtcTicks, 0);
+            Interlocked.Exchange(ref _session02LastInboundUtcTicks, 0);
             _activeStateEnteredTickCount = 0;
             _s02ReArmRounds = 0;
             _s02ReArmLastTickCount = 0;
-            _session01EngagedUtcTicks = 0;
-            _session01LastInboundUtcTicks = 0;
+            Interlocked.Exchange(ref _session01EngagedUtcTicks, 0);
+            Interlocked.Exchange(ref _session01LastInboundUtcTicks, 0);
             _s01ReArmRounds = 0;
             _s01ReArmLastTickCount = 0;
             _configJsonGapCount = 0;
-            _configJsonLastChunkUtcTicks = 0;
-            _configJsonLastPrimeRetryUtcTicks = 0;
+            Interlocked.Exchange(ref _configJsonLastChunkUtcTicks, 0);
+            Interlocked.Exchange(ref _configJsonLastPrimeRetryUtcTicks, 0);
             _configJsonGapTickEscalations = 0;
             for (int s = 0; s < CloseStormSessionMax; s++)
             {
@@ -441,16 +450,16 @@ namespace MozaPlugin.Telemetry.Watchdog
 
             // Don't escalate if we already nudged within the passive window
             // (HandleConfigJsonGap and this share _configJsonLastPrimeRetryUtcTicks).
-            long primeAgeTicks = now - _configJsonLastPrimeRetryUtcTicks;
+            long primeAgeTicks = now - Interlocked.Read(ref _configJsonLastPrimeRetryUtcTicks);
             long passiveWaitTicks = ConfigJsonGapPassiveWaitMs * TimeSpan.TicksPerMillisecond;
-            if (_configJsonLastPrimeRetryUtcTicks != 0 && primeAgeTicks < passiveWaitTicks)
+            if (Interlocked.Read(ref _configJsonLastPrimeRetryUtcTicks) != 0 && primeAgeTicks < passiveWaitTicks)
                 return;
 
             int recoveryOpenSeq = unchecked((ushort)(0x100 + _configJsonGapCount));
             int primeSeq = unchecked((ushort)(0x200 + _configJsonGapCount));
             byte session = 0x09;
             // Prefer 0x0a if the wheel's been talking on it instead.
-            if (_sender.Session09InboundSeq == 0 && _configJsonLastChunkUtcTicks != 0)
+            if (_sender.Session09InboundSeq == 0 && Interlocked.Read(ref _configJsonLastChunkUtcTicks) != 0)
                 session = 0x0a;
             // Tick-path escalation cap: if HandleConfigJsonGap is never
             // triggered (zero chunks arriving at all), the gap-count counter
@@ -461,9 +470,9 @@ namespace MozaPlugin.Telemetry.Watchdog
             // here (parks if restarts don't help).
             if (_configJsonGapTickEscalations >= ConfigJsonGapTickEscalationCap)
             {
-                if (now - _configJsonLastEscalationUtcTicks < ConfigJsonEscalationCooldownTicks)
+                if (now - Interlocked.Read(ref _configJsonLastEscalationUtcTicks) < ConfigJsonEscalationCooldownTicks)
                     return;
-                _configJsonLastEscalationUtcTicks = now;
+                Interlocked.Exchange(ref _configJsonLastEscalationUtcTicks, now);
                 _configJsonGapTickEscalations = 0;
                 _sender.Recovery.RequestRestart(
                     $"sess=0x{session:X2} configJson tick watchdog: " +
@@ -482,7 +491,7 @@ namespace MozaPlugin.Telemetry.Watchdog
                     $"nudge {_configJsonGapTickEscalations + 1}/{ConfigJsonGapTickEscalationCap})");
                 _sender.SendSessionPrime(session, (ushort)primeSeq);
                 SendConfigJsonOpenRequest(session, (ushort)recoveryOpenSeq);
-                _configJsonLastPrimeRetryUtcTicks = now;
+                Interlocked.Exchange(ref _configJsonLastPrimeRetryUtcTicks, now);
                 _configJsonGapTickEscalations++;
                 if (_configJsonGapCount == 0) _configJsonGapCount = 1;
             }
@@ -501,7 +510,7 @@ namespace MozaPlugin.Telemetry.Watchdog
             if (_sender.StateIsIdle) return;
             if (!_sender.ConnectionIsConnected) return;
             if (_sender.ConfigJsonHasLastState) return;
-            if (_configJsonLastChunkUtcTicks == 0) return;
+            if (Interlocked.Read(ref _configJsonLastChunkUtcTicks) == 0) return;
             // Hot-switch burst pacing owns the recovery surface during the
             // ~4 s burst window; deferring the stuck-state restart until the
             // burst settles keeps the burst from being stomped mid-emission.
@@ -514,14 +523,14 @@ namespace MozaPlugin.Telemetry.Watchdog
                 return;
 
             long now = DateTime.UtcNow.Ticks;
-            if (now - _configJsonLastChunkUtcTicks < ConfigJsonNoStateRestartTimeoutTicks)
+            if (now - Interlocked.Read(ref _configJsonLastChunkUtcTicks) < ConfigJsonNoStateRestartTimeoutTicks)
                 return;
-            if (now - _configJsonLastEscalationUtcTicks < ConfigJsonEscalationCooldownTicks)
+            if (now - Interlocked.Read(ref _configJsonLastEscalationUtcTicks) < ConfigJsonEscalationCooldownTicks)
                 return;
 
-            _configJsonLastEscalationUtcTicks = now;
+            Interlocked.Exchange(ref _configJsonLastEscalationUtcTicks, now);
             _configJsonGapCount = 0;
-            _configJsonLastChunkUtcTicks = now;
+            Interlocked.Exchange(ref _configJsonLastChunkUtcTicks, now);
             _sender.Recovery.RequestRestart(
                 "configJson stuck-state watchdog: " +
                 $"chunks arrived but no valid state for {ConfigJsonNoStateRestartTimeoutTicks / TimeSpan.TicksPerMillisecond / 1000}s, " +
@@ -541,20 +550,21 @@ namespace MozaPlugin.Telemetry.Watchdog
             // session gets a close+open+resubscribe cycle instead of hanging
             // forever. The 20 s threshold sits above the PH p999 inter-frame
             // gap (14 s on 47k samples) so it never trips healthy idle wheels.
-            if (_session02FirstInboundUtcTicks != 0)
+            if (Interlocked.Read(ref _session02FirstInboundUtcTicks) != 0)
             {
                 long nowUtc = DateTime.UtcNow.Ticks;
                 long stallTicks = TimeSpan.FromMilliseconds(S02StallThresholdMs).Ticks;
-                if (nowUtc - _session02LastInboundUtcTicks < stallTicks) return;
+                long lastInbound = Interlocked.Read(ref _session02LastInboundUtcTicks);
+                if (nowUtc - lastInbound < stallTicks) return;
                 // Stale: revoke engagement, reset re-arm counter so backoff
                 // restarts from round 0. The watchdog's existing close+open+
                 // resubscribe sequence below then runs as if we never engaged.
                 MozaLog.Warn(
                     $"[Moza] sess=0x02 engaged but inbound stale " +
-                    $"({(nowUtc - _session02LastInboundUtcTicks) / TimeSpan.TicksPerMillisecond} ms " +
+                    $"({(nowUtc - lastInbound) / TimeSpan.TicksPerMillisecond} ms " +
                     $"since last chunk, threshold {S02StallThresholdMs} ms) — " +
                     "revoking engagement to allow watchdog re-arm.");
-                _session02FirstInboundUtcTicks = 0;
+                Interlocked.Exchange(ref _session02FirstInboundUtcTicks, 0);
                 _s02ReArmRounds = 0;
             }
             if (_s02ReArmRounds >= S02ReArmMaxRounds) return;
@@ -620,17 +630,18 @@ namespace MozaPlugin.Telemetry.Watchdog
             // TickSession02EngagementWatchdog. If engaged but recent inbound
             // is older than S01StallThresholdMs, revoke engagement so the
             // watchdog re-arms instead of trusting a stale engaged flag.
-            if (_session01EngagedUtcTicks != 0)
+            if (Interlocked.Read(ref _session01EngagedUtcTicks) != 0)
             {
                 long nowUtc = DateTime.UtcNow.Ticks;
                 long stallTicks = TimeSpan.FromMilliseconds(S01StallThresholdMs).Ticks;
-                if (nowUtc - _session01LastInboundUtcTicks < stallTicks) return;
+                long lastInbound = Interlocked.Read(ref _session01LastInboundUtcTicks);
+                if (nowUtc - lastInbound < stallTicks) return;
                 MozaLog.Warn(
                     $"[Moza] sess=0x{_sender.MgmtPort:X2} (mgmt) engaged but inbound stale " +
-                    $"({(nowUtc - _session01LastInboundUtcTicks) / TimeSpan.TicksPerMillisecond} ms " +
+                    $"({(nowUtc - lastInbound) / TimeSpan.TicksPerMillisecond} ms " +
                     $"since last fc:00/data, threshold {S01StallThresholdMs} ms) — " +
                     "revoking engagement to allow watchdog re-arm.");
-                _session01EngagedUtcTicks = 0;
+                Interlocked.Exchange(ref _session01EngagedUtcTicks, 0);
                 _s01ReArmRounds = 0;
             }
             if (_s01ReArmRounds >= S01ReArmMaxRounds) return;
@@ -737,9 +748,9 @@ namespace MozaPlugin.Telemetry.Watchdog
             }
 
             // Don't re-fire prime+open-request within the passive window of the prior retry.
-            long primeAgeTicks = now - _configJsonLastPrimeRetryUtcTicks;
+            long primeAgeTicks = now - Interlocked.Read(ref _configJsonLastPrimeRetryUtcTicks);
             if (_configJsonGapCount <= ConfigJsonGapPrimeRetryAt
-                && _configJsonLastPrimeRetryUtcTicks != 0
+                && Interlocked.Read(ref _configJsonLastPrimeRetryUtcTicks) != 0
                 && primeAgeTicks < passiveWaitTicks)
             {
                 MozaLog.Debug(
@@ -760,7 +771,7 @@ namespace MozaPlugin.Telemetry.Watchdog
                         $"prime + open-request (open seq=0x{recoveryOpenSeq:X4}, prime seq=0x{primeSeq:X4})");
                     _sender.SendSessionPrime(session, (ushort)primeSeq);
                     SendConfigJsonOpenRequest(session, (ushort)recoveryOpenSeq);
-                    _configJsonLastPrimeRetryUtcTicks = now;
+                    Interlocked.Exchange(ref _configJsonLastPrimeRetryUtcTicks, now);
                 }
                 catch (Exception ex)
                 {
@@ -771,16 +782,16 @@ namespace MozaPlugin.Telemetry.Watchdog
 
             if (_configJsonGapCount >= ConfigJsonGapRestartAt)
             {
-                if (now - _configJsonLastEscalationUtcTicks < ConfigJsonEscalationCooldownTicks)
+                if (now - Interlocked.Read(ref _configJsonLastEscalationUtcTicks) < ConfigJsonEscalationCooldownTicks)
                 {
                     MozaLog.Warn(
                         $"[Moza] {tag} configJson gap #{_configJsonGapCount} ({cachedTag}): " +
                         "in escalation cooldown — deferring full restart");
                     return;
                 }
-                _configJsonLastEscalationUtcTicks = now;
+                Interlocked.Exchange(ref _configJsonLastEscalationUtcTicks, now);
                 _configJsonGapCount = 0;
-                _configJsonLastPrimeRetryUtcTicks = 0;
+                Interlocked.Exchange(ref _configJsonLastPrimeRetryUtcTicks, 0);
                 _sender.Recovery.RequestRestart(
                     $"{tag} configJson recovery escalation: " +
                     "no cached state and prime+open-request didn't recover the burst");
