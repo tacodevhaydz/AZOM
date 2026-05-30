@@ -430,12 +430,29 @@ namespace MozaPlugin.Sdk
         private static int s_orphanSweepDone;
 
         /// <summary>
-        /// Kill any running process whose <see cref="Process.MainModule"/>
-        /// path matches <paramref name="ourExePath"/>. These are stub
-        /// children orphaned by a prior SimHub crash where the JobObject's
-        /// <c>KILL_ON_JOB_CLOSE</c> didn't fire — typically Wine/Proton
-        /// gaps in that semantic. Only matches our own extracted exe path,
-        /// so a real PitHouse install (different path) is never touched.
+        /// Kill stub children orphaned by a prior SimHub crash where the
+        /// JobObject's <c>KILL_ON_JOB_CLOSE</c> didn't fire — typically
+        /// Wine/Proton gaps in that semantic. These orphans keep a stale
+        /// wineserver alive, which is implicated in the freshly-powered-base
+        /// serial-open wedge (a stale wineserver is exactly the state in which
+        /// SerialPort.Open hangs/crashes), so reaping them is load-bearing for
+        /// connection robustness, not just tidiness.
+        ///
+        /// <para><b>Identity test (Wine-tolerant):</b> the previous version
+        /// matched on <c>Process.MainModule.FileName == ourExePath</c>, but
+        /// <see cref="Process.MainModule"/> THROWS under Wine for another
+        /// process, so the <c>catch{continue}</c> silently skipped every orphan
+        /// ("no prior-session stub processes found" while several were alive).
+        /// We instead match by process name (already via
+        /// <see cref="Process.GetProcessesByName"/>) and treat as an orphan any
+        /// matching process whose <see cref="Process.StartTime"/> PREDATES this
+        /// SimHub process — it cannot be a child we spawned (ours start after
+        /// us) and cannot be a real PitHouse the user launched after SimHub.
+        /// Under the plugin↔PitHouse exclusivity assumption, a same-named
+        /// process older than us is a prior-session orphan. If StartTime is
+        /// unreadable, we still treat it as an orphan: this sweep runs at
+        /// <see cref="Start"/> BEFORE we spawn our own child, so no same-named
+        /// process at this moment can be ours.</para>
         ///
         /// <para>Idempotent within a process via <see cref="s_orphanSweepDone"/>.
         /// Failures are non-fatal (logged at Debug) — we'd rather lose a
@@ -459,29 +476,40 @@ namespace MozaPlugin.Sdk
                 return;
             }
 
+            int ourPid;
+            DateTime ourStart;
+            try
+            {
+                using var self = Process.GetCurrentProcess();
+                ourPid = self.Id;
+                try { ourStart = self.StartTime; } catch { ourStart = DateTime.MinValue; }
+            }
+            catch { ourPid = -1; ourStart = DateTime.MinValue; }
+
             int killed = 0;
             foreach (var p in candidates)
             {
                 try
                 {
-                    string? path = null;
-                    try { path = p.MainModule?.FileName; }
-                    catch
-                    {
-                        // Access-denied (different user / elevated) or
-                        // already-exited race: skip rather than guess.
-                        continue;
-                    }
-                    if (!string.Equals(path, ourExePath, StringComparison.OrdinalIgnoreCase))
-                        continue;
-
                     int pid = p.Id;
+                    if (pid == ourPid) continue; // never ourselves
+
+                    // Orphan iff it started before us (prior session). Do NOT
+                    // use Process.MainModule — it throws under Wine and silently
+                    // skipped every orphan in the old code. If StartTime is
+                    // unreadable, treat as orphan (this sweep runs pre-spawn, so
+                    // any same-named process now is not our child).
+                    bool isOrphan;
+                    try { isOrphan = ourStart == DateTime.MinValue || p.StartTime < ourStart; }
+                    catch { isOrphan = true; }
+                    if (!isOrphan) continue;
+
                     try
                     {
                         p.Kill();
                         try { p.WaitForExit(500); } catch { }
                         killed++;
-                        try { MozaLog.Info($"[Moza] Orphan-sweep killed prior-session stub PID {pid} (path={path})"); } catch { }
+                        try { MozaLog.Info($"[Moza] Orphan-sweep killed prior-session stub PID {pid}"); } catch { }
                     }
                     catch (Exception ex)
                     {
@@ -497,6 +525,10 @@ namespace MozaPlugin.Sdk
             if (killed == 0)
             {
                 try { MozaLog.Debug($"[Moza] Orphan-sweep: no prior-session stub processes found ({candidates.Length} candidate(s) checked)"); } catch { }
+            }
+            else
+            {
+                try { MozaLog.Info($"[Moza] Orphan-sweep reaped {killed} prior-session stub process(es) — stale wineserver state cleared."); } catch { }
             }
         }
 

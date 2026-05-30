@@ -377,6 +377,16 @@ namespace MozaPlugin.Telemetry.Inbound
             // wire trace. Does not alter recovery behaviour — that stays
             // with the engagement watchdogs below.
             _sender.Watchdog.NoteWheelInitiatedClose(session);
+            // Ack the wheel's CLOSE so it stops retransmitting it. A wheel-
+            // initiated close is reliable-delivery: if we never ack, the wheel
+            // re-sends the SAME close (same seq) ~1/sec indefinitely — this is
+            // the "close storm" on sess=0x01 (one close, retransmitted for the
+            // whole session because the plugin never acked it). Only the core
+            // session-layer ports we open and keep (mgmt 0x01 / telem 0x02)
+            // need this; dispatcher-owned upload sessions handle their own
+            // close routing below.
+            if (session == _sender.MgmtPort || session == _sender.FlagByte)
+                _sender.SendSessionAckInternal(session, (ushort)closeSeq);
             // Dispatcher-owned sessions: route exclusively.
             if (_sender.Dispatcher.GetOwner(session) != null)
             {

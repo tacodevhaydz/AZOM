@@ -1,10 +1,13 @@
 using System;
 using System.Collections.Concurrent;
 using System.Collections.Generic;
+using System.Diagnostics;
 using System.IO;
 using System.IO.Ports;
 using System.Linq;
+using System.Runtime.InteropServices;
 using System.Threading;
+using HidSharp;
 using MozaPlugin.Diagnostics;
 
 
@@ -76,9 +79,42 @@ namespace MozaPlugin.Protocol
         // Hard-disable serial probe fallback (user-toggle via MozaPluginSettings).
         private readonly Func<bool>? _disableProbeFallback;
 
-        private volatile SerialPort? _port;
+        private volatile IMozaPort? _port;
         private Thread? _readThread;
         private Thread? _writeThread;
+        // Ports with a probe thread that timed out and was ABANDONED (its
+        // SerialPort.Open() is still blocked in a Wine syscall). We must NOT
+        // close/dispose that SerialPort from another thread — doing so mid-Open
+        // is a native-crash vector under Wine (the original "crashes SimHub on
+        // a freshly-powered base": a not-ready CDC-ACM port makes Open() hang,
+        // the old timeout path force-closed it cross-thread, Wine segfaulted).
+        // Instead we abandon the background thread (it self-cleans when the
+        // syscall finally returns) and skip re-probing the port until it does,
+        // so we never spawn a second hung thread on the same stuck port and
+        // never enter the cross-thread-dispose crash window. Keyed by port name.
+        private static readonly ConcurrentDictionary<string, byte> _probeInFlight =
+            new ConcurrentDictionary<string, byte>();
+
+        // Probe-readiness settle gate (see IsSerialProbeReady). Stopwatch ticks
+        // of when the base HID was first observed continuously present; 0 = the
+        // base HID is not currently present. Static: detection runs on a shared
+        // reconnect timer, and the settle window must persist across ticks.
+        private static long _baseHidPresentSinceTicks;
+        // How long the base HID must be continuously present (after a fresh
+        // enumeration) before we trust the serial port to have finished binding.
+        // The crash window is the first few seconds of USB enumeration.
+        private const int ProbeHidSettleMs = 9_000;
+        // Timeout for an out-of-process (Wine) probe. Must cover child-process
+        // launch overhead under Wine (~1-2 s for a .NET exe) ON TOP of the
+        // probe's internal ~500 ms budget, hence much larger than the in-process
+        // timeout. A genuinely-hung helper is killed at this deadline.
+        private const int IsolatedProbeTimeoutMs = 4_000;
+        // Wine-detection latch (-1 unknown, 0 native Windows, 1 Wine). The
+        // serial-open crash is Wine-specific; on native Windows the settle gate
+        // is pure dead latency (probing a not-ready port there just throws and
+        // is caught). The field-bundle research showed the vast majority of
+        // users are on native Windows — they must pay ZERO gate latency.
+        private static int _isWine = -1;
         // Priority lane: unpaced FIFO for tiny, time-critical frames (fc:00 session
         // acks). Drained ahead of one-shot every WriteLoop iteration so an ack
         // can't get buried behind a 1000-chunk tier-def burst — the wheel times
@@ -135,6 +171,16 @@ namespace MozaPlugin.Protocol
         // closing the port and double-logging.
         private int _portFailureLogged;
         private const int PortDeadThreshold = 10;
+        // Half-open-tty liveness. The count-only PortDeadThreshold above never
+        // fires for a "half-open" port that delivers BytesToRead==0 forever
+        // WITHOUT throwing (a real failure mode: sleep/resume, USB stall) — the
+        // ReadLoop just spins at Thread.Sleep(2) and nothing triggers reconnect.
+        // We stamp the last successful read and, once the wheel HAS talked,
+        // force a reconnect if inbound goes silent past ReadIdleDeadMs. The
+        // plugin's ~1 Hz parity polls keep a healthy wheel answering well inside
+        // this window, so a breach means the port is dead, not merely idle.
+        private long _lastRxUtcTicks;
+        private const int ReadIdleDeadMs = 30_000;
 
         // Classified open-failure surface. UI hint-builder reads this every
         // 500 ms to distinguish port-in-use from generic disconnect. Counter
@@ -345,6 +391,25 @@ namespace MozaPlugin.Protocol
             if (_running || _port != null)
                 Disconnect();
 
+            // Under Wine, select the MOZA by USB identity via /dev/serial/by-id and
+            // open it DIRECTLY — never blind-probe COM ports. Opening an unrelated
+            // device's CDC-ACM interface (e.g. a phone/tablet on the bus) via Wine
+            // segfaults the SHARED wineserver and kills SimHub, which out-of-process
+            // probe isolation cannot prevent. This bypasses the registry/cached-COM/
+            // blind-probe paths below entirely on Linux. (mBooster stays registry-only.)
+            if (IsRunningUnderWine()
+                && _probeTarget != MozaProbeTarget.MBooster
+                && MozaByIdDiscovery.ByIdAvailable())
+            {
+                if (!IsSerialProbeReady(out int settleMs))
+                {
+                    MozaLog.Debug($"[Moza] by-id open deferred — base USB not settled ({settleMs}ms / {ProbeHidSettleMs}ms).");
+                    return false;
+                }
+                MozaLog.Debug($"[Moza] by-id: base USB settled ({settleMs}ms) — discovering + opening.");
+                return ConnectViaById();
+            }
+
             // Try the cached port first, gated on registry confirming it still
             // belongs to a MOZA device of the right family. _activePorts guards
             // against same-process sibling-connection double-open on Wine ptys.
@@ -355,6 +420,20 @@ namespace MozaPlugin.Protocol
                     && (_pidFilter == null || _pidFilter(FormatPid(info.Pid))))
                 {
                     DiscoveredPid = FormatPid(info.Pid);
+                    // Honor the same crash-safety gate as the probe path: NEVER
+                    // open a serial port until the base USB has settled. Without
+                    // this, a saved LastWheelbasePort gets opened on the very
+                    // first reconnect tick of a freshly-powered base — re-entering
+                    // the mid-enumeration Open() crash window the gate exists to
+                    // avoid. (On an empty-registry Wine base TryGetByPort fails so
+                    // this branch isn't reached; this guards registry-populated
+                    // setups where it is.)
+                    if (!IsSerialProbeReady(out _))
+                    {
+                        MozaLog.Debug(
+                            $"[Moza] Cached port {_lastPortName} open deferred — base USB not settled yet.");
+                        return false;
+                    }
                     if (TryOpen(_lastPortName))
                         return true;
                     MozaLog.Debug(
@@ -382,63 +461,114 @@ namespace MozaPlugin.Protocol
             return TryOpen(portName);
         }
 
-        private bool TryOpen(string portName)
+        // Wine path: open the MOZA by /dev/serial/by-id identity and confirm it
+        // with the existing discovery probe BEFORE committing — so a non-MOZA
+        // device is NEVER opened (the wineserver-killing crash vector).
+        private bool ConnectViaById()
         {
-            // Drain any stale messages from a previous connection
-            while (_priorityQueue.TryDequeue(out _)) { }
-            while (_oneShotQueue.TryDequeue(out _)) { }
-            for (int k = 0; k < _streamSlots.Length; k++)
-                Interlocked.Exchange(ref _streamSlots[k], null);
+            if (!MozaByIdDiscovery.TryListMozaDataPorts(out var candidates))
+                return false;
 
-            try
+            // Prefer the previously-connected by-id name (stable across re-enumeration).
+            if (_lastPortName != null && candidates.Count > 1)
+                candidates.Sort((a, b) =>
+                    (b.Name == _lastPortName ? 1 : 0) - (a.Name == _lastPortName ? 1 : 0));
+
+            MozaLog.Debug($"[Moza] by-id: {candidates.Count} MOZA data-port candidate(s) for {_probeTarget}");
+            foreach (var cand in candidates)
             {
-                _port = new SerialPort(portName, MozaProtocol.BaudRate)
-                {
-                    ReadTimeout = 500,
-                    WriteTimeout = 500,
-                    // Larger buffers cushion Wine/tty0tty session-burst contention.
-                    ReadBufferSize = 65536,
-                    WriteBufferSize = 16384,
-                    // CDC ACM: DTR is the host-connected signal; Close/Open must toggle it.
-                    DtrEnable = true,
-                };
-                _port.Open();
-                _port.DiscardInBuffer();
-                _port.DiscardOutBuffer();
+                if (_shutdownRequested) return false;
+                if (_activePorts.ContainsKey(cand.Name)) continue; // sibling connection holds it
 
-                _running = true;
-                _readThread = new Thread(ReadLoop) { IsBackground = true, Name = "MozaSerialRead" };
-                _writeThread = new Thread(WriteLoop) { IsBackground = true, Name = "MozaSerialWrite" };
-
+                MozaLog.Debug($"[Moza] by-id: opening {cand.Name}");
+                WineByIdMozaPort port;
                 try
                 {
-                    _readThread.Start();
-                    _writeThread.Start();
+                    port = new WineByIdMozaPort(cand.ByIdPath);
                 }
-                catch
+                catch (UnauthorizedAccessException ex)
                 {
-                    // If either start failed, tear down: signal stop, join whichever started,
-                    // close port, then rethrow so the outer catch logs it.
-                    _running = false;
-                    try { _readThread?.Join(500); } catch { }
-                    try { _writeThread?.Join(500); } catch { }
-                    try { _port?.Close(); } catch { }
-                    _port = null;
-                    throw;
+                    RecordOpenFailure(cand.Name, ConnectionFailureKind.AccessDenied, ex);
+                    MozaLog.Error($"[Moza] by-id open {cand.Name} denied: {ex.Message}");
+                    continue;
+                }
+                catch (IOException ex) when (LooksLikeAccessDenied(ex))
+                {
+                    RecordOpenFailure(cand.Name, ConnectionFailureKind.AccessDenied, ex);
+                    MozaLog.Error($"[Moza] by-id open {cand.Name} denied: {ex.Message}");
+                    continue;
+                }
+                catch (Exception ex)
+                {
+                    RecordOpenFailure(cand.Name, ConnectionFailureKind.OpenFailedOther, ex);
+                    MozaLog.Debug($"[Moza] by-id open {cand.Name} failed: {ex.GetType().Name}: {ex.Message}");
+                    continue;
                 }
 
-                _lastPortName = portName;
-                _activePorts[portName] = 1;
-                Interlocked.Exchange(ref _consecutiveIoErrors, 0);
-                Interlocked.Exchange(ref _portFailureLogged, 0);
-                lock (_failureLock)
-                {
-                    _lastFailure = ConnectionFailureInfo.None;
-                    _lastSuccessfulOpenUtc = DateTime.UtcNow;
-                }
-                Interlocked.Exchange(ref _consecutiveOpenFailures, 0);
-                MozaLog.Info($"[Moza] Connected to {portName}");
-                return true;
+                MozaLog.Debug($"[Moza] by-id: {cand.Name} open OK — confirming identity");
+                if (TryConfirmAndCommit(port, cand.Name))
+                    return true;
+                try { port.Close(); port.Dispose(); } catch { }
+            }
+            return false;
+        }
+
+        // Confirm device identity/readiness on an already-open by-id handle, then
+        // hand off to FinishOpen. Mirrors FindMozaPort's per-target probe logic.
+        private bool TryConfirmAndCommit(WineByIdMozaPort port, string name)
+        {
+            Action<string> log = m => MozaLog.Debug($"[Moza] {m}");
+            bool viaHub = false;
+            bool ok;
+            MozaLog.Debug($"[Moza] by-id: probing {name} for {_probeTarget}");
+            switch (_probeTarget)
+            {
+                case MozaProbeTarget.HubOnly:
+                    ok = MozaPortProbe.Confirm(port, ProbeKind.Hub, log);
+                    viaHub = ok;
+                    break;
+                case MozaProbeTarget.Ab9:
+                    // AB9 dev id collides with the base main; a base ALSO answers the
+                    // AB9 probe, so a base-probe match means "wheelbase, not AB9".
+                    if (MozaPortProbe.Confirm(port, ProbeKind.Base, log))
+                    {
+                        MozaLog.Debug($"[Moza] by-id {name}: base territory — not AB9, skipping");
+                        return false;
+                    }
+                    ok = MozaPortProbe.Confirm(port, ProbeKind.Ab9, log);
+                    break;
+                default: // BaseAndHub
+                    ok = MozaPortProbe.Confirm(port, ProbeKind.Base, log);
+                    if (!ok) { ok = MozaPortProbe.Confirm(port, ProbeKind.Hub, log); viaHub = ok; }
+                    break;
+            }
+            if (!ok)
+            {
+                MozaLog.Debug($"[Moza] by-id {name}: no MOZA {_probeTarget} response — skipping");
+                return false;
+            }
+
+            DiscoveredPid = null; // by-id path carries no Windows PID
+            HubProbeSucceeded = viaHub;
+            MozaLog.Info($"[Moza] Found MOZA {(viaHub ? "hub" : _probeTarget.ToString())} via by-id: {name}");
+            try
+            {
+                return FinishOpen(port, name);
+            }
+            catch (Exception ex)
+            {
+                RecordOpenFailure(name, ConnectionFailureKind.OpenFailedOther, ex);
+                MozaLog.Error($"[Moza] by-id finish-open {name} failed: {ex.Message}");
+                return false;
+            }
+        }
+
+        private bool TryOpen(string portName)
+        {
+            try
+            {
+                var sp = new SerialPortMozaPort(portName, MozaProtocol.BaudRate);
+                return FinishOpen(sp, portName);
             }
             catch (UnauthorizedAccessException ex)
             {
@@ -472,12 +602,64 @@ namespace MozaPlugin.Protocol
             }
         }
 
+        // Shared commit path: wire an already-open port into the read/write loops.
+        // Throws on thread-start failure (caller classifies); tears down on the way out.
+        private bool FinishOpen(IMozaPort port, string portName)
+        {
+            // Drain any stale messages from a previous connection.
+            while (_priorityQueue.TryDequeue(out _)) { }
+            while (_oneShotQueue.TryDequeue(out _)) { }
+            for (int k = 0; k < _streamSlots.Length; k++)
+                Interlocked.Exchange(ref _streamSlots[k], null);
+
+            _port = port;
+            port.DiscardInBuffer();
+            port.DiscardOutBuffer();
+
+            _running = true;
+            _readThread = new Thread(ReadLoop) { IsBackground = true, Name = "MozaSerialRead" };
+            _writeThread = new Thread(WriteLoop) { IsBackground = true, Name = "MozaSerialWrite" };
+
+            try
+            {
+                _readThread.Start();
+                _writeThread.Start();
+            }
+            catch
+            {
+                // If either start failed, tear down: signal stop, join whichever started,
+                // close port, then rethrow so the caller logs it.
+                _running = false;
+                try { _readThread?.Join(500); } catch { }
+                try { _writeThread?.Join(500); } catch { }
+                try { _port?.Close(); } catch { }
+                _port = null;
+                throw;
+            }
+
+            _lastPortName = portName;
+            _activePorts[portName] = 1;
+            Interlocked.Exchange(ref _consecutiveIoErrors, 0);
+            Interlocked.Exchange(ref _portFailureLogged, 0);
+            // Fresh connection: clear the half-open idle stamp so a stale
+            // value from a prior connection can't immediately force-close.
+            Interlocked.Exchange(ref _lastRxUtcTicks, 0);
+            lock (_failureLock)
+            {
+                _lastFailure = ConnectionFailureInfo.None;
+                _lastSuccessfulOpenUtc = DateTime.UtcNow;
+            }
+            Interlocked.Exchange(ref _consecutiveOpenFailures, 0);
+            MozaLog.Info($"[Moza] Connected to {portName}");
+            return true;
+        }
+
         public void Disconnect()
         {
             _running = false;
 
             // Close before joining so a syscall-wedged R/W returns to its loop.
-            SerialPort? p;
+            IMozaPort? p;
             lock (_lock)
             {
                 p = _port;
@@ -611,6 +793,21 @@ namespace MozaPlugin.Protocol
                     int avail = port.BytesToRead;
                     if (avail == 0)
                     {
+                        // Half-open-tty detector: if the wheel has talked before
+                        // but has now been silent past ReadIdleDeadMs, the port
+                        // is dead-but-IsOpen (BytesToRead==0 forever, no throw),
+                        // which the count-only PortDeadThreshold can't catch.
+                        // Force a reconnect. (Skipped until first inbound so a
+                        // never-engaged port doesn't self-trip.)
+                        long lastRx = Interlocked.Read(ref _lastRxUtcTicks);
+                        if (lastRx != 0
+                            && (DateTime.UtcNow.Ticks - lastRx) > ReadIdleDeadMs * TimeSpan.TicksPerMillisecond)
+                        {
+                            Interlocked.Exchange(ref _lastRxUtcTicks, 0);
+                            HandleIoFailure("ReadIdle",
+                                new IOException($"No inbound for >{ReadIdleDeadMs}ms while port open — half-open tty"));
+                            continue;
+                        }
                         Thread.Sleep(2);
                         continue;
                     }
@@ -620,6 +817,7 @@ namespace MozaPlugin.Protocol
                     for (int i = 0; i < n; i++)
                         rx.Add(tmp[i]);
                     Interlocked.Exchange(ref _consecutiveIoErrors, 0);
+                    Interlocked.Exchange(ref _lastRxUtcTicks, DateTime.UtcNow.Ticks);
 
                     // Parse as many complete frames from `rx` as possible, then
                     // keep any trailing partial frame for the next bulk read.
@@ -1099,6 +1297,26 @@ namespace MozaPlugin.Protocol
                 MozaLog.Debug(
                     $"[Moza] Registry classifies {registryByPort.Count} of {ports.Length} COM port(s); probing the remainder");
 
+            // Crash-safety gate: do NOT open/probe any COM port until the MOZA
+            // base USB has settled. A freshly-powered base enumerates its USB
+            // interfaces over several seconds; opening its CDC-ACM serial port
+            // mid-enumeration SEGFAULTS Wine — uncatchable, kills all of SimHub
+            // (the "crashes on a freshly-powered base" bug; neither SerialPort
+            // nor a native CreateFile open survives it). The base's HID
+            // interface comes up BEFORE its serial port is ready, so we gate on
+            // "base HID present continuously for ProbeHidSettleMs" as a safe
+            // proxy for "serial port has finished binding". HID enumeration is
+            // safe during the window — only the serial open crashes. Deferred
+            // probes retry on the next reconnect tick (~5 s).
+            if (!IsSerialProbeReady(out int settleWaitedMs))
+            {
+                MozaLog.Debug(
+                    $"[Moza] Serial probe deferred — waiting for base USB to settle " +
+                    $"(base HID present {settleWaitedMs}ms / {ProbeHidSettleMs}ms); avoids " +
+                    "opening a mid-enumeration CDC-ACM port that crashes Wine.");
+                return (null, null, false);
+            }
+
             // 600ms budget per port — SerialPort.Open can hang indefinitely under Wine
             // if another process holds the tty. Background-thread the probe so one bad
             // port can't block all detection.
@@ -1251,151 +1469,195 @@ namespace MozaPlugin.Protocol
             return (null, null, false);
         }
 
-        private enum ProbeKind { Base, Hub, Ab9 }
-
-        // Pre-built probe frames. Base: grp 0x2B dev 0x13 cmd 2. Hub: grp 0x64
-        // dev 0x12 cmd 3. AB9: grp 0x09 dev 0x12 (identity).
-        private static readonly byte[] BaseProbeFrame = BuildProbe(new byte[] { 0x7E, 0x03, 0x2B, 0x13, 0x02, 0x00, 0x00, 0x00 });
-        private static readonly byte[] HubProbeFrame  = BuildProbe(new byte[] { 0x7E, 0x03, 0x64, 0x12, 0x03, 0x00, 0x00, 0x00 });
-        private static readonly byte[] Ab9ProbeFrame  = BuildProbe(new byte[] { 0x7E, 0x00, 0x09, 0x12, 0x00 });
-
-        private static byte[] BuildProbe(byte[] frame)
-        {
-            // Wire-level checksum — stays correct if a probe template later contains 0x7E.
-            frame[frame.Length - 1] = MozaProtocol.CalculateWireChecksum(frame, frame.Length - 1);
-            return frame;
-        }
+        // ProbeKind, the probe frames, and the open+probe core moved to the
+        // shared SerialProbeCore (Protocol/SerialProbeCore.cs) so the exact same
+        // code is compiled into the out-of-process MozaProbeHelper.exe with zero
+        // wire-constant drift.
 
         /// <summary>
         /// Probe a port with a hard time budget. On timeout the outer thread closes
         /// the SerialPort to unblock any inner syscall.
         /// </summary>
+        /// <summary>Is a MOZA wheelbase HID interface currently enumerated?
+        /// Cheap VID/PID scan over the HID device list — does NOT open the
+        /// serial port (HID enumeration is safe during USB bring-up; the serial
+        /// open is what crashes Wine). Reused as the "USB is up" signal.</summary>
+        private static bool IsBaseHidPresent()
+        {
+            try
+            {
+                foreach (var dev in DeviceList.Local.GetHidDevices())
+                {
+                    try
+                    {
+                        if (dev.VendorID != MozaPortDiscovery.MozaVid) continue;
+                        if (MozaUsbIds.Categorize((ushort)dev.ProductID) == MozaDeviceCategory.Wheelbase)
+                            return true;
+                    }
+                    catch { /* per-device descriptor hiccup — keep scanning */ }
+                }
+            }
+            catch { /* HidSharp enumeration failure — treat as "not present" */ }
+            return false;
+        }
+
+        [DllImport("kernel32.dll", CharSet = CharSet.Ansi, SetLastError = false)]
+        private static extern IntPtr GetModuleHandle(string lpModuleName);
+
+        [DllImport("kernel32.dll", CharSet = CharSet.Ansi, SetLastError = false)]
+        private static extern IntPtr GetProcAddress(IntPtr hModule, string procName);
+
+        /// <summary>Are we running under Wine/Proton? Canonical check: the
+        /// <c>wine_get_version</c> export in ntdll. Latched. The serial-open
+        /// crash this whole gate exists for is Wine-specific; on native Windows
+        /// the gate would only add dead latency (probing a not-ready port there
+        /// throws and is caught, it doesn't crash), so we skip it entirely.</summary>
+        private static bool IsRunningUnderWine()
+        {
+            int v = _isWine;
+            if (v >= 0) return v == 1;
+            bool wine = false;
+            try
+            {
+                IntPtr ntdll = GetModuleHandle("ntdll.dll");
+                if (ntdll != IntPtr.Zero)
+                    wine = GetProcAddress(ntdll, "wine_get_version") != IntPtr.Zero;
+            }
+            catch { wine = false; }
+            _isWine = wine ? 1 : 0;
+            try { MozaLog.Debug($"[Moza] Runtime: {(wine ? "Wine/Proton" : "native Windows")} (serial-probe settle gate {(wine ? "ENABLED" : "disabled")})"); } catch { }
+            return wine;
+        }
+
+        /// <summary>Gate that decides whether it is safe to OPEN a serial port.
+        ///
+        /// <para>Native Windows: always ready — there is no Wine serial-open
+        /// crash to avoid, so we add zero latency (the field-bundle majority).</para>
+        ///
+        /// <para>Wine: avoid the freshly-powered-base SerialPort.Open segfault.
+        /// The base HID enumerates before its CDC-ACM serial port is ready, so we
+        /// use HID presence as a safe "USB is up" proxy (HID scan never crashes).
+        /// WARM start (base HID present continuously since the first check, never
+        /// observed absent) ⇒ the device was already bound before we launched ⇒
+        /// ready immediately, NO settle. FRESH enumeration (HID seen absent then
+        /// present — power-cycle / replug / cold plug) ⇒ require the base HID to
+        /// be continuously present for <see cref="ProbeHidSettleMs"/> before we
+        /// trust the serial port to have finished binding.</para></summary>
+        private static bool IsSerialProbeReady(out int waitedMs)
+        {
+            waitedMs = 0;
+
+            // Native Windows: no Wine crash to gate against — open immediately.
+            if (!IsRunningUnderWine())
+                return true;
+
+            bool present = IsBaseHidPresent();
+            if (!present)
+            {
+                _baseHidPresentSinceTicks = 0; // restart the settle clock
+                return false;
+            }
+
+            // ALWAYS require the settle under Wine. (An earlier "warm-fast"
+            // shortcut — skip the settle if the HID was present at the first
+            // check — was UNSOUND and reintroduced the crash: on a fresh
+            // power-cycle the base HID enumerates within ~1-2 s, i.e. BEFORE
+            // SimHub's first ~5 s reconnect tick, so it looks "present since
+            // startup" even though its serial port is NOT yet bound. There is
+            // no reliable HID-only warm/fresh discriminator, so we pay the
+            // settle on every Wine connect. Native Windows already returned
+            // early above, so this latency only affects Wine/Proton users.)
+            long now = Stopwatch.GetTimestamp();
+            long since = _baseHidPresentSinceTicks;
+            if (since == 0)
+            {
+                _baseHidPresentSinceTicks = now;
+                return false;
+            }
+            waitedMs = (int)((now - since) * 1000L / Stopwatch.Frequency);
+            return waitedMs >= ProbeHidSettleMs;
+        }
+
         private static (bool responded, bool reachable) ProbeWithTimeout(string portName, int timeoutMs, ProbeKind kind)
         {
+            // Under Wine, run the open+probe in a child process so a Wine
+            // serial-open SEGFAULT on a not-ready CDC-ACM port kills only the
+            // helper, never SimHub (the freshly-powered-base crash is
+            // uncatchable in-process). A hung helper is killed at the deadline —
+            // safe, because it's a separate process, unlike an in-proc Open
+            // thread we cannot cancel. Native Windows has no such crash, so it
+            // falls through to the in-process path below (no launch latency).
+            if (IsRunningUnderWine())
+                return SerialProbeHelperLauncher.ProbeViaHelper(portName, kind, IsolatedProbeTimeoutMs);
+
+            // A prior probe on this port hung in Open() and was abandoned (see
+            // _probeInFlight docs). Its SerialPort still owns the OS handle, so
+            // a new Open() here would fail anyway — and, more importantly,
+            // re-probing keeps re-entering the Wine open path that can crash on
+            // a not-ready CDC-ACM port. Skip until that thread self-cleans.
+            if (_probeInFlight.ContainsKey(portName))
+            {
+                MozaLog.Debug(
+                    $"[Moza] Probe {portName}: skipped — a prior probe is still " +
+                    "blocked in Open() (port not ready); will retry once it clears.");
+                return (false, false);
+            }
+
             bool responded = false;
             bool reachable = false;
-            SerialPort? portRef = null;
+            _probeInFlight[portName] = 1;
 
             var t = new Thread(() =>
             {
-                SerialPort? probe = null;
                 try
                 {
-                    probe = new SerialPort(portName, MozaProtocol.BaudRate)
-                    {
-                        ReadTimeout = 300,
-                        WriteTimeout = 300
-                    };
-                    // Publish before Open so a timed-out caller can close mid-syscall.
-                    System.Threading.Volatile.Write(ref portRef, probe);
-                    probe.Open();
-                    (responded, reachable) = ProbeMozaDeviceCore(probe, kind, portName);
+                    // SerialProbeCore opens, probes, and closes the port entirely
+                    // on THIS thread (no cross-thread dispose — that segfaults
+                    // Wine mid-Open). On the abandoned-timeout path the thread is
+                    // simply left running; it self-cleans here when Open finally
+                    // returns. NOTE: this is the IN-PROCESS path used on native
+                    // Windows; under Wine ProbeWithTimeout routes to the
+                    // out-of-process helper instead (see the Wine branch above).
+                    (responded, reachable) = SerialProbeCore.ProbeOnePort(
+                        portName, kind, m => MozaLog.Debug($"[Moza] {m}"));
                 }
                 catch { responded = false; reachable = false; }
                 finally
                 {
-                    try { probe?.Close(); } catch { }
-                    try { probe?.Dispose(); } catch { }
+                    _probeInFlight.TryRemove(portName, out _);
                 }
             })
             { IsBackground = true, Name = $"MozaProbe-{portName}" };
-            t.Start();
+            try
+            {
+                t.Start();
+            }
+            catch
+            {
+                // Thread couldn't start (e.g. resource exhaustion). The probe
+                // thread's finally — which removes the in-flight marker — will
+                // never run, so clear it here; otherwise this port is skipped
+                // forever (the marker would be a permanent in-flight tombstone).
+                _probeInFlight.TryRemove(portName, out _);
+                return (false, false);
+            }
 
             if (!t.Join(timeoutMs))
             {
-                // Close from this thread to unblock the inner syscall with IOException.
-                var p = System.Threading.Volatile.Read(ref portRef);
-                try { p?.Close(); } catch { }
-                try { p?.Dispose(); } catch { }
-                try { t.Join(500); } catch { }
-                MozaLog.Debug($"[Moza] Probe {portName}: timed out after {timeoutMs}ms (port force-closed)");
+                // Timed out: the port is not ready and Open() is still blocked.
+                // ABANDON the background thread instead of force-closing the
+                // SerialPort from here — cross-thread Close/Dispose during a
+                // native Open() is the freshly-powered-base crash. The thread
+                // stays in _probeInFlight and self-cleans (Close on its own
+                // thread, removes the in-flight marker) when the syscall finally
+                // returns; until then this port is skipped above. The thread is
+                // IsBackground, so it never blocks process exit.
+                MozaLog.Debug(
+                    $"[Moza] Probe {portName}: timed out after {timeoutMs}ms — abandoning " +
+                    "blocked probe thread (not force-closing cross-thread; port marked in-flight).");
                 return (false, false);
             }
             return (responded, reachable);
-        }
-
-        /// <summary>
-        /// Send probe + match response group at wire offset 2 (single-msg avoids
-        /// the v0.7.0 stuck-after-back-to-back-writes regression).
-        /// </summary>
-        private static (bool responded, bool reachable) ProbeMozaDeviceCore(SerialPort probe, ProbeKind kind, string portName)
-        {
-            byte[] msg;
-            byte expectedRespGroup;
-            switch (kind)
-            {
-                case ProbeKind.Base: msg = BaseProbeFrame; expectedRespGroup = MozaProtocol.BaseRespGroup; break;
-                case ProbeKind.Hub:  msg = HubProbeFrame;  expectedRespGroup = MozaProtocol.HubRespGroup;  break;
-                case ProbeKind.Ab9:  msg = Ab9ProbeFrame;  expectedRespGroup = MozaProtocol.Ab9RespGroup;  break;
-                default: return (false, false);
-            }
-
-            try
-            {
-                probe.DiscardInBuffer();
-
-                // Re-probe periodically and poll in short slices — boot-time
-                // debug-log bursts (group 0x0E) drown a single probe-and-peek.
-                const int TotalBudgetMs = 500;
-                const int ProbeRepeatMs = 200;
-                const int PollSliceMs = 25;
-                const int MaxAccumBytes = 4096;
-
-                var accum = new System.Collections.Generic.List<byte>(512);
-                byte firstSeenGroup = 0xFF;
-                bool responded = false;
-
-                int waited = 0;
-                int nextProbeAt = 0;
-                while (waited < TotalBudgetMs)
-                {
-                    if (waited >= nextProbeAt)
-                    {
-                        try { probe.Write(msg, 0, msg.Length); } catch { return (false, false); }
-                        nextProbeAt = waited + ProbeRepeatMs;
-                    }
-
-                    System.Threading.Thread.Sleep(PollSliceMs);
-                    waited += PollSliceMs;
-
-                    int avail = probe.BytesToRead;
-                    if (avail > 0)
-                    {
-                        int want = Math.Min(avail, MaxAccumBytes - accum.Count);
-                        if (want > 0)
-                        {
-                            var tmp = new byte[want];
-                            int n = probe.Read(tmp, 0, want);
-                            for (int i = 0; i < n; i++) accum.Add(tmp[i]);
-                        }
-                        for (int i = 0; i + 2 < accum.Count; i++)
-                        {
-                            if (accum[i] != MozaProtocol.MessageStart) continue;
-                            byte respGroup = accum[i + 2];
-                            if (firstSeenGroup == 0xFF) firstSeenGroup = respGroup;
-                            if (respGroup == expectedRespGroup)
-                            {
-                                responded = true;
-                                break;
-                            }
-                        }
-                        if (responded) break;
-                    }
-                }
-
-                if (!responded && firstSeenGroup != 0xFF)
-                {
-                    MozaLog.Debug(
-                        $"[Moza] Probe {portName} {kind}: {accum.Count}B in {waited}ms, " +
-                        $"no 0x{expectedRespGroup:X2} (first seen 0x{firstSeenGroup:X2})");
-                }
-                return (responded, true);
-            }
-            catch (Exception ex)
-            {
-                MozaLog.Debug($"[Moza] Probe {portName}: {ex.GetType().Name}");
-                return (false, false);
-            }
         }
 
         private static int ExtractPortNumber(string portName)

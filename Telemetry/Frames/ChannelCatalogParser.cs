@@ -104,6 +104,24 @@ namespace MozaPlugin.Telemetry.Frames
         // Tick when the END marker last changed value. Useful for "wait
         // until the wheel has emitted its post-switch END" gating.
         private volatile int _lastWheelEndMarkerTickMs;
+        // Per-session END marker. Unlike _lastWheelEndMarker (which is the LAST
+        // valid END seen across ALL sessions), this records the END u32 found
+        // in each session's OWN buffer. Required because the wheel can advertise
+        // a real catalog+END on one session (e.g. sess=0x02, END=4) while
+        // another session (sess=0x01) is degenerate with no valid END — and a
+        // tier-def emitted on sess=0x01 must echo the sess=0x01 END, NOT the
+        // cross-session merged value. Echoing the wrong-session END makes the
+        // wheel reject the tier-def (verified: R5 base cold start closed
+        // sess=0x01 after we echoed sess=0x02's END=4). Keyed by session byte;
+        // only populated when that session's buffer contains a valid
+        // tag-0x06 size-4 END record. Guarded by _bufferLock.
+        private readonly Dictionary<byte, uint> _endMarkerBySession = new();
+        // Sessions that have ever produced ≥1 valid URL/back-ref catalog record
+        // in TryParse. Used by HasRealCatalogOnSession to distinguish a session
+        // carrying the wheel's real channel catalog from a degenerate one (the
+        // cold R5 base advertised idx=0/empty on sess=0x01 while the real 4
+        // channels were on sess=0x02). Guarded by _bufferLock.
+        private readonly HashSet<byte> _sessionsWithValidUrls = new();
 
         // Live-set tracking: dashboard switches don't drop stale idxs from
         // _catalog (preserving prior bindings is required for back-ref
@@ -169,6 +187,33 @@ namespace MozaPlugin.Telemetry.Frames
         /// field docs.</summary>
         public uint LastWheelEndMarker => _lastWheelEndMarker;
         public int LastWheelEndMarkerTickMs => _lastWheelEndMarkerTickMs;
+
+        /// <summary>The END u32 the wheel announced in THIS session's own
+        /// catalog buffer, or 0 if that session has not pushed a valid
+        /// tag-0x06 size-4 END record. Unlike <see cref="LastWheelEndMarker"/>
+        /// (cross-session "last END seen anywhere"), this never returns an END
+        /// that belongs to a different session — the value a tier-def emitted
+        /// on <paramref name="session"/> must echo. 0 matches the PitHouse
+        /// cold-start fallback before the wheel has pushed a usable END.</summary>
+        public uint GetEndMarkerForSession(byte session)
+        {
+            lock (_bufferLock)
+                return _endMarkerBySession.TryGetValue(session, out var v) ? v : 0u;
+        }
+
+        /// <summary>True once <paramref name="session"/> has carried BOTH ≥1
+        /// valid channel-URL record AND a valid END u32. Used to gate
+        /// cold-start tier-def emission: the wheel binds tier-def by the
+        /// catalog idx of the session the tier-def rides on, so emitting before
+        /// that session's catalog is real (e.g. the cold R5 base, whose real
+        /// catalog was only on sess=0x02 while sess=0x01 was idx=0/empty) makes
+        /// the wheel reject the tier-def and close the session.</summary>
+        public bool HasRealCatalogOnSession(byte session)
+        {
+            lock (_bufferLock)
+                return _sessionsWithValidUrls.Contains(session)
+                    && _endMarkerBySession.ContainsKey(session);
+        }
 
         /// <summary>Latest parsed catalog (idx-1 positional, "" for unannounced
         /// gaps). Null until the first parse succeeds. Reads are volatile.
@@ -311,6 +356,8 @@ namespace MozaPlugin.Telemetry.Frames
                 // re-stamped the tick on the historical 340→416 transition
                 // inside one scan).
                 uint scanFinalEnd = _lastWheelEndMarker;
+                bool foundEndThisSession = false;
+                uint sessionEnd = 0;
                 int bcnt = buf.Count;
                 for (int ci = 0; ci + 8 < bcnt; ci++)
                 {
@@ -320,7 +367,15 @@ namespace MozaPlugin.Telemetry.Frames
                         | (buf[ci + 6] << 8)
                         | (buf[ci + 7] << 16)
                         | (buf[ci + 8] << 24));
+                    // Record per-session too: only THIS session's buffer is
+                    // scanned here, so a valid END found means it belongs to
+                    // `session` (no cross-session contamination — the whole
+                    // point of _endMarkerBySession).
+                    foundEndThisSession = true;
+                    sessionEnd = scanFinalEnd;
                 }
+                if (foundEndThisSession)
+                    _endMarkerBySession[session] = sessionEnd;
                 if (scanFinalEnd != _lastWheelEndMarker)
                 {
                     _lastWheelEndMarker = scanFinalEnd;
@@ -483,6 +538,15 @@ namespace MozaPlugin.Telemetry.Frames
             _committedMarkers.Clear();
             _pendingIdxs.Clear();
             _lastSeenArmCount = -1;
+            // Per-session catalog/END tracking is part of "what the wheel has
+            // advertised this connection" — drop it on a full restart like the
+            // parsed catalog above (kept across ClearBuffer for back-refs, but
+            // a Reset is a fresh wheel session).
+            lock (_bufferLock)
+            {
+                _endMarkerBySession.Clear();
+                _sessionsWithValidUrls.Clear();
+            }
         }
 
         /// <summary>Returns the total buffer length (across sessions) the last
@@ -1045,6 +1109,13 @@ namespace MozaPlugin.Telemetry.Frames
                 validRecordsBySession[s.session] = (s.full + s.prefix + s.abbr + s.backref) > 0;
             lock (_bufferLock)
             {
+                // Persist which sessions have EVER carried a real catalog
+                // record this connection. HasRealCatalogOnSession reads this to
+                // gate cold-start tier-def emission on the session actually
+                // carrying the wheel's channel catalog.
+                foreach (var kv in validRecordsBySession)
+                    if (kv.Value) _sessionsWithValidUrls.Add(kv.Key);
+
                 for (int i = _sessionOrder.Count - 1; i >= 0; i--)
                 {
                     byte sess = _sessionOrder[i];
