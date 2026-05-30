@@ -382,7 +382,9 @@ namespace MozaPlugin.Devices.WheelUi
             else if (testMode)
                 TelemetryStatusLabel.Text = $"Test pattern — {framesSent} frames sent";
             else if (phase == PipelinePhase.Parked)
-                TelemetryStatusLabel.Text = global::MozaPlugin.Resources.Strings.Status_TelemetryParked;
+                TelemetryStatusLabel.Text = (active?.Recovery?.ParkIsDegraded ?? false)
+                    ? global::MozaPlugin.Resources.Strings.Status_DegradedScreenless
+                    : global::MozaPlugin.Resources.Strings.Status_TelemetryParked;
             else if (phase == PipelinePhase.Recovery)
                 TelemetryStatusLabel.Text = global::MozaPlugin.Resources.Strings.Status_Recovering;
             else if (active != null && !active.IsActive)

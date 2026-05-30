@@ -489,12 +489,27 @@ namespace MozaPlugin.Telemetry.Watchdog
                 // sequence is identical to the prior inline path AND it sets the
                 // shared parked flag so subsequent watchdog escalations from other
                 // sessions don't queue restart work onto a torn-down pipeline.
-                _sender.Recovery.Park(
-                    $"sess=0x09 retry budget exhausted after {S09RetryMaxRounds} rounds " +
-                    "— wheel never engaged the configJson handshake. " +
-                    "Cause is usually a wheel with no display sub-device or a wheel that refused the " +
-                    "dashboard session — common for displayless wheels that slipped past the static " +
-                    "HasDisplay gate. A wheel hot-swap or telemetry toggle will re-attempt.");
+                //
+                // Distinguish the two causes (P2.4): no display sub-device ever
+                // appeared across the FULL retry window ⇒ screenless wheel that
+                // slipped past the static HasDisplay gate — a benign DEGRADED state,
+                // not a failure. A wheel WITH a display that still never engaged is
+                // genuinely rejecting the session. The degraded flag drives a calm
+                // "no display" status instead of "stopped after repeated failures".
+                if (!_sender.DisplayDetected)
+                {
+                    _sender.Recovery.Park(
+                        $"Screenless wheel — no display sub-device after {S09RetryMaxRounds} sess=0x09 rounds; " +
+                        "telemetry has nothing to drive. A wheel hot-swap or telemetry toggle will re-check.",
+                        degraded: true);
+                }
+                else
+                {
+                    _sender.Recovery.Park(
+                        $"sess=0x09 retry budget exhausted after {S09RetryMaxRounds} rounds — wheel has a " +
+                        "display but never engaged the configJson handshake (rejecting the dashboard " +
+                        "session). A wheel hot-swap or telemetry toggle will re-attempt.");
+                }
             }
         }
 

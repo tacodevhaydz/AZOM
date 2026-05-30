@@ -82,6 +82,7 @@ namespace MozaPlugin.Resources
         public static string Status_Recovering => Get("Status_Recovering");
         public static string Status_Parked => Get("Status_Parked");
         public static string Status_TelemetryParked => Get("Status_TelemetryParked");
+        public static string Status_DegradedScreenless => Get("Status_DegradedScreenless");
         public static string Button_Refresh => Get("Button_Refresh");
         public static string Label_PerformanceOutput => Get("Label_PerformanceOutput");
         public static string Option_Reserved => Get("Option_Reserved");

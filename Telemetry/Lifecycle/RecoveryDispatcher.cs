@@ -50,18 +50,79 @@ namespace MozaPlugin.Telemetry.Lifecycle
         /// state machine loop forever.</summary>
         internal const int RestartCapPerWindow = 3;
 
+        /// <summary>After parking, wait this long then make ONE bounded
+        /// re-attempt (Start) — many park causes (slow boot, transient USB,
+        /// wheel mid-reboot) self-resolve within a couple of minutes. Strictly
+        /// one-shot per park episode (<see cref="_parkRetryUsed"/>) so it can
+        /// never reintroduce the loop Park exists to stop. Cleared by Reset.</summary>
+        internal const int ParkAutoRetryMs = 180_000;  // 3 min
+
+        /// <summary>Connection-independent flap window. Unlike <see cref="WindowMs"/>,
+        /// this is NOT cleared by a reconnect-edge <see cref="Reset(bool)"/>, so a
+        /// connection that keeps dropping → reconnecting → restarting cannot dodge
+        /// the cap by clearing the per-cycle budget on every reconnect. Only a
+        /// deliberate user re-enable / hardware hot-swap clears it.</summary>
+        internal const int FlapWindowMs = 600_000;     // 10 min
+        /// <summary>Restarts within <see cref="FlapWindowMs"/> across connect cycles
+        /// before the pipeline parks as "flapping".</summary>
+        internal const int FlapCapPerWindow = 6;
+
         // ── State (guarded by _lock) ──────────────────────────────────────
         private readonly object _lock = new object();
         private long _lastEscalationUtcTicks;
         private readonly Queue<long> _recentRestartTicks = new Queue<long>();
+        private readonly Queue<long> _flapRestartTicks = new Queue<long>();
         private bool _parked;
-        private string _parkReason;
+        private string? _parkReason;
+        // True when the park is a benign "degraded" state (e.g. a screenless wheel
+        // that has no telemetry session) rather than a failure — drives a calmer,
+        // non-alarming status string/banner instead of "stopped after failures".
+        private bool _parkIsDegraded;
+        // One-shot post-park re-attempt: latch + timer (guarded by _lock for the
+        // latch; Timer.Change is itself thread-safe).
+        private bool _parkRetryUsed;
+        private readonly Timer _parkRetryTimer;
 
         private readonly TelemetrySender _sender;
 
         public RecoveryDispatcher(TelemetrySender sender)
         {
             _sender = sender ?? throw new ArgumentNullException(nameof(sender));
+            _parkRetryTimer = new Timer(_ => OnParkAutoRetry(), null, Timeout.Infinite, Timeout.Infinite);
+        }
+
+        // Arm the one-shot post-park re-attempt. Caller holds _lock. No-op if the
+        // single retry for this park episode has already been spent.
+        private void ArmParkAutoRetryLocked()
+        {
+            if (_parkRetryUsed) return;
+            try { _parkRetryTimer.Change(ParkAutoRetryMs, Timeout.Infinite); } catch { }
+        }
+
+        // Fires once ~ParkAutoRetryMs after a park. Un-parks with a fresh restart
+        // budget and re-attempts Start exactly once; if that attempt parks again,
+        // _parkRetryUsed stays set so there is no further auto-retry until Reset.
+        private void OnParkAutoRetry()
+        {
+            lock (_lock)
+            {
+                if (!_parked || _parkRetryUsed) return;
+                _parkRetryUsed = true;
+                _parked = false;
+                _parkReason = null;
+                _parkIsDegraded = false;
+                _recentRestartTicks.Clear();
+                _lastEscalationUtcTicks = 0;
+            }
+            MozaLog.Warn("[Moza] Recovery park auto-retry — re-attempting telemetry start once after park.");
+            ThreadPool.QueueUserWorkItem(_ =>
+            {
+                try { _sender.Start(); }
+                catch (Exception ex)
+                {
+                    MozaLog.Warn($"[Moza] Park auto-retry Start() raised: {ex.GetType().Name}: {ex.Message}");
+                }
+            });
         }
 
         /// <summary>True once a watchdog escalation has crossed the rate-limit
@@ -75,9 +136,17 @@ namespace MozaPlugin.Telemetry.Lifecycle
         /// <summary>Human-readable reason the pipeline parked (verbatim from the
         /// escalation that tripped it), or null when not parked. Surfaced by the
         /// status banner / diagnostics so the user sees WHY telemetry stopped.</summary>
-        public string ParkReason
+        public string? ParkReason
         {
             get { lock (_lock) return _parkReason; }
+        }
+
+        /// <summary>True when the current park is a benign "degraded" state (e.g.
+        /// a screenless wheel) rather than a failure park. UI uses this to choose a
+        /// calm "no display" message over "stopped after repeated failures".</summary>
+        public bool ParkIsDegraded
+        {
+            get { lock (_lock) return _parkIsDegraded; }
         }
 
         /// <summary>True while a queued restart is still inside its debounce
@@ -134,22 +203,32 @@ namespace MozaPlugin.Telemetry.Lifecycle
                 long windowStartTicks = now - WindowMs * TimeSpan.TicksPerMillisecond;
                 while (_recentRestartTicks.Count > 0 && _recentRestartTicks.Peek() < windowStartTicks)
                     _recentRestartTicks.Dequeue();
+                long flapStartTicks = now - FlapWindowMs * TimeSpan.TicksPerMillisecond;
+                while (_flapRestartTicks.Count > 0 && _flapRestartTicks.Peek() < flapStartTicks)
+                    _flapRestartTicks.Dequeue();
 
-                if (_recentRestartTicks.Count >= RestartCapPerWindow)
+                bool cycleCap = _recentRestartTicks.Count >= RestartCapPerWindow;
+                bool flapCap = _flapRestartTicks.Count >= FlapCapPerWindow;
+                if (cycleCap || flapCap)
                 {
+                    string capReason = (flapCap && !cycleCap)
+                        ? $"flapping: {FlapCapPerWindow} restarts in {FlapWindowMs / 1000}s across connect cycles"
+                        : $"{RestartCapPerWindow} restarts in {WindowMs / 1000}s";
                     MozaLog.Warn(
-                        $"[Moza] Recovery restart cap hit " +
-                        $"({RestartCapPerWindow} restarts in {WindowMs / 1000}s) — " +
+                        $"[Moza] Recovery restart cap hit ({capReason}) — " +
                         $"parking pipeline rather than looping: {reason}");
                     _parked = true;
                     _parkReason = reason;
+                    _parkIsDegraded = false; // a restart-cap park is a failure, not degraded
                     _lastEscalationUtcTicks = now;
+                    ArmParkAutoRetryLocked();
                     queuePark = true;
                 }
                 else
                 {
                     MozaLog.Warn($"[Moza] Recovery restart initiated: {reason}");
                     _recentRestartTicks.Enqueue(now);
+                    _flapRestartTicks.Enqueue(now);
                     _lastEscalationUtcTicks = now;
                     queueRestart = true;
                 }
@@ -189,7 +268,7 @@ namespace MozaPlugin.Telemetry.Lifecycle
         /// Doesn't consume restart budget — the caller has already decided no
         /// restart is going to help. Idempotent: subsequent calls are no-ops.
         /// </summary>
-        public void Park(string reason)
+        public void Park(string reason, bool degraded = false)
         {
             bool fire;
             lock (_lock)
@@ -201,7 +280,9 @@ namespace MozaPlugin.Telemetry.Lifecycle
                 }
                 _parked = true;
                 _parkReason = reason;
+                _parkIsDegraded = degraded;
                 _lastEscalationUtcTicks = DateTime.UtcNow.Ticks;
+                ArmParkAutoRetryLocked();
                 fire = true;
             }
             if (!fire) return;
@@ -225,7 +306,7 @@ namespace MozaPlugin.Telemetry.Lifecycle
         /// by a recovery restart must preserve the rate-limit window or the
         /// cap is unenforced.
         /// </summary>
-        public void Reset()
+        public void Reset(bool clearFlapHistory = true)
         {
             lock (_lock)
             {
@@ -233,6 +314,15 @@ namespace MozaPlugin.Telemetry.Lifecycle
                 _recentRestartTicks.Clear();
                 _parked = false;
                 _parkReason = null;
+                _parkIsDegraded = false;
+                _parkRetryUsed = false;
+                try { _parkRetryTimer.Change(Timeout.Infinite, Timeout.Infinite); } catch { }
+                // Reconnect edge passes clearFlapHistory:false — a flapping link keeps
+                // dropping+reconnecting, and clearing the flap window on every reconnect
+                // would let it dodge the cross-cycle cap forever. Only a deliberate user
+                // re-enable / hardware hot-swap (default true) wipes the flap history.
+                if (clearFlapHistory)
+                    _flapRestartTicks.Clear();
             }
         }
     }

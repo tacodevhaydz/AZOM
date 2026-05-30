@@ -31,6 +31,9 @@ namespace MozaPlugin.UI
         // The recovery ladder exhausted its restart budget / hit a terminal park
         // and stopped the telemetry pipeline. Surfaces the park reason + how to retry.
         TelemetryParked,
+        // The pipeline parked in a benign DEGRADED state (e.g. a screenless wheel
+        // with no display sub-device) — expected, not a failure; calm wording.
+        TelemetryDegraded,
     }
 
     /// <summary>

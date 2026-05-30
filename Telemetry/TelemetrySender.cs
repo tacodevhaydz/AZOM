@@ -3199,8 +3199,10 @@ namespace MozaPlugin.Telemetry
                 // Reconnect transition: forgive any prior restart-budget
                 // exhaustion / park. The wheel is observably back; if the
                 // root cause is still present the watchdogs will re-escalate
-                // from a clean budget.
-                try { _recovery.Reset(); } catch { }
+                // from a clean budget. Keep the cross-cycle FLAP history, though,
+                // so a connection that keeps dropping+reconnecting+restarting
+                // eventually parks instead of looping forever.
+                try { _recovery.Reset(clearFlapHistory: false); } catch { }
             }
 
             if (_state == TelemetryState.Idle || !currentlyConnected)

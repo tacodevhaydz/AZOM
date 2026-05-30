@@ -79,12 +79,26 @@ namespace MozaPlugin.UI
             var sender = plugin.TelemetrySender;
             if (sender != null && sender.Phase == global::MozaPlugin.Telemetry.PipelinePhase.Parked)
             {
-                string reason = sender.Recovery?.ParkReason;
-                list.Add(new StatusHint(
-                    StatusHintKind.TelemetryParked,
-                    "Telemetry stopped after repeated failures",
-                    (string.IsNullOrEmpty(reason) ? "" : reason + " ")
-                    + "Toggle dashboard telemetry off and on to retry."));
+                var rec = sender.Recovery;
+                string? reason = rec?.ParkReason;
+                if (rec?.ParkIsDegraded ?? false)
+                {
+                    // Benign degraded state (e.g. screenless wheel) — calm wording,
+                    // no "failure", no "toggle to retry" nag.
+                    list.Add(new StatusHint(
+                        StatusHintKind.TelemetryDegraded,
+                        "MOZA wheel has no display",
+                        (string.IsNullOrEmpty(reason) ? "" : reason + " ")
+                        + "This is expected for wheels without a screen — no action needed."));
+                }
+                else
+                {
+                    list.Add(new StatusHint(
+                        StatusHintKind.TelemetryParked,
+                        "Telemetry stopped after repeated failures",
+                        (string.IsNullOrEmpty(reason) ? "" : reason + " ")
+                        + "Toggle dashboard telemetry off and on to retry."));
+                }
             }
 
             // Rule 2: DeviceDefinitionDeployed (existing behaviour, kept verbatim)
