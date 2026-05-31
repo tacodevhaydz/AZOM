@@ -2150,6 +2150,35 @@ namespace MozaPlugin
             // a wheel silently ignores the binding; documented limitation.
             this.AttachDelegate("Moza.TelemetryState", () => (_telemetrySender?.Phase ?? PipelinePhase.Idle).ToString());
             this.AttachDelegate("Moza.DashboardBound", () => (_telemetrySender?.Phase ?? PipelinePhase.Idle) == PipelinePhase.Active);
+
+            // Live physical-input positions read directly from the device HID
+            // surface (independent of any game telemetry — these update even with
+            // no sim running, see issue #59). _hidReader is constructed later in
+            // Init than RegisterProperties, so guard it on every getter.
+            this.AttachDelegate("Moza.HidConnected", () => _data?.IsHidConnected ?? false);
+            // Signed steering angle in degrees: 0 = center, + / - = each lock
+            // direction. Scaled by the base's reported max-angle (MaxAngle*2 =
+            // full physical range), matching Moza.MaxAngle. Returns 0 until the
+            // max-angle and HID range are both known.
+            this.AttachDelegate("Moza.SteeringAngle", () =>
+            {
+                var hid = _hidReader;
+                int maxAngleDeg = (_data?.MaxAngle ?? 0) * 2;
+                if (hid == null || maxAngleDeg <= 0) return 0.0;
+                return hid.GetCurrentAngleDegrees(maxAngleDeg);
+            });
+            // Steering as a 0-100 position (0 = full lock one way, 50 = center,
+            // 100 = full lock the other). Independent of max-angle. Returns -1
+            // when no HID device is connected or the range is unknown.
+            this.AttachDelegate("Moza.SteeringPosition", () => _hidReader?.GetSteeringPositionPercent() ?? -1.0);
+            // Pedal / paddle axes as 0-100 positions.
+            this.AttachDelegate("Moza.Throttle", () => _data?.ThrottlePosition ?? 0);
+            this.AttachDelegate("Moza.Brake", () => _data?.BrakePosition ?? 0);
+            this.AttachDelegate("Moza.Clutch", () => _data?.ClutchPosition ?? 0);
+            this.AttachDelegate("Moza.Handbrake", () => _data?.HandbrakePosition ?? 0);
+            this.AttachDelegate("Moza.LeftPaddle", () => _data?.LeftPaddlePosition ?? 0);
+            this.AttachDelegate("Moza.RightPaddle", () => _data?.RightPaddlePosition ?? 0);
+            this.AttachDelegate("Moza.CombinedPaddle", () => _data?.CombinedPaddlePosition ?? 0);
         }
 
         private void RegisterActions()

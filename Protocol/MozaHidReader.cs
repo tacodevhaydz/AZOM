@@ -114,6 +114,28 @@ namespace MozaPlugin.Protocol
             return normalized * (maxAngleDeg / 2.0);
         }
 
+        /// <summary>
+        /// Returns the current wheel position as a 0-100 percentage of physical
+        /// travel, where 0 = full lock in one direction, 50 = center, and
+        /// 100 = full lock in the other. Unlike <see cref="GetCurrentAngleDegrees"/>
+        /// this is independent of the base's reported max-angle, so it is valid
+        /// as soon as the HID min/max range has been observed. Returns -1 when
+        /// no HID device is connected or the range is unknown.
+        /// </summary>
+        public double GetSteeringPositionPercent()
+        {
+            if (!_data.IsHidConnected) return -1.0;
+            int min = _data.SteeringAngleRawMin;
+            int max = _data.SteeringAngleRawMax;
+            int range = max - min;
+            if (range <= 0) return -1.0;
+            int raw = _data.SteeringAngleRaw;
+            double pct = ((raw - min) / (double)range) * 100.0;
+            if (pct < 0) pct = 0;
+            if (pct > 100) pct = 100;
+            return pct;
+        }
+
         private void Run()
         {
             while (!_stop)

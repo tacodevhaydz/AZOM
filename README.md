@@ -196,6 +196,18 @@ The plugin exposes these properties for use in SimHub dashboards and overlays:
 | `Moza.BaseState` | int | Wheelbase state |
 | `Moza.FfbStrength` | int | FFB strength (%) |
 | `Moza.MaxAngle` | int | Max steering angle (degrees) |
+| `Moza.HidConnected` | bool | Whether a device HID surface is being read (live input is available) |
+| `Moza.SteeringAngle` | double | Live steering angle in degrees (0 = center, ± = each lock direction); 0 until max-angle is known |
+| `Moza.SteeringPosition` | double | Live steering as 0–100 (0 = full lock, 50 = center, 100 = full lock); -1 when unknown |
+| `Moza.Throttle` | int | Throttle pedal position (0–100) |
+| `Moza.Brake` | int | Brake pedal position (0–100) |
+| `Moza.Clutch` | int | Clutch pedal position (0–100) |
+| `Moza.Handbrake` | int | Handbrake position (0–100) |
+| `Moza.LeftPaddle` | int | Left analog paddle position (0–100) |
+| `Moza.RightPaddle` | int | Right analog paddle position (0–100) |
+| `Moza.CombinedPaddle` | int | Combined analog paddle axis position (0–100) |
+
+These input properties are populated directly from the device HID surface, so they update live even when no game is running.
 
 ## Building from Source
 
