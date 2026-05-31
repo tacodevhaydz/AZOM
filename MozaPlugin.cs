@@ -898,6 +898,12 @@ namespace MozaPlugin
                     if (IsShuttingDown) return;
                     if (!_connection.IsConnected)
                         TryConnect();
+                    else
+                        // Primary already latched — if it grabbed a hub before the
+                        // wheelbase enumerated (wrong latch order), hand it off to
+                        // the base now. Runs before TryConnectHub so the freed hub
+                        // port is claimed by the hub manager in this same tick.
+                        MigratePrimaryToWheelbaseIfNeeded();
                     // AB9 probe is microseconds when registry is populated.
                     // On Wine/Proton (no registry) the fallback would scan
                     // every wine COM symlink and lock up SimHub; suppress when
@@ -2606,6 +2612,97 @@ namespace MozaPlugin
                 _settings.LastHubPort = "";
                 ScheduleSave();
             }
+        }
+
+        /// <summary>
+        /// Self-heal a mis-latched primary connection. The primary (BaseAndHub)
+        /// picks its port ONCE via FindMozaPort's wheel-location rule; if a
+        /// Universal Hub enumerated before the wheelbase ("wrong latch order"),
+        /// the primary bound the hub and — being IsConnected — never re-evaluates
+        /// (the reconnect tick only calls TryConnect while disconnected). The
+        /// wheel/session/telemetry pipeline must run on the BASE, so a primary
+        /// stuck on the hub leaves telemetry dead and the base port unclaimed.
+        ///
+        /// When a wheelbase is the intended primary, detect a primary bound to a
+        /// NON-wheelbase port while a free wheelbase port now exists, release the
+        /// hub (so the dedicated hub manager can claim it on the next
+        /// TryConnectHub), and rebind the primary to the base. Order-independent:
+        /// also covers hot-plugging a base into a hub-only setup.
+        ///
+        /// Registry-category gated — Wine/empty-registry setups can't tell hub
+        /// from base and rely on the probe path's bases-first ordering, so they
+        /// never trip this.
+        /// </summary>
+        private void MigratePrimaryToWheelbaseIfNeeded()
+        {
+            if (IsShuttingDown) return;
+            if (_connection == null || !_connection.IsConnected) return;
+
+            // Only meaningful when the registry can categorize ports (real-HW
+            // Windows). Empty registry = Wine/Proton → leave the probe path alone.
+            var ports = MozaPortDiscovery.Instance.Enumerate();
+            if (ports.Count == 0) return;
+
+            // Already on a wheelbase → correctly bound, nothing to do.
+            if (MozaUsbIds.Categorize(_connection.DiscoveredPid) == MozaDeviceCategory.Wheelbase)
+                return;
+
+            // Find a wheelbase port that is present and not held by any sibling
+            // connection (the hub-only case has none → primary correctly stays
+            // on the hub and we return).
+            string? wheelbasePort = null;
+            foreach (var p in ports)
+            {
+                if (p.Category != MozaDeviceCategory.Wheelbase) continue;
+                // Defensive: if the primary somehow already holds this wheelbase
+                // port the category check above would have returned; treat a
+                // self-match as "nothing to migrate".
+                if (string.Equals(p.PortName, _connection.LastPortName,
+                                  StringComparison.OrdinalIgnoreCase))
+                    return;
+                if (MozaSerialConnection.IsPortHeld(p.PortName)) continue;
+                wheelbasePort = p.PortName;
+                break;
+            }
+            if (wheelbasePort == null) return;
+
+            MozaLog.Info(
+                $"[Moza] Primary bound to non-wheelbase port {_connection.LastPortName} " +
+                $"(PID={_connection.DiscoveredPid}) but a wheelbase is available on {wheelbasePort} — " +
+                "migrating primary to the wheelbase");
+
+            // Release the hub: Disconnect() frees the port from the in-process
+            // active-port set so TryConnectHub can claim it. (Manual Disconnect
+            // does NOT raise the Disconnected event, so no OnSerialDisconnected
+            // side effects fire here.)
+            _connection.Disconnect();
+
+            // Clear the cached/persisted port so Connect()'s cached path — which
+            // validates by PID only (the hub PID passes the primary's filter) —
+            // can't immediately re-grab the hub. FindMozaPort's wheel-location
+            // rule then selects the wheelbase.
+            _connection.LastPortName = null;
+            if (!string.IsNullOrEmpty(_settings.LastWheelbasePort))
+            {
+                _settings.LastWheelbasePort = "";
+                ScheduleSave();
+            }
+
+            // Peripherals detected while the primary was wrongly on the hub got
+            // their owner pinned to the primary device-manager; reset detection +
+            // ownership (mirrors OnHubDisconnected) so they re-enumerate on the
+            // correct pipe — pedals/handbrake via the hub manager, base settings
+            // via the rebound primary.
+            DetectionState.PedalsDetected = false;
+            DetectionState.PedalsOwner = null;
+            DetectionState.HandbrakeDetected = false;
+            DetectionState.HandbrakeOwner = null;
+            DetectionState.HubDetected = false;
+
+            // Rebind the primary; TryConnect re-probes the wheel and persists the
+            // new (base) port. The freed hub port is claimed by TryConnectHub
+            // later in this same reconnect tick.
+            TryConnect();
         }
 
         /// <summary>

@@ -73,6 +73,12 @@ namespace MozaPlugin.Protocol
         private static readonly System.Collections.Concurrent.ConcurrentDictionary<string, byte> _activePorts =
             new System.Collections.Concurrent.ConcurrentDictionary<string, byte>(StringComparer.OrdinalIgnoreCase);
 
+        /// <summary>True when a live sibling connection in this process currently
+        /// holds <paramref name="portName"/>. Lets the plugin's primary→wheelbase
+        /// migration skip a hub port already claimed by another connection.</summary>
+        public static bool IsPortHeld(string? portName) =>
+            !string.IsNullOrEmpty(portName) && _activePorts.ContainsKey(portName!);
+
         // PID filter for port discovery; null PID = probe-based (unknown).
         private readonly Func<string?, bool>? _pidFilter;
         private readonly MozaProbeTarget _probeTarget;
