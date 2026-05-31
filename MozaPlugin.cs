@@ -123,21 +123,11 @@ namespace MozaPlugin
         private Timer _pollTimer = null!;
         private Timer _retryTimer = null!;
         private Timer _reconnectTimer = null!;
-        // Hub-probe back-off: the hub-port1-power read (cmd=100 / 0x64) is the
-        // only way to distinguish a Universal Hub from the wheelbase main
-        // controller (they share device id 0x12), so we have to probe it. But
-        // the probe got sent every 5 s status-poll tick forever when no Hub
-        // was present, and the wheelbase firmware logs an "Unexpected cmd: 100"
-        // warning for each one — 52 warnings in 4 minutes on the issue #43
-        // user's bundle, who has no Hub. Throttle: aggressive for the first
-        // 30 s after first probe (covers Hub-present-from-start within poll
-        // cadence), then back off to once per 60 s (covers hot-plug within
-        // ~60 s of attaching). Both timestamps in Environment.TickCount; 0 =
-        // "not yet probed".
-        private int _hubProbeFirstTickMs;
-        private int _hubProbeLastTickMs;
-        private const int HubProbeAggressiveMs = 30_000;
-        private const int HubProbeBackoffMs = 60_000;
+        // Hub detection belongs ONLY to the dedicated hub connection (_hubManager),
+        // which probes for a Universal Hub on the hub's OWN port and skips the
+        // wheelbase port. The base/wheelbase connection must NEVER emit hub calls
+        // (hub-port-power / cmd 0x64): that device answered the base probe, so it is
+        // a known wheelbase and rejects hub commands ("Unexpected cmd: 100").
         private int _connectingFlag;
         private MozaHidReader _hidReader = null!;
         private PluginManager _pluginManager = null!;
@@ -2194,6 +2184,203 @@ namespace MozaPlugin
                 ClearLedsOnHardware();
                 MozaLog.Debug("[Moza] LEDs cleared via action");
             });
+
+            // Step actions mirror the SettingsControl sliders so SimHub button
+            // bindings can nudge the same settings. Each registers Up/Down (fine)
+            // and UpCoarse/DownCoarse variants; the stepper clamps to the slider's
+            // [min,max] range, pushes to hardware exactly where the UI handler does,
+            // and persists via SaveSettings(). An open settings panel re-reads the
+            // new value on its refresh tick.
+
+            // Base feel.
+            AddStepActions("Moza.FfbStrength", 5, 10, StepFfbStrength);   // 0..100 %
+            AddStepActions("Moza.Torque",      5, 10, StepTorque);        // 50..100 %
+            AddStepActions("Moza.Rotation",   90, 180, StepRotation);     // 90..2700 deg
+
+            // AB9 shifter vibration.
+            AddStepActions("Moza.Ab9EngineIntensity",    5, 10, StepAb9EngineIntensity);    // 0..100
+            AddStepActions("Moza.Ab9EngineFrequency",   10, 20, StepAb9EngineFrequency);    // 0..200 Hz
+            AddStepActions("Moza.Ab9GearShiftIntensity", 5, 10, StepAb9GearShiftIntensity); // 0..100
+
+            // Cycle the wheel's displayed dashboard (wraparound).
+            this.AddAction("Moza.DashboardNext", (a, b) => CycleDashboard(+1));
+            this.AddAction("Moza.DashboardPrev", (a, b) => CycleDashboard(-1));
+
+            // Dashboard telemetry on/off for the active wheel page.
+            this.AddAction("Moza.DashboardTelemetryToggle", (a, b) => ToggleDashboardTelemetry());
+            this.AddAction("Moza.DashboardTelemetryOn", (a, b) =>
+            {
+                SetTelemetryEnabled(true);
+                MozaLog.Debug("[Moza] Dashboard telemetry on via action");
+            });
+            this.AddAction("Moza.DashboardTelemetryOff", (a, b) =>
+            {
+                SetTelemetryEnabled(false);
+                MozaLog.Debug("[Moza] Dashboard telemetry off via action");
+            });
+        }
+
+        /// <summary>
+        /// Registers the four button-bindable step variants for a setting:
+        /// <c>{name}Up</c>/<c>{name}Down</c> apply ±<paramref name="fine"/>, and
+        /// <c>{name}UpCoarse</c>/<c>{name}DownCoarse</c> apply ±<paramref name="coarse"/>.
+        /// <paramref name="apply"/> receives the signed delta in display units.
+        /// </summary>
+        private void AddStepActions(string name, int fine, int coarse, Action<int> apply)
+        {
+            this.AddAction(name + "Up",         (a, b) => apply(+fine));
+            this.AddAction(name + "Down",       (a, b) => apply(-fine));
+            this.AddAction(name + "UpCoarse",   (a, b) => apply(+coarse));
+            this.AddAction(name + "DownCoarse", (a, b) => apply(-coarse));
+        }
+
+        private static int ClampStep(int current, int delta, int min, int max)
+            => Math.Max(min, Math.Min(max, current + delta));
+
+        // FFB strength: stored raw = percent * 10 (cf. FfbStrengthSlider_ValueChanged).
+        private void StepFfbStrength(int deltaPct)
+        {
+            if (_data == null) return;
+            int pct = ClampStep(_data.FfbStrength / 10, deltaPct, 0, 100);
+            int raw = pct * 10;
+            _data.FfbStrength = raw;
+            WriteIfBaseConnected("base-ffb-strength", raw);
+            SaveSettings();
+            MozaLog.Debug($"[Moza] FFB strength → {pct}% via action");
+        }
+
+        // Torque limit: percent, 50..100 (cf. TorqueSlider_ValueChanged).
+        private void StepTorque(int deltaPct)
+        {
+            if (_data == null) return;
+            int v = ClampStep(_data.Torque, deltaPct, 50, 100);
+            _data.Torque = v;
+            WriteIfBaseConnected("base-torque", v);
+            SaveSettings();
+            MozaLog.Debug($"[Moza] Torque → {v}% via action");
+        }
+
+        // Steering rotation: display degrees, stored raw = degrees / 2; both
+        // base-limit and base-max-angle move together (cf. RotationSlider_ValueChanged).
+        private void StepRotation(int deltaDeg)
+        {
+            if (_data == null) return;
+            int deg = ClampStep(_data.Limit * 2, deltaDeg, 90, 2700);
+            int raw = deg / 2;
+            _data.Limit = raw;
+            _data.MaxAngle = raw;
+            WriteIfBaseConnected("base-limit", raw);
+            WriteIfBaseConnected("base-max-angle", raw);
+            SaveSettings();
+            MozaLog.Debug($"[Moza] Rotation → {deg}° via action");
+        }
+
+        // AB9 engine vibration is host-rendered: the worker thread picks up the
+        // new profile value on its next tick, no device write (cf.
+        // Ab9EngineVibIntensitySlider_ValueChanged).
+        private void StepAb9EngineIntensity(int delta)
+        {
+            var ab9 = GetOrCreateActiveAb9();
+            if (ab9 == null) return;
+            ab9.EngineVibrationIntensity = (byte)ClampStep(ab9.EngineVibrationIntensity, delta, 0, 100);
+            SaveSettings();
+            MozaLog.Debug($"[Moza] AB9 engine vibration intensity → {ab9.EngineVibrationIntensity} via action");
+        }
+
+        private void StepAb9EngineFrequency(int delta)
+        {
+            var ab9 = GetOrCreateActiveAb9();
+            if (ab9 == null) return;
+            ab9.EngineVibrationFrequency = (ushort)ClampStep(ab9.EngineVibrationFrequency, delta, 0, 200);
+            SaveSettings();
+            MozaLog.Debug($"[Moza] AB9 engine vibration frequency → {ab9.EngineVibrationFrequency} Hz via action");
+        }
+
+        // AB9 gear-shift vibration: one config write per change so the firmware
+        // persists the stored intensity (cf. Ab9GearShiftVibSlider_ValueChanged).
+        private void StepAb9GearShiftIntensity(int delta)
+        {
+            var ab9 = GetOrCreateActiveAb9();
+            if (ab9 == null) return;
+            int v = ClampStep(ab9.GearShiftVibrationIntensity, delta, 0, 100);
+            ab9.GearShiftVibrationIntensity = (byte)v;
+            _ab9Manager?.SendGearShiftVibrationIntensity(v);
+            SaveSettings();
+            MozaLog.Debug($"[Moza] AB9 gear-shift vibration intensity → {v} via action");
+        }
+
+        // Returns the active profile's AB9 block, creating it if absent (matches
+        // the UI's GetOrCreateAb9Profile). Null only when no profile is loaded.
+        private Ab9Settings? GetOrCreateActiveAb9()
+        {
+            var profile = _settings?.ProfileStore?.CurrentProfile;
+            if (profile == null) return null;
+            if (profile.Ab9 == null) profile.Ab9 = new Ab9Settings();
+            return profile.Ab9;
+        }
+
+        // Flip dashboard telemetry for the active wheel page. No-op when no wheel
+        // page is identified (ActiveTelemetryEnabled set is a no-op there).
+        private void ToggleDashboardTelemetry()
+        {
+            bool turningOn = !ActiveTelemetryEnabled;
+            SetTelemetryEnabled(turningOn);
+            MozaLog.Debug($"[Moza] Dashboard telemetry → {(turningOn ? "on" : "off")} via action");
+        }
+
+        // Cycle the wheel's displayed dashboard to the next/previous enabled slot,
+        // wrapping around. Mirrors the DashboardManagementControl combo switch:
+        // ConfigJsonList is slot-ordered (dropdown index IS the slot), the wheel's
+        // WheelReportedSlot is the ground-truth current slot, and
+        // OnDashboardSwitched(slot) routes through SwitchToProfile so FF kind=4 +
+        // the pipeline cycle honor the EnableHotRenegotiation flag. delta is +1
+        // (next) or -1 (prev). No-op when the wheel has 0 or 1 dashboards.
+        private void CycleDashboard(int delta)
+        {
+            var list = WheelStateForDiagnostics?.ConfigJsonList;
+            if (list == null || list.Count == 0)
+            {
+                MozaLog.Debug("[Moza] Dashboard cycle ignored: no wheel dashboard list");
+                return;
+            }
+            int n = list.Count;
+            if (n == 1)
+            {
+                MozaLog.Debug("[Moza] Dashboard cycle ignored: only one dashboard");
+                return;
+            }
+
+            // Prefer the wheel's reported slot; fall back to matching the active
+            // profile name against the slot list when the wheel slot is unknown.
+            int cur = _telemetrySender?.WheelReportedSlot ?? -1;
+            if (cur < 0 || cur >= n)
+            {
+                cur = -1;
+                string activeName = ActiveTelemetryProfileName;
+                if (!string.IsNullOrEmpty(activeName))
+                {
+                    for (int i = 0; i < n; i++)
+                    {
+                        if (string.Equals(list[i], activeName, StringComparison.OrdinalIgnoreCase))
+                        {
+                            cur = i;
+                            break;
+                        }
+                    }
+                }
+            }
+
+            // Unknown current slot: step in from the appropriate end.
+            int target = cur < 0
+                ? (delta > 0 ? 0 : n - 1)
+                : ((cur + delta) % n + n) % n;
+
+            string selected = list[target];
+            ActiveTelemetryProfileName = selected;
+            ActiveTelemetryMzdashPath = "";
+            SaveSettings();
+            OnDashboardSwitched((uint)target);
+            MozaLog.Debug($"[Moza] Dashboard cycle {(delta > 0 ? "next" : "prev")} → slot {target} \"{selected}\" via action");
         }
 
         /// <summary>
@@ -2435,7 +2622,8 @@ namespace MozaPlugin
                     _deviceManager.ReadSetting("dash-rpm-indicator-mode");
                     _deviceManager.ReadSetting("handbrake-direction");
                     _deviceManager.ReadSetting("pedals-throttle-dir");
-                    _deviceManager.ReadSetting("hub-port1-power");
+                    // No hub-port-power read here — this is the wheelbase connection;
+                    // hub detection is the dedicated hub connection's job (its own port).
 
                     // Persist successful port for next launch
                     var port = _connection.LastPortName;
@@ -2816,13 +3004,6 @@ namespace MozaPlugin
             // connection. They'd otherwise keep retrying after reconnect
             // against a fresh wheel that may not even speak the same protocol.
             try { PendingResponses.Clear(); } catch { }
-            // Reset Hub-probe back-off so the next reconnect re-enters the
-            // aggressive 30 s probe window. Without this, a user attaching
-            // a Hub during the disconnect window would face up to 60 s of
-            // Hub-detection latency after reconnect because the back-off
-            // counter rolled into the once-per-60s mode mid-session.
-            _hubProbeFirstTickMs = 0;
-            _hubProbeLastTickMs = 0;
             if (DetectionState.NewWheelDetected || DetectionState.OldWheelDetected || DetectionState.DashDetected)
                 ResetWheelDetection("Serial disconnect — resetting wheel detection");
         }
@@ -2946,35 +3127,9 @@ namespace MozaPlugin
                 _deviceManager.SendPresenceProbe(MozaProtocol.DeviceHandbrake);
             if (!DetectionState.PedalsDetected)
                 _deviceManager.SendPresenceProbe(MozaProtocol.DevicePedals);
-            if (!DetectionState.HubDetected)
-            {
-                int now = Environment.TickCount;
-                bool shouldProbe;
-                if (_hubProbeFirstTickMs == 0)
-                {
-                    // First probe ever — fire and start the aggressive window.
-                    _hubProbeFirstTickMs = now;
-                    shouldProbe = true;
-                }
-                else if ((now - _hubProbeFirstTickMs) < HubProbeAggressiveMs)
-                {
-                    // Inside the aggressive window: probe every poll tick.
-                    shouldProbe = true;
-                }
-                else
-                {
-                    // Past the aggressive window: probe at most once per
-                    // HubProbeBackoffMs so wheelbase firmware stops logging
-                    // "Unexpected cmd: 100" warnings on every tick. Hot-plug
-                    // detection latency capped at HubProbeBackoffMs.
-                    shouldProbe = (now - _hubProbeLastTickMs) >= HubProbeBackoffMs;
-                }
-                if (shouldProbe)
-                {
-                    _hubProbeLastTickMs = now;
-                    _deviceManager.ReadSetting("hub-port1-power");
-                }
-            }
+            // No hub-port-power poll on the wheelbase connection — a Universal Hub
+            // is found by the dedicated hub connection on its own port, never by
+            // sending hub commands to a device we already know is a wheelbase.
 
             // Re-probe display sub-device until fully identified — initial probe
             // can race power-up and return only partial identity. Skip for wheels

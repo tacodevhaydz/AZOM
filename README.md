@@ -209,6 +209,30 @@ The plugin exposes these properties for use in SimHub dashboards and overlays:
 
 These input properties are populated directly from the device HID surface, so they update live even when no game is running.
 
+### SimHub Actions
+
+The plugin registers these actions, bindable to wheel/controller buttons under SimHub's **Controls and events** (or to dashboard controls). They change the same settings as the sliders/toggles in the plugin UI, push to hardware immediately, and persist to the active profile.
+
+Each *step* setting has four actions: `…Up` / `…Down` apply a fine step, and `…UpCoarse` / `…DownCoarse` apply a coarse step. Values clamp to the slider range.
+
+| Action | Range | Fine | Coarse | Effect |
+|--------|-------|------|--------|--------|
+| `Moza.FfbStrengthUp` / `…Down` / `…UpCoarse` / `…DownCoarse` | 0–100% | ±5 | ±10 | Wheelbase FFB strength |
+| `Moza.TorqueUp` / `…Down` / `…UpCoarse` / `…DownCoarse` | 50–100% | ±5 | ±10 | Wheelbase torque limit |
+| `Moza.RotationUp` / `…Down` / `…UpCoarse` / `…DownCoarse` | 90–2700° | ±90° | ±180° | Steering rotation (max angle) |
+| `Moza.Ab9EngineIntensityUp` / `…Down` / `…UpCoarse` / `…DownCoarse` | 0–100 | ±5 | ±10 | AB9 engine-vibration intensity |
+| `Moza.Ab9EngineFrequencyUp` / `…Down` / `…UpCoarse` / `…DownCoarse` | 0–200 Hz | ±10 | ±20 | AB9 engine-vibration frequency |
+| `Moza.Ab9GearShiftIntensityUp` / `…Down` / `…UpCoarse` / `…DownCoarse` | 0–100 | ±5 | ±10 | AB9 gear-shift vibration intensity |
+
+| Action | Effect |
+|--------|--------|
+| `Moza.DashboardNext` | Switch the wheel's displayed dashboard to the next enabled slot (wraps around) |
+| `Moza.DashboardPrev` | Switch the wheel's displayed dashboard to the previous enabled slot (wraps around) |
+| `Moza.DashboardTelemetryToggle` | Toggle dashboard telemetry on/off for the active wheel page |
+| `Moza.DashboardTelemetryOn` | Enable dashboard telemetry for the active wheel page |
+| `Moza.DashboardTelemetryOff` | Disable dashboard telemetry for the active wheel page |
+| `Moza.ClearLeds` | Blank all wheel and dash LEDs |
+
 ## Building from Source
 
 See [DEVELOPMENT.md](docs/DEVELOPMENT.md) for build instructions (Windows & Linux cross-compilation), CI/CD pipeline details, and full architecture reference.
