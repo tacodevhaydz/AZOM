@@ -2735,6 +2735,30 @@ namespace MozaPlugin
         internal bool IsPendingDashboardApply => _dashboardBindingCoordinator?.IsPendingDashboardApply ?? false;
         internal string? PendingDashboardApplyDescription => _dashboardBindingCoordinator?.PendingDashboardApplyDescription;
 
+        /// <summary>
+        /// True when the singular primary connection is itself bound to a Universal
+        /// Hub — the hub-ONLY case (no wheelbase present). Here the primary, not the
+        /// dedicated hub connection, must perform hub detection: the dedicated hub
+        /// connection never opens because the primary already holds the only hub
+        /// port (the <c>_activePorts</c> guard blocks a second open). Without this,
+        /// nothing reads <c>hub-port1-power</c>, so <c>IsHubConnected</c> never flips,
+        /// <c>Data.IsConnected</c> stays false, and the SimHub LED pipeline's
+        /// connected-gate (<see cref="Devices.MozaLedDeviceManager.Display"/>)
+        /// suppresses every frame — the wheel sits on its static EEPROM colours.
+        ///
+        /// Registry-based setups expose the hub PID on <c>DiscoveredPid</c>;
+        /// Wine/probe setups have a null PID but set <c>HubProbeSucceeded</c> when
+        /// the bound device answered the hub probe (the bases-first ordering means a
+        /// hub-probe match implies no wheelbase responded). A wheelbase-bound primary
+        /// (base-only or base+hub) trips neither branch, so it never sends hub reads
+        /// down the base pipe.
+        /// </summary>
+        private bool PrimaryBoundToHub =>
+            _connection != null
+            && _connection.IsConnected
+            && (MozaUsbIds.IsHubPid(_connection.DiscoveredPid)
+                || (_connection.DiscoveredPid == null && _connection.HubProbeSucceeded));
+
         private void TryConnect()
         {
             if (Interlocked.CompareExchange(ref _connectingFlag, 1, 0) != 0)
@@ -2761,8 +2785,16 @@ namespace MozaPlugin
                     _deviceManager.ReadSetting("dash-rpm-indicator-mode");
                     _deviceManager.ReadSetting("handbrake-direction");
                     _deviceManager.ReadSetting("pedals-throttle-dir");
-                    // No hub-port-power read here — this is the wheelbase connection;
-                    // hub detection is the dedicated hub connection's job (its own port).
+                    // Hub detection normally belongs to the dedicated hub connection
+                    // (its own port). The exception is the hub-ONLY case: the primary
+                    // is itself bound to the hub, the dedicated hub connection can't
+                    // open (port already held), so the primary must read
+                    // hub-port1-power here — its 0xE4 reply flips HubDetected /
+                    // IsHubConnected (DeviceProber.hub-port1-power case), which is what
+                    // turns Data.IsConnected true and lets the SimHub LED pipeline
+                    // forward frames. A wheelbase-bound primary skips this.
+                    if (PrimaryBoundToHub)
+                        _deviceManager.ReadSetting("hub-port1-power");
 
                     // Persist successful port for next launch
                     var port = _connection.LastPortName;
@@ -3341,9 +3373,17 @@ namespace MozaPlugin
                 }
             }
 
-            // Poll hub port status while hub is connected (read-only, no settings to save)
+            // Poll hub port status while hub is connected (read-only, no settings to save).
+            // When the primary is itself bound to a hub (hub-only setup) and the hub
+            // hasn't been detected yet, keep issuing the hub-port1-power presence read
+            // — the connect-time read is tracked/retried, but this also recovers if the
+            // hub re-enumerates without a full reconnect. Once detected, poll the full
+            // port-power set so the Hub-tab indicators stay current. Mirrors
+            // PollHubPeripherals' trigger/full-set split for the dedicated hub pipe.
             if (DetectionState.HubDetected)
                 _deviceManager.ReadSettings(DeviceProber.HubReadCommands);
+            else if (PrimaryBoundToHub)
+                _deviceManager.ReadSetting("hub-port1-power");
         }
 
         private volatile int _unmatched;
