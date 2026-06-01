@@ -317,8 +317,11 @@
   <data name="Section_FullDiagReport" xml:space="preserve"><value>ПОЛНЫЙ ДИАГНОСТИЧЕСКИЙ ОТЧЁТ</value></data>
   <data name="Subtitle_FullDiagReport" xml:space="preserve"><value>// отладочная информация</value></data>
   <data name="Button_Expand" xml:space="preserve"><value>РАЗВЕРНУТЬ</value></data>
+  <data name="Button_Collapse" xml:space="preserve"><value>СВЕРНУТЬ</value></data>
   <data name="Button_CopyAll" xml:space="preserve"><value>СКОПИРОВАТЬ ВСЁ В БУФЕР</value></data>
   <data name="Hint_ClickExpandToRender" xml:space="preserve"><value>Нажмите Развернуть, чтобы отобразить полный многосекционный отчёт.</value></data>
+  <data name="Hint_FullDiagRendered" xml:space="preserve"><value>// {0} строк · то же содержимое, что и в экспортируемом пакете</value></data>
+  <data name="Hint_FullDiagRenderFailed" xml:space="preserve"><value>// сбой отрисовки</value></data>
   <data name="Hint_MBoosterIntro" xml:space="preserve"><value>Каждый подключённый mBooster появляется ниже. Выберите роль (Газ/Тормоз/Сцепление) для каждого устройства, чтобы направить положение его педали. Раздел Калибровка — экспериментальный.</value></data>
   <data name="Hint_MBoosterCalibrationWarning" xml:space="preserve"><value>Ещё не тестировалось.</value></data>
   <data name="Title_PickLedColor" xml:space="preserve"><value>Выбор цвета LED</value></data>

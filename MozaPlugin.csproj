@@ -79,6 +79,10 @@
       <WithCulture>false</WithCulture>
       <ManifestResourceName>MozaPlugin.Resources.Strings.de</ManifestResourceName>
     </EmbeddedResource>
+    <EmbeddedResource Update="Resources\Strings.el.resx">
+      <WithCulture>false</WithCulture>
+      <ManifestResourceName>MozaPlugin.Resources.Strings.el</ManifestResourceName>
+    </EmbeddedResource>
     <EmbeddedResource Update="Resources\Strings.es.resx">
       <WithCulture>false</WithCulture>
       <ManifestResourceName>MozaPlugin.Resources.Strings.es</ManifestResourceName>

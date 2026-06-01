@@ -134,7 +134,7 @@ All settings are stored per-game via SimHub's profile system and switch automati
 
 ### Languages
 
-The plugin UI is localized into **English, Deutsch, Español, Français, Italiano, Русский, Tiếng Việt, and 简体中文** (8 languages). By default the plugin follows SimHub's own language setting (Settings > General > Culture in SimHub); if SimHub is set to a language the plugin doesn't ship yet, it falls back to your OS UI language, then English. A **Language** picker in the plugin's Options tab lets you override that auto-detection — useful if you want SimHub in one language and the MOZA pane in another.
+The plugin UI is localized into **English, Deutsch, Ελληνικά, Español, Français, Italiano, Русский, Tiếng Việt, and 简体中文** (9 languages). By default the plugin follows SimHub's own language setting (Settings > General > Culture in SimHub); if SimHub is set to a language the plugin doesn't ship yet, it falls back to your OS UI language, then English. A **Language** picker in the plugin's Options tab lets you override that auto-detection — useful if you want SimHub in one language and the MOZA pane in another.
 
 All translations are embedded directly into `MozaPlugin.dll` — no per-culture satellite assemblies, no extra files to deploy. Translations live in `Resources/Strings.<culture>.resx`. PRs adding a new language are welcome — see the i18n section in [DEVELOPMENT.md](docs/DEVELOPMENT.md) for the four-step recipe.
 
@@ -223,9 +223,13 @@ Each *step* setting has four actions: `…Up` / `…Down` apply a fine step, and
 | `Moza.Ab9EngineIntensityUp` / `…Down` / `…UpCoarse` / `…DownCoarse` | 0–100 | ±5 | ±10 | AB9 engine-vibration intensity |
 | `Moza.Ab9EngineFrequencyUp` / `…Down` / `…UpCoarse` / `…DownCoarse` | 0–200 Hz | ±10 | ±20 | AB9 engine-vibration frequency |
 | `Moza.Ab9GearShiftIntensityUp` / `…Down` / `…UpCoarse` / `…DownCoarse` | 0–100 | ±5 | ±10 | AB9 gear-shift vibration intensity |
+| `Moza.DisplayBrightnessUp` / `…Down` / `…UpCoarse` / `…DownCoarse` | 0–100% | ±5 | ±10 | Wheel screen display brightness |
 
 | Action | Effect |
 |--------|--------|
+| `Moza.DisplayBrightness0` … `Moza.DisplayBrightness100` | Set wheel screen display brightness to a fixed level (0–100% in steps of 10) |
+| `Moza.WorkModeOff` | Turn off the wheelbase work mode (puts the base into standby) |
+| `Moza.WorkModeOn` | Turn on the wheelbase work mode (normal active state) |
 | `Moza.DashboardNext` | Switch the wheel's displayed dashboard to the next enabled slot (wraps around) |
 | `Moza.DashboardPrev` | Switch the wheel's displayed dashboard to the previous enabled slot (wraps around) |
 | `Moza.DashboardTelemetryToggle` | Toggle dashboard telemetry on/off for the active wheel page |

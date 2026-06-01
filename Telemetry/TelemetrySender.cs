@@ -210,8 +210,8 @@ namespace MozaPlugin.Telemetry
 
         // Blind retransmit state moved to TierDefinitionEmitter.
 
-        // Sess=0x09 retry + sess=0x02 engagement watchdog state moved to
-        // SessionWatchdogManager. See Telemetry/Watchdog/SessionWatchdogManager.cs.
+        // Sess=0x09 retry + engagement watchdog state moved to
+        // DisplayWatchdog. See Telemetry/Watchdog/DisplayWatchdog.cs.
 
         // Two host-side silence gates (Stop→Start ~11s + post-switch UI
         // cooldown) live in SilenceGate. The instance carries no per-gate
@@ -1181,7 +1181,7 @@ namespace MozaPlugin.Telemetry
             _connection = connection;
             _silenceGate = new Lifecycle.SilenceGate(() => EnableHotRenegotiation);
             _recovery = new Lifecycle.RecoveryDispatcher(this);
-            _watchdog = new SessionWatchdogManager(this);
+            _watchdog = new DisplayWatchdog(this);
             _slotTracker = new Display.WheelSlotTracker(this);
             // Wire the catalog parser to HotSwitchCoordinator's arm count.
             // This is the switch-boundary signal that gates REPLACE vs UNION
@@ -1911,6 +1911,9 @@ namespace MozaPlugin.Telemetry
             // redundant subsequent emits (catalog probe + profile-apply
             // racing to the same slot is the common case).
             _slotTracker.NoteHostEmittedKind4((int)slotIndex);
+            // Anchor the display watchdog's slot round-trip window for every
+            // kind=4 source (resync probe, SwitchToProfile, convergence nudge).
+            _watchdog.NoteHostEmittedKind4((int)slotIndex);
             MozaLog.Debug(
                 $"[Moza] Sent dashboard-switch FF-record: slot={slotIndex} " +
                 $"on FF session 0x{ResolveFfSession():X2} (mirror of tier-def session)");
@@ -1976,7 +1979,7 @@ namespace MozaPlugin.Telemetry
             }
         }
 
-        // ===== Internal accessors for SessionWatchdogManager =====
+        // ===== Internal accessors for DisplayWatchdog =====
         internal bool StateIsIdle => _state == TelemetryState.Idle;
         internal bool StateIsActive => _state == TelemetryState.Active;
         internal bool ConnectionIsConnected => _connection.IsConnected;
@@ -1992,8 +1995,8 @@ namespace MozaPlugin.Telemetry
             try { DashboardPipelineParked?.Invoke(this, EventArgs.Empty); } catch { }
         }
 
-        private SessionWatchdogManager _watchdog = null!;
-        internal SessionWatchdogManager Watchdog => _watchdog;
+        private DisplayWatchdog _watchdog = null!;
+        internal DisplayWatchdog Watchdog => _watchdog;
         internal bool HotSwitchBurstPending => _hotSwitch.IsBurstPending;
         private readonly Display.WheelSlotTracker _slotTracker;
         private readonly PropertyPushQueue _propertyPushQueue;
@@ -2121,7 +2124,7 @@ namespace MozaPlugin.Telemetry
         }
 
         /// <summary>Clear the wheel-ready latch — called at Start/Stop
-        /// boundaries via <see cref="Watchdog.SessionWatchdogManager.Reset"/>
+        /// boundaries via <see cref="Watchdog.DisplayWatchdog.Reset"/>
         /// so a subsequent reconnect re-arms detection from a clean slate.</summary>
         internal void ResetWheelReadyObserved() => _wheelReadyObserved = false;
         internal long SubscriptionResponseDeadlineTicksField
@@ -2472,7 +2475,7 @@ namespace MozaPlugin.Telemetry
             // state into a wheel that hasn't woken yet. Health wheels never
             // hit this branch; for CS-Pro the wheel eventually fc:00-acks
             // sess=0x02 (~14 s on the 0.9.3-dev capture) and we proceed from
-            // a known-awake state. Pairs with SessionWatchdogManager's 20 s
+            // a known-awake state. Pairs with DisplayWatchdog's 20 s
             // sess=0x01 grace — the watchdog catches the rarer case where the
             // wheel acks something but never engages sess=0x01 specifically.
             if (mgmtPort == 0 && telemetryPort == 0 && _connection.IsConnected)
@@ -3356,11 +3359,7 @@ namespace MozaPlugin.Telemetry
                 TickEmitLedStatePolls();
                 TickEmitRetransmits();
                 _tierDefEmitter.TickEmitTierDefBlindRetransmits();
-                _watchdog.TickRetryS09IfNotEstablished();
-                _watchdog.TickConfigJsonGapEscalation();
-                _watchdog.TickConfigJsonStuckWatchdog();
-                _watchdog.TickSession02EngagementWatchdog();
-                _watchdog.TickSession01EngagementWatchdog();
+                _watchdog.TickDisplayWatchdog();
                 TickGrowSubscriptionIfCatalogStable();
                 TickPostSwitchCatalogConvergence();
 
@@ -3499,7 +3498,7 @@ namespace MozaPlugin.Telemetry
                 }
 
                 TransitionTo(TelemetryState.Active, "preamble countdown elapsed");
-                // Anchor for TickSession02EngagementWatchdog's grace
+                // Anchor for the DisplayWatchdog's engagement grace
                 // window — the watchdog only starts counting against the
                 // wheel once we've actually entered Active (and thus
                 // emitted tier-def + initial value frames).
@@ -4180,69 +4179,6 @@ namespace MozaPlugin.Telemetry
                 $"max nudges {Lifecycle.PostSwitchCatalogConvergence.MaxNudges})");
         }
 
-        /// <summary>
-        /// Tick-driven gap escalation. When a forward gap was detected on
-        /// sess=0x09 but no further chunks have arrived (the wheel's auto-
-        /// retransmit timer didn't fire, or the retransmit itself dropped),
-        /// the chunk-arrival-driven <see cref="HandleConfigJsonGap"/> path
-        /// never re-runs. This watchdog notices a stale gap and escalates
-        /// from passive-wait to active prime+open-request from the tick
-        /// loop instead.
-        ///
-        /// Cheap: short-circuits the moment LastState is non-null OR no
-        /// forward gap was ever observed OR the configJson session isn't in
-        /// play yet. Only runs the soft-watchdog logic when there's an
-        /// outstanding gap to recover from.
-        /// </summary>
-        
-        /// <summary>
-        /// Stuck-state watchdog for sess=0x09 configJson. Restart-escalates
-        /// ONLY when nothing else is working — a chunk drop on the configJson
-        /// burst is "nice to lose" if the catalog and tier-def are healthy,
-        /// because configJson state is for dashboard-library UI, not for
-        /// rendering the active dashboard itself. Forcing a 11s Stop+Start
-        /// just because LastState is null while streams are alive throws away
-        /// a working session.
-        ///
-        /// Skip conditions:
-        ///   - LastState already populated (steady state — no problem)
-        ///   - No chunks ever received (wheel hasn't started — TickRetryS09
-        ///     already handles this with shorter retry cadence)
-        ///   - Catalog is populated AND we have a tier-def emitted (dashboard
-        ///     can render fine without configJson library list — observed
-        ///     2026-05-09: catalog 0→20 + working test pattern despite
-        ///     stuck configJson)
-        ///   - Within escalation cooldown
-        ///
-        /// Only fires when ALL of: chunks were arriving, then went silent
-        /// for ConfigJsonNoStateRestartTimeoutTicks AND we have nothing else
-        /// (no catalog, no tier-def). That's the genuine stuck case where
-        /// only a Stop+Start can recover.
-        /// </summary>
-        
-        /// <summary>
-        /// Stuck-state watchdog for sess=0x02 engagement. The wheel must
-        /// send at least one inbound chunk on sess=FlagByte (channel-
-        /// token assignments / post-subscription state) for value-frame
-        /// rendering to be alive. When it doesn't, dashboard layout still
-        /// renders but every channel sits at its initial/zero default —
-        /// see diag bundle CS-Pro-1stLaunchAfterDll-20260518.
-        ///
-        /// Re-arm sequence (close+open+init+resubscribe) is the same
-        /// handshake <see cref="ProbeAndOpenSessions"/> runs at start,
-        /// replayed against the now-alive wheel. Budget capped at
-        /// <see cref="S02ReArmMaxRounds"/>; on exhaustion escalates to
-        /// <see cref="RestartForSwitch"/> (matches the precedent in
-        /// <see cref="TickConfigJsonStuckWatchdog"/>).
-        ///
-        /// Skip conditions:
-        ///   - Not in Active state (the start path owns its own probe)
-        ///   - Engagement already confirmed (_session02FirstInboundUtcTicks
-        ///     non-zero — any prior inbound on sess=FlagByte sets it)
-        ///   - Re-arm budget exhausted (escalation already queued)
-        ///   - Within initial grace OR backoff window
-        /// </summary>
-        
         /// <summary>Widget-state poll cycle. Cycle of 80 slots at one frame per
         /// 10 ticks gives ~0.4/s per slot; PitHouse capture cadence is ~0.2/s
         /// per slot, within tolerable range.</summary>

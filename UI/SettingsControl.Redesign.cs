@@ -1,5 +1,6 @@
 using System;
 using System.Collections.ObjectModel;
+using System.Globalization;
 using System.Linq;
 using System.Reflection;
 using System.Windows;
@@ -430,20 +431,21 @@ namespace MozaPlugin
                     var report = BuildDiagnosticsDump();
                     FullDiagReportBox.Text = report;
                     int lineCount = report.Split('\n').Length;
-                    FullDiagSummaryText.Text = $"// {lineCount} lines · same content as Export bundle";
+                    FullDiagSummaryText.Text = string.Format(
+                        CultureInfo.CurrentCulture, Strings.Hint_FullDiagRendered, lineCount);
                 }
                 catch (Exception ex)
                 {
                     FullDiagReportBox.Text = $"[error rendering diagnostic report]\n{ex}";
-                    FullDiagSummaryText.Text = "// render failed";
+                    FullDiagSummaryText.Text = Strings.Hint_FullDiagRenderFailed;
                 }
                 FullDiagReportBox.Visibility = Visibility.Visible;
-                FullDiagToggleButton.Content = "COLLAPSE";
+                FullDiagToggleButton.Content = Strings.Button_Collapse;
             }
             else
             {
                 FullDiagReportBox.Visibility = Visibility.Collapsed;
-                FullDiagToggleButton.Content = "EXPAND";
+                FullDiagToggleButton.Content = Strings.Button_Expand;
             }
         }
 

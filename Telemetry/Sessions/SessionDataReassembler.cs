@@ -235,7 +235,7 @@ namespace MozaPlugin.Telemetry.Sessions
                 _lastSeq = seq;
                 if (!string.IsNullOrEmpty(tag)) _gapTag = tag;
                 // Forward progress resumed — clear the gap timestamp so the
-                // tick-driven watchdog (TickConfigJsonGapEscalation) doesn't
+                // tick-driven watchdog (DisplayWatchdog gap retransmit) doesn't
                 // fire an unnecessary prime+open-request.
                 _lastForwardGapUtcTicks = 0;
                 return wasRestart ? ChunkInsertResult.Restart : ChunkInsertResult.Contiguous;

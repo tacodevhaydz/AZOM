@@ -348,6 +348,9 @@ namespace MozaPlugin.UI
             sb.AppendLine($"WheelEra:           {plugin.ActiveTelemetryWheelEra}");
             if (ts != null)
             {
+                sb.AppendLine($"WheelReportedSlot:  {ts.WheelReportedSlot}");
+                sb.AppendLine($"LastEmittedKind4:   {ts.LastEmittedKind4Slot}");
+                sb.AppendLine($"DisplayEngaged:     {ts.Watchdog?.DisplayEngagementText() ?? "(n/a)"}");
                 var p = ts.Policy;
                 sb.AppendLine($"PolicyEra:          {p.Era}{(p.IsAuto ? " (auto)" : "")}");
                 sb.AppendLine($"TierDefSession:     {p.TierDefSession}");

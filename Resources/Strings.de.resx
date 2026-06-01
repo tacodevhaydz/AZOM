@@ -317,8 +317,11 @@
   <data name="Section_FullDiagReport" xml:space="preserve"><value>VOLLSTÄNDIGER DIAGNOSE-BERICHT</value></data>
   <data name="Subtitle_FullDiagReport" xml:space="preserve"><value>// Debug-Informationen</value></data>
   <data name="Button_Expand" xml:space="preserve"><value>AUSKLAPPEN</value></data>
+  <data name="Button_Collapse" xml:space="preserve"><value>EINKLAPPEN</value></data>
   <data name="Button_CopyAll" xml:space="preserve"><value>ALLES IN ZWISCHENABLAGE KOPIEREN</value></data>
   <data name="Hint_ClickExpandToRender" xml:space="preserve"><value>„Ausklappen“ drücken, um den vollständigen mehrteiligen Bericht zu erzeugen.</value></data>
+  <data name="Hint_FullDiagRendered" xml:space="preserve"><value>// {0} Zeilen · gleicher Inhalt wie Export-Bundle</value></data>
+  <data name="Hint_FullDiagRenderFailed" xml:space="preserve"><value>// Rendern fehlgeschlagen</value></data>
   <data name="Hint_MBoosterIntro" xml:space="preserve"><value>Jeder verbundene mBooster erscheint unten. Wähle eine Rolle (Gas/Bremse/Kupplung) pro Gerät, um seine Pedalposition zu zuweisen. Der Kalibrierungs-Abschnitt ist experimentell.</value></data>
   <data name="Hint_MBoosterCalibrationWarning" xml:space="preserve"><value>Noch nicht getestet.</value></data>
   <data name="Title_PickLedColor" xml:space="preserve"><value>LED-Farbe wählen</value></data>

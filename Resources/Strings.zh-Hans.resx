@@ -317,8 +317,11 @@
   <data name="Section_FullDiagReport" xml:space="preserve"><value>完整诊断报告</value></data>
   <data name="Subtitle_FullDiagReport" xml:space="preserve"><value>// 调试信息</value></data>
   <data name="Button_Expand" xml:space="preserve"><value>展开</value></data>
+  <data name="Button_Collapse" xml:space="preserve"><value>折叠</value></data>
   <data name="Button_CopyAll" xml:space="preserve"><value>全部复制到剪贴板</value></data>
   <data name="Hint_ClickExpandToRender" xml:space="preserve"><value>点击“展开”以生成完整的多段诊断报告。</value></data>
+  <data name="Hint_FullDiagRendered" xml:space="preserve"><value>// {0} 行 · 内容与导出包相同</value></data>
+  <data name="Hint_FullDiagRenderFailed" xml:space="preserve"><value>// 渲染失败</value></data>
   <data name="Hint_MBoosterIntro" xml:space="preserve"><value>已连接的每个 mBooster 都会显示在下方。为每个设备选择一个角色(油门/刹车/离合)以分配其踏板位置。校准部分为实验性功能。</value></data>
   <data name="Hint_MBoosterCalibrationWarning" xml:space="preserve"><value>尚未经过测试。</value></data>
   <data name="Title_PickLedColor" xml:space="preserve"><value>选择 LED 颜色</value></data>

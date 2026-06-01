@@ -62,7 +62,7 @@ namespace MozaPlugin
         // SimHub launch keeps emitting heartbeat chunks on its old
         // sess=0x09 instead of re-engaging via a fresh SessionOpen 0x81.
         // The s09 watchdog then burns its 56 s retry budget (10 rounds,
-        // SessionWatchdogManager.S09BackoffMs) and parks the dashboard
+        // DisplayWatchdog.S09BackoffMs) and parks the dashboard
         // pipeline — observed as "dashboard display failed to connect"
         // on cold start until the user toggles telemetry.
         //
@@ -2279,6 +2279,84 @@ namespace MozaPlugin
                 SetTelemetryEnabled(false);
                 MozaLog.Debug("[Moza] Dashboard telemetry off via action");
             });
+
+            // Wheel screen display brightness, 0..100 % (cf.
+            // DashboardManagementControl.WheelDisplayBrightnessSlider). Up/Down
+            // nudge ±5, the Coarse variants ±10; the stepper seeds from the
+            // wheel's real brightness with the slider's fallback chain so the
+            // first press never starts from the -1 sentinel.
+            AddStepActions("Moza.DisplayBrightness", 5, 10, StepDisplayBrightness);
+
+            // Jump straight to a fixed display brightness in 10-% steps
+            // (Moza.DisplayBrightness0 .. Moza.DisplayBrightness100).
+            for (int pct = 0; pct <= 100; pct += 10)
+            {
+                int target = pct; // capture per iteration
+                this.AddAction($"Moza.DisplayBrightness{pct}", (a, b) =>
+                {
+                    SetDisplayBrightness(target);
+                    MozaLog.Debug($"[Moza] Display brightness → {target}% via action");
+                });
+            }
+
+            // Turn off the base's work mode. The firmware command is
+            // main-set-work-mode; value 1 is the state the UI surfaces as
+            // "Standby Mode" on (cf. SettingsControl.StandbyCheck_Click), which
+            // is what "work mode off" means for the base.
+            this.AddAction("Moza.WorkModeOff", (a, b) =>
+            {
+                if (_data != null) _data.WorkMode = 1;
+                WriteIfBaseConnected("main-set-work-mode", 1);
+                SaveSettings();
+                MozaLog.Debug("[Moza] Work mode off (standby) via action");
+            });
+            // Turn work mode back on: value 0 is "Standby Mode" off — the base's
+            // normal active state.
+            this.AddAction("Moza.WorkModeOn", (a, b) =>
+            {
+                if (_data != null) _data.WorkMode = 0;
+                WriteIfBaseConnected("main-set-work-mode", 0);
+                SaveSettings();
+                MozaLog.Debug("[Moza] Work mode on via action");
+            });
+        }
+
+        // ===== Display brightness step/set helpers =====
+
+        // Current wheel display brightness using the same fallback chain as the
+        // UI slider (DashboardManagementControl.RefreshDisplaySection): live
+        // _data → active profile → settings default (100). Never returns the
+        // -1 sentinel, so a nudge always moves from the wheel's real value.
+        private int CurrentDisplayBrightness()
+        {
+            int b = _data?.DashDisplayBrightness ?? -1;
+            if (b < 0)
+            {
+                var profile = _settings?.ProfileStore?.CurrentProfile;
+                b = profile?.DashDisplayBrightness ?? -1;
+                if (b < 0) b = _settings?.DashDisplayBrightness ?? 100;
+            }
+            return b < 0 ? 0 : (b > 100 ? 100 : b);
+        }
+
+        // Apply an absolute display brightness, mirroring the slider's commit
+        // path: update _data + active profile, push on session 0x02, persist.
+        // allowZero: a button bound to a specific value is deliberate intent,
+        // same as a slider committed at 0.
+        private void SetDisplayBrightness(int val)
+        {
+            val = val < 0 ? 0 : (val > 100 ? 100 : val);
+            if (_data != null) _data.DashDisplayBrightness = val;
+            UpdateActiveProfile(p => p.DashDisplayBrightness = val);
+            TelemetrySender?.SendDashDisplayBrightness(val, allowZero: true);
+            SaveSettings();
+        }
+
+        private void StepDisplayBrightness(int delta)
+        {
+            int val = ClampStep(CurrentDisplayBrightness(), delta, 0, 100);
+            SetDisplayBrightness(val);
+            MozaLog.Debug($"[Moza] Display brightness → {val}% via action");
         }
 
         /// <summary>
@@ -2657,6 +2735,30 @@ namespace MozaPlugin
         internal bool IsPendingDashboardApply => _dashboardBindingCoordinator?.IsPendingDashboardApply ?? false;
         internal string? PendingDashboardApplyDescription => _dashboardBindingCoordinator?.PendingDashboardApplyDescription;
 
+        /// <summary>
+        /// True when the singular primary connection is itself bound to a Universal
+        /// Hub — the hub-ONLY case (no wheelbase present). Here the primary, not the
+        /// dedicated hub connection, must perform hub detection: the dedicated hub
+        /// connection never opens because the primary already holds the only hub
+        /// port (the <c>_activePorts</c> guard blocks a second open). Without this,
+        /// nothing reads <c>hub-port1-power</c>, so <c>IsHubConnected</c> never flips,
+        /// <c>Data.IsConnected</c> stays false, and the SimHub LED pipeline's
+        /// connected-gate (<see cref="Devices.MozaLedDeviceManager.Display"/>)
+        /// suppresses every frame — the wheel sits on its static EEPROM colours.
+        ///
+        /// Registry-based setups expose the hub PID on <c>DiscoveredPid</c>;
+        /// Wine/probe setups have a null PID but set <c>HubProbeSucceeded</c> when
+        /// the bound device answered the hub probe (the bases-first ordering means a
+        /// hub-probe match implies no wheelbase responded). A wheelbase-bound primary
+        /// (base-only or base+hub) trips neither branch, so it never sends hub reads
+        /// down the base pipe.
+        /// </summary>
+        private bool PrimaryBoundToHub =>
+            _connection != null
+            && _connection.IsConnected
+            && (MozaUsbIds.IsHubPid(_connection.DiscoveredPid)
+                || (_connection.DiscoveredPid == null && _connection.HubProbeSucceeded));
+
         private void TryConnect()
         {
             if (Interlocked.CompareExchange(ref _connectingFlag, 1, 0) != 0)
@@ -2683,8 +2785,16 @@ namespace MozaPlugin
                     _deviceManager.ReadSetting("dash-rpm-indicator-mode");
                     _deviceManager.ReadSetting("handbrake-direction");
                     _deviceManager.ReadSetting("pedals-throttle-dir");
-                    // No hub-port-power read here — this is the wheelbase connection;
-                    // hub detection is the dedicated hub connection's job (its own port).
+                    // Hub detection normally belongs to the dedicated hub connection
+                    // (its own port). The exception is the hub-ONLY case: the primary
+                    // is itself bound to the hub, the dedicated hub connection can't
+                    // open (port already held), so the primary must read
+                    // hub-port1-power here — its 0xE4 reply flips HubDetected /
+                    // IsHubConnected (DeviceProber.hub-port1-power case), which is what
+                    // turns Data.IsConnected true and lets the SimHub LED pipeline
+                    // forward frames. A wheelbase-bound primary skips this.
+                    if (PrimaryBoundToHub)
+                        _deviceManager.ReadSetting("hub-port1-power");
 
                     // Persist successful port for next launch
                     var port = _connection.LastPortName;
@@ -3263,9 +3373,17 @@ namespace MozaPlugin
                 }
             }
 
-            // Poll hub port status while hub is connected (read-only, no settings to save)
+            // Poll hub port status while hub is connected (read-only, no settings to save).
+            // When the primary is itself bound to a hub (hub-only setup) and the hub
+            // hasn't been detected yet, keep issuing the hub-port1-power presence read
+            // — the connect-time read is tracked/retried, but this also recovers if the
+            // hub re-enumerates without a full reconnect. Once detected, poll the full
+            // port-power set so the Hub-tab indicators stay current. Mirrors
+            // PollHubPeripherals' trigger/full-set split for the dedicated hub pipe.
             if (DetectionState.HubDetected)
                 _deviceManager.ReadSettings(DeviceProber.HubReadCommands);
+            else if (PrimaryBoundToHub)
+                _deviceManager.ReadSetting("hub-port1-power");
         }
 
         private volatile int _unmatched;

@@ -110,7 +110,7 @@ namespace MozaPlugin.Telemetry.Inbound
             }
             // Mgmt session engagement signal: a wheel fc:00 ack on sess=MgmtPort
             // proves the session is open even if the wheel never pushes data on
-            // it. See TickSession01EngagementWatchdog for why this matters on
+            // it. See DisplayWatchdog (liveness feeder) for why this matters on
             // slow-bring-up wheels (CS-Pro / Universal Hub).
             if (data[4] == _sender.MgmtPort && _sender.MgmtPort != 0)
                 _sender.Watchdog.NoteSession01Engaged();

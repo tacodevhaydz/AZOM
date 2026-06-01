@@ -33,6 +33,7 @@ namespace MozaPlugin.Resources
             {
                 { "",   new ResourceManager("MozaPlugin.Resources.Strings",    typeof(Strings).Assembly) },
                 { "de", new ResourceManager("MozaPlugin.Resources.Strings.de", typeof(Strings).Assembly) },
+                { "el", new ResourceManager("MozaPlugin.Resources.Strings.el", typeof(Strings).Assembly) },
                 { "es", new ResourceManager("MozaPlugin.Resources.Strings.es", typeof(Strings).Assembly) },
                 { "fr", new ResourceManager("MozaPlugin.Resources.Strings.fr", typeof(Strings).Assembly) },
                 { "it", new ResourceManager("MozaPlugin.Resources.Strings.it", typeof(Strings).Assembly) },
@@ -382,8 +383,11 @@ namespace MozaPlugin.Resources
         public static string Section_FullDiagReport => Get("Section_FullDiagReport");
         public static string Subtitle_FullDiagReport => Get("Subtitle_FullDiagReport");
         public static string Button_Expand => Get("Button_Expand");
+        public static string Button_Collapse => Get("Button_Collapse");
         public static string Button_CopyAll => Get("Button_CopyAll");
         public static string Hint_ClickExpandToRender => Get("Hint_ClickExpandToRender");
+        public static string Hint_FullDiagRendered => Get("Hint_FullDiagRendered");
+        public static string Hint_FullDiagRenderFailed => Get("Hint_FullDiagRenderFailed");
         public static string Hint_MBoosterIntro => Get("Hint_MBoosterIntro");
         public static string Hint_MBoosterCalibrationWarning => Get("Hint_MBoosterCalibrationWarning");
 
