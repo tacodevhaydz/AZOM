@@ -33,6 +33,7 @@ namespace MozaPlugin.Resources
             {
                 { "",   new ResourceManager("MozaPlugin.Resources.Strings",    typeof(Strings).Assembly) },
                 { "de", new ResourceManager("MozaPlugin.Resources.Strings.de", typeof(Strings).Assembly) },
+                { "el", new ResourceManager("MozaPlugin.Resources.Strings.el", typeof(Strings).Assembly) },
                 { "es", new ResourceManager("MozaPlugin.Resources.Strings.es", typeof(Strings).Assembly) },
                 { "fr", new ResourceManager("MozaPlugin.Resources.Strings.fr", typeof(Strings).Assembly) },
                 { "it", new ResourceManager("MozaPlugin.Resources.Strings.it", typeof(Strings).Assembly) },
