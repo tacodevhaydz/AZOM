@@ -62,7 +62,7 @@ namespace MozaPlugin
         // SimHub launch keeps emitting heartbeat chunks on its old
         // sess=0x09 instead of re-engaging via a fresh SessionOpen 0x81.
         // The s09 watchdog then burns its 56 s retry budget (10 rounds,
-        // SessionWatchdogManager.S09BackoffMs) and parks the dashboard
+        // DisplayWatchdog.S09BackoffMs) and parks the dashboard
         // pipeline — observed as "dashboard display failed to connect"
         // on cold start until the user toggles telemetry.
         //
