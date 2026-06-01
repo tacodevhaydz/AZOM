@@ -57,14 +57,19 @@ namespace MozaPlugin.Devices
         }
 
         /// <summary>
-        /// Deploy the embedded dashboard device definition. Routes by PID:
-        /// CM2 standalone (PID 0x0025) gets the 16-RPM-LED CM2 template;
-        /// every other dashboard PID gets the legacy SHDP template.
+        /// Deploy the embedded dashboard device definition. Routes by PID
+        /// (CM2 = 0x0025 → CM2 template, else legacy SHDP). <paramref name="forceCm2"/>
+        /// overrides: true forces the CM2 template (CM2 wired through the base),
+        /// false forces legacy, null keeps the PID default.
         /// </summary>
-        public static bool DeployDashboard(string? discoveredPid)
-            => string.Equals(discoveredPid, MozaUsbIds.PidDashboardCm2, StringComparison.OrdinalIgnoreCase)
+        public static bool DeployDashboard(string? discoveredPid, bool? forceCm2 = null)
+        {
+            bool cm2 = forceCm2
+                ?? string.Equals(discoveredPid, MozaUsbIds.PidDashboardCm2, StringComparison.OrdinalIgnoreCase);
+            return cm2
                 ? DeployFromResource(DashCm2DeviceName, DashCm2Resource, discoveredPid, MozaDeviceConstants.DashCm2Guid)
                 : DeployFromResource(DashDeviceName, DashResource, discoveredPid, MozaDeviceConstants.DashGuid);
+        }
 
         /// <summary>
         /// Deploy the embedded "Wheel Base" device definition exposing the

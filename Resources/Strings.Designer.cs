@@ -72,11 +72,17 @@ namespace MozaPlugin.Resources
         public static string TabHeader_Upload => Get("TabHeader_Upload");
         public static string TabHeader_WheelFiles => Get("TabHeader_WheelFiles");
         public static string TabHeader_Sdk => Get("TabHeader_Sdk");
+        public static string TabHeader_Import => Get("TabHeader_Import");
         public static string TabHeader_About => Get("TabHeader_About");
         public static string Brand_Unofficial => Get("Brand_Unofficial");
         public static string Brand_Moza => Get("Brand_Moza");
         public static string Brand_SimHubPlugin => Get("Brand_SimHubPlugin");
         public static string Status_Disconnected => Get("Status_Disconnected");
+        public static string Status_Connected => Get("Status_Connected");
+        public static string Status_Recovering => Get("Status_Recovering");
+        public static string Status_Parked => Get("Status_Parked");
+        public static string Status_TelemetryParked => Get("Status_TelemetryParked");
+        public static string Status_DegradedScreenless => Get("Status_DegradedScreenless");
         public static string Button_Refresh => Get("Button_Refresh");
         public static string Label_PerformanceOutput => Get("Label_PerformanceOutput");
         public static string Option_Reserved => Get("Option_Reserved");
@@ -303,6 +309,7 @@ namespace MozaPlugin.Resources
         public static string Section_CoapServer => Get("Section_CoapServer");
         public static string Subtitle_CoapServer => Get("Subtitle_CoapServer");
         public static string Hint_CoapServerEnabled => Get("Hint_CoapServerEnabled");
+        public static string Hint_CoapStubProcessName => Get("Hint_CoapStubProcessName");
         public static string SliderLabel_EnableCoapServer => Get("SliderLabel_EnableCoapServer");
         public static string Section_UdpControl => Get("Section_UdpControl");
         public static string Subtitle_UdpControl => Get("Subtitle_UdpControl");
@@ -331,6 +338,8 @@ namespace MozaPlugin.Resources
         public static string Button_OpenReleaseNotes => Get("Button_OpenReleaseNotes");
         public static string Button_SkipThisVersion => Get("Button_SkipThisVersion");
         public static string Button_DismissUpdate => Get("Button_DismissUpdate");
+        public static string Button_RestartSimHub => Get("Button_RestartSimHub");
+        public static string Label_WhatsNew => Get("Label_WhatsNew");
         public static string Label_CheckForUpdates => Get("Label_CheckForUpdates");
         public static string Label_ReleaseChannel => Get("Label_ReleaseChannel");
         public static string Option_ReleaseChannelStable => Get("Option_ReleaseChannelStable");
@@ -436,6 +445,7 @@ namespace MozaPlugin.Resources
         // ----- MozaWheelSettingsControl
         public static string TabHeader_Inputs => Get("TabHeader_Inputs");
         public static string TabHeader_Dashboard => Get("TabHeader_Dashboard");
+        public static string TabHeader_Leds => Get("TabHeader_Leds");
         public static string TabHeader_Rpm => Get("TabHeader_Rpm");
         public static string TabHeader_Buttons => Get("TabHeader_Buttons");
         public static string TabHeader_Knobs => Get("TabHeader_Knobs");

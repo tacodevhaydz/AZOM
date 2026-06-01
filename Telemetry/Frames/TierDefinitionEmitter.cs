@@ -312,28 +312,26 @@ namespace MozaPlugin.Telemetry.Frames
                 }
             }
 
-            // Era-driven session pick. 2025-era VGS firmware: tier-def on
-            // FlagByte (typically 0x02). 2026-era: tier-def on mgmt port 0x01.
-            byte tierDefSession;
-            object seqLock;
-            if (policy.TierDefSession == TierDefSessionPolicy.FlagByte)
-            {
-                tierDefSession = _sender.FlagByte;
-                seqLock = _sender.Session02SeqLock;
-            }
-            else
-            {
-                byte mgmtPort = _sender.MgmtPort;
-                tierDefSession = mgmtPort != 0 ? mgmtPort : (byte)0x01;
-                seqLock = _sender.Session01SeqLock;
-            }
+            // Session pick: emit the tier-def on whichever session carries the
+            // wheel's REAL catalog+END (and echo THAT session's END below) —
+            // resolved centrally so the FF/property-push session stays mirrored.
+            // Both 0x01 and 0x02 are valid under the right conditions: the wheel
+            // chooses by where it pushes its catalog (Form A=0x01, Form B=0x02),
+            // so we follow it deterministically rather than hardcoding a session
+            // (which oscillated across prior attempts and left this W17/CSP wheel
+            // rejected — its catalog+END=9 land on 0x02 while we emitted on 0x01
+            // with END=0, so the wheel acked then CLOSED 0x01). Era-agnostic.
+            byte tierDefSession = _sender.ResolveTierDefSession();
+            byte flagByte = _sender.FlagByte;
+            bool onFlagByte = tierDefSession == flagByte && flagByte != 0;
+            object seqLock = onFlagByte ? _sender.Session02SeqLock : _sender.Session01SeqLock;
 
             // Reserve seq range under the per-session lock so no other writer
             // (V0 value frames, FF property pushes, RPC reply) interleaves a
             // seq into the middle of our chunk train.
             lock (seqLock)
             {
-            int seq = policy.TierDefSession == TierDefSessionPolicy.FlagByte
+            int seq = onFlagByte
                 ? Math.Max(2, _sender.Session02OutboundSeq)
                 : Math.Max(2, _sender.Session01OutboundSeq);
 
@@ -463,7 +461,16 @@ namespace MozaPlugin.Telemetry.Frames
                     // and does not commit widget bindings (verified across both
                     // Type02 and VGS firmware, see version-2-compact-vgs.md). 0 is
                     // the cold-start fallback before the wheel has pushed any END.
-                    uint endForThisEmission = _sender.CatalogParser.LastWheelEndMarker;
+                    //
+                    // Echo the END the wheel announced on THIS tier-def's session,
+                    // NOT the cross-session-merged LastWheelEndMarker. On the cold
+                    // R5 base the real catalog+END (END=4) is on sess=0x02 while
+                    // sess=0x01 has no valid END; echoing sess=0x02's END=4 on the
+                    // sess=0x01 tier-def made the wheel reject it and close
+                    // sess=0x01. GetEndMarkerForSession returns 0 when this session
+                    // has no valid END yet — matching PitHouse's cold-start END=0.
+                    uint endForThisEmission =
+                        _sender.CatalogParser.GetEndMarkerForSession(tierDefSession);
                     byte[] message = TierDefinitionBuilder.BuildTierDefinitionMessage(
                         profile, flagBase,
                         includeEnableEntries: true,

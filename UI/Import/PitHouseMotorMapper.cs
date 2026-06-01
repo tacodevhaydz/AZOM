@@ -29,11 +29,14 @@ namespace MozaPlugin.UI.Import
             AddScaledInt(plan, dp, "gameForceFeedbackStrength", "FFB Strength", "%", 10,
                          () => profile.FfbStrength, v => profile.FfbStrength = v);
 
-            // Limit is stored as degrees/2 in MozaProfile (see MozaProfile.cs:197
-            // comment and HardwareApplier.cs:325 `_data.Limit * 2.0`).
-            AddInt(plan, dp, "maximumSteeringAngle", "Max Steering Angle", "°",
-                   pithouseDeg => pithouseDeg / 2,
-                   plug => plug * 2,
+            // Rotation lock. PitHouse stores maximumSteeringAngle in HALF-degree
+            // units (raw) — exactly like MozaProfile.Limit and the wheelbase wire
+            // value (450 = 900°). So the stored value maps 1:1 with no scaling
+            // (foxblat does the same: `max-angle = maximumSteeringAngle`, no
+            // divide). The value is shown to the user doubled (full degrees),
+            // matching every other rotation surface (SettingsControl.xaml.cs:361
+            // `_data.Limit * 2.0`, MozaPlugin.cs:2140, RSF SteerLockReadHandler).
+            AddHalfDegrees(plan, dp, "maximumSteeringAngle", "Max Steering Angle",
                    () => profile.Limit, v => profile.Limit = v);
 
             AddBoolToInt(plan, dp, "safeDrivingEnabled", "Protection",
@@ -309,6 +312,29 @@ namespace MozaPlugin.UI.Import
             string newDisplay = pithouse.Value.ToString() + unit;
 
             plan.Diffs.Add(new FieldDiff(label, oldDisplay, newDisplay, () => setProfile(newVal)));
+        }
+
+        /// <summary>
+        /// Map a PitHouse half-degree rotation field (e.g. maximumSteeringAngle)
+        /// onto a MozaProfile field that also stores half-degrees. The stored
+        /// value is identical — both sides use raw half-degree units, so there
+        /// is NO scaling on the way in (a divide here double-halves the lock,
+        /// the bug this replaces). The diff is displayed to the user in full
+        /// degrees (× 2), matching every other rotation surface in the plugin.
+        /// </summary>
+        private static void AddHalfDegrees(
+            ImportPlan plan, JObject dp, string pithouseKey, string label,
+            Func<int> getProfile, Action<int> setProfile)
+        {
+            plan.ConsideredKeys.Add(pithouseKey);
+            var pithouse = IntOrNull(dp, pithouseKey);
+            if (pithouse == null) return;
+
+            int newRaw = pithouse.Value;               // identity — both store half-degrees
+            int oldRaw = getProfile();
+            string oldDisplay = oldRaw < 0 ? "(unset)" : (oldRaw * 2).ToString() + "°";
+            string newDisplay = (newRaw * 2).ToString() + "°";
+            plan.Diffs.Add(new FieldDiff(label, oldDisplay, newDisplay, () => setProfile(newRaw)));
         }
 
         private static void AddScaledInt(

@@ -79,6 +79,10 @@ namespace MozaPlugin.UI
             string ab9Port = plugin.Ab9Manager?.Connection?.LastPortName ?? "";
             sb.Append("  |  AB9 ");
             sb.Append(string.IsNullOrEmpty(ab9Port) ? "(disconnected)" : "→ " + ab9Port);
+            string hubPort = plugin.HubConnection?.IsConnected == true
+                ? plugin.HubConnection.LastPortName ?? "" : "";
+            sb.Append("  |  Hub ");
+            sb.Append(string.IsNullOrEmpty(hubPort) ? "(disconnected)" : "→ " + hubPort);
             sb.AppendLine();
 
             // Classified open-failure surface. AccessDenied here is the
@@ -164,17 +168,24 @@ namespace MozaPlugin.UI
             if (conn == null) return "(no MOZA serial connection)";
             string pid = conn.DiscoveredPid ?? "(unknown)";
             string pidDesc = Protocol.MozaUsbIds.Describe(conn.DiscoveredPid);
-            bool isDashPid = Protocol.MozaUsbIds.IsDashboardPid(conn.DiscoveredPid);
             bool standalone = plugin?.ShouldUseStandaloneDashboardTarget() ?? false;
             byte target = plugin?.TelemetrySender?.TargetDeviceId ?? Protocol.MozaProtocol.DeviceWheel;
             string targetDesc = plugin?.TelemetrySender?.TargetDescription ?? $"0x{target:X2}";
 
+            // Dedicated standalone-USB dashboard connection (CM2 0x0025 on its own port).
+            var dashConn = plugin?.DashboardConnection;
+            bool dashUsb = plugin?.DashboardUsbConnected ?? false;
+            string dashLine = dashConn != null && dashConn.IsConnected
+                ? $"{dashConn.LastPortName} {dashConn.DiscoveredPid} ({Protocol.MozaUsbIds.Describe(dashConn.DiscoveredPid)})"
+                : "(not connected)";
+
             var sb = new StringBuilder();
-            sb.AppendLine($"USB PID:        {pid} ({pidDesc})");
-            sb.AppendLine($"Dashboard PID:  {(isDashPid ? "yes" : "no")}");
-            sb.AppendLine($"DashDetected:   {plugin?.IsDashDetected ?? false}");
-            sb.AppendLine($"Standalone:     {standalone}");
-            sb.Append    ($"Target dev_id:  {targetDesc}");
+            sb.AppendLine($"Wheelbase USB PID: {pid} ({pidDesc})");
+            sb.AppendLine($"Dashboard conn:    {dashLine}");
+            sb.AppendLine($"Dashboard USB:     {(dashUsb ? "yes" : "no")}");
+            sb.AppendLine($"DashDetected:      {plugin?.IsDashDetected ?? false}");
+            sb.AppendLine($"Standalone:        {standalone}");
+            sb.Append    ($"Target dev_id:     {targetDesc}");
             return sb.ToString();
         }
 
@@ -282,6 +293,23 @@ namespace MozaPlugin.UI
             var sb = new StringBuilder();
             sb.AppendLine($"Enabled:            {plugin.TelemetryEnabledForDiagnostics}");
             sb.AppendLine($"FramesSent:         {plugin.FramesSentForDiagnostics}");
+            sb.AppendLine($"Phase:              {(ts?.Phase ?? global::MozaPlugin.Telemetry.PipelinePhase.Idle)}");
+            var rec = ts?.Recovery;
+            if (rec != null)
+            {
+                sb.AppendLine($"  IsParked:         {rec.IsParked}");
+                sb.AppendLine($"  RecoveryInFlight: {rec.IsRecoveryInFlight}");
+                if (rec.IsParked && !string.IsNullOrEmpty(rec.ParkReason))
+                    sb.AppendLine($"  ParkReason:       {rec.ParkReason}");
+            }
+            var conn = plugin.Connection;
+            if (conn != null)
+            {
+                var lf = conn.LastFailure;
+                sb.AppendLine($"LastFailure:        {lf.Kind}"
+                    + (lf.Kind == ConnectionFailureKind.None ? "" : $" — {lf.Message}"));
+                sb.AppendLine($"ConsecOpenFails:    {conn.ConsecutiveOpenFailures}");
+            }
             var budget = plugin.SerialBudgetForDiagnostics;
             var errs = plugin.SerialWireErrorsForDiagnostics;
             int budgetTargetBytes = WriteBudget.TargetBytesPerWindow;

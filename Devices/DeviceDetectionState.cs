@@ -18,6 +18,17 @@ namespace MozaPlugin.Devices
         public volatile bool HubDetected;
         public volatile bool Ab9Detected;
 
+        // Which MozaDeviceManager owns each routable peripheral — i.e. the pipe
+        // it was detected on. Null = no opinion → callers fall back to the
+        // primary manager. Pedals/handbrake can live on the base pipe OR on a
+        // dedicated Universal Hub pipe (a base model with no pedal port + a hub),
+        // so settings reads AND calibration writes must target the owning pipe.
+        // Set (owner first, then the *Detected flag) by DeviceProber.Mark*Detected;
+        // read (flag first, then owner) by HardwareApplier. Volatile for
+        // cross-thread visibility between the two serial read threads and the UI.
+        public volatile MozaDeviceManager? PedalsOwner;
+        public volatile MozaDeviceManager? HandbrakeOwner;
+
         // Flips true on the first base-ambient-brightness response (R21/R25/R27 family).
         public volatile bool BaseAmbientLedSupported;
         // Edge guard: fire the ambient probe at most once per base detect.
@@ -72,6 +83,8 @@ namespace MozaPlugin.Devices
             PedalsDetected = false;
             HubDetected = false;
             Ab9Detected = false;
+            PedalsOwner = null;
+            HandbrakeOwner = null;
         }
 
         /// <summary>

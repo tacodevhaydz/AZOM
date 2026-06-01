@@ -15,6 +15,24 @@ namespace MozaPlugin
         private readonly MozaSerialConnection _connection;
         private readonly CancellationTokenSource _shutdownCts = new CancellationTokenSource();
 
+        // Retransmit tracker for tracked reads. The primary connection uses the
+        // global singleton (MozaPlugin.PendingResponses), whose TickRetransmits
+        // is driven by the plugin's retry timer against the PRIMARY pipe. A
+        // sibling connection (e.g. the dedicated Universal Hub pipe) MUST pass
+        // its own tracker so its read retransmits go out on its own Send — not
+        // the primary's — otherwise hub reads would be re-emitted on the base
+        // port. Null → fall back to the global singleton (primary behavior).
+        private readonly PendingResponseTracker? _pendingResponses;
+        private PendingResponseTracker? Tracker => _pendingResponses ?? MozaPlugin.Instance?.PendingResponses;
+
+        /// <summary>
+        /// The retransmit tracker this manager's reads are recorded against.
+        /// The message handler calls <c>NoteResponse</c> on it when a response
+        /// arrives on this manager's pipe, so acks clear retransmits on the
+        /// correct connection. Null only if the global singleton is unavailable.
+        /// </summary>
+        public PendingResponseTracker? PendingResponses => Tracker;
+
         // Wheel device ID detection
         // ES wheels may be on ID 21 instead of 23; R5 ES wheels share base ID 19
         private volatile byte _wheelDeviceId = MozaProtocol.DeviceWheel; // starts at 23
@@ -68,9 +86,11 @@ namespace MozaPlugin
             _wheelRespondedSinceLastPoll = false;
         }
 
-        public MozaDeviceManager(MozaSerialConnection connection)
+        public MozaDeviceManager(MozaSerialConnection connection,
+                                 PendingResponseTracker? pendingResponses = null)
         {
             _connection = connection;
+            _pendingResponses = pendingResponses;
         }
 
         // Valid wheel device IDs to try (23, 21, 19)
@@ -108,10 +128,13 @@ namespace MozaPlugin
         /// section on detection, and the user can't pick a profile until that
         /// section is visible.
         /// </summary>
-        public void SendDisplayProbe()
+        public void SendDisplayProbe() => SendDisplayProbe(MozaProtocol.DeviceWheel);
+
+        /// <summary>Identity cascade aimed at an explicit device id (0x12 for a
+        /// CM2 wired through the wheelbase; 0x17 for a wheel-hosted display).</summary>
+        public void SendDisplayProbe(byte dev)
         {
             if (!_connection.IsConnected) return;
-            byte dev = MozaProtocol.DeviceWheel;
             byte g = MozaProtocol.TelemetrySendGroup; // 0x43
             // Heartbeat
             SendRawProbe(g, dev, new byte[] { 0x00 });
@@ -232,7 +255,7 @@ namespace MozaPlugin
             var msg = cmd.BuildReadMessage(deviceId);
             if (msg == null) return false;
             _connection.Send(msg);
-            MozaPlugin.Instance?.PendingResponses.Track(
+            Tracker?.Track(
                 cmd.Name, msg, ReadRetryBackoffMs, ReadRetryMaxAttempts);
             return true;
         }
@@ -245,7 +268,7 @@ namespace MozaPlugin
             var msg = cmd.BuildReadMessage(GetDeviceId(cmd.DeviceType));
             if (msg == null) return false;
             _connection.Send(msg);
-            MozaPlugin.Instance?.PendingResponses.Track(
+            Tracker?.Track(
                 cmd.Name, msg, ReadRetryBackoffMs, ReadRetryMaxAttempts);
             return true;
         }

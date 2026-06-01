@@ -38,6 +38,20 @@ start_simhub() {
     unset LD_LIBRARY_PATH PYTHONPATH PYTHONHOME STEAM_RUNTIME_LIBRARY_PATH \
           WINEPREFIX WINEESYNC WINEFSYNC WINELOADERNOEXEC WINEDLLPATH WINEDEBUG
 
+    # Native serial-readiness gate. Under Wine the first comm-config IOCTL on a
+    # cold/half-enumerated CDC-ACM endpoint DEADLOCKS (CreateFile succeeds, then
+    # GetCommState/SetCommState/SetupComm block forever), wedging SimHub and the
+    # wineserver — with no segfault, so nothing in the Wine log. A native Linux
+    # probe is hang-safe, so we wait here until the MOZA base replies before
+    # launching; then SimHub opens an already-ready port. Best-effort: the tool
+    # self-times-out and we proceed regardless. MOZA_WAIT_SKIP=1 bypasses it.
+    local waiter
+    waiter="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)/tools/moza-wait-ready"
+    if [[ "${MOZA_WAIT_SKIP:-0}" != "1" && -f "$waiter" ]]; then
+        echo "Waiting for MOZA base to be serial-ready (native probe; set MOZA_WAIT_SKIP=1 to skip)..."
+        timeout 90 python3 "$waiter" || true
+    fi
+
     local log="${TMPDIR:-/tmp}/simhub-launch-${USER}.log"
     echo "Launching SimHub (appid=$APPID), log: $log"
     nohup setsid "$PT_LAUNCHER" --appid "$APPID" "$SIMHUB_EXE" \

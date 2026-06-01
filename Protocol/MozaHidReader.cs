@@ -114,6 +114,28 @@ namespace MozaPlugin.Protocol
             return normalized * (maxAngleDeg / 2.0);
         }
 
+        /// <summary>
+        /// Returns the current wheel position as a 0-100 percentage of physical
+        /// travel, where 0 = full lock in one direction, 50 = center, and
+        /// 100 = full lock in the other. Unlike <see cref="GetCurrentAngleDegrees"/>
+        /// this is independent of the base's reported max-angle, so it is valid
+        /// as soon as the HID min/max range has been observed. Returns -1 when
+        /// no HID device is connected or the range is unknown.
+        /// </summary>
+        public double GetSteeringPositionPercent()
+        {
+            if (!_data.IsHidConnected) return -1.0;
+            int min = _data.SteeringAngleRawMin;
+            int max = _data.SteeringAngleRawMax;
+            int range = max - min;
+            if (range <= 0) return -1.0;
+            int raw = _data.SteeringAngleRaw;
+            double pct = ((raw - min) / (double)range) * 100.0;
+            if (pct < 0) pct = 0;
+            if (pct > 100) pct = 100;
+            return pct;
+        }
+
         private void Run()
         {
             while (!_stop)
@@ -163,19 +185,33 @@ namespace MozaPlugin.Protocol
                     if (openCount > 0)
                         _data.IsHidConnected = true;
 
-                    // Wait until stop or all threads exit
-                    foreach (var t in threads)
-                    {
-                        while (!_stop && t.IsAlive)
-                            SleepInterruptible(250);
-                    }
+                    // Wait until we're stopping, or ANY device thread exits.
+                    // With multiple Moza HID devices (e.g. a wheelbase + Universal
+                    // Hub) one device's stream dropping MUST trigger a full
+                    // re-enumerate so that device gets reopened. Waiting for ALL
+                    // threads instead would park on the still-live sibling forever
+                    // and freeze the dead device's values permanently — the base's
+                    // HID thread (the only one carrying the steering X axis) dies,
+                    // the hub thread keeps the reader alive, and Moza.SteeringAngle
+                    // stays stuck at its last value while pedals/handbrake (hub)
+                    // keep updating. Single-device setups always recovered because
+                    // the lone thread dying ended the wait and re-enumerated.
+                    while (!_stop && threads.Count > 0 && threads.All(t => t.IsAlive))
+                        SleepInterruptible(250);
 
-                    // On stop: wait for ReadDevice threads to exit so they can dispose their streams.
-                    if (_stop)
+                    // A device dropped (or we're shutting down): force every
+                    // still-open stream closed so the surviving ReadDevice threads
+                    // unblock from their read wait and exit (same mechanism as
+                    // Dispose), then join them all so each disposes its own stream
+                    // before we re-enumerate from the top.
+                    HidStream[] snapshot;
+                    lock (_streamsLock) snapshot = _liveStreams.ToArray();
+                    foreach (var s in snapshot)
                     {
-                        foreach (var t in threads)
-                            try { t.Join(1000); } catch { }
+                        try { s.Close(); } catch { }
                     }
+                    foreach (var t in threads)
+                        try { t.Join(1000); } catch { }
                 }
                 catch (Exception ex)
                 {

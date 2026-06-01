@@ -247,8 +247,13 @@ namespace MozaPlugin.Sdk
                     NativeMethods.PROCESS_INFORMATION pi;
 
                     // lpCommandLine must be writable per CreateProcessW docs.
-                    // Quote the path because it contains spaces.
-                    string cmdLine = $"\"{exePath}\"";
+                    // Quote the path because it contains spaces. Pass our own
+                    // (SimHub's) PID so the stub can watch it and self-terminate
+                    // when SimHub exits — the Wine-proof primary teardown path;
+                    // the JobObject's KILL_ON_JOB_CLOSE is the backstop. The SDK
+                    // only checks process name + registry version, never the
+                    // command line, so the extra argument is invisible to it.
+                    string cmdLine = $"\"{exePath}\" --parent-pid {Process.GetCurrentProcess().Id}";
 
                     if (!NativeMethods.CreateProcess(
                             lpApplicationName: null,
@@ -430,12 +435,29 @@ namespace MozaPlugin.Sdk
         private static int s_orphanSweepDone;
 
         /// <summary>
-        /// Kill any running process whose <see cref="Process.MainModule"/>
-        /// path matches <paramref name="ourExePath"/>. These are stub
-        /// children orphaned by a prior SimHub crash where the JobObject's
-        /// <c>KILL_ON_JOB_CLOSE</c> didn't fire — typically Wine/Proton
-        /// gaps in that semantic. Only matches our own extracted exe path,
-        /// so a real PitHouse install (different path) is never touched.
+        /// Kill stub children orphaned by a prior SimHub crash where the
+        /// JobObject's <c>KILL_ON_JOB_CLOSE</c> didn't fire — typically
+        /// Wine/Proton gaps in that semantic. These orphans keep a stale
+        /// wineserver alive, which is implicated in the freshly-powered-base
+        /// serial-open wedge (a stale wineserver is exactly the state in which
+        /// SerialPort.Open hangs/crashes), so reaping them is load-bearing for
+        /// connection robustness, not just tidiness.
+        ///
+        /// <para><b>Identity test (Wine-tolerant):</b> the previous version
+        /// matched on <c>Process.MainModule.FileName == ourExePath</c>, but
+        /// <see cref="Process.MainModule"/> THROWS under Wine for another
+        /// process, so the <c>catch{continue}</c> silently skipped every orphan
+        /// ("no prior-session stub processes found" while several were alive).
+        /// We instead match by process name (already via
+        /// <see cref="Process.GetProcessesByName"/>) and treat as an orphan any
+        /// matching process whose <see cref="Process.StartTime"/> PREDATES this
+        /// SimHub process — it cannot be a child we spawned (ours start after
+        /// us) and cannot be a real PitHouse the user launched after SimHub.
+        /// Under the plugin↔PitHouse exclusivity assumption, a same-named
+        /// process older than us is a prior-session orphan. If StartTime is
+        /// unreadable, we still treat it as an orphan: this sweep runs at
+        /// <see cref="Start"/> BEFORE we spawn our own child, so no same-named
+        /// process at this moment can be ours.</para>
         ///
         /// <para>Idempotent within a process via <see cref="s_orphanSweepDone"/>.
         /// Failures are non-fatal (logged at Debug) — we'd rather lose a
@@ -459,29 +481,40 @@ namespace MozaPlugin.Sdk
                 return;
             }
 
+            int ourPid;
+            DateTime ourStart;
+            try
+            {
+                using var self = Process.GetCurrentProcess();
+                ourPid = self.Id;
+                try { ourStart = self.StartTime; } catch { ourStart = DateTime.MinValue; }
+            }
+            catch { ourPid = -1; ourStart = DateTime.MinValue; }
+
             int killed = 0;
             foreach (var p in candidates)
             {
                 try
                 {
-                    string? path = null;
-                    try { path = p.MainModule?.FileName; }
-                    catch
-                    {
-                        // Access-denied (different user / elevated) or
-                        // already-exited race: skip rather than guess.
-                        continue;
-                    }
-                    if (!string.Equals(path, ourExePath, StringComparison.OrdinalIgnoreCase))
-                        continue;
-
                     int pid = p.Id;
+                    if (pid == ourPid) continue; // never ourselves
+
+                    // Orphan iff it started before us (prior session). Do NOT
+                    // use Process.MainModule — it throws under Wine and silently
+                    // skipped every orphan in the old code. If StartTime is
+                    // unreadable, treat as orphan (this sweep runs pre-spawn, so
+                    // any same-named process now is not our child).
+                    bool isOrphan;
+                    try { isOrphan = ourStart == DateTime.MinValue || p.StartTime < ourStart; }
+                    catch { isOrphan = true; }
+                    if (!isOrphan) continue;
+
                     try
                     {
                         p.Kill();
                         try { p.WaitForExit(500); } catch { }
                         killed++;
-                        try { MozaLog.Info($"[Moza] Orphan-sweep killed prior-session stub PID {pid} (path={path})"); } catch { }
+                        try { MozaLog.Info($"[Moza] Orphan-sweep killed prior-session stub PID {pid}"); } catch { }
                     }
                     catch (Exception ex)
                     {
@@ -497,6 +530,10 @@ namespace MozaPlugin.Sdk
             if (killed == 0)
             {
                 try { MozaLog.Debug($"[Moza] Orphan-sweep: no prior-session stub processes found ({candidates.Length} candidate(s) checked)"); } catch { }
+            }
+            else
+            {
+                try { MozaLog.Info($"[Moza] Orphan-sweep reaped {killed} prior-session stub process(es) — stale wineserver state cleared."); } catch { }
             }
         }
 
@@ -648,6 +685,39 @@ namespace MozaPlugin.Sdk
         /// current registry contents are treated as untrusted in that
         /// case (they may be a stale stub path) and simply replaced.
         /// </summary>
+        /// <summary>
+        /// True if <paramref name="candidate"/> refers to our own extracted
+        /// stub — either the exact current <see cref="StubExePath"/> or any path
+        /// inside the <c>…\MozaPlugin\CoapStub\</c> directory we own (so an
+        /// older build's stub path under the same folder still matches).
+        /// Used by the snapshot guard so we never treat our stub as the user's
+        /// original PitHouse value. Tolerant of unnormalizable input.
+        /// </summary>
+        private static bool IsOwnStubPath(string candidate)
+        {
+            string Normalize(string p)
+            {
+                try { return Path.GetFullPath(p.Trim().Trim('"')); }
+                catch { return p.Trim().Trim('"'); }
+            }
+
+            var cand = Normalize(candidate);
+            if (cand.Length == 0) return false;
+
+            if (string.Equals(cand, Normalize(StubExePath), StringComparison.OrdinalIgnoreCase))
+                return true;
+
+            try
+            {
+                var ourDir = Normalize(Path.GetDirectoryName(StubExePath)!);
+                // Append a separator so "…\CoapStub" doesn't match "…\CoapStubX".
+                if (!ourDir.EndsWith(Path.DirectorySeparatorChar.ToString(), StringComparison.Ordinal))
+                    ourDir += Path.DirectorySeparatorChar;
+                return cand.StartsWith(ourDir, StringComparison.OrdinalIgnoreCase);
+            }
+            catch { return false; }
+        }
+
         private static bool ApplyRegistryRedirect(string stubExePath)
         {
             if (!RuntimeInformation.IsOSPlatform(OSPlatform.Windows))
@@ -674,6 +744,23 @@ namespace MozaPlugin.Sdk
                 catch (Exception ex)
                 {
                     MozaLog.Warn($"[Moza] Reading HKCU\\{MozaRegSubKey}\\{MozaRegValueName} for backup failed: {ex.GetType().Name}: {ex.Message}; treating as absent.");
+                }
+
+                // Self-capture guard: never record OUR OWN stub path as the
+                // user's "original." This branch only runs when no backup file
+                // exists, which in normal operation means the registry holds the
+                // user's real value (we always restore + delete the backup
+                // together). But if the backup file is lost while the registry
+                // still points at the stub — a manual sweep of the CoapStub
+                // folder, an uninstaller, or a stale path from an older build —
+                // capturing it verbatim would make a later restore "recover" the
+                // user to the stub forever. Treat any value that is our current
+                // stub path or otherwise lives inside our CoapStub directory as
+                // "no original" (empty backup → restore by deleting the value).
+                if (!string.IsNullOrEmpty(original) && IsOwnStubPath(original!))
+                {
+                    MozaLog.Info($"[Moza] Existing HKCU\\{MozaRegSubKey}\\{MozaRegValueName} value '{original}' is our own stub path; backing up as 'no original' so restore deletes it.");
+                    original = null;
                 }
 
                 try
@@ -733,8 +820,14 @@ namespace MozaPlugin.Sdk
             }
             catch (Exception ex)
             {
-                MozaLog.Warn($"[Moza] Reading registry backup '{backupPath}' failed: {ex.GetType().Name}: {ex.Message}; leaving registry untouched.");
-                return;
+                // We can't read the user's original value, but we know a redirect
+                // is active (the backup file exists), so the registry currently
+                // points at our stub. Leaving it pinned there would outlive the
+                // feature; the safe default is to remove our redirect entirely —
+                // a real PitHouse rewrites this key on its next launch anyway.
+                // Treat the unreadable backup as "no original" and delete.
+                MozaLog.Warn($"[Moza] Reading registry backup '{backupPath}' failed: {ex.GetType().Name}: {ex.Message}; removing our redirect (delete value) as the safe default.");
+                original = string.Empty;
             }
 
             try

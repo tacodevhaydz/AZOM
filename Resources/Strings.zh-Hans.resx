@@ -15,6 +15,7 @@
   <data name="TabHeader_Upload" xml:space="preserve"><value>上传</value></data>
   <data name="TabHeader_WheelFiles" xml:space="preserve"><value>方向盘文件</value></data>
   <data name="TabHeader_Sdk" xml:space="preserve"><value>SDK</value></data>
+  <data name="TabHeader_Import" xml:space="preserve"><value>导入</value></data>
   <data name="TabHeader_About" xml:space="preserve"><value>关于</value></data>
   <data name="Brand_Unofficial" xml:space="preserve"><value>非官方</value></data>
   <data name="Brand_Moza" xml:space="preserve"><value>MOZA</value></data>
@@ -242,11 +243,12 @@
   <data name="Tooltip_DeleteDisabled" xml:space="preserve"><value>已暂时禁用。</value></data>
   <data name="Section_CoapServer" xml:space="preserve"><value>CoAP 服务器</value></data>
   <data name="Subtitle_CoapServer" xml:space="preserve"><value>// 监听回环的内嵌 CoAP 服务器</value></data>
-  <data name="Hint_CoapServerEnabled" xml:space="preserve"><value>启用后,插件会运行一个内嵌的 CoAP SDK 控制服务器。</value></data>
+  <data name="Hint_CoapServerEnabled" xml:space="preserve"><value>为需要的游戏提供官方 MOZA SDK 支持,例如 iRacing 或任何使用 360 Hz 模式的游戏。为此,插件会在回环上运行一个内嵌的 CoAP SDK 控制服务器。</value></data>
+  <data name="Hint_CoapStubProcessName" xml:space="preserve"><value>启用期间,插件会运行一个小型替身进程,在进程列表中显示为“MOZA Pit House.exe”。这是正常现象——它让 MOZA SDK 应用能够按名称找到 PitHouse。当你停用此项或关闭 SimHub 时,它会自动退出。</value></data>
   <data name="SliderLabel_EnableCoapServer" xml:space="preserve"><value>启用 CoAP SDK 服务器</value></data>
   <data name="Section_UdpControl" xml:space="preserve"><value>UDP 控制</value></data>
   <data name="Subtitle_UdpControl" xml:space="preserve"><value>// 基于 CBOR over UDP 的简单控制接口</value></data>
-  <data name="Hint_UdpControlEnabled" xml:space="preserve"><value>启用后,插件会运行一个内嵌 UDP 控制服务器,供第三方方向盘配置工具使用。</value></data>
+  <data name="Hint_UdpControlEnabled" xml:space="preserve"><value>这是一个用于设置转向角度的旧版 UDP 控制接口。已知的唯一用途是 Richard Burns Rally 的 RSF 版本。</value></data>
   <data name="SliderLabel_EnableUdpControl" xml:space="preserve"><value>启用 UDP 控制服务器</value></data>
   <data name="Label_PortNumber" xml:space="preserve"><value>端口</value></data>
   <data name="Section_Status" xml:space="preserve"><value>状态</value></data>
@@ -271,6 +273,8 @@
   <data name="Button_OpenReleaseNotes" xml:space="preserve"><value>打开发布说明</value></data>
   <data name="Button_SkipThisVersion" xml:space="preserve"><value>跳过此版本</value></data>
   <data name="Button_DismissUpdate" xml:space="preserve"><value>忽略</value></data>
+  <data name="Button_RestartSimHub" xml:space="preserve"><value>重启 SimHub</value></data>
+  <data name="Label_WhatsNew" xml:space="preserve"><value>v{0} 新增内容</value></data>
   <data name="Label_CheckForUpdates" xml:space="preserve"><value>自动检查更新</value></data>
   <data name="Label_ReleaseChannel" xml:space="preserve"><value>发布通道</value></data>
   <data name="Option_ReleaseChannelStable" xml:space="preserve"><value>稳定版</value></data>
@@ -366,6 +370,7 @@
   <data name="Toggle_On" xml:space="preserve"><value>开</value></data>
   <data name="TabHeader_Inputs" xml:space="preserve"><value>输入</value></data>
   <data name="TabHeader_Dashboard" xml:space="preserve"><value>仪表盘</value></data>
+  <data name="TabHeader_Leds" xml:space="preserve"><value>LEDs</value></data>
   <data name="TabHeader_Rpm" xml:space="preserve"><value>RPM</value></data>
   <data name="TabHeader_Buttons" xml:space="preserve"><value>按键</value></data>
   <data name="TabHeader_Knobs" xml:space="preserve"><value>旋钮</value></data>
@@ -482,4 +487,9 @@
   <data name="Import_BrowseDescription" xml:space="preserve"><value>从系统任意位置选择 PitHouse 预设 JSON 文件。</value></data>
   <data name="Import_Error_InvalidJson" xml:space="preserve"><value>文件不是有效的 JSON: {0}</value></data>
   <data name="Import_Error_UnsupportedType" xml:space="preserve"><value>不支持的预设类型 "{0}"。仅支持 Motor 和 Pedals 预设。</value></data>
+  <data name="Status_Connected" xml:space="preserve"><value>已连接</value></data>
+  <data name="Status_Recovering" xml:space="preserve"><value>正在恢复…</value></data>
+  <data name="Status_Parked" xml:space="preserve"><value>已暂停</value></data>
+  <data name="Status_TelemetryParked" xml:space="preserve"><value>多次失败后已停止遥测——重新启用以重试</value></data>
+  <data name="Status_DegradedScreenless" xml:space="preserve"><value>方向盘无显示屏——无需遥测</value></data>
 </root>

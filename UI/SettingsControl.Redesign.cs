@@ -225,7 +225,11 @@ namespace MozaPlugin
 
                 if (SteeringArcViz != null)
                 {
-                    double maxA = _data.MaxAngle > 0 ? _data.MaxAngle : 540;
+                    // _data.MaxAngle is raw half-degrees; the arc's Angle is fed
+                    // full degrees (UpdateHidInputDisplays uses MaxAngle * 2 as
+                    // the range), so the scale must be doubled to match — else
+                    // the arc fills to "full lock" at half the real rotation.
+                    double maxA = _data.MaxAngle > 0 ? _data.MaxAngle * 2 : 540;
                     SteeringArcViz.MaxAngle = maxA;
                 }
                 UpdateConnectionPill();
@@ -306,7 +310,23 @@ namespace MozaPlugin
             if (ConnectionPill == null) return;
             ConnectionPill.IsConnected = _data.IsConnected;
             ConnectionPill.PortName = _plugin.Connection?.LastPortName ?? "—";
-            ConnectionPill.StatusText = _data.IsConnected ? "Connected" : "Disconnected";
+            if (!_data.IsConnected)
+            {
+                ConnectionPill.StatusText = global::MozaPlugin.Resources.Strings.Status_Disconnected;
+            }
+            else
+            {
+                // Widen the connected pill with telemetry phase so Recovery/Parked
+                // are visible at a glance without opening the Diagnostics tab.
+                var phase = _plugin.TelemetrySender?.Phase ?? global::MozaPlugin.Telemetry.PipelinePhase.Idle;
+                string connected = global::MozaPlugin.Resources.Strings.Status_Connected;
+                if (phase == global::MozaPlugin.Telemetry.PipelinePhase.Recovery)
+                    ConnectionPill.StatusText = connected + " · " + global::MozaPlugin.Resources.Strings.Status_Recovering;
+                else if (phase == global::MozaPlugin.Telemetry.PipelinePhase.Parked)
+                    ConnectionPill.StatusText = connected + " · " + global::MozaPlugin.Resources.Strings.Status_Parked;
+                else
+                    ConnectionPill.StatusText = connected;
+            }
         }
 
         private void OnBandwidthTick(object? sender, EventArgs e)

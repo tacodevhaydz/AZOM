@@ -28,8 +28,12 @@ namespace MozaPlugin.Telemetry.Dashboard
     /// </summary>
     internal sealed class WheelUploadCoordinator : IDisposable
     {
-        private readonly MozaSerialConnection _connection;
+        private MozaSerialConnection _connection;
         private readonly Func<bool> _shouldAbort;
+
+        /// <summary>Repoint the outbound connection (telemetry sink moved between the
+        /// wheelbase and a standalone-USB dashboard connection).</summary>
+        public void Rebind(MozaSerialConnection connection) => _connection = connection;
         private readonly Func<EraPolicy> _getPolicy;
         private readonly Func<WheelDashboardState?> _getConfigJsonState;
         private readonly Action<byte, ushort> _sendSessionAck;

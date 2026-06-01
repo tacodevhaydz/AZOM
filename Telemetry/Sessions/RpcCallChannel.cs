@@ -24,8 +24,12 @@ namespace MozaPlugin.Telemetry.Sessions
     /// </summary>
     internal sealed class RpcCallChannel : IDisposable
     {
-        private readonly MozaSerialConnection _connection;
+        private MozaSerialConnection _connection;
         private readonly Func<bool> _shouldAbort;
+
+        /// <summary>Repoint the outbound connection (telemetry sink moved between the
+        /// wheelbase and a standalone-USB dashboard connection).</summary>
+        public void Rebind(MozaSerialConnection connection) => _connection = connection;
 
         private int _nextId = 1000;
         private readonly object _lock = new object();

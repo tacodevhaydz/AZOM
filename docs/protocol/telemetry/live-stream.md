@@ -2,6 +2,19 @@
 
 Primary live data stream from Pithouse to wheel/dash. Sent ~17–20×/s.
 
+### Target device id
+
+The stream is addressed to the device that owns the display:
+
+| Display | Target dev |
+|---------|-----------|
+| Wheel-integrated screen | `0x17` |
+| Standalone-USB CM2 (PID `0x0025`, own CDC pipe) | `0x12` |
+| CM2 behind a wheelbase | `0x14` |
+
+The frame format below is identical across targets. See
+[`../devices/dash-0x14.md`](../devices/dash-0x14.md) for CM2 topology.
+
 ### Frame structure
 
 ```

@@ -116,6 +116,8 @@ namespace MozaPlugin
         // to skip re-probing. Empty = no saved port.
         public string LastWheelbasePort { get; set; } = "";
         public string LastAb9Port { get; set; } = "";
+        public string LastDashboardPort { get; set; } = "";
+        public string LastHubPort { get; set; } = "";
 
         // Hard opt-out of the serial-probe fallback. Default behaviour
         // (false) is registry-first: if the registry-based MOZA USB
@@ -252,6 +254,12 @@ namespace MozaPlugin
         // no matching asset (manual hand-cut tags, or 404 on dev-latest) —
         // in which case the banner falls back to the release-notes link only.
         public string LastSeenAssetUrl { get; set; } = "";
+
+        // The GitHub release `body` (markdown changelog) from the last
+        // successful check, rendered as plain text in the About > Updates
+        // "What's new" panel so users see what they're updating to without
+        // leaving SimHub. Empty when LastSeenLatestVersion is empty.
+        public string LastSeenReleaseNotes { get; set; } = "";
 
         // ===== Third-party SDK emulation =====
         // Master toggle for the in-plugin CoAP/UDP server that mimics MOZA's

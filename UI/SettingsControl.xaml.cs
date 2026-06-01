@@ -100,6 +100,16 @@ namespace MozaPlugin
             InitRedesignControls();
             InitSdkTab();
             InitLanguageCombo();
+
+            // Inline PitHouse import wizard (Import tab). Instantiated here
+            // rather than as a named XAML element because a generated typed
+            // field of MozaPlugin.UI.Import.* collides with the MozaPlugin
+            // class name. Hand it the plugin and route Apply to ApplyImportPlan.
+            var importControl = new UI.Import.PitHouseImportControl();
+            importControl.Initialize(_plugin);
+            importControl.ApplyRequested += ApplyImportPlan;
+            ImportTab.Content = importControl;
+
             Instance = this;
 
             _refreshTimer = new DispatcherTimer { Interval = TimeSpan.FromMilliseconds(500) };
@@ -176,6 +186,11 @@ namespace MozaPlugin
                 HintBanners.ItemsSource = hints;
                 _lastHints = hints;
             }
+
+            // Keep the cross-tab update banner live so it appears as soon as a
+            // background check finds a newer release, regardless of which tab
+            // the user is on. Cheap (a few string compares); no network.
+            try { RefreshHeaderBanner(); } catch { /* never let the banner break the refresh loop */ }
 
             using (_suppressor.Begin())
             {

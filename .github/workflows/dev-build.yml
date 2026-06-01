@@ -98,7 +98,7 @@ jobs:
           Compress-Archive -Path ./staging/* -DestinationPath ./MozaPlugin_dev.zip
 
       - name: Publish sha-tagged pre-release
-        uses: softprops/action-gh-release@v2
+        uses: softprops/action-gh-release@v3
         with:
           tag_name: dev-${{ steps.vars.outputs.short_sha }}
           name: "${{ steps.vars.outputs.dev_version }}"
@@ -125,7 +125,7 @@ jobs:
         run: gh release delete dev-latest --yes --cleanup-tag --repo "$GITHUB_REPOSITORY" || true
 
       - name: Publish dev-latest pre-release
-        uses: softprops/action-gh-release@v2
+        uses: softprops/action-gh-release@v3
         with:
           tag_name: dev-latest
           name: "dev-latest (${{ steps.vars.outputs.dev_version }})"

@@ -188,19 +188,26 @@ namespace MozaPlugin.Devices
         private readonly MozaDeviceManager _deviceManager;
         private readonly MozaData _data;
         private readonly DeviceDetectionState _detectionState;
+        // True for the primary (base/hub) prober, which drives the singular
+        // TelemetrySender; false for the dedicated Universal Hub prober, which
+        // only enumerates peripherals and must not touch the primary sender's
+        // heartbeat mask.
+        private readonly bool _drivesTelemetry;
 
         public DeviceProber(
             MozaPlugin plugin,
             MozaSerialConnection connection,
             MozaDeviceManager deviceManager,
             MozaData data,
-            DeviceDetectionState detectionState)
+            DeviceDetectionState detectionState,
+            bool drivesTelemetry = true)
         {
             _plugin = plugin;
             _connection = connection;
             _deviceManager = deviceManager;
             _data = data;
             _detectionState = detectionState;
+            _drivesTelemetry = drivesTelemetry;
         }
 
         /// <summary>
@@ -214,17 +221,43 @@ namespace MozaPlugin.Devices
         {
             if (_detectionState.DashDetected) return;
             _detectionState.DashDetected = true;
-            if (DeviceDefinitionDeployer.DeployDashboard(_connection.DiscoveredPid))
+
+            // CM2 reached through the wheelbase lives at the meter id 0x14
+            // (0x12 is the base main). Deploy the CM2 profile and probe its
+            // display identity at 0x14.
+            bool cm2BehindBase = _plugin.IsCm2BehindBaseCandidate;
+            if (cm2BehindBase)
+                _deviceManager.SendDisplayProbe(MozaProtocol.DeviceDash);
+
+            if (DeviceDefinitionDeployer.DeployDashboard(
+                    _connection.DiscoveredPid, forceCm2: cm2BehindBase ? true : (bool?)null))
                 _plugin.DeviceDefinitionDeployed = true;
             _plugin.ApplyDashToHardware(_plugin.Settings?.ProfileStore?.CurrentProfile);
-            _deviceManager.ReadSettings(DashSettingsReadCommands);
-            MozaLog.Info("[Moza] Dashboard detected");
+            // DashSettingsReadCommands are legacy SHDP dash registers (group 0x33).
+            // A CM2 is driven by the 0x43 telemetry path, not these — sending them
+            // to the CM2 is pointless bleedthrough, so only read them for a legacy dash.
+            if (!cm2BehindBase)
+                _deviceManager.ReadSettings(DashSettingsReadCommands);
+            MozaLog.Info(cm2BehindBase
+                ? "[Moza] Dashboard detected (CM2 on wheelbase bus — deployed CM2 profile, probing display identity at 0x12)"
+                : "[Moza] Dashboard detected");
+
+            // CM2-on-base: retarget screen telemetry to 0x12 and start it.
+            if (cm2BehindBase)
+            {
+                try { _plugin.ApplyTelemetrySettings(); _plugin.StartTelemetryIfReady(); }
+                catch (Exception ex) { MozaLog.Debug($"[Moza] CM2-on-base telemetry start skipped: {ex.Message}"); }
+            }
         }
 
         /// <summary>First-sight detection cascade for the handbrake sub-device.</summary>
         public void MarkHandbrakeDetected()
         {
             if (_detectionState.HandbrakeDetected) return;
+            // Record the owning pipe BEFORE flipping the flag so HardwareApplier
+            // (which reads flag-then-owner) never sees detected==true paired with
+            // a null/stale owner. First responder across the base + hub pipes wins.
+            _detectionState.HandbrakeOwner = _deviceManager;
             _detectionState.HandbrakeDetected = true;
             _plugin.ApplyHandbrakeToHardware(_plugin.Settings?.ProfileStore?.CurrentProfile);
             _deviceManager.ReadSettings(HandbrakeSettingsReadCommands);
@@ -235,6 +268,10 @@ namespace MozaPlugin.Devices
         public void MarkPedalsDetected()
         {
             if (_detectionState.PedalsDetected) return;
+            // Owner first, then flag (see MarkHandbrakeDetected). The owning
+            // MozaDeviceManager is this prober's — base pipe for the primary
+            // prober, hub pipe for the dedicated hub prober.
+            _detectionState.PedalsOwner = _deviceManager;
             _detectionState.PedalsDetected = true;
             _plugin.ApplyPedalsToHardware(_plugin.Settings?.ProfileStore?.CurrentProfile);
             _deviceManager.ReadSettings(PedalsSettingsReadCommands);
@@ -269,9 +306,15 @@ namespace MozaPlugin.Devices
             if (value < 0) return;
 
             // TelemetrySender's heartbeat mask: only ping detected devices.
-            var sender = _plugin.TelemetrySender;
-            if (deviceId >= 18 && deviceId <= 30 && sender != null)
-                sender.DetectedDeviceMask |= (1 << (deviceId - 18));
+            // Only the primary prober drives the singular sender; the dedicated
+            // hub prober enumerates peripherals on its own pipe and must not
+            // toggle heartbeats on the primary (base) pipe.
+            if (_drivesTelemetry)
+            {
+                var sender = _plugin.TelemetrySender;
+                if (deviceId >= 18 && deviceId <= 30 && sender != null)
+                    sender.DetectedDeviceMask |= (1 << (deviceId - 18));
+            }
 
             // Base detection — IsBaseConnected was just set by UpdateFromCommand;
             // re-apply the profile so base settings get pushed.
@@ -537,6 +580,15 @@ namespace MozaPlugin.Devices
                     if (!string.IsNullOrEmpty(_data.DisplayModelName))
                     {
                         MozaLog.Debug($"[Moza] Display model: {_data.DisplayModelName}");
+                        // CM2-on-base confirmed by display identity — re-assert 0x12 routing.
+                        if (_plugin.IsCm2BehindBaseCandidate)
+                        {
+                            MozaLog.Info($"[Moza] CM2-on-base display confirmed: {_data.DisplayModelName} — routing screen telemetry to 0x12");
+                            if (DeviceDefinitionDeployer.DeployDashboard(_connection.DiscoveredPid, forceCm2: true))
+                                _plugin.DeviceDefinitionDeployed = true;
+                            try { _plugin.ApplyTelemetrySettings(); }
+                            catch (Exception ex) { MozaLog.Debug($"[Moza] CM2-on-base ApplyTelemetrySettings skipped: {ex.Message}"); }
+                        }
                         // Re-arm the wedge-recovery one-shot now that we know
                         // a display is responsive — a future wheel hot-swap
                         // that wedges should get its own recovery attempt.

@@ -91,6 +91,10 @@ namespace MozaPlugin
         private MozaData _data = null!;
         private MozaDeviceManager _deviceManager = null!;
         private MozaAb9DeviceManager _ab9Manager = null!;
+        private MozaDashboardDeviceManager _dashboardManager = null!;
+        // Dedicated connection for a Universal Hub when a wheelbase is also
+        // present (base = primary, hub enumerates its own peripherals).
+        private MozaHubDeviceManager _hubManager = null!;
         private MozaMBoosterRegistry? _mboosterRegistry;
 
         // Captures unsolicited firmware-debug frames (raw wire group 0x0E,
@@ -113,27 +117,23 @@ namespace MozaPlugin
         private Sdk.MozaSdkCoapServer? _sdkServer;
         private Sdk.PitHouseUdp.MozaControlUdpServer? _controlUdpServer;
         private Sdk.CoapStubManager? _sdkStubManager;
+        // Serializes runtime start/stop of the SDK-emulation surface so the
+        // live UI toggles (which fire on the WPF thread, off-loaded to the
+        // ThreadPool) can't race Init()/End() or each other. Guards the
+        // _sdkServer / _controlUdpServer / _sdkStubManager fields and the
+        // s_persistentSdkStubManager static during transitions.
+        private readonly object _sdkLifecycleGate = new object();
         internal global::MozaPlugin.Protocol.PendingResponseTracker PendingResponses { get; }
             = new global::MozaPlugin.Protocol.PendingResponseTracker();
         private MozaPluginSettings _settings = null!;
         private Timer _pollTimer = null!;
         private Timer _retryTimer = null!;
         private Timer _reconnectTimer = null!;
-        // Hub-probe back-off: the hub-port1-power read (cmd=100 / 0x64) is the
-        // only way to distinguish a Universal Hub from the wheelbase main
-        // controller (they share device id 0x12), so we have to probe it. But
-        // the probe got sent every 5 s status-poll tick forever when no Hub
-        // was present, and the wheelbase firmware logs an "Unexpected cmd: 100"
-        // warning for each one — 52 warnings in 4 minutes on the issue #43
-        // user's bundle, who has no Hub. Throttle: aggressive for the first
-        // 30 s after first probe (covers Hub-present-from-start within poll
-        // cadence), then back off to once per 60 s (covers hot-plug within
-        // ~60 s of attaching). Both timestamps in Environment.TickCount; 0 =
-        // "not yet probed".
-        private int _hubProbeFirstTickMs;
-        private int _hubProbeLastTickMs;
-        private const int HubProbeAggressiveMs = 30_000;
-        private const int HubProbeBackoffMs = 60_000;
+        // Hub detection belongs ONLY to the dedicated hub connection (_hubManager),
+        // which probes for a Universal Hub on the hub's OWN port and skips the
+        // wheelbase port. The base/wheelbase connection must NEVER emit hub calls
+        // (hub-port-power / cmd 0x64): that device answered the base probe, so it is
+        // a known wheelbase and rejects hub commands ("Unexpected cmd: 100").
         private int _connectingFlag;
         private MozaHidReader _hidReader = null!;
         private PluginManager _pluginManager = null!;
@@ -143,6 +143,10 @@ namespace MozaPlugin
         internal HardwareApplier HardwareApplier => _hardwareApplier;
         private DeviceProber _deviceProber = null!;
         internal DeviceProber DeviceProber => _deviceProber;
+        // Peripheral-enumeration prober for the dedicated hub pipe. Shares
+        // _data + DetectionState with the primary prober; drivesTelemetry:false
+        // so it never touches the singular TelemetrySender.
+        private DeviceProber _hubDeviceProber = null!;
         private DashboardBindingCoordinator _dashboardBindingCoordinator = null!;
         internal DashboardBindingCoordinator DashboardBindingCoordinator => _dashboardBindingCoordinator;
 
@@ -415,37 +419,50 @@ namespace MozaPlugin
         internal DateTime StartupUtc { get; private set; } = DateTime.UtcNow;
 
         /// <summary>
-        /// True when the open serial port belongs to a Moza dashboard PID
-        /// (CM2 = 0x0025). Lets dashboard detection flip on USB PID alone,
-        /// without waiting for a wheelbase relay or wheel-side ack.
+        /// True when a standalone-USB dashboard (CM2 = 0x0025) is connected on
+        /// its own dedicated port. Lets dashboard detection flip on USB PID
+        /// alone, without waiting for a wheelbase relay or wheel-side ack.
         /// </summary>
-        private bool IsStandaloneDashboardUsbConnection =>
-            _connection?.IsConnected == true
-            && MozaUsbIds.IsDashboardPid(_connection.DiscoveredPid);
+        private bool IsStandaloneDashboardUsbConnection => DashboardUsbConnected;
 
         internal bool IsDashDetected =>
             DetectionState.DashDetected || IsStandaloneDashboardUsbConnection;
 
         /// <summary>
-        /// True iff the active dashboard pipeline must address a standalone
-        /// dashboard (CM2 bridge/main at dev=0x12) rather than a wheel-hosted
-        /// display at dev=0x17. Requires: dashboard detected, no wheel detected,
-        /// and the open USB PID classified as Dashboard.
+        /// A CM2 (external display) wired through the wheelbase: dash sub-device
+        /// present on a base bus whose attached wheel has no display of its own.
+        /// Drives the CM2 device profile + 0x12 screen-telemetry routing.
+        /// </summary>
+        internal bool IsCm2BehindBaseCandidate =>
+            _connection?.IsConnected == true
+            && DetectionState.BaseDetected
+            && DetectionState.DashDetected
+            && !IsStandaloneDashboardUsbConnection
+            && WheelModelInfo?.HasDisplay != true;
+
+        /// <summary>
+        /// True iff screen telemetry must target dev=0x12 (CM2 bridge/main)
+        /// rather than a wheel-hosted display at dev=0x17 — a standalone-USB CM2
+        /// or a CM2 wired through the wheelbase (<see cref="IsCm2BehindBaseCandidate"/>).
         /// </summary>
         internal bool ShouldUseStandaloneDashboardTarget()
         {
-            if (!DetectionState.DashDetected && !IsStandaloneDashboardUsbConnection) return false;
-            if (DetectionState.NewWheelDetected || DetectionState.OldWheelDetected) return false;
-            return MozaUsbIds.IsDashboardPid(_connection?.DiscoveredPid);
+            // Standalone-USB CM2 on its own connection drives the dashboard
+            // target even when a wheel is also present on the base.
+            if (DashboardUsbConnected) return true;
+            // CM2 bridged through the base bus (screenless wheel) → dev 0x14.
+            if (IsCm2BehindBaseCandidate) return true;
+            return false;
         }
 
         /// <summary>
-        /// Target dev_id for screen telemetry / session-control frames when
-        /// driving a standalone dashboard. Pinned to <see cref="MozaProtocol.DeviceMain"/>
-        /// (0x12 = CM2 bridge/main) — the verified target for CM2; a future
-        /// second standalone dash model can override here.
+        /// Target dev_id for screen telemetry / session-control frames. A
+        /// standalone-USB CM2 bridges as 0x12; a CM2 behind the wheelbase is the
+        /// meter at 0x14 (0x12 there is the base main, which rejects the session
+        /// layer), so target 0x14 in that topology.
         /// </summary>
-        internal byte PreferredStandaloneDashboardTargetDeviceId => MozaProtocol.DeviceMain;
+        internal byte PreferredStandaloneDashboardTargetDeviceId =>
+            IsCm2BehindBaseCandidate ? MozaProtocol.DeviceDash : MozaProtocol.DeviceMain;
 
         internal bool IsBaseAmbientLedSupported => DetectionState.BaseAmbientLedSupported;
         internal bool IsHandbrakeDetected => DetectionState.HandbrakeDetected;
@@ -455,6 +472,17 @@ namespace MozaPlugin
         internal MozaAb9DeviceManager Ab9Manager => _ab9Manager;
         internal MozaMBoosterRegistry? MBoosterRegistry => _mboosterRegistry;
         internal MozaSerialConnection Connection => _connection;
+
+        /// <summary>The standalone-USB dashboard connection (CM2 on its own cable), or null.</summary>
+        internal MozaSerialConnection? DashboardConnection => _dashboardManager?.Connection;
+
+        /// <summary>The dedicated Universal Hub connection (present when a base + hub coexist), or null.</summary>
+        internal MozaSerialConnection? HubConnection => _hubManager?.Connection;
+
+        /// <summary>True when a standalone-USB dashboard (CM2, PID 0x0025) is connected on its own port.</summary>
+        internal bool DashboardUsbConnected =>
+            _dashboardManager?.IsConnected == true
+            && MozaUsbIds.IsDashboardPid(_dashboardManager.Connection.DiscoveredPid);
 
         /// <summary>
         /// Live SDK CoAP server when emulation is enabled; null otherwise.
@@ -524,6 +552,8 @@ namespace MozaPlugin
         /// </summary>
         internal bool ShouldDriveDashboard()
         {
+            // CM2 on the wheelbase bus drives a dashboard even on a screenless wheel.
+            if (IsCm2BehindBaseCandidate) return true;
             bool? hasDisplay = WheelModelInfo?.HasDisplay;
             if (hasDisplay == false) return false;   // known no-display: never
             if (hasDisplay == true)  return true;    // known display: don't wait for probe
@@ -764,9 +794,11 @@ namespace MozaPlugin
                     // (the device may have changed during the gap).
                     s_persistentDetectionState = null;
                     _connection = new MozaSerialConnection(
+                        // Dashboard PIDs (CM2 0x0025) are claimed by the dedicated
+                        // _dashboardManager connection so a standalone CM2 works
+                        // alongside a base; the wheelbase no longer admits them.
                         pid => MozaUsbIds.IsWheelbasePid(pid)
                                || MozaUsbIds.IsHubPid(pid)
-                               || MozaUsbIds.IsDashboardPid(pid)
                                || !MozaUsbIds.IsKnownMozaPid(pid),
                         MozaProbeTarget.BaseAndHub,
                         disableProbeFallback);
@@ -783,6 +815,26 @@ namespace MozaPlugin
                 if (!string.IsNullOrEmpty(_settings.LastAb9Port))
                     _ab9Manager.Connection.LastPortName = _settings.LastAb9Port;
                 _ab9Manager.MessageReceived += OnAb9MessageReceived;
+
+                // Dedicated connection for a standalone-USB CM2 (PID 0x0025), so it
+                // works even when a base holds the wheelbase connection.
+                _dashboardManager = new MozaDashboardDeviceManager();
+                if (!string.IsNullOrEmpty(_settings.LastDashboardPort))
+                    _dashboardManager.Connection.LastPortName = _settings.LastDashboardPort;
+                _dashboardManager.MessageReceived += OnDashboardMessageReceived;
+                _dashboardManager.Connection.Disconnected += OnDashboardDisconnected;
+
+                // Dedicated connection for a Universal Hub (PID 0x0020) on its
+                // own COM port. Brought up alongside the wheelbase so a base with
+                // no pedal port + a hub-for-pedals enumerates the hub's peripherals
+                // (pedals / handbrake / port-power) in parallel. Like the dashboard
+                // manager it's a fresh instance each Init (not part of the
+                // persistent-connection reuse, which is wheel-session-scoped).
+                _hubManager = new MozaHubDeviceManager();
+                if (!string.IsNullOrEmpty(_settings.LastHubPort))
+                    _hubManager.Connection.LastPortName = _settings.LastHubPort;
+                _hubManager.MessageReceived += OnHubMessageReceived;
+                _hubManager.Connection.Disconnected += OnHubDisconnected;
 
                 // AB9 engine-vibration worker — tick gates on connection/detection state.
                 _ab9Worker = new Ab9EngineVibrationWorker(
@@ -818,9 +870,20 @@ namespace MozaPlugin
                 _retryTimer.Elapsed += (s, e) =>
                 {
                     if (IsShuttingDown) return;
-                    if (!_connection.IsConnected) return;
-                    try { PendingResponses.TickRetransmits(_connection.Send); }
-                    catch (Exception ex) { MozaLog.Warn($"[Moza] PendingResponseTracker tick failed: {ex.Message}"); }
+                    // Each pipe retransmits its own tracked reads on its own Send,
+                    // independently — the hub's reads must NOT go out on the base
+                    // port and vice versa. Ticked separately so one pipe being
+                    // down doesn't stall the other's retransmits.
+                    if (_connection.IsConnected)
+                    {
+                        try { PendingResponses.TickRetransmits(_connection.Send); }
+                        catch (Exception ex) { MozaLog.Warn($"[Moza] PendingResponseTracker tick failed: {ex.Message}"); }
+                    }
+                    if (_hubManager != null && _hubManager.IsConnected)
+                    {
+                        try { _hubManager.PendingResponses?.TickRetransmits(_hubManager.Connection.Send); }
+                        catch (Exception ex) { MozaLog.Warn($"[Moza] Hub PendingResponseTracker tick failed: {ex.Message}"); }
+                    }
                 };
                 _retryTimer.AutoReset = true;
                 _retryTimer.Start();
@@ -831,6 +894,12 @@ namespace MozaPlugin
                     if (IsShuttingDown) return;
                     if (!_connection.IsConnected)
                         TryConnect();
+                    else
+                        // Primary already latched — if it grabbed a hub before the
+                        // wheelbase enumerated (wrong latch order), hand it off to
+                        // the base now. Runs before TryConnectHub so the freed hub
+                        // port is claimed by the hub manager in this same tick.
+                        MigratePrimaryToWheelbaseIfNeeded();
                     // AB9 probe is microseconds when registry is populated.
                     // On Wine/Proton (no registry) the fallback would scan
                     // every wine COM symlink and lock up SimHub; suppress when
@@ -841,6 +910,18 @@ namespace MozaPlugin
                         && registryHasMoza
                         && !_ab9Manager.IsConnected)
                         TryConnectAb9();
+
+                    // Standalone-USB CM2 on its own port (0x0025) — same Wine guard.
+                    if (registryHasMoza && !_dashboardManager.IsConnected)
+                        TryConnectDashboard();
+
+                    // Universal Hub on its own port (0x0020) — registry-only, same
+                    // Wine guard. The hub-only case is handled by the primary
+                    // (BaseAndHub) connection; this dedicated connection only takes
+                    // a hub the primary didn't claim (i.e. a base is the primary),
+                    // and no-ops when the hub port is already held by the primary.
+                    if (registryHasMoza && !_hubManager.IsConnected)
+                        TryConnectHub();
 
                     // Slice I: reconnect-timer mBooster Refresh re-enabled.
                     try { _mboosterRegistry?.Refresh(); }
@@ -864,6 +945,13 @@ namespace MozaPlugin
                 _propertyResolver = new SimHubPropertyResolver(_pluginManager, _data, _hidReader);
                 _hardwareApplier = new HardwareApplier(this, _data, _deviceManager, _ab9Manager, DetectionState);
                 _deviceProber = new DeviceProber(this, _connection, _deviceManager, _data, DetectionState);
+                // Hub-pipe peripheral prober: same _data + DetectionState, but
+                // bound to the hub connection + hub device manager so its reads
+                // and Mark*Detected ownership go out on the hub pipe.
+                // drivesTelemetry:false keeps it off the primary TelemetrySender.
+                _hubDeviceProber = new DeviceProber(
+                    this, _hubManager.Connection, _hubManager.DeviceManager, _data, DetectionState,
+                    drivesTelemetry: false);
                 _dashboardBindingCoordinator = new DashboardBindingCoordinator(this, _data, _connection, DetectionState);
 
                 // Control Mapper variant-provider integration. Construction is in
@@ -983,95 +1071,13 @@ namespace MozaPlugin
                 //     looks for in process enumeration.
                 //   - UdpControlEnabled gates the plain-UDP-CBOR control
                 //     surface (40288) third-party wheel-config tools use.
-                // Either or both can be on. Each start path catches its own
-                // failures so one bad port doesn't take the other down.
-                // Toggling either requires a plugin restart for the change
-                // to take effect (matches the description shown in the UI).
-                if (_settings.SdkEmulationEnabled)
-                {
-                    try
-                    {
-                        // Reuse the persistent stub manager from a prior
-                        // plugin instance if its child process is still
-                        // alive. Avoids Stop+Restart thrash (registry
-                        // re-redirect, CreateProcess, AssignProcessToJobObject)
-                        // on every game switch — and sidesteps the Wine/Proton
-                        // teardown hang that wedges Stop() between registry
-                        // restore and Process.Kill / JobObject.Dispose.
-                        if (s_persistentSdkStubManager != null
-                            && s_persistentSdkStubManager.IsRunning)
-                        {
-                            _sdkStubManager = s_persistentSdkStubManager;
-                            MozaLog.Info(
-                                "[Sdk] Reusing persistent CoAP stub from prior plugin instance " +
-                                $"(status={_sdkStubManager.Status})");
-                        }
-                        else
-                        {
-                            // Persistent reference exists but the child is gone
-                            // (crashed / killed externally). Tear down the husk
-                            // before allocating a fresh manager so its job-handle
-                            // / process-handle don't leak. Bounded so a Wine-side
-                            // JobObject.Dispose wedge can't block Init.
-                            if (s_persistentSdkStubManager != null)
-                            {
-                                try { s_persistentSdkStubManager.TryStop(1500); } catch { }
-                                s_persistentSdkStubManager = null;
-                            }
-                            _sdkStubManager = new Sdk.CoapStubManager();
-                            _sdkStubManager.Start();
-                            s_persistentSdkStubManager = _sdkStubManager;
-                        }
-                        // SDK server holds refs to _data + _hardwareApplier
-                        // (both per-instance), so it MUST be recreated each
-                        // Init — it cannot be persistent like the stub manager.
-                        _sdkServer = new Sdk.MozaSdkCoapServer(_data, _hardwareApplier);
-                        _sdkServer.Start();
-                        MozaLog.Info("[Sdk] CoAP SDK server enabled");
-                    }
-                    catch (Exception ex)
-                    {
-                        MozaLog.Error($"[Sdk] Failed to start CoAP SDK server: {ex.Message}");
-                        try { _sdkServer?.Stop(); } catch { /* swallow */ }
-                        // Don't Stop() the stub manager from this catch — it
-                        // may be the persistent one and a Wine-side Stop()
-                        // hang is exactly the failure we're avoiding. Leave
-                        // it running; the next Init re-evaluates via IsRunning.
-                        _sdkServer = null;
-                        _sdkStubManager = null;
-                    }
-                }
-                else
-                {
-                    // SDK emulation toggled OFF. If a prior session left a
-                    // persistent stub running, stop it now so the registry
-                    // redirect doesn't outlive the user's intent. Bounded —
-                    // a Wine-side wedge in Stop()/JobObject.Dispose can't
-                    // block Init; JobObject's KILL_ON_JOB_CLOSE backstops
-                    // the child cleanup on process exit if Stop() times out.
-                    if (s_persistentSdkStubManager != null)
-                    {
-                        try { s_persistentSdkStubManager.TryStop(1500); } catch { }
-                        s_persistentSdkStubManager = null;
-                    }
-                }
-
-                if (_settings.UdpControlEnabled)
-                {
-                    try
-                    {
-                        _controlUdpServer = new Sdk.PitHouseUdp.MozaControlUdpServer(
-                            _data, _hardwareApplier);
-                        _controlUdpServer.Start();
-                        MozaLog.Info("[Sdk] UDP control server enabled");
-                    }
-                    catch (Exception ex)
-                    {
-                        MozaLog.Error($"[Sdk] Failed to start UDP control server: {ex.Message}");
-                        try { _controlUdpServer?.Stop(); } catch { /* swallow */ }
-                        _controlUdpServer = null;
-                    }
-                }
+                // Either or both can be on. Both go through the same runtime
+                // start/stop helpers the live UI toggles use, so startup and a
+                // mid-session toggle take exactly the same code path. Each
+                // helper catches its own failures so one bad port doesn't take
+                // the other down.
+                SetSdkEmulationEnabled(_settings.SdkEmulationEnabled);
+                SetUdpControlEnabled(_settings.UdpControlEnabled);
             }
             catch (Exception ex)
             {
@@ -1193,6 +1199,17 @@ namespace MozaPlugin
             }
             catch { }
             try { _ab9Manager?.Dispose(); } catch { }
+            try { _dashboardManager?.Dispose(); } catch { }
+            try
+            {
+                if (_hubManager != null)
+                {
+                    _hubManager.MessageReceived -= OnHubMessageReceived;
+                    _hubManager.Connection.Disconnected -= OnHubDisconnected;
+                }
+            }
+            catch { }
+            try { _hubManager?.Dispose(); } catch { }
             try { _pollTimer?.Dispose(); } catch { }
             try { _retryTimer?.Dispose(); } catch { }
             try { _reconnectTimer?.Dispose(); } catch { }
@@ -1664,6 +1681,28 @@ namespace MozaPlugin
             catch { }
             _ab9Manager?.Dispose();
 
+            try
+            {
+                if (_dashboardManager != null)
+                {
+                    _dashboardManager.MessageReceived -= OnDashboardMessageReceived;
+                    _dashboardManager.Connection.Disconnected -= OnDashboardDisconnected;
+                }
+            }
+            catch { }
+            _dashboardManager?.Dispose();
+
+            try
+            {
+                if (_hubManager != null)
+                {
+                    _hubManager.MessageReceived -= OnHubMessageReceived;
+                    _hubManager.Connection.Disconnected -= OnHubDisconnected;
+                }
+            }
+            catch { }
+            _hubManager?.Dispose();
+
             // 7. Dispose timers after I/O is gone.
             _saveDebounceTimer?.Dispose();
             _saveDebounceTimer = null;
@@ -1734,6 +1773,143 @@ namespace MozaPlugin
             catch { }
         }
 
+        /// <summary>
+        /// Start or stop the CoAP SDK emulation surface (port 40266 server +
+        /// the <c>MOZA Pit House.exe</c> impersonation stub) at runtime. Called
+        /// both from <see cref="Init"/> (to honour the persisted setting) and
+        /// from the live UI toggle, so startup and a mid-session flip share one
+        /// path. Serialized by <see cref="_sdkLifecycleGate"/>; safe to call
+        /// repeatedly (idempotent in each direction).
+        ///
+        /// <para>Disabling stops the stub via <c>TryStop</c> (bounded — never
+        /// wedges the caller under Wine) which restores
+        /// <c>HKCU\Software\MOZA\PitHouse\path</c> to the user's original value
+        /// before the child is killed, and clears the persistent static so the
+        /// redirect can't be re-applied after an explicit "off".</para>
+        /// </summary>
+        internal void SetSdkEmulationEnabled(bool enabled)
+        {
+            lock (_sdkLifecycleGate)
+            {
+                if (enabled)
+                {
+                    try
+                    {
+                        // Stub manager is persistent across plugin reloads (the
+                        // child holds no per-instance state and its Wine teardown
+                        // is the path that intermittently hangs). Reuse a live
+                        // one; otherwise reap a dead husk and spawn fresh.
+                        if (_sdkStubManager != null && _sdkStubManager.IsRunning)
+                        {
+                            // Already running for this instance — nothing to do.
+                        }
+                        else if (s_persistentSdkStubManager != null
+                                 && s_persistentSdkStubManager.IsRunning)
+                        {
+                            _sdkStubManager = s_persistentSdkStubManager;
+                            MozaLog.Info(
+                                "[Sdk] Reusing persistent CoAP stub " +
+                                $"(status={_sdkStubManager.Status})");
+                        }
+                        else
+                        {
+                            // Persistent reference exists but its child is gone
+                            // (crashed / killed externally). Tear down the husk
+                            // before allocating a fresh manager so its job/process
+                            // handles don't leak. Bounded so a Wine-side
+                            // JobObject.Dispose wedge can't block the caller.
+                            if (s_persistentSdkStubManager != null)
+                            {
+                                try { s_persistentSdkStubManager.TryStop(1500); } catch { }
+                                s_persistentSdkStubManager = null;
+                            }
+                            _sdkStubManager = new Sdk.CoapStubManager();
+                            _sdkStubManager.Start();
+                            s_persistentSdkStubManager = _sdkStubManager;
+                        }
+
+                        // SDK server holds refs to _data + _hardwareApplier (both
+                        // per-instance), so it lives and dies with this instance —
+                        // it cannot be persistent like the stub manager. Create
+                        // only when not already up (idempotent re-enable).
+                        if (_sdkServer == null)
+                        {
+                            _sdkServer = new Sdk.MozaSdkCoapServer(_data, _hardwareApplier);
+                            _sdkServer.Start();
+                            MozaLog.Info("[Sdk] CoAP SDK server enabled");
+                        }
+                    }
+                    catch (Exception ex)
+                    {
+                        MozaLog.Error($"[Sdk] Failed to start CoAP SDK server: {ex.Message}");
+                        try { _sdkServer?.Stop(); } catch { /* swallow */ }
+                        // Don't Stop() the stub manager from this catch — it may
+                        // be the persistent one and a Wine-side Stop() hang is
+                        // exactly the failure we're avoiding. Leave it running;
+                        // the next transition re-evaluates via IsRunning.
+                        _sdkServer = null;
+                        _sdkStubManager = null;
+                    }
+                }
+                else
+                {
+                    // Stop the CoAP server, then the stub. Stopping the stub
+                    // restores the registry redirect (before the kill, so it
+                    // survives a Wine-side hang). Clear the persistent static so
+                    // nothing re-applies the redirect after an explicit "off".
+                    try { _sdkServer?.Stop(); _sdkServer?.Dispose(); }
+                    catch (Exception ex) { MozaLog.Warn($"[Sdk] server stop: {ex.Message}"); }
+                    _sdkServer = null;
+
+                    var stub = _sdkStubManager ?? s_persistentSdkStubManager;
+                    if (stub != null)
+                    {
+                        try { stub.TryStop(1500); }
+                        catch (Exception ex) { MozaLog.Warn($"[Sdk] stub stop: {ex.Message}"); }
+                        MozaLog.Info("[Sdk] CoAP SDK emulation disabled — stub stopped, registry restored");
+                    }
+                    _sdkStubManager = null;
+                    s_persistentSdkStubManager = null;
+                }
+            }
+        }
+
+        /// <summary>
+        /// Start or stop the PitHouse-compatible plain-UDP control server
+        /// (port 40288) at runtime. Parallel to
+        /// <see cref="SetSdkEmulationEnabled"/>; shares the same lifecycle gate
+        /// and is driven from both <see cref="Init"/> and the live UI toggle.
+        /// </summary>
+        internal void SetUdpControlEnabled(bool enabled)
+        {
+            lock (_sdkLifecycleGate)
+            {
+                if (enabled)
+                {
+                    if (_controlUdpServer != null) return; // already running
+                    try
+                    {
+                        _controlUdpServer = new Sdk.PitHouseUdp.MozaControlUdpServer(
+                            _data, _hardwareApplier);
+                        _controlUdpServer.Start();
+                        MozaLog.Info("[Sdk] UDP control server enabled");
+                    }
+                    catch (Exception ex)
+                    {
+                        MozaLog.Error($"[Sdk] Failed to start UDP control server: {ex.Message}");
+                        try { _controlUdpServer?.Stop(); } catch { /* swallow */ }
+                        _controlUdpServer = null;
+                    }
+                }
+                else
+                {
+                    try { _controlUdpServer?.Stop(); _controlUdpServer?.Dispose(); }
+                    catch (Exception ex) { MozaLog.Warn($"[PitHouseUdp] server stop: {ex.Message}"); }
+                    _controlUdpServer = null;
+                }
+            }
+        }
+
         internal MozaHidReader HidReader => _hidReader;
 
         internal void SaveSettings()
@@ -1760,6 +1936,42 @@ namespace MozaPlugin
             ScheduleSave();
         }
 
+        /// <summary>
+        /// Requests SimHub to exit and relaunch — used after an in-app plugin
+        /// update is installed so the freshly-swapped DLL gets loaded. Drives
+        /// the supported SimHub lifecycle hook
+        /// <c>PluginManager.RequestApplicationExit(restart: true)</c> (see
+        /// docs/simhub.md § Application Lifecycle). Best-effort: logs and
+        /// returns false if the call is unavailable or throws, leaving SimHub
+        /// running so the user can restart manually.
+        /// </summary>
+        public bool RestartSimHub()
+        {
+            // Flush any pending settings synchronously-ish before we ask SimHub
+            // to tear down — ScheduleSave is debounced, but SimHub's own
+            // shutdown also persists plugin settings, so this is belt-and-braces.
+            try { PersistSettings(); } catch { /* best-effort */ }
+
+            var pm = _pluginManager;
+            if (pm == null)
+            {
+                MozaLog.Warn("[UpdateInstall] restart requested but PluginManager is null");
+                return false;
+            }
+
+            try
+            {
+                MozaLog.Info("[UpdateInstall] requesting SimHub restart to load updated plugin");
+                pm.RequestApplicationExit(true);
+                return true;
+            }
+            catch (Exception ex)
+            {
+                MozaLog.Warn($"[UpdateInstall] RequestApplicationExit failed: {ex.GetType().Name}: {ex.Message}");
+                return false;
+            }
+        }
+
         // Kicks off the background GitHub Releases query on a thread-pool
         // thread, with a 24h throttle (LastUpdateCheckUtc) and a per-process
         // dedupe (s_updateCheckStarted). Returns immediately; the result is
@@ -1771,7 +1983,17 @@ namespace MozaPlugin
             {
                 if (_settings == null || !_settings.UpdateCheckEnabled) return;
                 if (s_updateCheckStarted) return;
-                if (DateTime.UtcNow - _settings.LastUpdateCheckUtc < TimeSpan.FromHours(24))
+                // The dev channel tracks the rolling 'dev-latest' tag, so a
+                // version cached in a prior session can't be trusted across a
+                // restart: its 7-char SHA differs from any freshly-installed
+                // build, which the dev comparator reads as "newer" and paints a
+                // phantom "update available" banner. Re-check dev on every
+                // launch (still once per process via s_updateCheckStarted) so
+                // the cache re-syncs to the live dev-latest. Stable versions are
+                // SHA-stable and directly comparable, so they keep the 24h
+                // throttle.
+                if (_settings.UpdateChannel != UpdateChannel.Dev
+                    && DateTime.UtcNow - _settings.LastUpdateCheckUtc < TimeSpan.FromHours(24))
                 {
                     MozaLog.Debug("[UpdateCheck] skipped — last check less than 24h ago");
                     return;
@@ -1793,6 +2015,7 @@ namespace MozaPlugin
                             _settings.LastSeenLatestVersion = result.LatestVersion;
                             _settings.LastSeenReleaseUrl = result.ReleaseUrl;
                             _settings.LastSeenAssetUrl = result.AssetUrl;
+                            _settings.LastSeenReleaseNotes = result.ReleaseNotes;
                             MozaLog.Debug(
                                 $"[UpdateCheck] {channel}: latest={result.LatestVersion} asset={(string.IsNullOrEmpty(result.AssetUrl) ? "(none)" : "ok")}");
                         }
@@ -1804,6 +2027,21 @@ namespace MozaPlugin
 
                         try { this.SaveCommonSettings("MozaPluginSettings", _settings); }
                         catch { /* persistence is best-effort */ }
+
+                        // Repaint the settings pane if it's open so a fresh
+                        // result lands immediately — without this the About-card
+                        // banner + release notes would only update on the next
+                        // tab reopen or manual "Check now" (the header banner
+                        // already self-refreshes on its 500ms tick).
+                        try
+                        {
+                            var ctrl = SettingsControl.Instance;
+                            ctrl?.Dispatcher?.BeginInvoke(new Action(() =>
+                            {
+                                try { ctrl.RefreshUpdateNotifications(); } catch { }
+                            }));
+                        }
+                        catch { /* UI refresh is best-effort */ }
                     }
                     catch (Exception ex)
                     {
@@ -1912,7 +2150,10 @@ namespace MozaPlugin
                 DetectionState.PedalsDetected = false;
                 DetectionState.HubDetected = false;
                 DetectionState.Ab9Detected = false;
+                DetectionState.PedalsOwner = null;
+                DetectionState.HandbrakeOwner = null;
                 _ab9Manager?.Disconnect();
+                _hubManager?.Disconnect();
                 if (_telemetrySender != null)
                 {
                     _telemetrySender.DetectedDeviceMask = 0;
@@ -1958,6 +2199,43 @@ namespace MozaPlugin
             this.AttachDelegate("Moza.BaseState", () => _data?.BaseState ?? 0);
             this.AttachDelegate("Moza.FfbStrength", () => (_data?.FfbStrength ?? 0) / 10);
             this.AttachDelegate("Moza.MaxAngle", () => (_data?.MaxAngle ?? 0) * 2);
+            // Telemetry pipeline health, so users can show a degraded/parked state on
+            // an overlay. TelemetryState = the PipelinePhase name (Idle/SilenceWait/
+            // Starting/Active/HotSwitchBurst/Recovery/Parked). DashboardBound is a
+            // best-effort "telemetry actively flowing" flag (Phase==Active) — there is
+            // no true wheel-side commit signal yet (see P4), so it can read true while
+            // a wheel silently ignores the binding; documented limitation.
+            this.AttachDelegate("Moza.TelemetryState", () => (_telemetrySender?.Phase ?? PipelinePhase.Idle).ToString());
+            this.AttachDelegate("Moza.DashboardBound", () => (_telemetrySender?.Phase ?? PipelinePhase.Idle) == PipelinePhase.Active);
+
+            // Live physical-input positions read directly from the device HID
+            // surface (independent of any game telemetry — these update even with
+            // no sim running, see issue #59). _hidReader is constructed later in
+            // Init than RegisterProperties, so guard it on every getter.
+            this.AttachDelegate("Moza.HidConnected", () => _data?.IsHidConnected ?? false);
+            // Signed steering angle in degrees: 0 = center, + / - = each lock
+            // direction. Scaled by the base's reported max-angle (MaxAngle*2 =
+            // full physical range), matching Moza.MaxAngle. Returns 0 until the
+            // max-angle and HID range are both known.
+            this.AttachDelegate("Moza.SteeringAngle", () =>
+            {
+                var hid = _hidReader;
+                int maxAngleDeg = (_data?.MaxAngle ?? 0) * 2;
+                if (hid == null || maxAngleDeg <= 0) return 0.0;
+                return hid.GetCurrentAngleDegrees(maxAngleDeg);
+            });
+            // Steering as a 0-100 position (0 = full lock one way, 50 = center,
+            // 100 = full lock the other). Independent of max-angle. Returns -1
+            // when no HID device is connected or the range is unknown.
+            this.AttachDelegate("Moza.SteeringPosition", () => _hidReader?.GetSteeringPositionPercent() ?? -1.0);
+            // Pedal / paddle axes as 0-100 positions.
+            this.AttachDelegate("Moza.Throttle", () => _data?.ThrottlePosition ?? 0);
+            this.AttachDelegate("Moza.Brake", () => _data?.BrakePosition ?? 0);
+            this.AttachDelegate("Moza.Clutch", () => _data?.ClutchPosition ?? 0);
+            this.AttachDelegate("Moza.Handbrake", () => _data?.HandbrakePosition ?? 0);
+            this.AttachDelegate("Moza.LeftPaddle", () => _data?.LeftPaddlePosition ?? 0);
+            this.AttachDelegate("Moza.RightPaddle", () => _data?.RightPaddlePosition ?? 0);
+            this.AttachDelegate("Moza.CombinedPaddle", () => _data?.CombinedPaddlePosition ?? 0);
         }
 
         private void RegisterActions()
@@ -1967,6 +2245,203 @@ namespace MozaPlugin
                 ClearLedsOnHardware();
                 MozaLog.Debug("[Moza] LEDs cleared via action");
             });
+
+            // Step actions mirror the SettingsControl sliders so SimHub button
+            // bindings can nudge the same settings. Each registers Up/Down (fine)
+            // and UpCoarse/DownCoarse variants; the stepper clamps to the slider's
+            // [min,max] range, pushes to hardware exactly where the UI handler does,
+            // and persists via SaveSettings(). An open settings panel re-reads the
+            // new value on its refresh tick.
+
+            // Base feel.
+            AddStepActions("Moza.FfbStrength", 5, 10, StepFfbStrength);   // 0..100 %
+            AddStepActions("Moza.Torque",      5, 10, StepTorque);        // 50..100 %
+            AddStepActions("Moza.Rotation",   90, 180, StepRotation);     // 90..2700 deg
+
+            // AB9 shifter vibration.
+            AddStepActions("Moza.Ab9EngineIntensity",    5, 10, StepAb9EngineIntensity);    // 0..100
+            AddStepActions("Moza.Ab9EngineFrequency",   10, 20, StepAb9EngineFrequency);    // 0..200 Hz
+            AddStepActions("Moza.Ab9GearShiftIntensity", 5, 10, StepAb9GearShiftIntensity); // 0..100
+
+            // Cycle the wheel's displayed dashboard (wraparound).
+            this.AddAction("Moza.DashboardNext", (a, b) => CycleDashboard(+1));
+            this.AddAction("Moza.DashboardPrev", (a, b) => CycleDashboard(-1));
+
+            // Dashboard telemetry on/off for the active wheel page.
+            this.AddAction("Moza.DashboardTelemetryToggle", (a, b) => ToggleDashboardTelemetry());
+            this.AddAction("Moza.DashboardTelemetryOn", (a, b) =>
+            {
+                SetTelemetryEnabled(true);
+                MozaLog.Debug("[Moza] Dashboard telemetry on via action");
+            });
+            this.AddAction("Moza.DashboardTelemetryOff", (a, b) =>
+            {
+                SetTelemetryEnabled(false);
+                MozaLog.Debug("[Moza] Dashboard telemetry off via action");
+            });
+        }
+
+        /// <summary>
+        /// Registers the four button-bindable step variants for a setting:
+        /// <c>{name}Up</c>/<c>{name}Down</c> apply ±<paramref name="fine"/>, and
+        /// <c>{name}UpCoarse</c>/<c>{name}DownCoarse</c> apply ±<paramref name="coarse"/>.
+        /// <paramref name="apply"/> receives the signed delta in display units.
+        /// </summary>
+        private void AddStepActions(string name, int fine, int coarse, Action<int> apply)
+        {
+            this.AddAction(name + "Up",         (a, b) => apply(+fine));
+            this.AddAction(name + "Down",       (a, b) => apply(-fine));
+            this.AddAction(name + "UpCoarse",   (a, b) => apply(+coarse));
+            this.AddAction(name + "DownCoarse", (a, b) => apply(-coarse));
+        }
+
+        private static int ClampStep(int current, int delta, int min, int max)
+            => Math.Max(min, Math.Min(max, current + delta));
+
+        // FFB strength: stored raw = percent * 10 (cf. FfbStrengthSlider_ValueChanged).
+        private void StepFfbStrength(int deltaPct)
+        {
+            if (_data == null) return;
+            int pct = ClampStep(_data.FfbStrength / 10, deltaPct, 0, 100);
+            int raw = pct * 10;
+            _data.FfbStrength = raw;
+            WriteIfBaseConnected("base-ffb-strength", raw);
+            SaveSettings();
+            MozaLog.Debug($"[Moza] FFB strength → {pct}% via action");
+        }
+
+        // Torque limit: percent, 50..100 (cf. TorqueSlider_ValueChanged).
+        private void StepTorque(int deltaPct)
+        {
+            if (_data == null) return;
+            int v = ClampStep(_data.Torque, deltaPct, 50, 100);
+            _data.Torque = v;
+            WriteIfBaseConnected("base-torque", v);
+            SaveSettings();
+            MozaLog.Debug($"[Moza] Torque → {v}% via action");
+        }
+
+        // Steering rotation: display degrees, stored raw = degrees / 2; both
+        // base-limit and base-max-angle move together (cf. RotationSlider_ValueChanged).
+        private void StepRotation(int deltaDeg)
+        {
+            if (_data == null) return;
+            int deg = ClampStep(_data.Limit * 2, deltaDeg, 90, 2700);
+            int raw = deg / 2;
+            _data.Limit = raw;
+            _data.MaxAngle = raw;
+            WriteIfBaseConnected("base-limit", raw);
+            WriteIfBaseConnected("base-max-angle", raw);
+            SaveSettings();
+            MozaLog.Debug($"[Moza] Rotation → {deg}° via action");
+        }
+
+        // AB9 engine vibration is host-rendered: the worker thread picks up the
+        // new profile value on its next tick, no device write (cf.
+        // Ab9EngineVibIntensitySlider_ValueChanged).
+        private void StepAb9EngineIntensity(int delta)
+        {
+            var ab9 = GetOrCreateActiveAb9();
+            if (ab9 == null) return;
+            ab9.EngineVibrationIntensity = (byte)ClampStep(ab9.EngineVibrationIntensity, delta, 0, 100);
+            SaveSettings();
+            MozaLog.Debug($"[Moza] AB9 engine vibration intensity → {ab9.EngineVibrationIntensity} via action");
+        }
+
+        private void StepAb9EngineFrequency(int delta)
+        {
+            var ab9 = GetOrCreateActiveAb9();
+            if (ab9 == null) return;
+            ab9.EngineVibrationFrequency = (ushort)ClampStep(ab9.EngineVibrationFrequency, delta, 0, 200);
+            SaveSettings();
+            MozaLog.Debug($"[Moza] AB9 engine vibration frequency → {ab9.EngineVibrationFrequency} Hz via action");
+        }
+
+        // AB9 gear-shift vibration: one config write per change so the firmware
+        // persists the stored intensity (cf. Ab9GearShiftVibSlider_ValueChanged).
+        private void StepAb9GearShiftIntensity(int delta)
+        {
+            var ab9 = GetOrCreateActiveAb9();
+            if (ab9 == null) return;
+            int v = ClampStep(ab9.GearShiftVibrationIntensity, delta, 0, 100);
+            ab9.GearShiftVibrationIntensity = (byte)v;
+            _ab9Manager?.SendGearShiftVibrationIntensity(v);
+            SaveSettings();
+            MozaLog.Debug($"[Moza] AB9 gear-shift vibration intensity → {v} via action");
+        }
+
+        // Returns the active profile's AB9 block, creating it if absent (matches
+        // the UI's GetOrCreateAb9Profile). Null only when no profile is loaded.
+        private Ab9Settings? GetOrCreateActiveAb9()
+        {
+            var profile = _settings?.ProfileStore?.CurrentProfile;
+            if (profile == null) return null;
+            if (profile.Ab9 == null) profile.Ab9 = new Ab9Settings();
+            return profile.Ab9;
+        }
+
+        // Flip dashboard telemetry for the active wheel page. No-op when no wheel
+        // page is identified (ActiveTelemetryEnabled set is a no-op there).
+        private void ToggleDashboardTelemetry()
+        {
+            bool turningOn = !ActiveTelemetryEnabled;
+            SetTelemetryEnabled(turningOn);
+            MozaLog.Debug($"[Moza] Dashboard telemetry → {(turningOn ? "on" : "off")} via action");
+        }
+
+        // Cycle the wheel's displayed dashboard to the next/previous enabled slot,
+        // wrapping around. Mirrors the DashboardManagementControl combo switch:
+        // ConfigJsonList is slot-ordered (dropdown index IS the slot), the wheel's
+        // WheelReportedSlot is the ground-truth current slot, and
+        // OnDashboardSwitched(slot) routes through SwitchToProfile so FF kind=4 +
+        // the pipeline cycle honor the EnableHotRenegotiation flag. delta is +1
+        // (next) or -1 (prev). No-op when the wheel has 0 or 1 dashboards.
+        private void CycleDashboard(int delta)
+        {
+            var list = WheelStateForDiagnostics?.ConfigJsonList;
+            if (list == null || list.Count == 0)
+            {
+                MozaLog.Debug("[Moza] Dashboard cycle ignored: no wheel dashboard list");
+                return;
+            }
+            int n = list.Count;
+            if (n == 1)
+            {
+                MozaLog.Debug("[Moza] Dashboard cycle ignored: only one dashboard");
+                return;
+            }
+
+            // Prefer the wheel's reported slot; fall back to matching the active
+            // profile name against the slot list when the wheel slot is unknown.
+            int cur = _telemetrySender?.WheelReportedSlot ?? -1;
+            if (cur < 0 || cur >= n)
+            {
+                cur = -1;
+                string activeName = ActiveTelemetryProfileName;
+                if (!string.IsNullOrEmpty(activeName))
+                {
+                    for (int i = 0; i < n; i++)
+                    {
+                        if (string.Equals(list[i], activeName, StringComparison.OrdinalIgnoreCase))
+                        {
+                            cur = i;
+                            break;
+                        }
+                    }
+                }
+            }
+
+            // Unknown current slot: step in from the appropriate end.
+            int target = cur < 0
+                ? (delta > 0 ? 0 : n - 1)
+                : ((cur + delta) % n + n) % n;
+
+            string selected = list[target];
+            ActiveTelemetryProfileName = selected;
+            ActiveTelemetryMzdashPath = "";
+            SaveSettings();
+            OnDashboardSwitched((uint)target);
+            MozaLog.Debug($"[Moza] Dashboard cycle {(delta > 0 ? "next" : "prev")} → slot {target} \"{selected}\" via action");
         }
 
         /// <summary>
@@ -2208,7 +2683,8 @@ namespace MozaPlugin
                     _deviceManager.ReadSetting("dash-rpm-indicator-mode");
                     _deviceManager.ReadSetting("handbrake-direction");
                     _deviceManager.ReadSetting("pedals-throttle-dir");
-                    _deviceManager.ReadSetting("hub-port1-power");
+                    // No hub-port-power read here — this is the wheelbase connection;
+                    // hub detection is the dedicated hub connection's job (its own port).
 
                     // Persist successful port for next launch
                     var port = _connection.LastPortName;
@@ -2257,16 +2733,17 @@ namespace MozaPlugin
             DetectionState.DashDetected = true;
             _data.IsDashboardConnected = true;
 
-            if (DeviceDefinitionDeployer.DeployDashboard(_connection.DiscoveredPid))
+            string? dashPid = _dashboardManager.Connection.DiscoveredPid;
+            if (DeviceDefinitionDeployer.DeployDashboard(dashPid))
                 DeviceDefinitionDeployed = true;
 
             if (rising)
             {
                 MozaLog.Info(
                     $"[Moza] Standalone dashboard detected from USB PID " +
-                    $"{_connection.DiscoveredPid} ({MozaUsbIds.Describe(_connection.DiscoveredPid)}; {reason})");
-                try { _deviceManager.ReadSettings(Devices.DeviceProber.DashSettingsReadCommands); }
-                catch (Exception ex) { MozaLog.Debug($"[Moza] Standalone dashboard settings probe skipped: {ex.Message}"); }
+                    $"{dashPid} ({MozaUsbIds.Describe(dashPid)}; {reason})");
+                // Skip the legacy SHDP group-0x33 dash reads — a CM2 is driven by
+                // the 0x43 telemetry path, so those reads are pointless bleedthrough.
             }
 
             try { ApplyDashToHardware(_settings?.ProfileStore?.CurrentProfile); }
@@ -2318,6 +2795,258 @@ namespace MozaPlugin
             }
         }
 
+        /// <summary>Open the standalone CM2's dedicated port (PID 0x0025) and, on the
+        /// rising edge, run the standalone-dashboard detection (deploy + reads +
+        /// retarget the sender to this connection).</summary>
+        private void TryConnectDashboard()
+        {
+            if (_dashboardManager == null) return;
+            if (_dashboardManager.TryConnect())
+            {
+                MarkStandaloneDashboardDetectedFromUsb("dashboard USB connect");
+                var port = _dashboardManager.Connection.LastPortName;
+                if (!string.IsNullOrEmpty(port) && _settings.LastDashboardPort != port)
+                {
+                    _settings.LastDashboardPort = port!;
+                    ScheduleSave();
+                }
+            }
+            else if (!string.IsNullOrEmpty(_settings.LastDashboardPort)
+                     && string.IsNullOrEmpty(_dashboardManager.Connection.LastPortName))
+            {
+                MozaLog.Info($"[Moza] Cleared stale saved dashboard port {_settings.LastDashboardPort}");
+                _settings.LastDashboardPort = "";
+                ScheduleSave();
+            }
+        }
+
+        /// <summary>Inbound from the dashboard connection — same command-parse path as
+        /// the wheelbase. (The telemetry inbound dispatcher follows the sender's
+        /// Rebind, so dashboard session frames reach it once the sender is bound here.)</summary>
+        private void OnDashboardMessageReceived(byte[] data) => OnMessageReceived(data);
+
+        /// <summary>Dashboard USB unplugged — pause the sender so the next tick rebinds
+        /// it back to the wheelbase (and the base-bridged 0x14 path takes over if present).</summary>
+        private void OnDashboardDisconnected()
+        {
+            if (IsShuttingDown) return;
+            try { _telemetrySender?.Pause(); } catch { }
+            DetectionState.DashDetected = false;
+            _data.IsDashboardConnected = false;
+        }
+
+        /// <summary>
+        /// Open the Universal Hub's COM port (dedicated connection used when a
+        /// wheelbase is also present). On success, persist the port and kick off
+        /// peripheral enumeration immediately rather than waiting for the next
+        /// poll tick. Clears a stale saved port on definitive open-failure.
+        /// </summary>
+        private void TryConnectHub()
+        {
+            if (_hubManager == null) return;
+            if (_hubManager.TryConnect())
+            {
+                var port = _hubManager.Connection.LastPortName;
+                if (!string.IsNullOrEmpty(port) && _settings.LastHubPort != port)
+                {
+                    _settings.LastHubPort = port!;
+                    ScheduleSave();
+                }
+                PollHubPeripherals();
+            }
+            else if (!string.IsNullOrEmpty(_settings.LastHubPort)
+                     && string.IsNullOrEmpty(_hubManager.Connection.LastPortName))
+            {
+                MozaLog.Info($"[Moza] Cleared stale saved hub port {_settings.LastHubPort}");
+                _settings.LastHubPort = "";
+                ScheduleSave();
+            }
+        }
+
+        /// <summary>
+        /// Self-heal a mis-latched primary connection. The primary (BaseAndHub)
+        /// picks its port ONCE via FindMozaPort's wheel-location rule; if a
+        /// Universal Hub enumerated before the wheelbase ("wrong latch order"),
+        /// the primary bound the hub and — being IsConnected — never re-evaluates
+        /// (the reconnect tick only calls TryConnect while disconnected). The
+        /// wheel/session/telemetry pipeline must run on the BASE, so a primary
+        /// stuck on the hub leaves telemetry dead and the base port unclaimed.
+        ///
+        /// When a wheelbase is the intended primary, detect a primary bound to a
+        /// NON-wheelbase port while a free wheelbase port now exists, release the
+        /// hub (so the dedicated hub manager can claim it on the next
+        /// TryConnectHub), and rebind the primary to the base. Order-independent:
+        /// also covers hot-plugging a base into a hub-only setup.
+        ///
+        /// Registry-category gated — Wine/empty-registry setups can't tell hub
+        /// from base and rely on the probe path's bases-first ordering, so they
+        /// never trip this.
+        /// </summary>
+        private void MigratePrimaryToWheelbaseIfNeeded()
+        {
+            if (IsShuttingDown) return;
+            if (_connection == null || !_connection.IsConnected) return;
+
+            // Only meaningful when the registry can categorize ports (real-HW
+            // Windows). Empty registry = Wine/Proton → leave the probe path alone.
+            var ports = MozaPortDiscovery.Instance.Enumerate();
+            if (ports.Count == 0) return;
+
+            // Already on a wheelbase → correctly bound, nothing to do.
+            if (MozaUsbIds.Categorize(_connection.DiscoveredPid) == MozaDeviceCategory.Wheelbase)
+                return;
+
+            // Find a wheelbase port that is present and not held by any sibling
+            // connection (the hub-only case has none → primary correctly stays
+            // on the hub and we return).
+            string? wheelbasePort = null;
+            foreach (var p in ports)
+            {
+                if (p.Category != MozaDeviceCategory.Wheelbase) continue;
+                // Defensive: if the primary somehow already holds this wheelbase
+                // port the category check above would have returned; treat a
+                // self-match as "nothing to migrate".
+                if (string.Equals(p.PortName, _connection.LastPortName,
+                                  StringComparison.OrdinalIgnoreCase))
+                    return;
+                if (MozaSerialConnection.IsPortHeld(p.PortName)) continue;
+                wheelbasePort = p.PortName;
+                break;
+            }
+            if (wheelbasePort == null) return;
+
+            MozaLog.Info(
+                $"[Moza] Primary bound to non-wheelbase port {_connection.LastPortName} " +
+                $"(PID={_connection.DiscoveredPid}) but a wheelbase is available on {wheelbasePort} — " +
+                "migrating primary to the wheelbase");
+
+            // Release the hub: Disconnect() frees the port from the in-process
+            // active-port set so TryConnectHub can claim it. (Manual Disconnect
+            // does NOT raise the Disconnected event, so no OnSerialDisconnected
+            // side effects fire here.)
+            _connection.Disconnect();
+
+            // Clear the cached/persisted port so Connect()'s cached path — which
+            // validates by PID only (the hub PID passes the primary's filter) —
+            // can't immediately re-grab the hub. FindMozaPort's wheel-location
+            // rule then selects the wheelbase.
+            _connection.LastPortName = null;
+            if (!string.IsNullOrEmpty(_settings.LastWheelbasePort))
+            {
+                _settings.LastWheelbasePort = "";
+                ScheduleSave();
+            }
+
+            // Peripherals detected while the primary was wrongly on the hub got
+            // their owner pinned to the primary device-manager; reset detection +
+            // ownership (mirrors OnHubDisconnected) so they re-enumerate on the
+            // correct pipe — pedals/handbrake via the hub manager, base settings
+            // via the rebound primary.
+            DetectionState.PedalsDetected = false;
+            DetectionState.PedalsOwner = null;
+            DetectionState.HandbrakeDetected = false;
+            DetectionState.HandbrakeOwner = null;
+            DetectionState.HubDetected = false;
+
+            // Rebind the primary; TryConnect re-probes the wheel and persists the
+            // new (base) port. The freed hub port is claimed by TryConnectHub
+            // later in this same reconnect tick.
+            TryConnect();
+        }
+
+        /// <summary>
+        /// Probe the hub pipe for its attached peripherals + port-power status.
+        /// Pedals/handbrake presence probes fire on BOTH the base and hub pipes
+        /// until detected (shared flags); first responder wins and records the
+        /// owning pipe (DeviceProber.Mark*Detected). No-op unless the hub is up.
+        /// </summary>
+        private void PollHubPeripherals()
+        {
+            if (_hubManager == null || !_hubManager.IsConnected) return;
+            var dm = _hubManager.DeviceManager;
+            if (!DetectionState.PedalsDetected)
+                dm.SendPresenceProbe(MozaProtocol.DevicePedals);
+            if (!DetectionState.HandbrakeDetected)
+                dm.SendPresenceProbe(MozaProtocol.DeviceHandbrake);
+            // hub-port1-power is the hub-presence trigger (first 0xE4 reply sets
+            // HubDetected). Once detected, read the full set so every Hub-tab
+            // port-power indicator populates.
+            if (!DetectionState.HubDetected)
+                dm.ReadSetting("hub-port1-power");
+            else
+                dm.ReadSettings(Devices.DeviceProber.HubReadCommands);
+        }
+
+        /// <summary>Universal Hub unplugged — drop hub state and re-route any
+        /// peripherals that were owned by the hub pipe so they re-detect on
+        /// whichever pipe answers next.</summary>
+        private void OnHubDisconnected()
+        {
+            if (IsShuttingDown) return;
+            DetectionState.HubDetected = false;
+            _data.IsHubConnected = false;
+            var hubDm = _hubManager?.DeviceManager;
+            if (hubDm != null && ReferenceEquals(DetectionState.PedalsOwner, hubDm))
+            {
+                DetectionState.PedalsDetected = false;
+                DetectionState.PedalsOwner = null;
+            }
+            if (hubDm != null && ReferenceEquals(DetectionState.HandbrakeOwner, hubDm))
+            {
+                DetectionState.HandbrakeDetected = false;
+                DetectionState.HandbrakeOwner = null;
+            }
+            // The hub's tracked reads will never be answered now — drop them so
+            // they don't retransmit against a reconnected (possibly different) hub.
+            try { _hubManager?.PendingResponses?.Clear(); } catch { }
+        }
+
+        /// <summary>
+        /// Inbound from the dedicated hub connection. Only peripheral (pedals /
+        /// handbrake) and hub port-power frames are routed here — wheel / base /
+        /// dash / session frames are dropped so the wheel/telemetry pipeline stays
+        /// exclusively on the primary (base) connection. Detection is dispatched
+        /// to the hub prober so ownership lands on the hub pipe.
+        /// </summary>
+        private void OnHubMessageReceived(byte[] data)
+        {
+            if (IsShuttingDown) return;
+            if (data == null || data.Length < 2) return;
+
+            // Firmware debug noise.
+            if (data[0] == MozaProtocol.FirmwareDebugGroup) return;
+
+            // Empty presence-probe ACK: 7e 00 80 swap(dev) chk → data = {0x80, dev}.
+            // Only pedals / handbrake are probed on the hub pipe.
+            if (data.Length == 2 && data[0] == 0x80)
+            {
+                byte deviceId = MozaProtocol.SwapNibbles(data[1]);
+                if (deviceId == MozaProtocol.DevicePedals)
+                    _hubDeviceProber.MarkPedalsDetected();
+                else if (deviceId == MozaProtocol.DeviceHandbrake)
+                    _hubDeviceProber.MarkHandbrakeDetected();
+                return;
+            }
+
+            var result = MozaResponseParser.Parse(data);
+            if (!result.HasValue) return;
+            var r = result.Value;
+            if (r.Name == null) return;
+
+            // Scope to peripherals + hub status. Anything else (wheel/base/dash)
+            // belongs to the primary pipe and is ignored here.
+            if (!(r.Name.StartsWith("pedals-", StringComparison.Ordinal)
+                  || r.Name.StartsWith("handbrake-", StringComparison.Ordinal)
+                  || r.Name.StartsWith("hub-", StringComparison.Ordinal)))
+                return;
+
+            _hubManager.PendingResponses?.NoteResponse(r.Name);
+            _data.UpdateFromCommand(r.Name, r.IntValue);
+            if (r.ArrayValue != null)
+                _data.UpdateFromArray(r.Name, r.ArrayValue);
+            _hubDeviceProber.DetectDevices(r.Name, r.IntValue, r.DeviceId);
+        }
+
         private const int WheelMissThreshold = 3;
 
         // Fires from MozaSerialConnection.HandleIoFailure on the read or
@@ -2336,13 +3065,6 @@ namespace MozaPlugin
             // connection. They'd otherwise keep retrying after reconnect
             // against a fresh wheel that may not even speak the same protocol.
             try { PendingResponses.Clear(); } catch { }
-            // Reset Hub-probe back-off so the next reconnect re-enters the
-            // aggressive 30 s probe window. Without this, a user attaching
-            // a Hub during the disconnect window would face up to 60 s of
-            // Hub-detection latency after reconnect because the back-off
-            // counter rolled into the once-per-60s mode mid-session.
-            _hubProbeFirstTickMs = 0;
-            _hubProbeLastTickMs = 0;
             if (DetectionState.NewWheelDetected || DetectionState.OldWheelDetected || DetectionState.DashDetected)
                 ResetWheelDetection("Serial disconnect — resetting wheel detection");
         }
@@ -2402,6 +3124,12 @@ namespace MozaPlugin
         private void PollStatus(object sender, ElapsedEventArgs e)
         {
             if (IsShuttingDown) return;
+
+            // The dedicated hub pipe is polled independently of the primary
+            // (base) connection — a Universal Hub can be present with the base
+            // unplugged, or vice versa. No-op when the hub isn't connected.
+            PollHubPeripherals();
+
             if (!_connection.IsConnected) return;
 
             _dashboardBindingCoordinator?.TickPendingDashboardRetry();
@@ -2460,35 +3188,9 @@ namespace MozaPlugin
                 _deviceManager.SendPresenceProbe(MozaProtocol.DeviceHandbrake);
             if (!DetectionState.PedalsDetected)
                 _deviceManager.SendPresenceProbe(MozaProtocol.DevicePedals);
-            if (!DetectionState.HubDetected)
-            {
-                int now = Environment.TickCount;
-                bool shouldProbe;
-                if (_hubProbeFirstTickMs == 0)
-                {
-                    // First probe ever — fire and start the aggressive window.
-                    _hubProbeFirstTickMs = now;
-                    shouldProbe = true;
-                }
-                else if ((now - _hubProbeFirstTickMs) < HubProbeAggressiveMs)
-                {
-                    // Inside the aggressive window: probe every poll tick.
-                    shouldProbe = true;
-                }
-                else
-                {
-                    // Past the aggressive window: probe at most once per
-                    // HubProbeBackoffMs so wheelbase firmware stops logging
-                    // "Unexpected cmd: 100" warnings on every tick. Hot-plug
-                    // detection latency capped at HubProbeBackoffMs.
-                    shouldProbe = (now - _hubProbeLastTickMs) >= HubProbeBackoffMs;
-                }
-                if (shouldProbe)
-                {
-                    _hubProbeLastTickMs = now;
-                    _deviceManager.ReadSetting("hub-port1-power");
-                }
-            }
+            // No hub-port-power poll on the wheelbase connection — a Universal Hub
+            // is found by the dedicated hub connection on its own port, never by
+            // sending hub commands to a device we already know is a wheelbase.
 
             // Re-probe display sub-device until fully identified — initial probe
             // can race power-up and return only partial identity. Skip for wheels

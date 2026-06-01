@@ -47,15 +47,19 @@ namespace MozaPlugin.Telemetry
         }
 
         /// <summary>
-        /// Send a pre-built FF property body on session 0x02. All host-side
-        /// FF records (init kind=2/7 handshake, dashboard switches kind=4,
-        /// brightness/standby kind=1/10) go on sess=0x02; sess=0x01 carries
-        /// tier-def TLV traffic only.
+        /// Send a pre-built FF property body (init kind=2/7 handshake, dashboard
+        /// switches kind=4, brightness/standby kind=1/10) on the FF session —
+        /// the MIRROR of the tier-def session (<see cref="TelemetrySender.ResolveFfSession"/>).
+        /// PitHouse Form A: tier-def on 0x01, FF on 0x02; Form B: tier-def on
+        /// 0x02, FF on 0x01. The wheel only acks the FF-init and commits the
+        /// tier-def to the display when these land on the expected session.
         /// </summary>
         public void SendBody(byte[] body)
         {
             if (body == null) return;
-            const byte session = 0x02;
+            byte session = _sender.ResolveFfSession();
+            bool onFlagByte = session == _sender.FlagByte && _sender.FlagByte != 0;
+            object seqLock = onFlagByte ? _sender.Session02SeqLock : _sender.Session01SeqLock;
 
             // Body layout from SessionPropertyPushBuilder.WrapFfRecord:
             //   [0]      0xFF
@@ -68,7 +72,7 @@ namespace MozaPlugin.Telemetry
                 ? (uint)(body[9] | (body[10] << 8) | (body[11] << 16) | (body[12] << 24))
                 : 0u;
 
-            lock (_sender.Session02SeqLock)
+            lock (seqLock)
             {
                 // Drop prior seqs for the same kind from the retransmitter
                 // before queuing the new chunk. Prevents stale brightness=0
@@ -81,7 +85,8 @@ namespace MozaPlugin.Telemetry
                     prevSeqs.Clear();
                 }
 
-                int seq = System.Math.Max(2, _sender.Session02OutboundSeq);
+                int seq = System.Math.Max(2,
+                    onFlagByte ? _sender.Session02OutboundSeq : _sender.Session01OutboundSeq);
                 var frames = TierDefinitionBuilder.ChunkMessage(body, session, ref seq, _sender.TargetDeviceId);
                 var newSeqs = haveKind ? new List<int>(frames.Count) : null;
                 foreach (var frame in frames)
@@ -91,7 +96,8 @@ namespace MozaPlugin.Telemetry
                     if (newSeqs != null && frame.Length >= 10)
                         newSeqs.Add(frame[8] | (frame[9] << 8));
                 }
-                _sender.Session02OutboundSeq = seq;
+                if (onFlagByte) _sender.Session02OutboundSeq = seq;
+                else            _sender.Session01OutboundSeq = seq;
 
                 if (haveKind)
                     _lastSeqs[(session, kind)] = newSeqs!;

@@ -15,6 +15,7 @@
   <data name="TabHeader_Upload" xml:space="preserve"><value>Téléverser</value></data>
   <data name="TabHeader_WheelFiles" xml:space="preserve"><value>Fichiers du volant</value></data>
   <data name="TabHeader_Sdk" xml:space="preserve"><value>SDK</value></data>
+  <data name="TabHeader_Import" xml:space="preserve"><value>Importer</value></data>
   <data name="TabHeader_About" xml:space="preserve"><value>À propos</value></data>
   <data name="Brand_Unofficial" xml:space="preserve"><value>NON OFFICIEL</value></data>
   <data name="Brand_Moza" xml:space="preserve"><value>MOZA</value></data>
@@ -242,11 +243,12 @@
   <data name="Tooltip_DeleteDisabled" xml:space="preserve"><value>Désactivé temporairement.</value></data>
   <data name="Section_CoapServer" xml:space="preserve"><value>SERVEUR COAP</value></data>
   <data name="Subtitle_CoapServer" xml:space="preserve"><value>// serveur CoAP intégré sur loopback</value></data>
-  <data name="Hint_CoapServerEnabled" xml:space="preserve"><value>Lorsqu'activé, le plugin exécute un serveur de contrôle SDK CoAP intégré.</value></data>
+  <data name="Hint_CoapServerEnabled" xml:space="preserve"><value>Fournit la prise en charge officielle du SDK MOZA pour les jeux qui l'exigent, comme iRacing ou tout jeu utilisant le mode 360 Hz. Le plugin exécute pour cela un serveur de contrôle SDK CoAP intégré sur loopback.</value></data>
+  <data name="Hint_CoapStubProcessName" xml:space="preserve"><value>Lorsqu'il est activé, le plugin exécute un petit processus de substitution qui apparaît dans la liste des processus sous le nom « MOZA Pit House.exe ». C'est normal : cela permet aux applications du SDK MOZA de trouver PitHouse par son nom. Il se ferme automatiquement lorsque vous le désactivez ou fermez SimHub.</value></data>
   <data name="SliderLabel_EnableCoapServer" xml:space="preserve"><value>Activer le serveur SDK CoAP</value></data>
   <data name="Section_UdpControl" xml:space="preserve"><value>CONTRÔLE UDP</value></data>
   <data name="Subtitle_UdpControl" xml:space="preserve"><value>// surface de contrôle CBOR-sur-UDP simple</value></data>
-  <data name="Hint_UdpControlEnabled" xml:space="preserve"><value>Lorsqu'activé, le plugin exécute un serveur de contrôle UDP intégré pour les outils tiers de configuration de volant.</value></data>
+  <data name="Hint_UdpControlEnabled" xml:space="preserve"><value>Il s'agit d'un contrôle UDP hérité permettant de régler l'angle de braquage. Le seul usage connu est la version RSF de Richard Burns Rally.</value></data>
   <data name="SliderLabel_EnableUdpControl" xml:space="preserve"><value>Activer le serveur de contrôle UDP</value></data>
   <data name="Label_PortNumber" xml:space="preserve"><value>Port</value></data>
   <data name="Label_UdpControlServer" xml:space="preserve"><value>Contrôle UDP</value></data>
@@ -271,6 +273,8 @@
   <data name="Button_OpenReleaseNotes" xml:space="preserve"><value>Ouvrir les notes de version</value></data>
   <data name="Button_SkipThisVersion" xml:space="preserve"><value>Ignorer cette version</value></data>
   <data name="Button_DismissUpdate" xml:space="preserve"><value>Rejeter</value></data>
+  <data name="Button_RestartSimHub" xml:space="preserve"><value>Redémarrer SimHub</value></data>
+  <data name="Label_WhatsNew" xml:space="preserve"><value>Nouveautés de la v{0}</value></data>
   <data name="Label_CheckForUpdates" xml:space="preserve"><value>Rechercher les mises à jour automatiquement</value></data>
   <data name="Label_ReleaseChannel" xml:space="preserve"><value>Canal de publication</value></data>
   <data name="Option_ReleaseChannelStable" xml:space="preserve"><value>Stable</value></data>
@@ -366,6 +370,7 @@
   <data name="Toggle_On" xml:space="preserve"><value>ON</value></data>
   <data name="TabHeader_Inputs" xml:space="preserve"><value>Entrées</value></data>
   <data name="TabHeader_Dashboard" xml:space="preserve"><value>Tableau de bord</value></data>
+  <data name="TabHeader_Leds" xml:space="preserve"><value>LEDs</value></data>
   <data name="TabHeader_Rpm" xml:space="preserve"><value>RPM</value></data>
   <data name="TabHeader_Buttons" xml:space="preserve"><value>Boutons</value></data>
   <data name="TabHeader_Knobs" xml:space="preserve"><value>Encodeurs</value></data>
@@ -482,4 +487,9 @@
   <data name="Import_BrowseDescription" xml:space="preserve"><value>Choisissez un fichier JSON de préréglage PitHouse n'importe où sur votre système.</value></data>
   <data name="Import_Error_InvalidJson" xml:space="preserve"><value>Le fichier n'est pas du JSON valide : {0}</value></data>
   <data name="Import_Error_UnsupportedType" xml:space="preserve"><value>Type de préréglage non pris en charge « {0} ». Seuls les préréglages Motor et Pédales sont pris en charge.</value></data>
+  <data name="Status_Connected" xml:space="preserve"><value>Connecté</value></data>
+  <data name="Status_Recovering" xml:space="preserve"><value>Récupération…</value></data>
+  <data name="Status_Parked" xml:space="preserve"><value>En pause</value></data>
+  <data name="Status_TelemetryParked" xml:space="preserve"><value>Télémétrie arrêtée après des échecs répétés — réactivez pour réessayer</value></data>
+  <data name="Status_DegradedScreenless" xml:space="preserve"><value>Le volant n'a pas d'écran — télémétrie non nécessaire</value></data>
 </root>

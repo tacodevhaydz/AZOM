@@ -93,7 +93,7 @@ namespace MozaPlugin.Telemetry
     /// </summary>
     public class TelemetrySender : IDisposable
     {
-        private readonly MozaSerialConnection _connection;
+        private MozaSerialConnection _connection;
         private Timer? _sendTimer;
         private TierState[]? _tiers;
         private volatile StatusDataBase? _latestGameData;
@@ -137,9 +137,39 @@ namespace MozaPlugin.Telemetry
         // while the wheel was still booting.
         internal volatile bool _wheelReadyObserved;
 
+        // Cold-start preamble gate. Set true in StartInner ONLY on a true
+        // cold start (first start in this SimHub process); read by
+        // TickPreamble to hold the preamble→Active transition (and thus the
+        // first tier-def emission) until the wheel signals session-layer
+        // readiness via sess=0x09 device-init (_wheelReadyObserved). On a cold
+        // base the wheelbase acks our session opens and advertises a few
+        // intrinsic channels (RPM/Gear/Speed) immediately, but its DISPLAY
+        // sub-device is still booting — emitting tier-def then triggers the
+        // sess=0x01 CLOSE storm and the dashboard never binds. Warm/hot-switch
+        // reloads leave this false so they add ZERO latency. Cleared in
+        // InitTickStateAndTransitionToStarting (so a stale cold flag can't
+        // survive into a later warm Start) and re-set in StartInner.
+        private volatile bool _coldStartWheelGatePending;
+        // One-shot guard so the "waiting for sess=0x09" hold logs exactly once
+        // per cold start rather than on every held tick. Reset alongside the
+        // gate flag in InitTickStateAndTransitionToStarting.
+        private bool _coldStartGateLogged;
+
 
         // Upload handshake state.
         internal int _mgmtAckSeq;
+
+        // Gap-aware catalog ack: highest CONTIGUOUS inbound seq per catalog
+        // session (mgmt/telem) during binding. A dropped catalog chunk under
+        // Wine leaves a seq gap (observed 07→0c on sess=0x01); acking the
+        // post-gap seq tells the wheel we received chunks we didn't, so it never
+        // resends and the catalog stays truncated → dash wedged. Instead we
+        // re-ack the last contiguous seq across a gap. Pre-Active only;
+        // steady-state telemetry keeps specific-seq acks. Reset per session open
+        // (ResetContigAck) and per StartInner.
+        private readonly object _contigAckLock = new object();
+        private readonly System.Collections.Generic.Dictionary<byte, int> _contigAckSeqBySession
+            = new System.Collections.Generic.Dictionary<byte, int>();
         private readonly ManualResetEventSlim _mgmtResponseEvent = new ManualResetEventSlim(false);
 
         // File-transfer session state. See docs/protocol/dashboard-upload/.
@@ -903,16 +933,15 @@ namespace MozaPlugin.Telemetry
 
                 if (value != null && value.Tiers.Count > 0)
                 {
-                    // Multi-broadcast: replicate each sub-tier 3-N+1 times with
-                    // consecutive flag bytes. Without this, slow-pkg tiers
-                    // (pkg=500, pkg=2000) only fire at their nominal rate (2Hz,
-                    // 0.5Hz) → visible test-mode lag for slow-tier channels.
-                    // Replication forces every channel to update at the fast
-                    // base tick rate via parallel flag bytes.
+                    // Single broadcast: each tier fires at its own package rate.
+                    // The prior strategy replicated every sub-tier into max(4, N+1)
+                    // copies with parallel flag bytes to push slow-pkg channels at
+                    // the base rate, but it also replicated the already-fast tier,
+                    // multiplying wire load ~4× and saturating the shared base wire.
                     var subTiers = new System.Collections.Generic.List<DashboardProfile>(value.Tiers);
                     subTiers.Sort((a, b) => a.PackageLevel.CompareTo(b.PackageLevel));
                     int subCount = subTiers.Count;
-                    int broadcasts = subCount == 1 ? 3 : System.Math.Max(4, subCount + 1);
+                    int broadcasts = 1;
                     var expanded = new System.Collections.Generic.List<DashboardProfile>(subCount * broadcasts);
                     // One Channels copy per source sub-tier, shared across
                     // its broadcast replicas. COPY so the in-place mutate in
@@ -1202,6 +1231,26 @@ namespace MozaPlugin.Telemetry
             };
         }
 
+        /// <summary>
+        /// Repoint the sender at a different serial connection — used when the
+        /// active dashboard sink moves between the wheelbase connection
+        /// (wheel-hosted 0x17 / base-bridged CM2 0x14) and a dedicated
+        /// standalone-USB dashboard connection (CM2 0x12). MUST be called while
+        /// Idle (no live session on the old connection); the caller checks
+        /// <see cref="StateIsIdle"/>. The inbound-dispatcher subscription is
+        /// (re)attached on the next Start; defensively detach from the old
+        /// connection here in case one lingers.
+        /// </summary>
+        internal void Rebind(MozaSerialConnection connection)
+        {
+            if (ReferenceEquals(connection, _connection)) return;
+            try { _connection.MessageReceived -= _inboundDispatcher.OnMessageDuringPreamble; } catch { }
+            _connection = connection;
+            _rpc.Rebind(connection);
+            _uploader.Rebind(connection);
+            MozaLog.Debug($"[Moza] TelemetrySender rebound to {connection.CaptureLabel} connection");
+        }
+
         // Caller passes the MozaPlugin instance directly because Init may call
         // ApplyTelemetrySettings BEFORE MozaPlugin.Instance is assigned, so the
         // static accessor is null at this point and the delegate binding throws
@@ -1381,6 +1430,11 @@ namespace MozaPlugin.Telemetry
             }
 
             InitTickStateAndTransitionToStarting();
+            // Cold start only: arm the sess=0x09-readiness preamble gate (see
+            // _coldStartWheelGatePending docs). Must be set AFTER the init
+            // method above, which clears it. Warm/game-switch reloads leave it
+            // false → no added preamble latency.
+            _coldStartWheelGatePending = isFirstStartInProcess;
             BuildCachedFrames();
 
             // Subscribe early so we catch fc:00 acks during port probing AND preamble
@@ -1417,11 +1471,99 @@ namespace MozaPlugin.Telemetry
 
             _tierDefEmitter.WaitForChannelCatalogQuiet(quietMs: 200, timeoutMs: 2000);
             _catalogParser.TryParse();
+
+            // CRITICAL ordering: wait for a REAL catalog (on either session)
+            // before the FF-init handshake, so the handshake goes on the correct
+            // (mirror) FF session the FIRST time. The cold-start bug: the catalog
+            // reveals which session is the tier-def session (Form A=0x01,
+            // Form B=0x02), and the FF-init must ride the OPPOSITE session. If we
+            // send the init before the catalog arrives, it lands on the
+            // pre-catalog default (0x02) and we re-send on 0x01 once the catalog
+            // shows Form B — but the wheel, having received a premature 0x02 init
+            // then a 0x01 init, never commits the binding (dash renders, no
+            // data). Proof: a telemetry off→on toggle PRESERVES the catalog, so
+            // its StartInner sends the init straight to 0x01 once and the wheel
+            // renders fine. WaitForChannelCatalogQuiet only waits for QUIET (which
+            // fires during the pre-catalog silence, before the catalog burst), so
+            // it is NOT sufficient — we explicitly wait for HasRealCatalogOnSession.
+            // Bounded so a screenless / never-cataloging wheel still proceeds.
+            {
+                const int CatalogWaitMaxMs = 5000;
+                const int CatalogWaitSliceMs = 100;
+                // The cold-start catalog can arrive with dropped/truncated
+                // chunks under Wine: mid-burst session-data frames are lost
+                // (observed on sess=0x01, seq 07→0c — the URL records 08-0b
+                // never reach the read buffer), leaving a partial URL record +
+                // END. The read thread cumulative-acks that END as delivered,
+                // so the wheel never resends; the dash renders but shows no live
+                // data and NEVER self-recovers — only a telemetry off/on toggle
+                // (a full session re-cycle) fixes it. So when the wheel pushed an
+                // END marker but we assembled ZERO valid channel URLs, treat the
+                // catalog as garbage and RE-REQUEST: wipe the polluted buffer and
+                // close+reopen the catalog sessions so the wheel re-pushes the
+                // full catalog. Bounded; a wheel that pushed no END at all
+                // (screenless / no dash bound) has nothing to re-request and just
+                // proceeds.
+                const int MaxCatalogRequests = 3; // 1 initial + 2 re-requests
+                byte mgmt = _mgmtPort != 0 ? _mgmtPort : (byte)0x01;
+                byte flag = FlagByte;
+                int totalWaited = 0;
+                bool haveCatalog = false;
+                for (int attempt = 1; attempt <= MaxCatalogRequests; attempt++)
+                {
+                    int waited = 0;
+                    while (waited < CatalogWaitMaxMs)
+                    {
+                        _catalogParser.TryParse();
+                        if (_catalogParser.HasRealCatalogOnSession(mgmt)
+                            || (flag != 0 && flag != mgmt && _catalogParser.HasRealCatalogOnSession(flag)))
+                        {
+                            haveCatalog = true;
+                            break;
+                        }
+                        if (_state == TelemetryState.Idle || !_connection.IsConnected) return;
+                        try { System.Threading.Thread.Sleep(CatalogWaitSliceMs); } catch { }
+                        waited += CatalogWaitSliceMs;
+                    }
+                    totalWaited += waited;
+                    if (haveCatalog) break;
+
+                    // Timed out with no usable catalog. Distinguish "incomplete
+                    // burst" (END seen, no valid URLs — re-request) from "no
+                    // catalog at all" (no END ever — screenless / nothing to ask
+                    // for, proceed).
+                    bool sawEnd = _catalogParser.GetEndMarkerForSession(mgmt) != 0
+                        || (flag != 0 && _catalogParser.GetEndMarkerForSession(flag) != 0)
+                        || _catalogParser.LastWheelEndMarker != 0;
+                    if (!sawEnd || attempt == MaxCatalogRequests)
+                        break;
+
+                    MozaLog.Warn(
+                        $"[Moza] Incomplete channel catalog (END seen, 0 valid channels — " +
+                        $"dropped/truncated catalog chunks) after {waited}ms; re-requesting via " +
+                        $"session re-cycle (attempt {attempt}/{MaxCatalogRequests - 1}).");
+                    _catalogParser.ClearBuffer();
+                    try { TryCloseSession(0x01, 300); } catch { }
+                    try { TryCloseSession(0x02, 300); } catch { }
+                    try { TryCloseSession(0x03, 300); } catch { }
+                    try { System.Threading.Thread.Sleep(250); } catch { }
+                    if (_state == TelemetryState.Idle || !_connection.IsConnected) return;
+                    TryOpenSession(0x01, 500);
+                    if (_state == TelemetryState.Idle || !_connection.IsConnected) return;
+                    TryOpenSession(0x02, 500);
+                    SendSessionOpen(0x03, 0x03);
+                }
+                MozaLog.Debug(
+                    $"[Moza] Pre-init catalog wait: {totalWaited}ms — tier-def session resolved to " +
+                    $"0x{ResolveTierDefSession():X2}, FF session 0x{ResolveFfSession():X2}" +
+                    $"{(haveCatalog ? "" : " (no usable catalog — proceeding)")}.");
+            }
             MaybeSwapProfileForCatalog();
 
-            // Sess=0x02 init handshake (kind=2 nonce + kind=7 slot-index).
-            // Required: without it, wheel ignores dashboard-switch FF records
-            // on a fresh session 0x02.
+            // FF-init handshake (kind=2 nonce + kind=7 slot-index) on the FF
+            // session (mirror of the tier-def session, now resolved from the
+            // catalog above). Required: without it the wheel ignores
+            // dashboard-switch FF records and never commits the dashboard.
             SendSessionInitHandshake();
 
             // Empty-state tile-server blob on session 0x03 (host→wheel only).
@@ -1456,8 +1598,16 @@ namespace MozaPlugin.Telemetry
             _nextFlagBase = 0;
             _activeSubscription = null;
             _sessionAckSeq = 0;
+            lock (_contigAckLock) _contigAckSeqBySession.Clear();
             _dashboardDownloadTriggered = false;
             _preambleTickTarget = Math.Max(1, 1000 / _baseTickMs);
+            // Default the cold-start preamble gate off; StartInner re-arms it
+            // for true cold starts immediately after this call.
+            _coldStartWheelGatePending = false;
+            _coldStartGateLogged = false;
+            // Fresh cycle: init handshake not yet sent (so the FF-session re-send
+            // guard in ApplySubscription re-evaluates against this connection).
+            _initHandshakeSession = 0;
         }
 
         /// <summary>Prime session 0x09 (configJson state push) plus the
@@ -1763,7 +1913,7 @@ namespace MozaPlugin.Telemetry
             _slotTracker.NoteHostEmittedKind4((int)slotIndex);
             MozaLog.Debug(
                 $"[Moza] Sent dashboard-switch FF-record: slot={slotIndex} " +
-                $"on session 0x02 seq={_session02OutboundSeq - 1}");
+                $"on FF session 0x{ResolveFfSession():X2} (mirror of tier-def session)");
             return true;
         }
 
@@ -1888,6 +2038,37 @@ namespace MozaPlugin.Telemetry
         internal global::MozaPlugin.Diagnostics.SessionRetransmitter Retransmitter => _retransmitter;
         internal void SendAndTrackChunkInternal(byte[] frame) => SendAndTrackChunk(frame);
         internal MultiStreamProfile? ProfileRef => _profile;
+
+        /// <summary>The session the tier-def is emitted on: whichever carries
+        /// the wheel's real catalog+END. PitHouse "Form A" = mgmt (0x01),
+        /// "Form B" = FlagByte (0x02); same wheel can use either by where it
+        /// pushes its catalog, so we follow it. Falls back to the era policy's
+        /// session before any catalog has arrived. Single source of truth shared
+        /// by the tier-def emitter AND the FF/property-push session pick so they
+        /// stay mirrored.</summary>
+        internal byte ResolveTierDefSession()
+        {
+            byte mgmt = _mgmtPort != 0 ? _mgmtPort : (byte)0x01;
+            byte flag = FlagByte;
+            if (_catalogParser.HasRealCatalogOnSession(mgmt)) return mgmt;
+            if (flag != 0 && flag != mgmt && _catalogParser.HasRealCatalogOnSession(flag)) return flag;
+            return _policy.TierDefSession == TierDefSessionPolicy.FlagByte
+                ? (flag != 0 ? flag : (byte)0x02) : mgmt;
+        }
+
+        /// <summary>The session FF-init / dashboard-switch (kind=4) / property
+        /// pushes ride: the OPPOSITE of the tier-def session. PitHouse Form A
+        /// puts tier-def on 0x01 and the FF records on 0x02; Form B mirrors both
+        /// (tier-def 0x02, FF 0x01). The wheel only acks the FF-init
+        /// (kind=10/16) and commits the tier-def to the display when the FF
+        /// records arrive on the expected (mirror) session — sending them on the
+        /// wrong session is "switch is visual but the dash shows no data."</summary>
+        internal byte ResolveFfSession()
+        {
+            byte mgmt = _mgmtPort != 0 ? _mgmtPort : (byte)0x01;
+            byte flag = FlagByte != 0 ? FlagByte : (byte)0x02;
+            return ResolveTierDefSession() == flag ? mgmt : flag;
+        }
         internal TierState[]? Tiers => _tiers;
         internal ChannelCatalogParser CatalogParser => _catalogParser;
         internal byte MgmtPort => _mgmtPort;
@@ -1953,6 +2134,42 @@ namespace MozaPlugin.Telemetry
         internal int IncrementCatalogCrcRejects() => Interlocked.Increment(ref _catalogCrcRejects);
         internal int IncrementTileServerCrcRejects() => Interlocked.Increment(ref _tileServerCrcRejects);
         internal void SendSessionAckInternal(byte session, ushort ackSeq) => SendSessionAck(session, ackSeq);
+
+        /// <summary>Gap-aware ack-seq for a catalog-bearing session during the
+        /// binding phase. Advances on contiguous seqs, acks retransmits of
+        /// already-seen seqs specifically, and on a gap (a dropped catalog
+        /// chunk) re-acks the last CONTIGUOUS seq instead of acking past the
+        /// hole — so we never tell the wheel we received chunks we didn't, and
+        /// it gets a chance to resend. Once Active (steady-state telemetry) it
+        /// acks the seq verbatim, preserving the existing specific-seq behaviour
+        /// (a dropped keepalive must not stall the ack). Reset per session open.</summary>
+        internal ushort GapAwareCatalogAckSeq(byte session, int seq)
+        {
+            if (_state == TelemetryState.Active)
+                return (ushort)seq;
+            lock (_contigAckLock)
+            {
+                int contig = _contigAckSeqBySession.TryGetValue(session, out var c) ? c : -1;
+                if (contig < 0 || seq == contig + 1)
+                {
+                    _contigAckSeqBySession[session] = seq;   // first frame, or in-order
+                    return (ushort)seq;
+                }
+                if (seq <= contig)
+                    return (ushort)seq;                      // retransmit of an acked seq
+                // seq > contig + 1: chunk(s) between contig and seq dropped on RX.
+                // Dup-ack the last contiguous seq; do NOT advance past the hole.
+                return (ushort)contig;
+            }
+        }
+
+        /// <summary>Drop the gap-aware contiguous-ack baseline for a session so a
+        /// fresh open (new seq generation) starts clean. Called from
+        /// SendSessionOpen and the StartInner reset.</summary>
+        internal void ResetContigAck(byte session)
+        {
+            lock (_contigAckLock) _contigAckSeqBySession.Remove(session);
+        }
         internal void MaybeSendConfigJsonReplyInternal(WheelDashboardState state, byte session) =>
             MaybeSendConfigJsonReply(state, session);
         internal void MaybeTriggerDashboardDownloadInternal(WheelDashboardState state) =>
@@ -2027,6 +2244,15 @@ namespace MozaPlugin.Telemetry
         /// wheel (required power-cycle); the records carry session-bound
         /// state and have to be regenerated per cold-start, not replayed.
         /// </summary>
+        // FF session the init handshake (kind=2/7) was last sent on. The
+        // handshake fires early in StartInner BEFORE the wheel's catalog has
+        // arrived, so on a Form-B wheel it goes on the pre-catalog FF default
+        // (0x02) while the catalog later flips the FF session to 0x01. The wheel
+        // acked the init on the old session and won't accept kind=4 / commit the
+        // tier-def on the new session, so ApplySubscription re-sends the init on
+        // the corrected FF session. 0 = not sent this cycle.
+        private byte _initHandshakeSession;
+
         internal void SendSessionInitHandshake()
         {
             if (_state == TelemetryState.Idle || !_connection.IsConnected) return;
@@ -2043,9 +2269,10 @@ namespace MozaPlugin.Telemetry
             // comment above and docs/protocol/sessions/session-0x02-ff-init.md
             // for the required body-decode work before re-attempting.
 
+            _initHandshakeSession = ResolveFfSession();
             MozaLog.Debug(
-                $"[Moza] Sent sess=0x02 init handshake (kind=2 nonce + kind=7 slot=0); " +
-                $"next outbound seq={_session02OutboundSeq}");
+                $"[Moza] Sent init handshake (kind=2 nonce + kind=7 slot=0) on FF session " +
+                $"0x{_initHandshakeSession:X2} (mirror of tier-def session).");
         }
 
         public void SwitchToProfile(uint slotIndex, MultiStreamProfile? newProfile)
@@ -2533,6 +2760,23 @@ namespace MozaPlugin.Telemetry
             // policy used for tier-def emission and value-frame routing.
             ResolveAutoPolicy();
 
+            // If the catalog revealed a different tier-def session than when we
+            // first sent the FF-init handshake (Form B: catalog landed on 0x02,
+            // flipping the FF session from 0x02 to 0x01), the wheel acked the
+            // init on the OLD session and won't accept kind=4 / commit the
+            // tier-def on the new FF session — symptom: dash renders but shows
+            // no data. Re-send the init handshake on the now-correct FF session
+            // before the tier-def below so the binding actually commits. Fires
+            // at most once per cycle (after re-send the sessions match).
+            byte ffNow = ResolveFfSession();
+            if (_initHandshakeSession != 0 && _initHandshakeSession != ffNow)
+            {
+                MozaLog.Debug(
+                    $"[Moza] FF session moved 0x{_initHandshakeSession:X2}→0x{ffNow:X2} after catalog " +
+                    "arrived — re-sending init handshake on the corrected FF session so kind=4/tier-def commit.");
+                SendSessionInitHandshake();
+            }
+
             MaybeSwapProfileForCatalog(force: force);
             if (_profile == null || _profile.Tiers.Count == 0)
                 return;
@@ -2635,7 +2879,7 @@ namespace MozaPlugin.Telemetry
                 newPolicy.AutoFallbackUploadWireFormat = true;
 
             _policy = newPolicy;
-            MozaLog.Info($"[Moza] Auto era resolved → {resolved} ({reason})");
+            MozaLog.Debug($"[Moza] Auto era resolved → {resolved} ({reason})");
         }
 
         /// <summary>
@@ -2754,7 +2998,7 @@ namespace MozaPlugin.Telemetry
 
             int chCount = 0;
             foreach (var t in synthesised.Tiers) chCount += t.Channels.Count;
-            MozaLog.Info(
+            MozaLog.Debug(
                 $"[Moza] Synthesised catalog-only profile: {chCount}ch in {synthesised.Tiers.Count}t " +
                 $"+ {synthesised.StringChannels.Count} strings (catalog={catalog.Count}, " +
                 $"endMarker={_catalogParser.LastWheelEndMarker}, userMappings={mappedCount})");
@@ -3055,8 +3299,10 @@ namespace MozaPlugin.Telemetry
                 // Reconnect transition: forgive any prior restart-budget
                 // exhaustion / park. The wheel is observably back; if the
                 // root cause is still present the watchdogs will re-escalate
-                // from a clean budget.
-                try { _recovery.Reset(); } catch { }
+                // from a clean budget. Keep the cross-cycle FLAP history, though,
+                // so a connection that keeps dropping+reconnecting+restarting
+                // eventually parks instead of looping forever.
+                try { _recovery.Reset(clearFlapHistory: false); } catch { }
             }
 
             if (_state == TelemetryState.Idle || !currentlyConnected)
@@ -3200,6 +3446,58 @@ namespace MozaPlugin.Telemetry
                     return;
                 }
 
+                // Cold start only: even when the base advertised intrinsic
+                // channels (merged Count>0), those may live on a DIFFERENT
+                // session than the one the tier-def rides on. The wheel binds a
+                // tier-def by the catalog idx of its OWN session, so emitting
+                // before THAT session has a real catalog makes the wheel reject
+                // the tier-def and close the session (verified: cold R5 base —
+                // real 4-ch catalog only on sess=0x02, sess=0x01 degenerate
+                // idx=0/empty — closed sess=0x01 after our tier-def). Hold the
+                // transition until the tier-def's session has a real catalog
+                // (≥1 valid URL record + a valid END u32), capped so a
+                // screenless / never-ready wheel still proceeds. Warm and
+                // hot-switch reloads skip this entirely
+                // (_coldStartWheelGatePending=false → zero latency); on a warm
+                // wheel the tier-def session's catalog is already real so the
+                // gate passes on the first check.
+                // Wait for a real catalog (≥1 valid URL + valid END u32) on
+                // EITHER candidate session — the tier-def emitter then emits on
+                // whichever session actually carries it (catalog-following
+                // session pick; this wheel's catalog lands on 0x02). Gating on a
+                // single hardcoded session was the bug that made this hold time
+                // out uselessly on a 0x02-catalog wheel.
+                byte gateMgmt = _mgmtPort != 0 ? _mgmtPort : (byte)0x01;
+                byte gateFlag = FlagByte;
+                bool anyRealCatalog =
+                    _catalogParser.HasRealCatalogOnSession(gateMgmt)
+                    || (gateFlag != 0 && gateFlag != gateMgmt
+                        && _catalogParser.HasRealCatalogOnSession(gateFlag));
+                if (_coldStartWheelGatePending && !anyRealCatalog)
+                {
+                    int catalogCap = Math.Max(_preambleTickTarget,
+                        PreambleSess01CatalogWaitMaxMs / Math.Max(1, _baseTickMs));
+                    if (_tickCounter < catalogCap)
+                    {
+                        if (!_coldStartGateLogged)
+                        {
+                            _coldStartGateLogged = true;
+                            MozaLog.Info(
+                                $"[Moza] Cold-start preamble hold: waiting for a real catalog " +
+                                $"(valid URL + END u32) on sess 0x{gateMgmt:X2} or 0x{gateFlag:X2} " +
+                                $"before first tier-def. Cap {catalogCap} ticks " +
+                                $"({PreambleSess01CatalogWaitMaxMs} ms).");
+                        }
+                        return;
+                    }
+                    MozaLog.Warn(
+                        $"[Moza] Cold-start catalog wait exceeded {PreambleSess01CatalogWaitMaxMs} ms " +
+                        "without a real catalog on either session — proceeding to Active anyway " +
+                        "(screenless or slow wheel; watchdog will recover if binding fails).");
+                    // One-shot: don't re-hold if preamble is somehow re-entered.
+                    _coldStartWheelGatePending = false;
+                }
+
                 TransitionTo(TelemetryState.Active, "preamble countdown elapsed");
                 // Anchor for TickSession02EngagementWatchdog's grace
                 // window — the watchdog only starts counting against the
@@ -3218,6 +3516,20 @@ namespace MozaPlugin.Telemetry
         /// we have (likely empty → idx=alpha tier-def + the catalog-growth
         /// re-apply path will eventually pick up the slack).</summary>
         private const int PreambleCatalogWaitMaxMs = 3000;
+
+        /// <summary>Cold-start only: ceiling on the preamble→Active hold while
+        /// waiting for the tier-def session to carry a REAL catalog (valid URL
+        /// record + valid END u32). NOTE: on wheels whose catalog only ever
+        /// lands on a DIFFERENT session than the tier-def session (e.g. this R5
+        /// base advertises its catalog on sess=0x02 while tier-def rides
+        /// sess=0x01), HasRealCatalogOnSession(tier-def session) is structurally
+        /// never satisfied, so this hold ALWAYS runs to the cap with zero
+        /// binding benefit — it is pure dead latency. Capped at 6 s (was 22 s)
+        /// to bound that wasted wait until the tier-def-session mismatch is
+        /// fixed upstream (see docs/connection-robustness-and-recovery-plan.md
+        /// P4.1). A screenless / never-ready wheel still proceeds after the cap.
+        /// Only consulted while _coldStartWheelGatePending is true.</summary>
+        private const int PreambleSess01CatalogWaitMaxMs = 6_000;
 
         /// <summary>Continuous catalog absorption. Wheel pushes URL records
         /// in batches with ~1.2s gaps; parse every time the buffer grows and
@@ -3799,7 +4111,7 @@ namespace MozaPlugin.Telemetry
                     }
                     break;
                 case Lifecycle.PostSwitchCatalogConvergence.TickDecision.Converged:
-                    MozaLog.Info(
+                    MozaLog.Debug(
                         $"[Moza] Post-switch catalog convergence reached: slot={targetSlot} " +
                         $"after {nudgesSentBefore} nudge(s), final sig=0x{sig:X8} " +
                         $"(stable for {Lifecycle.PostSwitchCatalogConvergence.StableSampleThreshold} samples)");
@@ -3984,7 +4296,10 @@ namespace MozaPlugin.Telemetry
             var frame = new byte[]
             {
                 MozaProtocol.MessageStart, 0x06,
-                MozaProtocol.TelemetrySendGroup, MozaProtocol.DeviceWheel,
+                // Target the active dashboard device (wheel 0x17 / CM2 0x14|0x12),
+                // matching SendSessionOpen — closing on the wheel left a CM2's
+                // stale sessions open and spammed the wheel with rejected cmds.
+                MozaProtocol.TelemetrySendGroup, _targetDeviceId,
                 0x7C, 0x00,
                 session, 0x00,          // type=0x00 (end marker)
                 0x00, 0x00,             // ack_seq = 0 (LE)
@@ -3996,6 +4311,9 @@ namespace MozaPlugin.Telemetry
 
         private void SendSessionOpen(byte session, byte port)
         {
+            // Fresh seq generation incoming — clear the gap-aware contiguous
+            // ack baseline so the re-opened session re-bases cleanly.
+            ResetContigAck(session);
             var frame = new byte[]
             {
                 MozaProtocol.MessageStart, 0x0A,

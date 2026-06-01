@@ -168,7 +168,8 @@ namespace MozaPlugin.Telemetry.Inbound
             {
                 if (seq > _sender._sessionAckSeq)
                     _sender._sessionAckSeq = seq;
-                _sender.SendSessionAckInternal(_sender.FlagByte, (ushort)seq);
+                _sender.SendSessionAckInternal(
+                    _sender.FlagByte, _sender.GapAwareCatalogAckSeq(_sender.FlagByte, seq));
 
                 // First inbound on sess=FlagByte = engagement gate.
                 _sender.Watchdog.NoteSession02FirstInbound();
@@ -194,7 +195,8 @@ namespace MozaPlugin.Telemetry.Inbound
             {
                 if (seq > _sender._mgmtAckSeq)
                     _sender._mgmtAckSeq = seq;
-                _sender.SendSessionAckInternal(_sender.MgmtPort, (ushort)seq);
+                _sender.SendSessionAckInternal(
+                    _sender.MgmtPort, _sender.GapAwareCatalogAckSeq(_sender.MgmtPort, seq));
                 _sender.MgmtResponseEvent.Set();
                 // Mgmt session engagement signal — data flow on sess=MgmtPort
                 // is the strongest possible proof the session is alive.
@@ -377,6 +379,16 @@ namespace MozaPlugin.Telemetry.Inbound
             // wire trace. Does not alter recovery behaviour — that stays
             // with the engagement watchdogs below.
             _sender.Watchdog.NoteWheelInitiatedClose(session);
+            // Ack the wheel's CLOSE so it stops retransmitting it. A wheel-
+            // initiated close is reliable-delivery: if we never ack, the wheel
+            // re-sends the SAME close (same seq) ~1/sec indefinitely — this is
+            // the "close storm" on sess=0x01 (one close, retransmitted for the
+            // whole session because the plugin never acked it). Only the core
+            // session-layer ports we open and keep (mgmt 0x01 / telem 0x02)
+            // need this; dispatcher-owned upload sessions handle their own
+            // close routing below.
+            if (session == _sender.MgmtPort || session == _sender.FlagByte)
+                _sender.SendSessionAckInternal(session, (ushort)closeSeq);
             // Dispatcher-owned sessions: route exclusively.
             if (_sender.Dispatcher.GetOwner(session) != null)
             {

@@ -11,9 +11,15 @@ input subsystems.
 | Field | Value | Notes |
 |-------|-------|-------|
 | Vendor ID | `0x346E` | Moza |
-| Product ID | `0x0006` | Wheelbase composite (R5 / R9 / R12, etc.) |
+| Product ID | `0x0006` / `0x0002` / `0x0012` | Wheelbase composite (R5 / R9 / R12, etc.) |
+| Product ID | `0x0025` | CM2 Racing Dash — separate USB device when connected by its own cable (own CDC pipe) |
 | Product ID | `0x1000` | AB9 active shifter — separate USB device, parallel composite (see [`../devices/ab9-shifter.md`](../devices/ab9-shifter.md)) |
 | Class / SubClass / Protocol | composite (`0xEF / 0x02 / 0x01`) | Multi-interface device |
+
+A standalone-USB CM2 is its own USB device with its own CDC serial pipe (a
+separate COM port), opened on a dedicated connection — not multiplexed through a
+wheelbase. A CM2 attached behind a wheelbase instead rides the wheelbase pipe as
+the dash sub-device at `0x14` (see [`../devices/dash-0x14.md`](../devices/dash-0x14.md)).
 
 ### Interface map
 
@@ -44,7 +50,7 @@ hub multiplexes; the host only sees one CDC pipe.
 |-----------|-----|------|-------|
 | 18 | `0x12` | Main / hub | Hub controller, USB-side endpoint of the bus |
 | 19 | `0x13` | Base | Wheelbase motor controller |
-| 20 | `0x14` | Dash | Standalone Moza MDD display |
+| 20 | `0x14` | Dash / meter | Legacy Moza MDD display, or a base-bridged CM2 Racing Dash |
 | 21 | `0x15` | Wheel (secondary) | Observed in `0x43` broadcasts; purpose undecoded |
 | 23 | `0x17` | Wheel (primary) | All known steering wheel models target this address |
 | 25 | `0x19` | Pedals | KS Pro firmware exposes pedal sub-device at this ID |
@@ -59,10 +65,17 @@ and [`internal-bus.md`](internal-bus.md) for the topology tree (`monitor.json`).
 
 ### Telemetry routing
 
-**All captured live telemetry is addressed to dev `0x17` (wheel).** No
-captures exist of telemetry sent to dev `0x14` (MDD / standalone dash);
-whether the MDD uses the same group `0x43` payload or a different format
-is undetermined.
+Group-`0x43` screen telemetry is addressed to the device that owns the display:
+
+| Display | Target dev |
+|---------|-----------|
+| Wheel-integrated screen | `0x17` (wheel) |
+| Standalone-USB CM2 | `0x12` (the CM2's own bridge/main, on its own CDC pipe) |
+| Base-bridged CM2 | `0x14` (the meter on the wheelbase bus; `0x12` there is the base main) |
+
+The CM2 uses the same group-`0x43` tier-def / value-frame format as a
+wheel-integrated display, just at a different target dev. See
+[`../devices/dash-0x14.md`](../devices/dash-0x14.md).
 
 ### Re-enumeration on disconnect
 
