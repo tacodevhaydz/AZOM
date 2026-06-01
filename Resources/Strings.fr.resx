@@ -39,7 +39,7 @@
   <data name="SliderLabel_VibrateOnNeutral" xml:space="preserve"><value>Vibrer au point mort</value></data>
   <data name="SliderLabel_ShiftDebounce" xml:space="preserve"><value>Anti-rebond de changement</value></data>
   <data name="Section_WheelbaseEffects" xml:space="preserve"><value>EFFETS DE LA BASE</value></data>
-  <data name="Section_GameEffects" xml:space="preserve"><value>EFFETS D'FFB DU JEU</value></data>
+  <data name="Section_GameEffects" xml:space="preserve"><value>EFFETS FFB DU JEU</value></data>
   <data name="SliderLabel_WheelDamper" xml:space="preserve"><value>Amortisseur du volant</value></data>
   <data name="SliderLabel_WheelFriction" xml:space="preserve"><value>Friction du volant</value></data>
   <data name="SliderLabel_NaturalInertia" xml:space="preserve"><value>Inertie naturelle</value></data>
@@ -317,8 +317,11 @@
   <data name="Section_FullDiagReport" xml:space="preserve"><value>RAPPORT DIAGNOSTIC COMPLET</value></data>
   <data name="Subtitle_FullDiagReport" xml:space="preserve"><value>// informations de débogage</value></data>
   <data name="Button_Expand" xml:space="preserve"><value>ÉTENDRE</value></data>
+  <data name="Button_Collapse" xml:space="preserve"><value>RÉDUIRE</value></data>
   <data name="Button_CopyAll" xml:space="preserve"><value>TOUT COPIER DANS LE PRESSE-PAPIERS</value></data>
   <data name="Hint_ClickExpandToRender" xml:space="preserve"><value>Cliquez sur Développer pour afficher le rapport complet en plusieurs sections.</value></data>
+  <data name="Hint_FullDiagRendered" xml:space="preserve"><value>// {0} lignes · même contenu que le paquet d'exportation</value></data>
+  <data name="Hint_FullDiagRenderFailed" xml:space="preserve"><value>// échec du rendu</value></data>
   <data name="Hint_MBoosterIntro" xml:space="preserve"><value>Chaque mBooster connecté apparaît ci-dessous. Choisissez un rôle (Accélérateur/Frein/Embrayage) par périphérique pour acheminer la position de sa pédale. La section Calibration est expérimentale.</value></data>
   <data name="Hint_MBoosterCalibrationWarning" xml:space="preserve"><value>Pas encore testé.</value></data>
   <data name="Title_PickLedColor" xml:space="preserve"><value>Choisir la couleur du LED</value></data>
@@ -468,7 +471,7 @@
   <data name="SliderLabel_Color" xml:space="preserve"><value>Couleur</value></data>
   <data name="Section_Language" xml:space="preserve"><value>LANGUE</value></data>
   <data name="SliderLabel_Language" xml:space="preserve"><value>Langue</value></data>
-  <data name="Hint_LanguageChangeRestart" xml:space="preserve"><value>Fermez et rouvrez cette page de réglages pour appliquer la nouvelle langue. Auto s'adate à la langue de SimHub, puis celle du système.</value></data>
+  <data name="Hint_LanguageChangeRestart" xml:space="preserve"><value>Fermez et rouvrez cette page de réglages pour appliquer la nouvelle langue. Auto s'adapte à la langue de SimHub, puis celle du système.</value></data>
   <!-- PitHouse preset import (Button_ImportProfile + Import_*) -->
   <data name="Button_ImportProfile" xml:space="preserve"><value>IMPORTER PROFIL…</value></data>
   <data name="Import_DialogTitle" xml:space="preserve"><value>Importer un préréglage PitHouse</value></data>

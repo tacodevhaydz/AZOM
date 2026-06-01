@@ -324,8 +324,11 @@
   <data name="Section_FullDiagReport" xml:space="preserve"><value>FULL DIAGNOSTIC REPORT</value></data>
   <data name="Subtitle_FullDiagReport" xml:space="preserve"><value>// debugging information</value></data>
   <data name="Button_Expand" xml:space="preserve"><value>EXPAND</value></data>
+  <data name="Button_Collapse" xml:space="preserve"><value>COLLAPSE</value></data>
   <data name="Button_CopyAll" xml:space="preserve"><value>COPY ALL TO CLIPBOARD</value></data>
   <data name="Hint_ClickExpandToRender" xml:space="preserve"><value>Click expand to render the full multi-section report.</value></data>
+  <data name="Hint_FullDiagRendered" xml:space="preserve"><value>// {0} lines · same content as Export bundle</value></data>
+  <data name="Hint_FullDiagRenderFailed" xml:space="preserve"><value>// render failed</value></data>
   <data name="Hint_MBoosterIntro" xml:space="preserve"><value>Each connected mBooster appears below. Pick a role (Throttle/Brake/Clutch) per device to route its pedal position. The Calibration section is experimental.</value></data>
   <data name="Hint_MBoosterCalibrationWarning" xml:space="preserve"><value>Not yet tested.</value></data>
   <data name="Title_PickLedColor" xml:space="preserve"><value>Pick LED Color</value></data>

@@ -320,8 +320,11 @@
   <data name="Section_FullDiagReport" xml:space="preserve"><value>REPORT DIAGNOSTICO COMPLETO</value></data>
   <data name="Subtitle_FullDiagReport" xml:space="preserve"><value>// informazioni di debug</value></data>
   <data name="Button_Expand" xml:space="preserve"><value>ESPANDI</value></data>
+  <data name="Button_Collapse" xml:space="preserve"><value>COMPRIMI</value></data>
   <data name="Button_CopyAll" xml:space="preserve"><value>COPIA TUTTO NEGLI APPUNTI</value></data>
   <data name="Hint_ClickExpandToRender" xml:space="preserve"><value>Clicca espandi per visualizzare il report completo a più sezioni.</value></data>
+  <data name="Hint_FullDiagRendered" xml:space="preserve"><value>// {0} righe · stesso contenuto del pacchetto di esportazione</value></data>
+  <data name="Hint_FullDiagRenderFailed" xml:space="preserve"><value>// rendering non riuscito</value></data>
   <data name="Hint_MBoosterIntro" xml:space="preserve"><value>Ogni mBooster connesso appare qui sotto. Assegna un ruolo (Acceleratore/Freno/Frizione) per dispositivo per instradare la posizione del pedale. La sezione Calibrazione è sperimentale.</value></data>
   <data name="Hint_MBoosterCalibrationWarning" xml:space="preserve"><value>Non ancora testato.</value></data>
   <data name="Title_PickLedColor" xml:space="preserve"><value>Scegli Colore LED</value></data>

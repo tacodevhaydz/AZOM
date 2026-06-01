@@ -317,8 +317,11 @@
   <data name="Section_FullDiagReport" xml:space="preserve"><value>ΠΛΗΡΗΣ ΔΙΑΓΝΩΣΤΙΚΗ ΑΝΑΦΟΡΑ</value></data>
   <data name="Subtitle_FullDiagReport" xml:space="preserve"><value>// πληροφορίες εντοπισμού σφαλμάτων</value></data>
   <data name="Button_Expand" xml:space="preserve"><value>ΑΝΑΠΤΥΞΗ</value></data>
+  <data name="Button_Collapse" xml:space="preserve"><value>ΣΥΜΠΤΥΞΗ</value></data>
   <data name="Button_CopyAll" xml:space="preserve"><value>ΑΝΤΙΓΡΑΦΗ ΟΛΩΝ ΣΤΟ ΠΡΟΧΕΙΡΟ</value></data>
   <data name="Hint_ClickExpandToRender" xml:space="preserve"><value>Κάντε κλικ Ανάπτυξη για εμφάνιση της πλήρους αναφοράς πολλαπλών ενοτήτων.</value></data>
+  <data name="Hint_FullDiagRendered" xml:space="preserve"><value>// {0} γραμμές · ίδιο περιεχόμενο με το πακέτο εξαγωγής</value></data>
+  <data name="Hint_FullDiagRenderFailed" xml:space="preserve"><value>// η απόδοση απέτυχε</value></data>
   <data name="Hint_MBoosterIntro" xml:space="preserve"><value>Κάθε συνδεδεμένο mBooster εμφανίζεται παρακάτω. Επιλέξτε ρόλο (Γκάζι/Φρένο/Συμπλέκτης) ανά συσκευή για δρομολόγηση θέσης πεντάλ. Η ενότητα Βαθμονόμησης είναι πειραματική.</value></data>
   <data name="Hint_MBoosterCalibrationWarning" xml:space="preserve"><value>Δεν έχει δοκιμαστεί ακόμα.</value></data>
   <data name="Title_PickLedColor" xml:space="preserve"><value>Επιλογή Χρώματος LED</value></data>

@@ -317,8 +317,11 @@
   <data name="Section_FullDiagReport" xml:space="preserve"><value>BÁO CÁO CHẨN ĐOÁN ĐẦY ĐỦ</value></data>
   <data name="Subtitle_FullDiagReport" xml:space="preserve"><value>// thông tin gỡ lỗi</value></data>
   <data name="Button_Expand" xml:space="preserve"><value>MỞ RỘNG</value></data>
+  <data name="Button_Collapse" xml:space="preserve"><value>THU GỌN</value></data>
   <data name="Button_CopyAll" xml:space="preserve"><value>SAO CHÉP TẤT CẢ VÀO CLIPBOARD</value></data>
   <data name="Hint_ClickExpandToRender" xml:space="preserve"><value>Nhấn Mở rộng để hiển thị toàn bộ báo cáo gồm nhiều phần.</value></data>
+  <data name="Hint_FullDiagRendered" xml:space="preserve"><value>// {0} dòng · cùng nội dung với gói xuất</value></data>
+  <data name="Hint_FullDiagRenderFailed" xml:space="preserve"><value>// kết xuất thất bại</value></data>
   <data name="Hint_MBoosterIntro" xml:space="preserve"><value>Mỗi mBooster được kết nối sẽ xuất hiện bên dưới. Hãy chọn vai trò (Ga/Phanh/Côn) cho từng thiết bị để định tuyến vị trí bàn đạp. Phần Hiệu chuẩn đang ở giai đoạn thử nghiệm.</value></data>
   <data name="Hint_MBoosterCalibrationWarning" xml:space="preserve"><value>Chưa được kiểm thử.</value></data>
   <data name="Title_PickLedColor" xml:space="preserve"><value>Chọn màu LED</value></data>
