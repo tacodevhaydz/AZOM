@@ -2279,6 +2279,84 @@ namespace MozaPlugin
                 SetTelemetryEnabled(false);
                 MozaLog.Debug("[Moza] Dashboard telemetry off via action");
             });
+
+            // Wheel screen display brightness, 0..100 % (cf.
+            // DashboardManagementControl.WheelDisplayBrightnessSlider). Up/Down
+            // nudge ±5, the Coarse variants ±10; the stepper seeds from the
+            // wheel's real brightness with the slider's fallback chain so the
+            // first press never starts from the -1 sentinel.
+            AddStepActions("Moza.DisplayBrightness", 5, 10, StepDisplayBrightness);
+
+            // Jump straight to a fixed display brightness in 10-% steps
+            // (Moza.DisplayBrightness0 .. Moza.DisplayBrightness100).
+            for (int pct = 0; pct <= 100; pct += 10)
+            {
+                int target = pct; // capture per iteration
+                this.AddAction($"Moza.DisplayBrightness{pct}", (a, b) =>
+                {
+                    SetDisplayBrightness(target);
+                    MozaLog.Debug($"[Moza] Display brightness → {target}% via action");
+                });
+            }
+
+            // Turn off the base's work mode. The firmware command is
+            // main-set-work-mode; value 1 is the state the UI surfaces as
+            // "Standby Mode" on (cf. SettingsControl.StandbyCheck_Click), which
+            // is what "work mode off" means for the base.
+            this.AddAction("Moza.WorkModeOff", (a, b) =>
+            {
+                if (_data != null) _data.WorkMode = 1;
+                WriteIfBaseConnected("main-set-work-mode", 1);
+                SaveSettings();
+                MozaLog.Debug("[Moza] Work mode off (standby) via action");
+            });
+            // Turn work mode back on: value 0 is "Standby Mode" off — the base's
+            // normal active state.
+            this.AddAction("Moza.WorkModeOn", (a, b) =>
+            {
+                if (_data != null) _data.WorkMode = 0;
+                WriteIfBaseConnected("main-set-work-mode", 0);
+                SaveSettings();
+                MozaLog.Debug("[Moza] Work mode on via action");
+            });
+        }
+
+        // ===== Display brightness step/set helpers =====
+
+        // Current wheel display brightness using the same fallback chain as the
+        // UI slider (DashboardManagementControl.RefreshDisplaySection): live
+        // _data → active profile → settings default (100). Never returns the
+        // -1 sentinel, so a nudge always moves from the wheel's real value.
+        private int CurrentDisplayBrightness()
+        {
+            int b = _data?.DashDisplayBrightness ?? -1;
+            if (b < 0)
+            {
+                var profile = _settings?.ProfileStore?.CurrentProfile;
+                b = profile?.DashDisplayBrightness ?? -1;
+                if (b < 0) b = _settings?.DashDisplayBrightness ?? 100;
+            }
+            return b < 0 ? 0 : (b > 100 ? 100 : b);
+        }
+
+        // Apply an absolute display brightness, mirroring the slider's commit
+        // path: update _data + active profile, push on session 0x02, persist.
+        // allowZero: a button bound to a specific value is deliberate intent,
+        // same as a slider committed at 0.
+        private void SetDisplayBrightness(int val)
+        {
+            val = val < 0 ? 0 : (val > 100 ? 100 : val);
+            if (_data != null) _data.DashDisplayBrightness = val;
+            UpdateActiveProfile(p => p.DashDisplayBrightness = val);
+            TelemetrySender?.SendDashDisplayBrightness(val, allowZero: true);
+            SaveSettings();
+        }
+
+        private void StepDisplayBrightness(int delta)
+        {
+            int val = ClampStep(CurrentDisplayBrightness(), delta, 0, 100);
+            SetDisplayBrightness(val);
+            MozaLog.Debug($"[Moza] Display brightness → {val}% via action");
         }
 
         /// <summary>
