@@ -781,6 +781,36 @@ namespace MozaPlugin.Telemetry.Dashboard
                         name ?? url, compression, packageLevel, simHubProp ?? "", scale, field,
                         rangeStr, dataType);
                 }
+
+                // Drift guard for the deterministic tyre codec families. These
+                // regressed once — stale "float" in the JSON silently overrode
+                // the firmware codec, leaving tyre-pressure/temp widgets dead
+                // (issue #43). The codec is uniquely determined by the URL and
+                // wheel-model-independent (verified W13 + W17 against PitHouse:
+                // tyre_pressure_1 = 0x16/12, tyre_temp_1 = 0x11/14), so a
+                // base-unit TyrePressure*/TyreTemp* channel set to anything else
+                // is almost certainly a mistake. Unit variants (&unit=F, &kpa,
+                // &B) use raw float (different scaling) and are skipped.
+                var tyreDrift = new List<string>();
+                foreach (var kv in result)
+                {
+                    string chUrl = kv.Key;
+                    if (chUrl.IndexOf('&') >= 0) continue;
+                    string suffix = chUrl.Contains('/')
+                        ? chUrl.Substring(chUrl.LastIndexOf('/') + 1) : chUrl;
+                    string? expected =
+                        suffix.StartsWith("TyrePressure", StringComparison.OrdinalIgnoreCase) ? "tyre_pressure_1" :
+                        suffix.StartsWith("TyreTemp", StringComparison.OrdinalIgnoreCase) ? "tyre_temp_1" :
+                        null;
+                    if (expected != null && !string.Equals(kv.Value.Compression, expected,
+                            StringComparison.OrdinalIgnoreCase))
+                        tyreDrift.Add($"{suffix}=\"{kv.Value.Compression}\" (expected {expected})");
+                }
+                if (tyreDrift.Count > 0)
+                    MozaLog.Warn(
+                        $"[Moza] Telemetry.json tyre codec drift — {tyreDrift.Count} channel(s) not using "
+                        + "the firmware codec PitHouse emits; these widgets will not render: "
+                        + string.Join(", ", tyreDrift));
             }
             catch (Exception ex)
             {
