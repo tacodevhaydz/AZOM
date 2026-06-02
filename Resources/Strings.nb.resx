@@ -89,7 +89,7 @@
   <data name="Option_Combined" xml:space="preserve"><value>Kombinert</value></data>
   <data name="Option_Split" xml:space="preserve"><value>Delt</value></data>
   <data name="SliderLabel_ClutchSplitPoint" xml:space="preserve"><value>Clutch-delingspunkt</value></data>
-  <data name="Section_InputSettings" xml:space="preserve"><value>Innganginnstillinger</value></data>
+  <data name="Section_InputSettings" xml:space="preserve"><value>Inngangsinnstillinger</value></data>
   <data name="SliderLabel_RotaryEncoders" xml:space="preserve"><value>Rotary-encodere</value></data>
   <data name="Option_Knob" xml:space="preserve"><value>Bryter</value></data>
   <data name="SliderLabel_Rotary1" xml:space="preserve"><value>Rotary 1</value></data>
@@ -228,7 +228,7 @@
   <data name="Status_NoFileSelected" xml:space="preserve"><value>(ingen fil valgt)</value></data>
   <data name="Label_Dashboard" xml:space="preserve"><value>Dashboard:</value></data>
   <data name="Button_UploadNow" xml:space="preserve"><value>LAST OPP NÅ</value></data>
-  <data name="Status_Idle" xml:space="preserve"><value>inaktiv</value></data>
+  <data name="Status_Idle" xml:space="preserve"><value>på tomgang</value></data>
   <data name="Label_DashboardName" xml:space="preserve"><value>Dashboard-navn:</value></data>
   <data name="Label_RawSize" xml:space="preserve"><value>Rå størrelse:</value></data>
   <data name="Label_Md5" xml:space="preserve"><value>MD5:</value></data>
@@ -434,12 +434,12 @@
   <data name="Section_RpmLedMode" xml:space="preserve"><value>RPM-LED-MODUS</value></data>
   <data name="SliderLabel_RpmLedMode" xml:space="preserve"><value>RPM-LED-modus</value></data>
   <data name="Option_Static" xml:space="preserve"><value>Statisk</value></data>
-  <data name="SliderLabel_RpmIdleEffect" xml:space="preserve"><value>RPM idle-effekt</value></data>
+  <data name="SliderLabel_RpmIdleEffect" xml:space="preserve"><value>RPM tomgangs-effekt</value></data>
   <data name="Option_Breathing" xml:space="preserve"><value>Pust</value></data>
   <data name="Option_ColorCycle" xml:space="preserve"><value>Fargesyklus</value></data>
   <data name="Option_SandFlow" xml:space="preserve"><value>Sandflyt</value></data>
   <data name="Option_RgbPulse" xml:space="preserve"><value>RGB-puls</value></data>
-  <data name="SliderLabel_RpmIdleSpeed" xml:space="preserve"><value>RPM idle-hastighet</value></data>
+  <data name="SliderLabel_RpmIdleSpeed" xml:space="preserve"><value>RPM tomgangs-hastighet</value></data>
   <data name="Section_RpmLedColorsStatic" xml:space="preserve"><value>RPM-LED-FARGER (STATISK)</value></data>
   <data name="Subtitle_RpmLedColorsStatic" xml:space="preserve"><value>// vises når telemetri ikke sender · klikk en LED for å endre farge</value></data>
   <data name="Label_LedPlaceholder" xml:space="preserve"><value>LED 01</value></data>
@@ -451,15 +451,15 @@
   <data name="SliderLabel_DisplayMode" xml:space="preserve"><value>Visningsmodus</value></data>
   <data name="Section_ButtonLedMode" xml:space="preserve"><value>KNAPP-LED-MODUS</value></data>
   <data name="SliderLabel_ButtonLedMode" xml:space="preserve"><value>Knapp-LED-modus</value></data>
-  <data name="SliderLabel_ButtonIdleEffect" xml:space="preserve"><value>Knapp idle-effekt</value></data>
-  <data name="SliderLabel_ButtonIdleSpeed" xml:space="preserve"><value>Knapp idle-hastighet</value></data>
+  <data name="SliderLabel_ButtonIdleEffect" xml:space="preserve"><value>Knapp tomgangs-effekt</value></data>
+  <data name="SliderLabel_ButtonIdleSpeed" xml:space="preserve"><value>Knapp tomgangs-hastighet</value></data>
   <data name="Section_ButtonLedColors" xml:space="preserve"><value>KNAPP-LED-FARGER</value></data>
   <data name="Subtitle_ButtonLedColors" xml:space="preserve"><value>// klikk en knapp for å endre farge · «standard under telemetri» erstatter av-knapper med valgt farge</value></data>
   <data name="Label_ButtonPlaceholder" xml:space="preserve"><value>KNAPP 01</value></data>
   <data name="Section_KnobLedMode" xml:space="preserve"><value>BRYTER-LED-MODUS</value></data>
   <data name="SliderLabel_KnobLedMode" xml:space="preserve"><value>Bryter-LED-modus</value></data>
-  <data name="SliderLabel_KnobIdleEffect" xml:space="preserve"><value>Bryter idle-effekt</value></data>
-  <data name="SliderLabel_KnobIdleSpeed" xml:space="preserve"><value>Bryter idle-hastighet</value></data>
+  <data name="SliderLabel_KnobIdleEffect" xml:space="preserve"><value>Bryter tomgangs-effekt</value></data>
+  <data name="SliderLabel_KnobIdleSpeed" xml:space="preserve"><value>Bryter tomgangs-hastighet</value></data>
   <data name="Section_KnobSettings" xml:space="preserve"><value>BRYTER-INNSTILLINGER</value></data>
   <data name="Label_SignalMode" xml:space="preserve"><value>SIGNALMODUS</value></data>
   <data name="Subtitle_SignalMode" xml:space="preserve"><value>// hvordan hver rotary rapporterer inngang</value></data>
@@ -471,7 +471,7 @@
   <data name="Button_CopyKnobToAll" xml:space="preserve"><value>KOPIER DENNE BRYTEREN TIL ALLE</value></data>
   <data name="Banner_DashboardUploadNotWorkingYet" xml:space="preserve"><value>⚠  Dashboard-opplasting fungerer ikke ennå</value></data>
   <data name="Section_SleepLight" xml:space="preserve"><value>HVILELYS</value></data>
-  <data name="Subtitle_SleepLight" xml:space="preserve"><value>// hva rattet viser etter at idle-timeouten utløper</value></data>
+  <data name="Subtitle_SleepLight" xml:space="preserve"><value>// hva rattet viser etter at tomgangs-timeouten utløper</value></data>
   <data name="SliderLabel_Speed" xml:space="preserve"><value>Hastighet</value></data>
   <data name="SliderLabel_Color" xml:space="preserve"><value>Farge</value></data>
   <data name="Section_Language" xml:space="preserve"><value>SPRÅK</value></data>
