@@ -244,7 +244,11 @@ namespace MozaPlugin.Devices
 
         private void RefreshDash()
         {
-            if (!ResolvePlugin())
+            // The explicit `_plugin == null` here is redundant with ResolvePlugin
+            // (which only returns true when _plugin is set) but lets the compiler's
+            // flow analysis treat _plugin as non-null for the rest of the method —
+            // net48 lacks [MemberNotNullWhen] to express that on ResolvePlugin.
+            if (!ResolvePlugin() || _plugin == null)
             {
                 StatusDot.Fill = Brushes.Gray;
                 StatusText.Text = "Plugin not loaded";

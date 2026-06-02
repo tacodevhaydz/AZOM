@@ -319,9 +319,12 @@ namespace MozaPlugin.Devices
 
         // ===== Host-rendered engine vibration (Group 0x20 / cmd 0x0A 0x05) =====
         //
-        // PitHouse streams this with a 24-bit BE period field that satisfies
-        //   period = K / (engine_rpm × freq_hz),  K ≈ 1.197e12
-        // (calibrated 2026-05-31 against ground-truth RPM telemetry — see below).
+        // PitHouse streams this with a 24-bit BE period field. The freq slider
+        // is the buzz frequency AT REDLINE, scaled by RPM fraction below it:
+        //   audible = freqSlider × (rpm/maxRpm)
+        //   period  = FreqTickHz × maxRpm / (engine_rpm × freqSlider),  FreqTickHz ≈ 6.366e7
+        // (calibrated 2026-05-31 against ground-truth RPM telemetry — see
+        // Ab9EngineVibrationWorker and docs/protocol/devices/ab9-shifter.md).
         //
         // The 16-bit field at payload offset 2-3 (historically mislabelled the
         // "slot ID" / DirectInput handle) is the ENGINE-VIBRATION INTENSITY,
