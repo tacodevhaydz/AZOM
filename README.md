@@ -235,6 +235,8 @@ Each *step* setting has four actions: `…Up` / `…Down` apply a fine step, and
 | `Moza.DashboardTelemetryToggle` | Toggle dashboard telemetry on/off for the active wheel page |
 | `Moza.DashboardTelemetryOn` | Enable dashboard telemetry for the active wheel page |
 | `Moza.DashboardTelemetryOff` | Disable dashboard telemetry for the active wheel page |
+| `Moza.DisplayToggle` | Toggle the wheel screen on/off (remembers the on-brightness so toggling back on restores it) |
+| `Moza.TestModeToggle` | Toggle telemetry test mode (synthetic signal sweep) for the active wheel page |
 | `Moza.ClearLeds` | Blank all wheel and dash LEDs |
 
 ## Building from Source

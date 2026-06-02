@@ -2333,6 +2333,72 @@ namespace MozaPlugin
                 SaveSettings();
                 MozaLog.Debug("[Moza] Work mode on via action");
             });
+
+            // Toggle the wheel screen on/off, remembering the on-brightness so a
+            // later toggle-on restores it instead of a fixed default.
+            this.AddAction("Moza.DisplayToggle", (a, b) => ToggleDisplay());
+
+            // Toggle telemetry test mode (synthetic signal sweep) for the active
+            // wheel page, mirroring the Test Start/Stop buttons in the UI.
+            this.AddAction("Moza.TestModeToggle", (a, b) => ToggleTestMode());
+        }
+
+        // Remembered display brightness from the last DisplayToggle-off, so the
+        // next toggle-on restores it. -1 = nothing remembered yet (per-session;
+        // not persisted across plugin reload).
+        private int _displayBrightnessBeforeBlank = -1;
+
+        // Flip the wheel screen on/off. Off = brightness 0 after stashing the
+        // current level; on = restore the stashed level (or 100 if none). "Off"
+        // is detected as current brightness 0, matching SetDisplayBrightness's
+        // clamp. Reuses the slider commit path so _data, the active profile, the
+        // wheel, and settings all stay in sync.
+        private void ToggleDisplay()
+        {
+            int current = CurrentDisplayBrightness();
+            if (current > 0)
+            {
+                _displayBrightnessBeforeBlank = current;
+                SetDisplayBrightness(0);
+                MozaLog.Debug($"[Moza] Display off (was {current}%) via action");
+            }
+            else
+            {
+                int restore = _displayBrightnessBeforeBlank > 0 ? _displayBrightnessBeforeBlank : 100;
+                SetDisplayBrightness(restore);
+                MozaLog.Debug($"[Moza] Display on → {restore}% via action");
+            }
+        }
+
+        // Flip telemetry test mode for the active wheel page. Mirrors
+        // DashboardManagementControl's Test Start/Stop: when the active overlay
+        // doesn't already have live telemetry enabled, test mode owns the sender
+        // lifecycle (start on a worker thread when turning on, stop when turning
+        // off) so the synthetic sweep runs without flipping the persisted
+        // per-page telemetry-enabled flag.
+        private void ToggleTestMode()
+        {
+            var active = TelemetrySender;
+            if (active == null)
+            {
+                MozaLog.Debug("[Moza] Test mode toggle ignored: no telemetry sender");
+                return;
+            }
+            bool turningOn = !active.TestMode;
+            active.TestMode = turningOn;
+            if (!ActiveTelemetryEnabled)
+            {
+                if (turningOn)
+                {
+                    ApplyTelemetrySettings();
+                    System.Threading.ThreadPool.QueueUserWorkItem(_ => active.Start());
+                }
+                else
+                {
+                    active.Stop();
+                }
+            }
+            MozaLog.Debug($"[Moza] Test mode → {(turningOn ? "on" : "off")} via action");
         }
 
         // ===== Display brightness step/set helpers =====
