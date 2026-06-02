@@ -464,6 +464,18 @@ namespace MozaPlugin
             = new Dictionary<string, Dictionary<string, Dictionary<string, string>>>(StringComparer.OrdinalIgnoreCase);
 
         /// <summary>
+        /// FSR V1 active built-in dashboard/page index (0..18), keyed by wheel-page
+        /// GUID. The plugin selects it by sending the group-0x32 cmd-0x81 index write
+        /// (<see cref="MozaPlugin.Telemetry.Fsr1DisplayEmitter.BuildSelect"/>); the
+        /// wheel also changes it via its HID button combo and reports it back. Absent
+        /// = default 0. Per-wheel (not per-game) — the wheel shows one dashboard.
+        /// </summary>
+        [Newtonsoft.Json.JsonProperty(NullValueHandling = Newtonsoft.Json.NullValueHandling.Ignore,
+            DefaultValueHandling = Newtonsoft.Json.DefaultValueHandling.Ignore)]
+        public Dictionary<Guid, int> Fsr1ActiveDashboardByWheelGuid { get; set; }
+            = new Dictionary<Guid, int>();
+
+        /// <summary>
         /// One-shot migration: copy entries from the legacy single-level
         /// <see cref="TelemetryChannelMappings"/> into <see cref="TelemetryChannelMappingsByWheel"/>
         /// under the empty-wheel slot ("") so users upgrading from 2026-05-08 or earlier
