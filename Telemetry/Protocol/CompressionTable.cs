@@ -86,6 +86,12 @@ namespace MozaPlugin.Telemetry.Protocol
             Add(new Entry("uint30", 0x0D, 5, EncodeInt30, (0, 30)));
             Add(new Entry("uint31", 0x0D, 5, EncodeInt30, (0, 30)));
 
+            // 5-bit level/index. PitHouse emits code 0x13 width 5 for ABSLevel,
+            // TCLevel and SectorIndex (small integers); the plugin previously
+            // sent these as uint30/uint31 (code 0x0D). Integer-clamped, reuses
+            // the int30 encoder.
+            Add(new Entry("level_1", 0x13, 5, EncodeInt30, (0, 30)));
+
             // 10-bit percent (×10, 0..1000)
             Add(new Entry("percent_1", 0x0E, 10,
                 v => (ulong)Clamp(Sanitize(v) * 10.0, 0, 1000), (0, 100)));
@@ -111,8 +117,11 @@ namespace MozaPlugin.Telemetry.Protocol
             Add(new Entry("track_temp_1", 0x12, 14, EncodeTemp14, (0, 60)));
             Add(new Entry("oil_pressure_1", 0x13, 14, EncodeTemp14, (0, 10)));
 
-            // 16-bit brake temp
-            Add(new Entry("brake_temp_1", 0x16, 16,
+            // 16-bit brake temp. PitHouse emits code 0x12 width 16 for brake
+            // temps (bridge-20260503 W17 + FSR2 W13). The code was previously
+            // 0x16, which collides with tyre_pressure_1 (0x16/12) — distinct on
+            // PitHouse, so brake temp uses 0x12 here too.
+            Add(new Entry("brake_temp_1", 0x12, 16,
                 v => (ulong)Clamp(Sanitize(v) * 10.0 + 5000.0, 0, 65535), (0, 1000)));
 
             // 4-bit
@@ -135,7 +144,8 @@ namespace MozaPlugin.Telemetry.Protocol
             Add(new Entry("double", 0x0A, 64,
                 v => BitConverter.ToUInt64(BitConverter.GetBytes(Sanitize(v)), 0),
                 (0, 200)));
-            Add(new Entry("location_t", 0x0B, 64,
+            // PitHouse emits code 0x09 width 64 for patch/Location_* (was 0x0B).
+            Add(new Entry("location_t", 0x09, 64,
                 v => BitConverter.ToUInt64(BitConverter.GetBytes(Sanitize(v)), 0),
                 (0, 1)));
             Add(new Entry("int64_t", 0x0C, 64,

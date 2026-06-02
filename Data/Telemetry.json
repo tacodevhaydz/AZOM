@@ -64,7 +64,7 @@
       },
       "package_level": 2000,
       "default_value": 0,
-      "compression": "uint8_t",
+      "compression": "int8_t",
       "simhub_property": "DataCorePlugin.GameData.OpponentsCount",
       "is_visible": true
     },
@@ -86,7 +86,7 @@
       },
       "package_level": 500,
       "default_value": 0,
-      "compression": "uint8_t",
+      "compression": "int8_t",
       "simhub_property": "DataCorePlugin.GameData.CurrentLap",
       "simhub_scale": 1.0,
       "simhub_field": "CurrentLap",
@@ -110,7 +110,7 @@
       },
       "package_level": 500,
       "default_value": 0,
-      "compression": "uint8_t",
+      "compression": "int8_t",
       "simhub_property": "DataCorePlugin.GameData.Position",
       "is_visible": true
     },
@@ -504,7 +504,7 @@
       },
       "package_level": 30,
       "default_value": 0,
-      "compression": "uint30",
+      "compression": "level_1",
       "is_visible": true,
       "simhub_property": "DataCorePlugin.GameData.ABSLevel"
     },
@@ -526,7 +526,7 @@
       },
       "package_level": 30,
       "default_value": 0,
-      "compression": "uint30",
+      "compression": "level_1",
       "is_visible": true,
       "simhub_property": "DataCorePlugin.GameData.TCLevel"
     },
@@ -638,7 +638,7 @@
       },
       "package_level": 500,
       "default_value": 0,
-      "compression": "uint8_t",
+      "compression": "int8_t",
       "is_visible": true,
       "simhub_property": "DataCorePlugin.GameData.FuelLaps"
     },
@@ -838,7 +838,7 @@
       },
       "package_level": 2000,
       "default_value": 0,
-      "compression": "float",
+      "compression": "tyre_temp_1",
       "is_visible": true,
       "simhub_property": "DataCorePlugin.GameData.TyreTemperatureFrontLeft"
     },
@@ -860,7 +860,7 @@
       },
       "package_level": 2000,
       "default_value": 0,
-      "compression": "float",
+      "compression": "tyre_temp_1",
       "is_visible": true,
       "simhub_property": "DataCorePlugin.GameData.TyreTemperatureFrontRight"
     },
@@ -882,7 +882,7 @@
       },
       "package_level": 2000,
       "default_value": 0,
-      "compression": "float",
+      "compression": "tyre_temp_1",
       "is_visible": true,
       "simhub_property": "DataCorePlugin.GameData.TyreTemperatureRearLeft"
     },
@@ -904,7 +904,7 @@
       },
       "package_level": 2000,
       "default_value": 0,
-      "compression": "float",
+      "compression": "tyre_temp_1",
       "is_visible": true,
       "simhub_property": "DataCorePlugin.GameData.TyreTemperatureRearRight"
     },
@@ -926,7 +926,7 @@
       },
       "package_level": 2000,
       "default_value": 0,
-      "compression": "float",
+      "compression": "tyre_temp_1",
       "is_visible": true,
       "simhub_property": "DataCorePlugin.GameData.TyreTempFrontLeftInner"
     },
@@ -948,7 +948,7 @@
       },
       "package_level": 2000,
       "default_value": 0,
-      "compression": "float",
+      "compression": "tyre_temp_1",
       "is_visible": true,
       "simhub_property": "DataCorePlugin.GameData.TyreTempFrontRightInner"
     },
@@ -970,7 +970,7 @@
       },
       "package_level": 2000,
       "default_value": 0,
-      "compression": "float",
+      "compression": "tyre_temp_1",
       "is_visible": true,
       "simhub_property": "DataCorePlugin.GameData.TyreTempRearLeftInner"
     },
@@ -992,7 +992,7 @@
       },
       "package_level": 2000,
       "default_value": 0,
-      "compression": "float",
+      "compression": "tyre_temp_1",
       "is_visible": true,
       "simhub_property": "DataCorePlugin.GameData.TyreTempRearRightInner"
     },
@@ -1014,7 +1014,7 @@
       },
       "package_level": 2000,
       "default_value": 0,
-      "compression": "float",
+      "compression": "tyre_temp_1",
       "is_visible": true,
       "simhub_property": "DataCorePlugin.GameData.TyreTempFrontLeftMiddle"
     },
@@ -1036,7 +1036,7 @@
       },
       "package_level": 2000,
       "default_value": 0,
-      "compression": "float",
+      "compression": "tyre_temp_1",
       "is_visible": true,
       "simhub_property": "DataCorePlugin.GameData.TyreTempFrontRightMiddle"
     },
@@ -1058,7 +1058,7 @@
       },
       "package_level": 2000,
       "default_value": 0,
-      "compression": "float",
+      "compression": "tyre_temp_1",
       "is_visible": true,
       "simhub_property": "DataCorePlugin.GameData.TyreTempRearLeftMiddle"
     },
@@ -1164,7 +1164,7 @@
       },
       "package_level": 2000,
       "default_value": 0,
-      "compression": "float",
+      "compression": "tyre_temp_1",
       "is_visible": true,
       "simhub_property": "DataCorePlugin.GameData.TyreTempRearRightMiddle"
     },
@@ -1610,7 +1610,7 @@
       },
       "package_level": 2000,
       "default_value": 0,
-      "compression": "track_temp_1",
+      "compression": "tyre_temp_1",
       "is_visible": true,
       "simhub_property": "DataCorePlugin.GameData.TrackTemp"
     },
@@ -1632,7 +1632,7 @@
       },
       "package_level": 2000,
       "default_value": 0,
-      "compression": "track_temp_1",
+      "compression": "tyre_temp_1",
       "is_visible": true,
       "simhub_property": "DataCorePlugin.GameData.AirTemp"
     },
@@ -2188,7 +2188,7 @@
       },
       "package_level": 2000,
       "default_value": 0,
-      "compression": "uint31",
+      "compression": "level_1",
       "simhub_property": "DataCorePlugin.GameData.CurrentSectorIndex",
       "is_visible": true
     },
@@ -2342,7 +2342,7 @@
       },
       "package_level": 30,
       "default_value": 0,
-      "compression": "float",
+      "compression": "tyre_temp_1",
       "is_visible": true,
       "simhub_property": "DataCorePlugin.GameData.Heading"
     },
@@ -2408,7 +2408,7 @@
       },
       "package_level": 2000,
       "default_value": 0,
-      "compression": "float",
+      "compression": "tyre_temp_1",
       "is_visible": true,
       "simhub_property": "DataCorePlugin.GameData.TyreTempFrontLeftOuter"
     },
@@ -2430,7 +2430,7 @@
       },
       "package_level": 2000,
       "default_value": 0,
-      "compression": "float",
+      "compression": "tyre_temp_1",
       "is_visible": true,
       "simhub_property": "DataCorePlugin.GameData.TyreTempFrontRightOuter"
     },
@@ -2452,7 +2452,7 @@
       },
       "package_level": 2000,
       "default_value": 0,
-      "compression": "float",
+      "compression": "tyre_temp_1",
       "is_visible": true,
       "simhub_property": "DataCorePlugin.GameData.TyreTempRearLeftOuter"
     },
@@ -2474,7 +2474,7 @@
       },
       "package_level": 2000,
       "default_value": 0,
-      "compression": "float",
+      "compression": "tyre_temp_1",
       "is_visible": true,
       "simhub_property": "DataCorePlugin.GameData.TyreTempRearRightOuter"
     },
@@ -2518,7 +2518,7 @@
       },
       "package_level": 2000,
       "default_value": 0,
-      "compression": "float",
+      "compression": "tyre_pressure_1",
       "is_visible": true,
       "simhub_property": "DataCorePlugin.GameData.TyrePressureFrontLeft"
     },
@@ -2540,7 +2540,7 @@
       },
       "package_level": 2000,
       "default_value": 0,
-      "compression": "float",
+      "compression": "tyre_pressure_1",
       "is_visible": true,
       "simhub_property": "DataCorePlugin.GameData.TyrePressureFrontRight"
     },
@@ -2562,7 +2562,7 @@
       },
       "package_level": 2000,
       "default_value": 0,
-      "compression": "float",
+      "compression": "tyre_pressure_1",
       "is_visible": true,
       "simhub_property": "DataCorePlugin.GameData.TyrePressureRearLeft"
     },
@@ -2584,7 +2584,7 @@
       },
       "package_level": 2000,
       "default_value": 0,
-      "compression": "float",
+      "compression": "tyre_pressure_1",
       "is_visible": true,
       "simhub_property": "DataCorePlugin.GameData.TyrePressureRearRight"
     },
@@ -3289,7 +3289,7 @@
       },
       "package_level": 2000,
       "default_value": 0,
-      "compression": "uint8_t",
+      "compression": "int8_t",
       "is_visible": true,
       "simhub_property": "DataCorePlugin.GameData.PlayerIndex"
     },
@@ -3311,7 +3311,7 @@
       },
       "package_level": 2000,
       "default_value": 0,
-      "compression": "uint8_t",
+      "compression": "int8_t",
       "simhub_property": "DataCorePlugin.GameData.OpponentsCount",
       "is_visible": true
     },
