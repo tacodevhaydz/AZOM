@@ -14,17 +14,27 @@ namespace MozaPlugin.Devices
     /// </summary>
     internal sealed class Ab9EngineVibrationWorker : IDisposable
     {
-        // Oscillator period: period = K / (engine_rpm × freq_hz).
-        // K calibrated 2026-05-31 against ground-truth RPM telemetry captured
-        // alongside the AB9 stream in usb-capture/AB9/
-        // ab9-pithouse-engine-vibration-intensity-2.pcapng (freq slider held at
-        // 100 Hz; the wheel dashboard streamed real Rpm/MaxRpm). Across 3,567
-        // frames, median(period × rpm × freq) = 1.197e12 (CV 0.03), directly
-        // confirming period ∝ 1/rpm. Supersedes the prior K=5.56e11, which was
-        // derived from an assumed idle RPM plus an indirect phone-mic
-        // measurement. See docs/protocol/devices/ab9-shifter.md and
-        // tools/ab9-rpm-correlate.
-        private const double K = 1.197e12;
+        // Oscillator period. The frequency slider is the buzz frequency AT
+        // REDLINE; below redline the audible frequency scales with the RPM
+        // fraction:  audible = freqSlider × (rpm / maxRpm).  Therefore
+        //   period = FreqTickHz / audible = FreqTickHz × maxRpm / (rpm × freqSlider).
+        //
+        // FreqTickHz (the device oscillator tick clock) calibrated 2026-05-31
+        // against ground-truth RPM telemetry captured alongside the AB9 stream
+        // in usb-capture/AB9/ab9-pithouse-engine-vibration-intensity-2.pcapng
+        // (freq slider held at 100 Hz; wheel dashboard streamed real Rpm/MaxRpm):
+        //   FreqTickHz = median(period × rpm/maxRpm × freq) = 636,553 × 100
+        //              ≈ 6.366e7   (CV 0.03, independent of the car's redline).
+        // This maxRpm-scaling reconciles the capture (effective K = 1.197e12 at
+        // an 18,800-rpm redline) with the earlier Cayman GT4 phone-mic (~100 Hz
+        // at its 7,700-rpm redline, slider 100) — a fixed K cannot satisfy both,
+        // FreqTickHz × maxRpm does (K = FreqTickHz × maxRpm). See
+        // docs/protocol/devices/ab9-shifter.md and tools/ab9-rpm-correlate.
+        private const double FreqTickHz = 6.366e7;
+        // Redline fallback when the game doesn't report MaxRpm (matches the
+        // HardwareApplier 8000-rpm convention) so the slider still maps to a
+        // sensible redline frequency.
+        private const double DefaultRedlineRpm = 8000.0;
         private const int TickPeriodMs = 11;
         // Sub-stream tick budgets. Scaled by rpm/IdleRpm at runtime where noted.
         private const int KeepalivePairBaseTicks = 12;
@@ -191,7 +201,14 @@ namespace MozaPlugin.Devices
             uint period;
             if (rawActive)
             {
-                double p = K / (rpm * freqHz);
+                // audible = freqSlider × (rpm/maxRpm); slider is the redline
+                // frequency. period = FreqTickHz / audible. Clamp the fraction
+                // to (0,1] so over-rev can't exceed the redline pitch and a
+                // missing MaxRpm falls back to an 8000-rpm redline.
+                double redline = maxRpm > 100.0 ? maxRpm : DefaultRedlineRpm;
+                double fraction = rpm / redline;
+                if (fraction > 1.0) fraction = 1.0;
+                double p = FreqTickHz / (freqHz * fraction);
                 if (p < MozaAb9DeviceManager.MinPeriodTicks) p = MozaAb9DeviceManager.MinPeriodTicks;
                 if (p > MozaAb9DeviceManager.MaxPeriodTicks) p = MozaAb9DeviceManager.MaxPeriodTicks;
                 period = (uint)p;
