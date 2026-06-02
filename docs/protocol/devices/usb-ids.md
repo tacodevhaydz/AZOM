@@ -22,7 +22,9 @@ expected to stay in sync.
 | `0x0005` | Wheelbase   | R3                            | unconfirmed |
 | `0x0006` | Wheelbase   | R12, R12v2                    | confirmed   |
 | `0x0008` | MBooster    | mBooster Pedals               | confirmed   |
+| `0x0011` | Pedals      | CRP2 (variant)                | confirmed   |
 | `0x0012` | Wheelbase   | R9 (variant)                  | confirmed   |
+| `0x0016` | Wheelbase   | R12 (variant)                 | confirmed   |
 | `0x001E` | Shifter     | HGP                           | unconfirmed |
 | `0x001F` | Handbrake   | HBP                           | unconfirmed |
 | `0x0020` | Hub         | Universal HUB                 | confirmed   |
@@ -34,6 +36,15 @@ expected to stay in sync.
 PID `0x0006` is reported by Windows as USB string `"MOZA R12 Base"`
 (see [`../../../usb-capture/USB-device-tree-view-infos.txt`](../../../usb-capture/USB-device-tree-view-infos.txt)).
 PID `0x0002` is verified as R9 from the user's hardware inventory.
+
+Some devices enumerate a `+0x0010` high-nibble **variant** PID (same
+device class, a different firmware/hardware revision): `0x0002` R9 →
+`0x0012`, `0x0006` R12 → `0x0016`, `0x0001` CRP2 → `0x0011`. The R12
+(`0x0016`) and CRP2 (`0x0011`) variants were reported from a user with
+an R12 base on `0x0016` and CRP-2 pedals on `0x0011`; before they were
+registered, both unknown PIDs fell into the wheelbase/AB9 "unknown PID"
+probe fallback, so the pedal port received wheelbase probe traffic and
+base detection was ambiguous.
 PID `0x0020` is verified as the Universal HUB from a user diagnostics
 bundle: the host enumerates only the hub's CDC composite (no wheelbase
 PID), so any wheel attached behind the hub (e.g. KS Pro) reaches the
