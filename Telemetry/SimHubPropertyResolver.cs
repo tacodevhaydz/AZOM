@@ -144,9 +144,13 @@ namespace MozaPlugin.Telemetry
                 }
                 case "@internal/TimeStamp":
                     // Monotonic ms clock for v1/preset/TimeStamp. Packed as
-                    // uint32_t (see Data/Telemetry.json), so it wraps every
-                    // ~49.7 days — well beyond any session, and the dashboard
-                    // only consumes sub-second differences.
+                    // float (compression 0x07 — the only ✓-verified 32-bit
+                    // numeric code; matches MOZA's own v1/preset/* channels.
+                    // uint32_t's 0x09 is an inferred code the firmware also
+                    // uses for 64-bit location_t, which mis-sizes the tier).
+                    // float is exact to 2^24 ms (~4.7 h uptime), then degrades
+                    // gracefully; the dashboard only consumes sub-second
+                    // differences, so coarsening past that is harmless.
                     return _monotonicClock.ElapsedMilliseconds;
                 default:
                     return 0.0;

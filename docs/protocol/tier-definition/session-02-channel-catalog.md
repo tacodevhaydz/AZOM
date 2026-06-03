@@ -48,7 +48,7 @@ not just the docs.
 
 | Wire bytes (URL body) | Form | Expansion | Counter |
 |---|---|---|---|
-| `76 31 2F …` (`v1/…`) | literal | URL as-is | `sFull` |
+| `76 31 2F …` (`v1/…`) | literal | URL as-is, but the embedded code `\s` (`5C 73`) → `preset/` is expanded (see `\s` note below) | `sFull` |
 | `01 …` | `0x01` prefix | `"v1/gameData/" + rest` | `sPrefix` |
 | `5C 31 …` (`\1…`) | `\1` abbreviation | `"v1/gameData/" + rest`, with `\t` → `TyreTemp`, `\P` → `TyrePressure`, `\b` → `BrakeTemp` (inferred, see below), `{FL}`/`{FR}`/`{RL}`/`{RR}` → `FrontLeft`/`FrontRight`/`RearLeft`/`RearRight` placeholder expansion | `sAbbr` |
 | `5C 70 …` (`\p…`) | `\p` abbreviation | `"v1/gameData/patch/" + rest` — used for the `patch/*` channels documented in [`../telemetry/channels.md`](../telemetry/channels.md) (`patch/TrackPositionPercent`, `patch/TrackName`, `patch/DisplayTrackName`, `patch/GameName`, etc.) | `sAbbr` |
@@ -79,6 +79,25 @@ track-completion-% slot vanished from every catalog-synthesised tier-def
 the host pushed back. Symptom: the wheel showed the layout but the track
 position slot rendered as zero. Adding `\p` recognition with the
 `v1/gameData/patch/` expansion fixed it without touching anything else.
+
+Discovery of `\s` (2026-06-03, wire-verified both ways): the `v1/preset/*`
+namespace (`TimeStamp`, `CurrentTorque`, `SteeringWheelAngle`) is abbreviated
+**embedded inside a literal `v1/`** rather than as a whole-prefix code like
+`\1`/`\p`. The wheel emits `\s` (`5C 73`) for the `preset/` path segment: URL
+body `76 31 2F 5C 73 …` = `v1/` + `\s` + suffix. Unlike `\1`/`\p`, the body
+starts with `v1/`, so it passes plausibility via the literal branch — but that
+branch did no expansion, storing `v1/\sTimeStamp` verbatim. Symptom: the
+channel-mapping UI showed `\sTimeStamp`, and the verbatim URL did not match the
+`v1/preset/TimeStamp` key in `Data/Telemetry.json`, so catalog synth fell to
+the heuristic fallback and the host fed the wheel a constant 0 (breaking the
+`(tt - lastTt) < 1200` ms flash-on-change logic in community dashboards).
+**Wire-verified, not inferred**: the same `TimeStamp` channel appears as the
+full literal `v1/preset/TimeStamp` (moza-wire `20260602-212424`, idx 35) AND as
+`v1/\sTimeStamp` (`20260602-184935`, idx 2), so `\s` → `preset/` reproduces the
+known URL exactly. Fix: expand `\s` → `preset/` in the literal branch of
+`ChannelCatalogParser`. The `v1/preset/TimeStamp` value source is the
+plugin-computed `@internal/TimeStamp` monotonic ms clock (see
+[`../telemetry/channels.md`](../telemetry/channels.md)).
 
 ### Channel indexing
 

@@ -944,10 +944,13 @@ namespace MozaPlugin.Telemetry.Frames
                     }
 
                     // Accepted URL prefixes on the wire:
-                    //   "v1/"            literal (no abbreviation)
+                    //   "v1/"            literal (may embed \s, see below)
                     //   0x01             abbreviation for "v1/gameData/"
                     //   0x5C 0x31  "\1"  abbreviation for "v1/gameData/"
                     //   0x5C 0x70  "\p"  abbreviation for "v1/gameData/patch/"
+                    // Embedded (mid-URL, inside a literal "v1/"):
+                    //   0x5C 0x73  "\s"  abbreviation for "preset/" — handled
+                    //                    in the literal branch below.
                     // The `\p` form was missing — channels like
                     // `patch/TrackPositionPercent` were emitted by the wheel
                     // as `\pTrackPositionPercent` and rejected here, never
@@ -1049,7 +1052,22 @@ namespace MozaPlugin.Telemetry.Frames
                     }
                     else
                     {
-                        url = Encoding.ASCII.GetString(buffer, urlStart, urlLen);
+                        // Literal "v1/" URL. The wheel still embeds the
+                        // abbreviation code \s (0x5C 0x73) for the "preset/"
+                        // path segment, e.g. "v1/\sTimeStamp" for
+                        // v1/preset/TimeStamp (the preset namespace: TimeStamp,
+                        // CurrentTorque, SteeringWheelAngle). Wire-verified both
+                        // ways: the SAME TimeStamp channel appears as the full
+                        // literal "v1/preset/TimeStamp" (moza-wire
+                        // 20260602-212424 idx 35) AND abbreviated as
+                        // "v1/\sTimeStamp" (20260602-184935 idx 2), so \s →
+                        // "preset/" reproduces the known URL. Expanding here
+                        // (rather than storing "v1/\sTimeStamp" verbatim) lets
+                        // the catalog URL match Telemetry.json + the channel-
+                        // mapping UI. A backslash never occurs in a fully-
+                        // expanded URL, so this is a no-op on normal literals.
+                        url = Encoding.ASCII.GetString(buffer, urlStart, urlLen)
+                            .Replace("\\s", "preset/");
                         sFull++;
                     }
                     if (idx >= 1)

@@ -5585,17 +5585,17 @@
       },
       "url": "v1/preset/TimeStamp",
       "descs": {
-        "zh_CN": "单调毫秒时间戳",
+        "zh_CN": "毫秒时间戳",
         "en_US": "Monotonic millisecond timestamp"
       },
-      "data_type": "int",
+      "data_type": "float",
       "range": {
         "zh_CN": ">=0",
         "en_US": ">=0"
       },
       "package_level": 30,
       "default_value": 0,
-      "compression": "uint32_t",
+      "compression": "float",
       "is_visible": true,
       "simhub_property": "@internal/TimeStamp"
     },
