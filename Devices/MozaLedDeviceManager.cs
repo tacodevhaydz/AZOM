@@ -446,8 +446,12 @@ namespace MozaPlugin.Devices
                         if (alwaysResendBitmask || bitmask != _lastRpmBitmask)
                         {
                             _lastRpmBitmask = bitmask;
+                            // 8-byte active+window form, matching PitHouse on every wheel
+                            // captured (CS V2.1, CS Pro). window = the full RPM-LED set;
+                            // the old 2-byte form (no window) left CS V2.1's first LED
+                            // stuck lit. See docs/protocol/leds/color-commands.md.
                             plugin.DeviceManager.WriteArray("wheel-send-rpm-telemetry",
-                                BuildRpmBitmaskBytes(bitmask, count));
+                                BuildWindowedBitmaskBytes(bitmask, (1 << rpmN) - 1));
                         }
                         anySent = true;
                     }
@@ -555,10 +559,13 @@ namespace MozaPlugin.Devices
                         if (alwaysResendBitmask || buttonBitmask != _lastButtonBitmask)
                         {
                             _lastButtonBitmask = buttonBitmask;
-                            // 8-byte form matching PitHouse: active_mask(u32 LE) + window_mask(u32 LE).
-                            // PitHouse sends window=0 for buttons.
+                            // 8-byte form: active_mask(u32 LE) + window_mask(u32 LE).
+                            // window is the wheel's full button set for non-contiguous
+                            // layouts (CS V2.1 → 0x034B; its firmware leaves buttons dark
+                            // when window=0), and 0 for contiguous-button wheels — exactly
+                            // what PitHouse sends per wheel. See WheelModelInfo.ButtonWindowMask.
                             plugin.DeviceManager.WriteArray("wheel-send-buttons-telemetry",
-                                BuildKnobBitmaskBytes(buttonBitmask, 0));
+                                BuildWindowedBitmaskBytes(buttonBitmask, modelInfo.ButtonWindowMask));
                         }
                         anySent = true;
                     }
@@ -645,7 +652,7 @@ namespace MozaPlugin.Devices
                             {
                                 _lastKnobBitmask = knobBitmask;
                                 int windowMask = (1 << knobCount) - 1;
-                                plugin.DeviceManager.WriteArray("wheel-send-knob-telemetry", BuildKnobBitmaskBytes(knobBitmask, windowMask));
+                                plugin.DeviceManager.WriteArray("wheel-send-knob-telemetry", BuildWindowedBitmaskBytes(knobBitmask, windowMask));
                             }
                             _lastKnobSendTime = DateTime.UtcNow;
                             anySent = true;
@@ -722,7 +729,7 @@ namespace MozaPlugin.Devices
                         {
                             int windowMask = (1 << modelInfo.KnobCount) - 1;
                             plugin.DeviceManager.WriteArray("wheel-send-knob-telemetry",
-                                BuildKnobBitmaskBytes(_lastKnobBitmask, windowMask));
+                                BuildWindowedBitmaskBytes(_lastKnobBitmask, windowMask));
                         }
                         NoteLiveSend();
                     }
@@ -750,7 +757,7 @@ namespace MozaPlugin.Devices
                 SendColorChunks(plugin, _lastLeds, count, "wheel-telemetry-rpm-colors");
                 if (_lastRpmBitmask >= 0)
                     plugin.DeviceManager.WriteArray("wheel-send-rpm-telemetry",
-                        BuildRpmBitmaskBytes(_lastRpmBitmask, count));
+                        BuildWindowedBitmaskBytes(_lastRpmBitmask, (1 << rpmN) - 1));
 
                 if (modelInfo?.HasFlagLeds == true && plugin.IsDashDetected && _lastFlagColorsPrimed)
                 {
@@ -771,7 +778,7 @@ namespace MozaPlugin.Devices
                     {
                         int windowMask = (1 << modelInfo.KnobCount) - 1;
                         plugin.DeviceManager.WriteArray("wheel-send-knob-telemetry",
-                            BuildKnobBitmaskBytes(_lastKnobBitmask, windowMask));
+                            BuildWindowedBitmaskBytes(_lastKnobBitmask, windowMask));
                     }
                 }
             }
@@ -783,32 +790,15 @@ namespace MozaPlugin.Devices
         }
 
         /// <summary>
-        /// Build RPM active-LED bitmask payload sized for the wheel's LED count.
-        /// 16 or fewer LEDs → 2 bytes (legacy wire format). 17+ LEDs → 4 bytes.
-        /// KS Pro (18 LEDs) requires the extended form to light bits 16-17.
+        /// Build the 8-byte active+window LED bitmask payload:
+        /// active_mask(u32 LE) + window_mask(u32 LE). This is the form PitHouse
+        /// sends on every wheel captured — for the RPM strip (group 0), button
+        /// matrix (group 1) and knob rings (group 3) alike. <paramref name="windowMask"/>
+        /// is the set of LED indices the firmware should treat as addressable
+        /// (e.g. 0x03FF = 10 RPM LEDs, 0x034B = CS V2.1's six mapped buttons);
+        /// <paramref name="activeMask"/> is the lit subset.
         /// </summary>
-        internal static byte[] BuildRpmBitmaskBytes(int bitmask, int ledCount)
-        {
-            if (ledCount > 16)
-            {
-                return new byte[] {
-                    (byte)(bitmask & 0xFF),
-                    (byte)((bitmask >> 8) & 0xFF),
-                    (byte)((bitmask >> 16) & 0xFF),
-                    (byte)((bitmask >> 24) & 0xFF)
-                };
-            }
-            return new byte[] {
-                (byte)(bitmask & 0xFF),
-                (byte)((bitmask >> 8) & 0xFF)
-            };
-        }
-
-        /// <summary>
-        /// Build knob indicator bitmask payload — always 8-byte form:
-        /// active_mask(u32 LE) + window_mask(u32 LE).
-        /// </summary>
-        internal static byte[] BuildKnobBitmaskBytes(int activeMask, int windowMask)
+        internal static byte[] BuildWindowedBitmaskBytes(int activeMask, int windowMask)
         {
             return new byte[] {
                 (byte)(activeMask & 0xFF),

@@ -28,6 +28,27 @@ namespace MozaPlugin.Devices
         public int[]? ButtonLedMap { get; }
 
         /// <summary>
+        /// Window mask for the button-LED bitmask (the 8-byte active+window form,
+        /// <see cref="MozaLedDeviceManager.BuildWindowedBitmaskBytes"/>). PitHouse
+        /// drives wheels with a non-contiguous <see cref="ButtonLedMap"/> using
+        /// window = the full set of mapped protocol indices; CS V2.1 firmware leaves
+        /// its buttons dark unless this window is present (verified in idk.pcapng →
+        /// 0x034B). Contiguous-button wheels (CS Pro, VGS …) are driven with window
+        /// = 0 by PitHouse (verified in the CS Pro captures), so they return 0 and
+        /// keep their existing behaviour.
+        /// </summary>
+        public int ButtonWindowMask
+        {
+            get
+            {
+                if (ButtonLedMap == null) return 0;
+                int mask = 0;
+                foreach (int idx in ButtonLedMap) mask |= (1 << idx);
+                return mask;
+            }
+        }
+
+        /// <summary>
         /// Number of physical rotary encoders on this wheel that have configurable
         /// background + primary LED ring colors. Protocol group indices are 0..KnobCount-1.
         /// 0 when the wheel has no configurable knob colors.

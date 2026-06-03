@@ -288,11 +288,9 @@ namespace MozaPlugin.Devices
             if (alwaysResendBitmask || bitmask != _lastBitmask)
             {
                 _lastBitmask = bitmask;
-                // wheel-send-rpm-telemetry expects a u32-equivalent payload.
-                // BuildRpmBitmaskBytes returns 4 bytes when ledCount > 16, but
-                // CM2 has exactly 16 LEDs and the firmware should accept the
-                // 2-byte legacy form. Use the 4-byte form for headroom against
-                // a future 17+ LED variant.
+                // CM2 (dev 0x12) RPM LEDs: send the 4-byte active-mask form. This
+                // path is unrelated to the wheel's (dev 0x17) 8-byte active+window
+                // form and is left as-is — no CM2 PitHouse capture to verify against.
                 var bitmaskBytes = new byte[]
                 {
                     (byte)(bitmask & 0xFF),
