@@ -204,7 +204,6 @@ namespace MozaPlugin.Devices.WheelUi
                 TelemetryEnabledCheck.IsChecked = _plugin.ActiveTelemetryEnabled;
 
                 PopulateDashboardCombo();
-                    UpdateFolderInfo();
                 // CHANNEL MAPPINGS is always-on (no expander gate). Bind the
                 // ItemsControl to its ObservableCollection once, then seed the
                 // list + start the 2 Hz value poller.
@@ -401,7 +400,6 @@ namespace MozaPlugin.Devices.WheelUi
             bool enabled = _plugin.ActiveTelemetryEnabled;
             var active = _plugin.TelemetrySender;
             bool testMode = active?.TestMode ?? false;
-            int framesSent = _plugin.FramesSentForDiagnostics;
 
             // Sync checkbox to overlay each tick so game/profile switches reflect immediately.
             if (TelemetryEnabledCheck.IsChecked != enabled)
@@ -420,33 +418,35 @@ namespace MozaPlugin.Devices.WheelUi
             // truthful instead of mislabeling a parked pipeline as "Connecting…" forever.
             var phase = active?.Phase ?? PipelinePhase.Idle;
             if (!enabled)
-                TelemetryStatusLabel.Text = "Disabled";
+                DashboardTelemetryCard.Subtitle = "Disabled";
             else if (testMode)
-                TelemetryStatusLabel.Text = $"Test pattern — {framesSent} frames sent";
+                DashboardTelemetryCard.Subtitle = "Test pattern";
             else if (phase == PipelinePhase.Parked)
-                TelemetryStatusLabel.Text = (active?.Recovery?.ParkIsDegraded ?? false)
+                DashboardTelemetryCard.Subtitle = (active?.Recovery?.ParkIsDegraded ?? false)
                     ? global::MozaPlugin.Resources.Strings.Status_DegradedScreenless
                     : global::MozaPlugin.Resources.Strings.Status_TelemetryParked;
             else if (phase == PipelinePhase.Recovery)
-                TelemetryStatusLabel.Text = global::MozaPlugin.Resources.Strings.Status_Recovering;
+                DashboardTelemetryCard.Subtitle = global::MozaPlugin.Resources.Strings.Status_Recovering;
             else if (active != null && !active.IsActive)
-                TelemetryStatusLabel.Text = inCooldown
+                DashboardTelemetryCard.Subtitle = inCooldown
                     ? "Switching dashboard… (post-emit silence)"
                     : "Connecting to wheel…";
             else if (pendingApply)
             {
                 string? why = _plugin?.PendingDashboardApplyDescription;
-                TelemetryStatusLabel.Text = string.IsNullOrEmpty(why)
-                    ? $"Switching dashboard… — {framesSent} frames sent"
-                    : $"Switching dashboard… ({why}) — {framesSent} frames sent";
+                DashboardTelemetryCard.Subtitle = string.IsNullOrEmpty(why)
+                    ? "Switching dashboard…"
+                    : $"Switching dashboard… ({why})";
             }
             else if (inCooldown)
-                TelemetryStatusLabel.Text = $"Switching dashboard… — {framesSent} frames sent";
+                DashboardTelemetryCard.Subtitle = "Switching dashboard…";
             else
-                TelemetryStatusLabel.Text = $"Sending — {framesSent} frames sent";
+                DashboardTelemetryCard.Subtitle = "Connected";
 
-            TelemetryTestStopBtn.IsEnabled = testMode && senderReady;
-            TelemetryTestStartBtn.IsEnabled = !testMode && senderReady;
+            TelemetryTestBtn.IsEnabled = senderReady;
+            TelemetryTestBtn.Content = testMode
+                ? global::MozaPlugin.Resources.Strings.Button_StopTest
+                : global::MozaPlugin.Resources.Strings.Button_SendTestPattern;
             TelemetryProfileCombo.IsEnabled = senderReady;
 
             // Refresh profile info — auto-renegotiate may have swapped
@@ -616,167 +616,30 @@ namespace MozaPlugin.Devices.WheelUi
             PopulateChannelMappingList();
         }
 
-        private void TelemetryLoadMzdash_Click(object sender, RoutedEventArgs e)
-        {
-            if (_plugin == null) return;
-            var dlg = new Microsoft.Win32.OpenFileDialog
-            {
-                Title = "Open .mzdash dashboard file",
-                Filter = "MOZA Dashboard|*.mzdash|All Files|*.*",
-                DefaultExt = ".mzdash"
-            };
-            if (dlg.ShowDialog() != true) return;
-
-            _plugin.ActiveTelemetryMzdashPath = dlg.FileName;
-            _plugin.ActiveTelemetryProfileName = "";
-            _plugin.SaveSettings();
-            // Hot-reload tier def on the existing session — mirrors PitHouse's
-            // mid-game dash-change burst on session 0x01.
-            _plugin.OnDashboardSwitched();
-
-            using (_suppressor.Begin())
-            {
-                string label = "[Custom: " + System.IO.Path.GetFileName(dlg.FileName) + "]";
-                for (int i = TelemetryProfileCombo.Items.Count - 1; i >= 0; i--)
-                    if (TelemetryProfileCombo.Items[i]?.ToString()?.StartsWith("[Custom:") == true)
-                        TelemetryProfileCombo.Items.RemoveAt(i);
-                TelemetryProfileCombo.Items.Add(label);
-                TelemetryProfileCombo.SelectedIndex = TelemetryProfileCombo.Items.Count - 1;
-            }
-
-            PopulateChannelMappingList();
-        }
-
-        private void TelemetrySetFolder_Click(object sender, RoutedEventArgs e)
-        {
-            if (_plugin == null) return;
-            using (var dlg = new System.Windows.Forms.FolderBrowserDialog())
-            {
-                dlg.Description = "Select folder containing .mzdash dashboard files";
-                dlg.ShowNewFolderButton = false;
-                if (!string.IsNullOrEmpty(_plugin.ActiveTelemetryMzdashFolder)
-                    && System.IO.Directory.Exists(_plugin.ActiveTelemetryMzdashFolder))
-                    dlg.SelectedPath = _plugin.ActiveTelemetryMzdashFolder;
-
-                if (dlg.ShowDialog() != System.Windows.Forms.DialogResult.OK) return;
-
-                _plugin.ActiveTelemetryMzdashFolder = dlg.SelectedPath;
-                _plugin.SaveSettings();
-                _plugin.DashCache?.LoadFromFolder(dlg.SelectedPath);
-                PopulateDashboardCombo();
-                _plugin.ApplyTelemetrySettings();
-                UpdateFolderInfo();
-            }
-        }
-
-        private void TelemetryAutoDetect_Click(object sender, RoutedEventArgs e)
-        {
-            if (_plugin == null) return;
-
-            string dashesRoot = System.IO.Path.Combine(
-                Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
-                "MOZA Pit House", "_dashes");
-
-            if (!System.IO.Directory.Exists(dashesRoot))
-            {
-                MessageBox.Show(
-                    $"MOZA Pit House dashboard folder not found at:\n{dashesRoot}\n\n" +
-                    "Install MOZA Pit House and load a dashboard, or use Set Folder… to point at a custom location.",
-                    "Auto-detect dashboard folder",
-                    MessageBoxButton.OK, MessageBoxImage.Warning);
-                return;
-            }
-
-            byte[] uid = _plugin.Data?.WheelMcuUid ?? Array.Empty<byte>();
-            string uidHex = uid.Length == 12 ? UidToHex(uid) : "";
-
-            string? picked = null;
-            string? failReason = null;
-
-            if (!string.IsNullOrEmpty(uidHex))
-            {
-                // Match the UID-named subfolder case-insensitively. PitHouse
-                // normalizes these to lowercase, but a case-sensitive FS
-                // (Linux/Wine, case-sensitive NTFS) would still miss a
-                // mismatched case from older installs or manual copies.
-                string? match = System.IO.Directory.EnumerateDirectories(dashesRoot)
-                    .FirstOrDefault(p => string.Equals(
-                        new System.IO.DirectoryInfo(p).Name,
-                        uidHex,
-                        StringComparison.OrdinalIgnoreCase));
-                if (match != null)
-                    picked = match;
-                else
-                    failReason = $"No dashboard folder for the connected wheel (UID {uidHex}).\n" +
-                                 $"Looked under:\n{dashesRoot}\n\n" +
-                                 "Open a dashboard in MOZA Pit House for this wheel first.";
-            }
-            else
-            {
-                var guidDirs = System.IO.Directory.GetDirectories(dashesRoot)
-                    .Where(p => System.Text.RegularExpressions.Regex.IsMatch(
-                        new System.IO.DirectoryInfo(p).Name, "^[0-9a-fA-F]{24}$"))
-                    .ToList();
-                if (guidDirs.Count == 1)
-                    picked = guidDirs[0];
-                else if (guidDirs.Count == 0)
-                    failReason = "No wheel-specific dashboard folders found under _dashes. " +
-                                 "Open MOZA Pit House and load a dashboard, then try again.";
-                else
-                    failReason = $"Multiple dashboard folders found ({guidDirs.Count}) and no wheel is connected. " +
-                                 "Connect your wheel and try again, or use Set Folder… to choose manually.";
-            }
-
-            if (picked == null)
-            {
-                MessageBox.Show(failReason, "Auto-detect dashboard folder",
-                    MessageBoxButton.OK, MessageBoxImage.Information);
-                return;
-            }
-
-            // Per-wheel-page overlay carries the folder. _plugin's helper writes
-            // into the current wheel's overlay; legacy WheelMzdashFolderByUid is
-            // no longer maintained.
-            _plugin.ActiveTelemetryMzdashFolder = picked;
-            _plugin.SaveSettings();
-            _plugin.DashCache?.LoadFromFolder(picked);
-            PopulateDashboardCombo();
-            _plugin.ApplyTelemetrySettings();
-            UpdateFolderInfo();
-        }
-
-        private void UpdateFolderInfo()
-        {
-            if (_plugin == null) return;
-            var folder = _plugin.ActiveTelemetryMzdashFolder;
-            TelemetryFolderInfo.Text = string.IsNullOrEmpty(folder) ? "" : $"Folder: {folder}";
-        }
-
-        private void TelemetryTestStart_Click(object sender, RoutedEventArgs e)
+        // Single toggle: Send Test Pattern ⇄ Stop Test. Button content + enabled
+        // state are kept in sync each tick by RefreshTelemetryStatus.
+        private void TelemetryTestToggle_Click(object sender, RoutedEventArgs e)
         {
             if (_plugin == null) return;
             var active = _plugin.TelemetrySender;
             if (active == null) return;
-            active.TestMode = true;
-            if (!_plugin.ActiveTelemetryEnabled)
-            {
-                _plugin.ApplyTelemetrySettings();
-                System.Threading.ThreadPool.QueueUserWorkItem(_ => active.Start());
-            }
-            TelemetryTestStartBtn.IsEnabled = false;
-            TelemetryTestStopBtn.IsEnabled = true;
-        }
 
-        private void TelemetryTestStop_Click(object sender, RoutedEventArgs e)
-        {
-            if (_plugin == null) return;
-            var active = _plugin.TelemetrySender;
-            if (active == null) return;
-            active.TestMode = false;
-            if (!_plugin.ActiveTelemetryEnabled)
+            bool turningOn = !active.TestMode;
+            active.TestMode = turningOn;
+            if (turningOn)
+            {
+                if (!_plugin.ActiveTelemetryEnabled)
+                {
+                    _plugin.ApplyTelemetrySettings();
+                    System.Threading.ThreadPool.QueueUserWorkItem(_ => active.Start());
+                }
+            }
+            else if (!_plugin.ActiveTelemetryEnabled)
+            {
                 active.Stop();
-            TelemetryTestStartBtn.IsEnabled = true;
-            TelemetryTestStopBtn.IsEnabled = false;
+            }
+
+            RefreshTelemetryStatus();
         }
 
         // ===== Channel mappings =====

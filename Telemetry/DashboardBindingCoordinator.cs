@@ -261,19 +261,19 @@ namespace MozaPlugin.Telemetry
             }
             // else: catalog-only mode — profile stays null; sender synthesises post-preamble.
 
-            // Apply user channel mappings for the selected dashboard (active profile × current wheel page).
-            var channelMap = _plugin.GetActiveChannelMappings();
-            if (profile != null && channelMap != null)
-            {
-                foreach (var dashKey in _plugin.GetActiveDashboardKeyCandidates())
-                {
-                    if (channelMap.TryGetValue(dashKey, out var overrides) && overrides != null)
-                    {
-                        DashboardProfileStore.ApplyUserMappings(profile, overrides);
-                        break;
-                    }
-                }
-            }
+            // Telemetry channels ALWAYS come from the wheel's live catalog
+            // (catalog-only synthesis). The parsed mzdash profile is never used
+            // to drive the subscription: trusting it over the wheel's
+            // advertisement misaligned channels and dropped catalog channels the
+            // wheel actually wants (e.g. the wheel's "Core" page advertises Rpm
+            // at idx 4, but a local "Core" mzdash that omits Rpm left the RPM
+            // widget dead). The wheel's catalog is authoritative — Telemetry.json
+            // supplies compression/property/test-signal per URL and the synth
+            // applies user channel mappings itself (see TelemetrySender catalog
+            // synthesis). mzdashContent / mzdashName resolved above are retained
+            // ONLY for the upload path. FSR1 uses neither catalog nor mzdash and
+            // is driven by its own emitter, so this is a no-op there.
+            profile = null;
 
             sender.PropertyResolver = _plugin.PropertyResolver.ResolveAsDouble;
             sender.PropertyStringResolver = _plugin.PropertyResolver.ResolveAsString;
