@@ -223,8 +223,8 @@
                         BorderThickness="0,0,1,0" BorderBrush="{StaticResource BorderBrush}"
                         Padding="0,0,18,0" Margin="0,0,18,0">
                     <StackPanel Orientation="Horizontal">
-                        <Rectangle Width="28" Height="28" Fill="{StaticResource CyanBrush}"
-                                   RadiusX="3" RadiusY="3" Margin="0,0,10,0"/>
+                        <Image Width="32" Height="32" Margin="0,0,10,0"
+                               Source="{StaticResource MozaWheelBrandIcon}"/>
                         <StackPanel VerticalAlignment="Center">
                             <TextBlock Text="{x:Static res:Strings.Brand_Unofficial}"
                                        FontSize="8" FontWeight="SemiBold"
