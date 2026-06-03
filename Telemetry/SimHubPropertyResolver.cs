@@ -20,6 +20,19 @@ namespace MozaPlugin.Telemetry
         private readonly MozaHidReader _hidReader;
         private bool _allPropertiesNamesWarned;
 
+        // Process-wide monotonic millisecond clock backing the
+        // @internal/TimeStamp channel (v1/preset/TimeStamp). Community
+        // dashboards (kenobi LMU GT3, General) read this as a render clock to
+        // flash an element for a fixed window after a watched value changes:
+        //   tt = Telemetry.get("v1/preset/TimeStamp").value;
+        //   return changed && (tt - lastChangeTt) < 1200;   // ms
+        // The dashboard only uses differences, so the epoch is irrelevant;
+        // it must be monotonic and in milliseconds. Stopwatch is monotonic
+        // (unaffected by wall-clock changes) and static so the clock is
+        // continuous across plugin recycle within a SimHub process.
+        private static readonly System.Diagnostics.Stopwatch _monotonicClock =
+            System.Diagnostics.Stopwatch.StartNew();
+
         public SimHubPropertyResolver(PluginManager pluginManager, MozaData data, MozaHidReader hidReader)
         {
             _pluginManager = pluginManager;
@@ -129,6 +142,12 @@ namespace MozaPlugin.Telemetry
                     if (hid == null || maxAngleDeg <= 0) return 0.0;
                     return hid.GetCurrentAngleDegrees(maxAngleDeg);
                 }
+                case "@internal/TimeStamp":
+                    // Monotonic ms clock for v1/preset/TimeStamp. Packed as
+                    // uint32_t (see Data/Telemetry.json), so it wraps every
+                    // ~49.7 days — well beyond any session, and the dashboard
+                    // only consumes sub-second differences.
+                    return _monotonicClock.ElapsedMilliseconds;
                 default:
                     return 0.0;
             }
