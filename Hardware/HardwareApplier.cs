@@ -218,7 +218,7 @@ namespace MozaPlugin.Hardware
                 WriteColorArray(rpmColors, "wheel-rpm-color", rpmCount);
                 if (hasRpm)
                     WriteColorArray(rpmBlinkColors, "wheel-rpm-blink-color", Math.Min(10, rpmCount));
-                WriteColorArray(buttonColors, "wheel-button-color", btnCount);
+                WriteButtonStaticColors(buttonColors, model);
                 if (_detectionState.DashDetected)
                     WriteColorArray(flagColors, "dash-flag-color", 6);
                 if (idleColor != null && idleColor.Length > 0 && hasSleepLight)
@@ -1036,6 +1036,31 @@ namespace MozaPlugin.Hardware
             {
                 var rgb = MozaProfile.UnpackColor(packedColors[i]);
                 _deviceManager.WriteColor($"{commandPrefix}{i + 1}", rgb[0], rgb[1], rgb[2]);
+            }
+        }
+
+        /// <summary>
+        /// Write the persisted static button colours. <c>WheelButtonColors</c> is
+        /// protocol-indexed (14 slots); on a non-contiguous wheel (e.g. CS V2.1 →
+        /// protocol indices 0,1,3,6,8,9) a flat 0..N-1 loop writes phantom slots and
+        /// skips the high physical buttons. Drive each mapped protocol index directly
+        /// (`wheel-button-color{p+1}` addresses protocol index p) so 6/8/9 aren't lost.
+        /// Contiguous-button wheels (ButtonLedMap == null) keep the flat write.
+        /// </summary>
+        private void WriteButtonStaticColors(int[]? packedColors, WheelModelInfo model)
+        {
+            if (packedColors == null) return;
+            int[]? map = model.ButtonLedMap;
+            if (map == null)
+            {
+                WriteColorArray(packedColors, "wheel-button-color", model.ButtonLedCount);
+                return;
+            }
+            foreach (int p in map)
+            {
+                if (p < 0 || p >= packedColors.Length) continue;
+                var rgb = MozaProfile.UnpackColor(packedColors[p]);
+                _deviceManager.WriteColor($"wheel-button-color{p + 1}", rgb[0], rgb[1], rgb[2]);
             }
         }
 

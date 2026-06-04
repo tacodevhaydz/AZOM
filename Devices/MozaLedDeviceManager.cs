@@ -513,7 +513,12 @@ namespace MozaPlugin.Devices
                     if (anyOverride)
                     {
                         var overridden = (Color[])buttonColors.Clone();
-                        int lim = Math.Min(overridden.Length, Math.Min(defaultFlags.Length, staticColors.Length));
+                        // overridden is SimHub-logical (0..ButtonLedCount-1); the static
+                        // arrays are protocol-indexed (14 slots). Map logical → protocol
+                        // via ButtonLedMap so a non-contiguous wheel (CS V2.1 → 0,1,3,6,8,9)
+                        // reads each button's own flag/colour instead of the wrong slot.
+                        var buttonMap = modelInfo.ButtonLedMap;
+                        int lim = Math.Min(overridden.Length, modelInfo.ButtonLedCount);
                         // B4: read every static-colour triplet under the colour lock —
                         // UI handlers may be writing concurrently and a torn read
                         // would push a 1-frame wrong-colour to the wheel.
@@ -521,10 +526,12 @@ namespace MozaPlugin.Devices
                         {
                             for (int i = 0; i < lim; i++)
                             {
-                                if (!defaultFlags[i]) continue;
+                                int p = buttonMap != null ? buttonMap[i] : i;
+                                if (p < 0 || p >= defaultFlags.Length || p >= staticColors.Length) continue;
+                                if (!defaultFlags[p]) continue;
                                 var c = overridden[i];
                                 if (c.R != 0 || c.G != 0 || c.B != 0) continue;
-                                var sc = staticColors[i];
+                                var sc = staticColors[p];
                                 overridden[i] = Color.FromArgb(sc[0], sc[1], sc[2]);
                             }
                         }
