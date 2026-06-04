@@ -3544,6 +3544,13 @@ namespace MozaPlugin
                 // switches. See docs/protocol/devices/wheel-0x17.md § Group 0x42.
                 if (rawDeviceId == 0x71 && IsFsr1DisplayWheel)
                     TryFollowFsr1DashboardLog(text);
+                // The main bridge logs steering-wheel (rim) attach/detach edges
+                // here as "steer_connected <N>" / "Gpw Wheel Disconnected". A rim
+                // pull is NOT a USB/serial disconnect, so the poll-miss hot-swap
+                // path never fires — this is the only signal that tears down the
+                // stale cached identity/catalog. See TryHandleWheelConnectionLog.
+                if (rawDeviceId == 0x21)
+                    TryHandleWheelConnectionLog(text);
                 MozaLog.Debug(
                     $"[Moza] firmware-debug src={(rawDeviceId == 0x21 ? "main" : rawDeviceId == 0x71 ? "wheel" : rawDeviceId == 0xB1 ? "display" : $"0x{rawDeviceId:X2}")}: {text}");
                 return;
@@ -4363,6 +4370,44 @@ namespace MozaPlugin
             var m = _fsr1DashLogRe.Match(text);
             if (m.Success && int.TryParse(m.Groups[1].Value, out int idx))
                 NoteFsr1WheelIndex(idx);
+        }
+
+        // Match "steer_connected <N>" in a main-bridge firmware-debug line. The
+        // wheel-bus firmware emits this on the edge of the steering-wheel (rim)
+        // attach state: "steer_connected 1" when a rim is seated on the
+        // quick-release, "steer_connected 0" when it's pulled off (alongside
+        // "Gpw Wheel Disconnected").
+        private static readonly System.Text.RegularExpressions.Regex _steerConnectedRe =
+            new System.Text.RegularExpressions.Regex(
+                @"steer_connected\s+(\d+)",
+                System.Text.RegularExpressions.RegexOptions.Compiled);
+
+        // Last rim attach-state parsed from the main bridge firmware-debug log;
+        // -1 = not yet observed. Read/written only on the serial read thread
+        // (OnMessageReceived), so no synchronisation needed.
+        private int _lastSteerConnected = -1;
+
+        // Tear down cached wheel/display identity + channel catalog when the rim
+        // is detached. A rim pull keeps the wheelbase COM port open and the base
+        // keeps answering wheel-model-name on the locked ID (see PollStatus
+        // hot-swap notes), so the poll-miss path never fires and the diagnostics
+        // tab / dashboard gating would otherwise report a phantom wheel
+        // indefinitely. We act only on the 1→0 (or unknown→0) falling edge;
+        // reseating the rim re-detects automatically via the PollStatus
+        // ProbeWheelDetection loop, so no connect-edge handling is needed.
+        private void TryHandleWheelConnectionLog(string text)
+        {
+            if (string.IsNullOrEmpty(text)) return;
+            var m = _steerConnectedRe.Match(text);
+            if (!m.Success || !int.TryParse(m.Groups[1].Value, out int state)) return;
+
+            int prev = _lastSteerConnected;
+            _lastSteerConnected = state;
+            if (state == prev || state != 0) return;   // ignore re-prints and the attach edge
+
+            if (DetectionState.NewWheelDetected || DetectionState.OldWheelDetected)
+                ResetWheelDetection(
+                    "Rim detached (firmware steer_connected 0) — resetting wheel detection");
         }
 
         /// <summary>
