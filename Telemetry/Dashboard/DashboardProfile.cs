@@ -137,5 +137,6 @@ namespace MozaPlugin.Telemetry.Dashboard
         TyreWearRearLeft,
         TyreWearRearRight,
         CurrentLap,         // lap counter (1+)
+        PlayerIndex,        // index of the local car in the Opponents list (track-map highlight)
     }
 }

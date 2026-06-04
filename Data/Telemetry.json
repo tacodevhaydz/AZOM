@@ -3291,7 +3291,8 @@
       "default_value": 0,
       "compression": "int8_t",
       "is_visible": true,
-      "simhub_property": "DataCorePlugin.GameData.PlayerIndex"
+      "simhub_field": "PlayerIndex",
+      "simhub_property": ""
     },
     {
       "name": "OpponentCount",

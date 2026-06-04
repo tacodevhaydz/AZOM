@@ -29,11 +29,26 @@ namespace MozaPlugin.Telemetry.Frames
         public double TyreWearRearRight;
         public double CurrentLap;       // lap counter (1+)
 
+        // Track-map (patch/Location*) per-car ground-plane positions. Each
+        // entry feeds one 64-bit location_t slot, packed by
+        // TelemetryFrameBuilder as two little-endian float32 (X, Z) — the
+        // wire format reverse-engineered from the PitHouse FSR2 capture.
+        // CarLocations is indexed by SimHub Opponents[] order; PlayerLocation
+        // is the local car. Null/default when there's no game or no opponents.
+        // Source: Opponent.Coordinates / StatusDataBase.CarCoordinates, which
+        // are double[X,Y,Z] — the ground plane is indices 0 (X) and 2 (Z);
+        // index 1 (Y) is elevation and unused by the 2-D map.
+        public (float X, float Y)[]? CarLocations;
+        public (float X, float Y) PlayerLocation;
+        // Index of the local car within CarLocations (= the IsPlayer opponent),
+        // so the wheel can highlight "you" on the track map. 0 when unknown.
+        public int PlayerIndex;
+
         /// <summary>Populate from a live StatusDataBase instance.</summary>
         public static GameDataSnapshot FromStatusData(StatusDataBase? data)
         {
             if (data == null) return default;
-            return new GameDataSnapshot
+            var snap = new GameDataSnapshot
             {
                 SpeedKmh               = data.SpeedKmh,
                 Rpms                   = data.Rpms,
@@ -53,6 +68,35 @@ namespace MozaPlugin.Telemetry.Frames
                 TyreWearRearRight      = data.TyreWearRearRight,
                 CurrentLap             = data.CurrentLap,
             };
+            PopulateCarLocations(data, ref snap);
+            return snap;
+        }
+
+        // Ground-plane (X, Z) for the local car and every opponent, for the
+        // track-map location_t channels. Defensive against null/short arrays
+        // (games that don't expose coordinates leave them null).
+        private static void PopulateCarLocations(StatusDataBase data, ref GameDataSnapshot snap)
+        {
+            var pc = data.CarCoordinates;
+            if (pc != null && pc.Length >= 3)
+                snap.PlayerLocation = ((float)pc[0], (float)pc[2]);
+
+            var opps = data.Opponents;
+            if (opps != null && opps.Count > 0)
+            {
+                var locs = new (float X, float Y)[opps.Count];
+                for (int i = 0; i < opps.Count; i++)
+                {
+                    var opp = opps[i];
+                    var c = opp?.Coordinates;
+                    locs[i] = (c != null && c.Length >= 3)
+                        ? ((float)c[0], (float)c[2])
+                        : (0f, 0f);
+                    if (opp != null && opp.IsPlayer)
+                        snap.PlayerIndex = i;
+                }
+                snap.CarLocations = locs;
+            }
         }
 
         private static double ParseGear(string? gear)
@@ -85,6 +129,7 @@ namespace MozaPlugin.Telemetry.Frames
                 case SimHubField.TyreWearRearLeft:      return TyreWearRearLeft;
                 case SimHubField.TyreWearRearRight:     return TyreWearRearRight;
                 case SimHubField.CurrentLap:            return CurrentLap;
+                case SimHubField.PlayerIndex:           return PlayerIndex;
                 default:                                return 0.0;
             }
         }
