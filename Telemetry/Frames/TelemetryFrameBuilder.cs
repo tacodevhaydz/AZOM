@@ -257,6 +257,15 @@ namespace MozaPlugin.Telemetry.Frames
                 x = 0f;
                 y = 0f;
             }
+            // Never emit NaN/Inf: a non-finite coordinate (car in the pits /
+            // not yet spawned) makes the wheel's Map.qml plot a dot at NaN and
+            // can crash the display. PitHouse only ever sends finite values;
+            // fall back to (0,0) = the empty-slot marker.
+            if (float.IsNaN(x) || float.IsInfinity(x) || float.IsNaN(y) || float.IsInfinity(y))
+            {
+                x = 0f;
+                y = 0f;
+            }
             _bitWriter!.WriteFloat(x);
             _bitWriter!.WriteFloat(y);
         }

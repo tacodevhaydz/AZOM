@@ -170,19 +170,44 @@ namespace MozaPlugin.Telemetry.Dashboard
             var sortedLevels = new List<int>(perTier.Keys);
             sortedLevels.Sort((a, b) => b.CompareTo(a));
 
+            // Split each package_level's channels into sub-tiers whose value
+            // frame stays within MaxTierDataBytes. A value frame is a single
+            // group-0x43 packet whose length is carried in a 1-BYTE field
+            // (N = 10 + dataLen); a tier larger than ~245 B overflows it, and
+            // the wheel misframes the stream and CRASHES the display. PitHouse
+            // never exceeds 55 B per value frame (measured across FSR2
+            // captures) and splits big channel sets across many sub-tier flags
+            // (e.g. 64-bit location_t track-map channels at 6/flag), so we cap
+            // at the same 55 B. Each sub-tier shares the package_level (same
+            // emit rate) and gets its own consecutive flag downstream.
+            const int MaxTierDataBytes = 55;
             var tiers = new List<DashboardProfile>();
             foreach (var level in sortedLevels)
             {
                 var chs = perTier[level];
-                int bits = chs.Sum(c => c.BitWidth);
-                tiers.Add(new DashboardProfile
+                int start = 0;
+                while (start < chs.Count)
                 {
-                    Name = $"L{level}",
-                    Channels = chs,
-                    PackageLevel = level,
-                    TotalBits = bits,
-                    TotalBytes = (bits + 7) / 8,
-                });
+                    int subBits = 0, end = start;
+                    while (end < chs.Count)
+                    {
+                        int next = subBits + chs[end].BitWidth;
+                        // Always take at least one channel; otherwise stop
+                        // before this sub-tier would exceed the byte cap.
+                        if (end > start && (next + 7) / 8 > MaxTierDataBytes) break;
+                        subBits = next;
+                        end++;
+                    }
+                    tiers.Add(new DashboardProfile
+                    {
+                        Name = start == 0 ? $"L{level}" : $"L{level}_{start}",
+                        Channels = chs.GetRange(start, end - start),
+                        PackageLevel = level,
+                        TotalBits = subBits,
+                        TotalBytes = (subBits + 7) / 8,
+                    });
+                    start = end;
+                }
             }
 
             // Always emit at least one tier (firmware expects subscription).
