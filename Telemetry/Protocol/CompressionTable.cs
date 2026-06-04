@@ -104,6 +104,17 @@ namespace MozaPlugin.Telemetry.Protocol
             Add(new Entry("float_600_2", 0x15, 16,
                 v => (ulong)Clamp(Sanitize(v) * 100.0, 0, 65535), (0, 400)));
 
+            // 16-bit navigation speed limit. PitHouse emits comp=0x10 width=16
+            // for NavigationSpeedLimit in truck-sim (ETS2/ATS) tier-defs
+            // (bridge-20260514-170002 idx=18) — the only place 0x10 appears
+            // (the earlier "0x10 never used" note was from circuit captures,
+            // which lack this channel). The firmware's 0x10 codec is ×100
+            // (confirmed on hardware: a 0–130 test sweep displayed 0–1 at ×1,
+            // i.e. raw/100). Same scale as float_600_2 — the original bug was
+            // the wrong CODE (0x15), not the scale.
+            Add(new Entry("nav_speed_limit", 0x10, 16,
+                v => (ulong)Clamp(Sanitize(v) * 100.0, 0, 65535), (0, 130)));
+
             // 12-bit tyre pressure (×10, 0..4095). Code confirmed by decoding
             // PitHouse value frames in bridge-20260503-112940.jsonl flag=0x04/0x0a/0x10:
             // raw=299 → 29.9 PSI / 2.99 bar (all-tyres garage default). PitHouse emits
@@ -135,6 +146,14 @@ namespace MozaPlugin.Telemetry.Protocol
             // 32-bit ints
             Add(new Entry("int32_t", 0x08, 32,
                 v => (ulong)(uint)(int)Sanitize(v), (-10000, 10000)));
+            // 32-bit int via code 0x05 (not 0x08). PitHouse emits comp=0x05
+            // width=32 for TimeAbsolute in truck-sim tier-defs
+            // (bridge-20260514-170002 idx=15); the inferred int32_t code 0x08
+            // isn't decoded by the wheel (TimeAbsolute rendered 00:00). 0x05 is
+            // int16_t at width 16 and a 32-bit int at width 32 — same code,
+            // width-dependent, like 0x09 (uint32/location). Raw value through.
+            Add(new Entry("int32_5", 0x05, 32,
+                v => (ulong)(uint)(int)Sanitize(v), (0, 86400)));
             Add(new Entry("uint32_t", 0x09, 32,
                 v => (ulong)(uint)(int)Sanitize(v), (0, 10000)));
             Add(new Entry("uint24_t", 0x18, 24,

@@ -5182,7 +5182,7 @@
       },
       "package_level": 500,
       "default_value": 0,
-      "compression": "float_600_2",
+      "compression": "nav_speed_limit",
       "is_visible": true,
       "simhub_property": "DataCorePlugin.GameData.NavigationSpeedLimit"
     },
@@ -5314,7 +5314,7 @@
       },
       "package_level": 1000,
       "default_value": 0,
-      "compression": "int32_t",
+      "compression": "int32_5",
       "is_visible": true,
       "simhub_property": "DataCorePlugin.GameData.TimeAbsolute"
     },
