@@ -2342,7 +2342,7 @@
       },
       "package_level": 30,
       "default_value": 0,
-      "compression": "tyre_temp_1",
+      "compression": "float",
       "is_visible": true,
       "simhub_property": "DataCorePlugin.GameData.Heading"
     },
