@@ -2342,9 +2342,9 @@
       },
       "package_level": 30,
       "default_value": 0,
-      "compression": "float",
+      "compression": "tyre_temp_1",
       "is_visible": true,
-      "simhub_property": "DataCorePlugin.GameData.Heading"
+      "simhub_property": "DataCorePlugin.GameData.OrientationYawWorld"
     },
     {
       "name": "Pitch",

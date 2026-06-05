@@ -198,10 +198,10 @@ namespace MozaPlugin
         public bool EnableWireTraceFileSink { get; set; } = false;
 
         // Radar (patch/ri*, OpponentCount, PlayerIndex) + track-map
-        // (patch/Location*) channels render blank on the wheel pending the
-        // binding fix, so they're excluded from the synthesized catalog profile
-        // by default. Code-only toggle — not serialized, no UI; flip the default
-        // here to resume protocol work.
+        // (patch/Location*) channels. Code-only toggle — not serialized, no UI.
+        // TEMPORARILY true to test opponent-position + heading data on the wheel
+        // (no tier-def enable-handshake change — that broke binding); set back to
+        // false before shipping until the feature is verified.
         [Newtonsoft.Json.JsonIgnore]
         public bool EnableRadarTrackMapChannels { get; set; } = false;
 

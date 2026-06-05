@@ -3015,17 +3015,24 @@ namespace MozaPlugin.Telemetry
             if (_catalogParser.LastWheelEndMarker == 0)
                 return;
 
-            // Re-synthesis trigger: catalog count grew, wheel committed a new
-            // tier-def generation (END marker bumped — happens on dashboard
-            // switch), OR the catalog body changed at constant count/END (the
-            // parser corrected back-ref/abbreviated URLs in place). Skip only
-            // when all three are unchanged. The signature catch is what lets a
-            // synth that bound against an incomplete catalog refresh once the
-            // URLs finish resolving, instead of waiting for a manual switch.
+            // Re-synthesis trigger: catalog count grew or the catalog body
+            // changed (signature — e.g. the parser corrected back-ref/
+            // abbreviated URLs in place, or a dashboard switch rebound idxs to
+            // new URLs). Skip when BOTH count and signature are unchanged.
+            //
+            // The wheel's END marker is DELIBERATELY excluded: it is a
+            // cumulative counter that advances on every catalog re-advertisement
+            // (keepalive), even when the channel set is byte-for-byte identical
+            // (observed END 68→136→244 for the same 68-channel catalog). Keying
+            // re-synthesis on END advance made every keepalive look like a new
+            // generation → re-arm → re-emit → the wheel re-advertised (END++) →
+            // re-arm again: a feedback loop that marched the flag base without
+            // end (0x00→0x3F over 64 emissions) and let partial re-advertisements
+            // collapse the bound channel set. A real dashboard switch always
+            // changes count or signature, so content-keying still catches it.
             string catalogSignature = string.Join("\n", catalog);
             if (currentIsSynthesised
                 && _catalogCountAtSynthesis == catalog.Count
-                && _catalogEndMarkerAtSynthesis == _catalogParser.LastWheelEndMarker
                 && _catalogSignatureAtSynthesis == catalogSignature
                 && !force)
                 return;
@@ -3087,9 +3094,13 @@ namespace MozaPlugin.Telemetry
             // re-emits with force), so reaching here does NOT imply a real
             // change — we must compare explicitly or the re-arm below loops
             // forever on every forced burst frame.
+            // Content-keyed (NOT END-keyed) — see the dedup guard above: the
+            // wheel's END marker advances on every keepalive re-advertisement, so
+            // re-arming on END advance self-perpetuates a flag-base-marching
+            // feedback loop. A genuine new generation (catalog grew, or switch
+            // rebound idxs) always changes count or signature.
             bool generationChanged =
-                _catalogEndMarkerAtSynthesis != _catalogParser.LastWheelEndMarker
-                || _catalogCountAtSynthesis != catalog.Count
+                _catalogCountAtSynthesis != catalog.Count
                 || _catalogSignatureAtSynthesis != catalogSignature;
 
             _catalogEndMarkerAtSynthesis = _catalogParser.LastWheelEndMarker;

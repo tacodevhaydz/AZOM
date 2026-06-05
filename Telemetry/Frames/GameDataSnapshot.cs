@@ -1,4 +1,5 @@
 using System;
+using System.Reflection;
 using GameReaderCommon;
 using MozaPlugin.Telemetry.Dashboard;
 
@@ -94,28 +95,102 @@ namespace MozaPlugin.Telemetry.Frames
         private static void PopulateCarLocations(StatusDataBase data, ref GameDataSnapshot snap)
         {
             var pc = data.CarCoordinates;
+            float px = 0f, pz = 0f; bool havePlayer = false;
             if (pc != null && pc.Length >= 3)
-                snap.PlayerLocation = ((float)pc[0], (float)pc[2]);
+            {
+                px = (float)pc[0]; pz = (float)pc[2]; havePlayer = true;
+                snap.PlayerLocation = (px, pz);
+            }
 
             var opps = data.Opponents;
-            if (opps != null && opps.Count > 0)
+            if (opps == null || opps.Count == 0) return;
+            int count = opps.Count;
+
+            // SimHub's generic Opponent.Coordinates / RelativeCoordinatesToPlayer
+            // are EMPTY for AC — measured 98.5% of radar frames carried all-zero
+            // ri despite OpponentCount=8. The reliable source is the per-car
+            // ABSOLUTE coordinates in the raw game struct
+            // (ACSharedMemory.DataContainer.Graphics.CarCoordinates — a flat
+            // [x,y,z, x,y,z, …] per slot). Read it reflectively (no compile-time
+            // AC reference) and compute each car's position relative to the
+            // player ourselves. Falls back to the generic fields when raw isn't
+            // available (other games / failure).
+            //
+            // NOTE: rels are WORLD-frame (Δ from player) for now — get real dots
+            // on the radar first. If they don't rotate with the car the way the
+            // widget expects, rotate by OrientationYawWorld (heading is wired).
+            float[]? raw = TryReadRawCarCoordinates(data);
+
+            var locs = new (float X, float Y)[count];
+            var rels = new (float X, float Y)[count];
+            int playerIdx = 0;
+            double bestD = double.MaxValue;
+            bool playerByDist = false;
+            for (int i = 0; i < count; i++)
             {
-                var locs = new (float X, float Y)[opps.Count];
-                var rels = new (float X, float Y)[opps.Count];
-                for (int i = 0; i < opps.Count; i++)
+                var opp = opps[i];
+                (float X, float Y) abs;
+                bool haveAbs = false;
+
+                if (raw != null && i * 3 + 2 < raw.Length
+                    && (raw[i * 3] != 0f || raw[i * 3 + 2] != 0f))
                 {
-                    var opp = opps[i];
+                    abs = (raw[i * 3], raw[i * 3 + 2]); // ground plane = X, Z
+                    haveAbs = true;
+                }
+                else
+                {
                     var c = opp?.Coordinates;
-                    locs[i] = (c != null && c.Length >= 3)
-                        ? ((float)c[0], (float)c[2])
-                        : (0f, 0f);
+                    if (c != null && c.Length >= 3 && (c[0] != 0.0 || c[2] != 0.0))
+                    {
+                        abs = ((float)c[0], (float)c[2]);
+                        haveAbs = true;
+                    }
+                    else
+                    {
+                        abs = (0f, 0f);
+                    }
+                }
+
+                locs[i] = abs;
+                if (haveAbs && havePlayer)
+                {
+                    rels[i] = (abs.X - px, abs.Y - pz);
+                    double d = (abs.X - px) * (abs.X - px) + (abs.Y - pz) * (abs.Y - pz);
+                    if (d < bestD) { bestD = d; playerIdx = i; playerByDist = true; }
+                }
+                else
+                {
                     var rc = opp?.RelativeCoordinatesToPlayer;
                     rels[i] = rc.HasValue ? (rc.Value.X, rc.Value.Y) : (0f, 0f);
-                    if (opp != null && opp.IsPlayer)
-                        snap.PlayerIndex = i;
                 }
-                snap.CarLocations = locs;
-                snap.CarRelative = rels;
+
+                if (!playerByDist && opp != null && opp.IsPlayer)
+                    playerIdx = i;
+            }
+            snap.CarLocations = locs;
+            snap.CarRelative = rels;
+            snap.PlayerIndex = playerIdx;
+        }
+
+        // Per-car absolute ground coordinates from the raw game struct, when the
+        // game exposes them (AC: DataContainer.Graphics.CarCoordinates, a flat
+        // float[] of x,y,z per slot). Reflection-only so we don't take a
+        // compile-time dependency on any game plugin; any failure returns null
+        // and the caller falls back to SimHub's generic fields.
+        private static float[]? TryReadRawCarCoordinates(StatusDataBase data)
+        {
+            try
+            {
+                object? raw = data.GetRawDataObject();
+                if (raw == null) return null;
+                object? gfx = raw.GetType().GetProperty("Graphics")?.GetValue(raw);
+                if (gfx == null) return null;
+                return gfx.GetType().GetField("CarCoordinates")?.GetValue(gfx) as float[];
+            }
+            catch
+            {
+                return null;
             }
         }
 
