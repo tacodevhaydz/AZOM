@@ -1071,12 +1071,12 @@ namespace MozaPlugin
 
                 // Standalone-peripheral registry — one dedicated connection per
                 // pedal set / handbrake plugged directly into the PC. Refresh()
-                // runs on the reconnect timer; an initial walk here surfaces any
-                // device attached before SimHub launched without the 5 s wait.
+                // runs on the reconnect timer; the initial walk is deferred to
+                // just after _hardwareApplier/_deviceProber are constructed (a
+                // connect immediately marks the peripheral detected, which calls
+                // ApplyPedalsToHardware — that NREs if the applier isn't up yet).
                 _peripheralRegistry = new MozaStandalonePeripheralRegistry(
                     this, _data, DetectionState, () => IsShuttingDown);
-                try { _peripheralRegistry.Refresh(); }
-                catch (Exception ex) { MozaLog.Debug($"[Moza] Standalone peripheral initial refresh: {ex.Message}"); }
 
                 // 5 s poll interval — balances wire noise vs hot-swap / temp UI responsiveness.
                 _pollTimer = new Timer(5000);
@@ -1177,6 +1177,11 @@ namespace MozaPlugin
                 _propertyResolver = new SimHubPropertyResolver(_pluginManager, _data, _hidReader);
                 _hardwareApplier = new HardwareApplier(this, _data, _deviceManager, _ab9Manager, DetectionState);
                 _deviceProber = new DeviceProber(this, _connection, _deviceManager, _data, DetectionState);
+                // Now that the hardware applier exists, do the initial standalone
+                // peripheral walk — surfaces a pedal set / handbrake attached
+                // before SimHub launched without waiting for the 5 s reconnect tick.
+                try { _peripheralRegistry.Refresh(); }
+                catch (Exception ex) { MozaLog.Debug($"[Moza] Standalone peripheral initial refresh: {ex.Message}"); }
                 // Hub-pipe peripheral prober: same _data + DetectionState, but
                 // bound to the hub connection + hub device manager so its reads
                 // and Mark*Detected ownership go out on the hub pipe.
@@ -3786,19 +3791,6 @@ namespace MozaPlugin
                     text = $"<{data.Length - 3} bytes>";
                 }
                 _firmwareDebugLog.Record(rawDeviceId, text);
-                // A wheel still streaming firmware-debug (rawDeviceId 0x71) is
-                // physically present and alive at the firmware level, even when
-                // its command-response path is momentarily too busy to answer
-                // reads. Without this, the PollStatus hot-swap watchdog judges
-                // liveness only from decodable read responses and never sees
-                // these frames — observed on a screenless CS V2 whose command
-                // path stalled for ~15 s under a param-table read storm: the
-                // watchdog logged "3 misses", tore wheel detection down, and
-                // re-detected every ~20 s, losing identity in a loop. A removed
-                // wheel goes silent here too, so this still distinguishes a busy
-                // wheel from a gone one.
-                if (rawDeviceId == 0x71)
-                    _deviceManager.MarkWheelResponse(MozaProtocol.SwapNibbles(rawDeviceId));
                 // FSR V1 reports its current dashboard/page index via this log on
                 // every switch (incl. wheel-side HID combo): "Table 7, Param 6
                 // Written: <N>". Parse it so the plugin follows wheel-initiated

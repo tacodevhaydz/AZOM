@@ -20,6 +20,14 @@ namespace MozaPlugin.Protocol
         /// is skipped for this class.
         /// </summary>
         MBooster = 1,
+        /// <summary>
+        /// Pedals plugged STRAIGHT into the PC (their own VID 0x346E PID 0x0001/
+        /// 0x0003/0x0011 HID), NOT through a wheelbase. Their 3-axis HID layout
+        /// (Rx/Ry/Rz = 0x33/0x34/0x35) differs from the base's pedal layout
+        /// (Z/Rz/Slider), so the Standard usage→field switch would route them to
+        /// paddle/brake fields. This class maps them to throttle/brake/clutch.
+        /// </summary>
+        Pedals = 2,
     }
 
     /// <summary>Reads physical input positions from Moza HID devices (VID 0x346E).</summary>
@@ -295,7 +303,9 @@ namespace MozaPlugin.Protocol
                     }
                     if (usages.Count > 0)
                     {
-                        var kind = isMBooster ? MozaHidClass.MBooster : MozaHidClass.Standard;
+                        var kind = isMBooster ? MozaHidClass.MBooster
+                                 : category == MozaDeviceCategory.Pedals ? MozaHidClass.Pedals
+                                 : MozaHidClass.Standard;
                         string identity = isMBooster ? ExtractUsbParentInstance(dev) : "";
                         result.Add((dev, usages, kind, identity));
                     }
@@ -441,6 +451,23 @@ namespace MozaPlugin.Protocol
                                         }
 
                                         int pct = NormalizePct(value.GetLogicalValue(), range.min, range.max);
+
+                                        if (kind == MozaHidClass.Pedals)
+                                        {
+                                            // Standalone pedal HID exposes only Rx/Ry/Rz; these
+                                            // are throttle/brake/clutch (NOT paddles). PROVISIONAL
+                                            // order mirrors the base's throttle<brake<clutch usage
+                                            // ordering — confirm against the per-axis debug log.
+                                            switch (usage)
+                                            {
+                                                case UsageRx: _data.ThrottlePosition = pct; break;
+                                                case UsageRy: _data.BrakePosition    = pct; break;
+                                                case UsageRz: _data.ClutchPosition   = pct; break;
+                                            }
+                                            MozaLog.Debug($"[Moza] standalone-pedal HID axis usage=0x{usage:X8} raw={value.GetLogicalValue()} pct={pct}");
+                                            continue;
+                                        }
+
                                         switch (usage)
                                         {
                                             case UsageY:      _data.CombinedPaddlePosition = pct; break;
