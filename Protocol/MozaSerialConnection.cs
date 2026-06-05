@@ -111,25 +111,14 @@ namespace MozaPlugin.Protocol
         private static readonly ConcurrentDictionary<string, byte> _probeInFlight =
             new ConcurrentDictionary<string, byte>();
 
-        // Probe-readiness settle gate (see IsSerialProbeReady). Stopwatch ticks
-        // of when the base HID was first observed continuously present; 0 = the
-        // base HID is not currently present. Static: detection runs on a shared
-        // reconnect timer, and the settle window must persist across ticks.
-        private static long _baseHidPresentSinceTicks;
-        // How long the base HID must be continuously present (after a fresh
-        // enumeration) before we trust the serial port to have finished binding.
-        // The crash window is the first few seconds of USB enumeration.
-        private const int ProbeHidSettleMs = 9_000;
         // Timeout for an out-of-process (Wine) probe. Must cover child-process
         // launch overhead under Wine (~1-2 s for a .NET exe) ON TOP of the
         // probe's internal ~500 ms budget, hence much larger than the in-process
         // timeout. A genuinely-hung helper is killed at this deadline.
         private const int IsolatedProbeTimeoutMs = 4_000;
-        // Wine-detection latch (-1 unknown, 0 native Windows, 1 Wine). The
-        // serial-open crash is Wine-specific; on native Windows the settle gate
-        // is pure dead latency (probing a not-ready port there just throws and
-        // is caught). The field-bundle research showed the vast majority of
-        // users are on native Windows — they must pay ZERO gate latency.
+        // Wine-detection latch (-1 unknown, 0 native Windows, 1 Wine). Routes
+        // the serial probe out-of-process under Wine (the Wine serial-open path
+        // can wedge on a not-ready CDC-ACM port); native Windows probes in-process.
         private static int _isWine = -1;
         // Priority lane: unpaced FIFO for tiny, time-critical frames (fc:00 session
         // acks). Drained ahead of one-shot every WriteLoop iteration so an ack
@@ -430,20 +419,6 @@ namespace MozaPlugin.Protocol
                     && (_pidFilter == null || _pidFilter(FormatPid(info.Pid))))
                 {
                     DiscoveredPid = FormatPid(info.Pid);
-                    // Honor the same crash-safety gate as the probe path: NEVER
-                    // open a serial port until the base USB has settled. Without
-                    // this, a saved LastWheelbasePort gets opened on the very
-                    // first reconnect tick of a freshly-powered base — re-entering
-                    // the mid-enumeration Open() crash window the gate exists to
-                    // avoid. (On an empty-registry Wine base TryGetByPort fails so
-                    // this branch isn't reached; this guards registry-populated
-                    // setups where it is.)
-                    if (!IsSerialProbeReady(out _))
-                    {
-                        MozaLog.Debug(
-                            $"[Moza] Cached port {_lastPortName} open deferred — base USB not settled yet.");
-                        return false;
-                    }
                     if (TryOpen(_lastPortName))
                         return true;
                     MozaLog.Debug(
@@ -1207,26 +1182,6 @@ namespace MozaPlugin.Protocol
                 MozaLog.Debug(
                     $"[Moza] Registry classifies {registryByPort.Count} of {ports.Length} COM port(s); probing the remainder");
 
-            // Crash-safety gate: do NOT open/probe any COM port until the MOZA
-            // base USB has settled. A freshly-powered base enumerates its USB
-            // interfaces over several seconds; opening its CDC-ACM serial port
-            // mid-enumeration SEGFAULTS Wine — uncatchable, kills all of SimHub
-            // (the "crashes on a freshly-powered base" bug; neither SerialPort
-            // nor a native CreateFile open survives it). The base's HID
-            // interface comes up BEFORE its serial port is ready, so we gate on
-            // "base HID present continuously for ProbeHidSettleMs" as a safe
-            // proxy for "serial port has finished binding". HID enumeration is
-            // safe during the window — only the serial open crashes. Deferred
-            // probes retry on the next reconnect tick (~5 s).
-            if (!IsSerialProbeReady(out int settleWaitedMs))
-            {
-                MozaLog.Debug(
-                    $"[Moza] Serial probe deferred — waiting for base USB to settle " +
-                    $"(base HID present {settleWaitedMs}ms / {ProbeHidSettleMs}ms); avoids " +
-                    "opening a mid-enumeration CDC-ACM port that crashes Wine.");
-                return (null, null, false);
-            }
-
             // 600ms budget per port — SerialPort.Open can hang indefinitely under Wine
             // if another process holds the tty. Background-thread the probe so one bad
             // port can't block all detection.
@@ -1384,33 +1339,6 @@ namespace MozaPlugin.Protocol
         // code is compiled into the out-of-process MozaProbeHelper.exe with zero
         // wire-constant drift.
 
-        /// <summary>
-        /// Probe a port with a hard time budget. On timeout the outer thread closes
-        /// the SerialPort to unblock any inner syscall.
-        /// </summary>
-        /// <summary>Is a MOZA wheelbase HID interface currently enumerated?
-        /// Cheap VID/PID scan over the HID device list — does NOT open the
-        /// serial port (HID enumeration is safe during USB bring-up; the serial
-        /// open is what crashes Wine). Reused as the "USB is up" signal.</summary>
-        private static bool IsBaseHidPresent()
-        {
-            try
-            {
-                foreach (var dev in DeviceList.Local.GetHidDevices())
-                {
-                    try
-                    {
-                        if (dev.VendorID != MozaPortDiscovery.MozaVid) continue;
-                        if (MozaUsbIds.Categorize((ushort)dev.ProductID) == MozaDeviceCategory.Wheelbase)
-                            return true;
-                    }
-                    catch { /* per-device descriptor hiccup — keep scanning */ }
-                }
-            }
-            catch { /* HidSharp enumeration failure — treat as "not present" */ }
-            return false;
-        }
-
         [DllImport("kernel32.dll", CharSet = CharSet.Ansi, SetLastError = false)]
         private static extern IntPtr GetModuleHandle(string lpModuleName);
 
@@ -1418,10 +1346,9 @@ namespace MozaPlugin.Protocol
         private static extern IntPtr GetProcAddress(IntPtr hModule, string procName);
 
         /// <summary>Are we running under Wine/Proton? Canonical check: the
-        /// <c>wine_get_version</c> export in ntdll. Latched. The serial-open
-        /// crash this whole gate exists for is Wine-specific; on native Windows
-        /// the gate would only add dead latency (probing a not-ready port there
-        /// throws and is caught, it doesn't crash), so we skip it entirely.</summary>
+        /// <c>wine_get_version</c> export in ntdll. Latched. Used to route the
+        /// serial probe out-of-process (the Wine serial-open path can wedge a
+        /// not-ready CDC-ACM port); native Windows probes in-process.</summary>
         private static bool IsRunningUnderWine()
         {
             int v = _isWine;
@@ -1435,57 +1362,8 @@ namespace MozaPlugin.Protocol
             }
             catch { wine = false; }
             _isWine = wine ? 1 : 0;
-            try { MozaLog.Debug($"[Moza] Runtime: {(wine ? "Wine/Proton" : "native Windows")} (serial-probe settle gate {(wine ? "ENABLED" : "disabled")})"); } catch { }
+            try { MozaLog.Debug($"[Moza] Runtime: {(wine ? "Wine/Proton" : "native Windows")} (serial probe {(wine ? "out-of-process" : "in-process")})"); } catch { }
             return wine;
-        }
-
-        /// <summary>Gate that decides whether it is safe to OPEN a serial port.
-        ///
-        /// <para>Native Windows: always ready — there is no Wine serial-open
-        /// crash to avoid, so we add zero latency (the field-bundle majority).</para>
-        ///
-        /// <para>Wine: avoid the freshly-powered-base SerialPort.Open segfault.
-        /// The base HID enumerates before its CDC-ACM serial port is ready, so we
-        /// use HID presence as a safe "USB is up" proxy (HID scan never crashes).
-        /// WARM start (base HID present continuously since the first check, never
-        /// observed absent) ⇒ the device was already bound before we launched ⇒
-        /// ready immediately, NO settle. FRESH enumeration (HID seen absent then
-        /// present — power-cycle / replug / cold plug) ⇒ require the base HID to
-        /// be continuously present for <see cref="ProbeHidSettleMs"/> before we
-        /// trust the serial port to have finished binding.</para></summary>
-        private static bool IsSerialProbeReady(out int waitedMs)
-        {
-            waitedMs = 0;
-
-            // Native Windows: no Wine crash to gate against — open immediately.
-            if (!IsRunningUnderWine())
-                return true;
-
-            bool present = IsBaseHidPresent();
-            if (!present)
-            {
-                _baseHidPresentSinceTicks = 0; // restart the settle clock
-                return false;
-            }
-
-            // ALWAYS require the settle under Wine. (An earlier "warm-fast"
-            // shortcut — skip the settle if the HID was present at the first
-            // check — was UNSOUND and reintroduced the crash: on a fresh
-            // power-cycle the base HID enumerates within ~1-2 s, i.e. BEFORE
-            // SimHub's first ~5 s reconnect tick, so it looks "present since
-            // startup" even though its serial port is NOT yet bound. There is
-            // no reliable HID-only warm/fresh discriminator, so we pay the
-            // settle on every Wine connect. Native Windows already returned
-            // early above, so this latency only affects Wine/Proton users.)
-            long now = Stopwatch.GetTimestamp();
-            long since = _baseHidPresentSinceTicks;
-            if (since == 0)
-            {
-                _baseHidPresentSinceTicks = now;
-                return false;
-            }
-            waitedMs = (int)((now - since) * 1000L / Stopwatch.Frequency);
-            return waitedMs >= ProbeHidSettleMs;
         }
 
         private static (bool responded, bool reachable) ProbeWithTimeout(string portName, int timeoutMs, ProbeKind kind)
