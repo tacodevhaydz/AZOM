@@ -62,6 +62,16 @@ namespace MozaPlugin.Protocol
         // to the hub when no wheelbase port exists — so this target never claims
         // a hub the primary already holds (the _activePorts guard enforces it).
         HubOnly,
+        // Standalone-USB pedals / handbrake on their OWN dedicated connection
+        // (pedals PID 0x0001/0x0003/0x0011, handbrake 0x001F), one per
+        // MozaStandalonePeripheralRegistry controller. Like MBooster, discovery
+        // is registry-only by design (the PIDs are registered, so the registry
+        // always classifies them) and the serial-probe fallback is force-
+        // disabled — these targets never write scan bytes to unclassified COM
+        // ports. Kept as distinct values so the probe shape stays honest if the
+        // fallback is ever enabled; no probe-emission branch is wired today.
+        PedalsOnly,
+        HandbrakeOnly,
     }
 
     public class MozaSerialConnection : IDisposable

@@ -96,6 +96,10 @@ namespace MozaPlugin
         // present (base = primary, hub enumerates its own peripherals).
         private MozaHubDeviceManager _hubManager = null!;
         private MozaMBoosterRegistry? _mboosterRegistry;
+        // Dedicated lane for peripherals plugged STRAIGHT into the PC (their own
+        // USB port + PID) rather than through a base/hub — one connection per
+        // attached pedal set / handbrake. Config/calibration only; axes stay HID.
+        private MozaStandalonePeripheralRegistry? _peripheralRegistry;
 
         // Captures unsolicited firmware-debug frames (raw wire group 0x0E,
         // subtype 0x05) for the Diagnostics tab. Owned by the plugin so the
@@ -909,6 +913,15 @@ namespace MozaPlugin
                 try { _mboosterRegistry.Refresh(); }
                 catch (Exception ex) { MozaLog.Debug($"[Moza/mBooster] Initial refresh: {ex.Message}"); }
 
+                // Standalone-peripheral registry — one dedicated connection per
+                // pedal set / handbrake plugged directly into the PC. Refresh()
+                // runs on the reconnect timer; an initial walk here surfaces any
+                // device attached before SimHub launched without the 5 s wait.
+                _peripheralRegistry = new MozaStandalonePeripheralRegistry(
+                    this, _data, DetectionState, () => IsShuttingDown);
+                try { _peripheralRegistry.Refresh(); }
+                catch (Exception ex) { MozaLog.Debug($"[Moza] Standalone peripheral initial refresh: {ex.Message}"); }
+
                 // 5 s poll interval — balances wire noise vs hot-swap / temp UI responsiveness.
                 _pollTimer = new Timer(5000);
                 _pollTimer.Elapsed += PollStatus;
@@ -935,6 +948,10 @@ namespace MozaPlugin
                         try { _hubManager.PendingResponses?.TickRetransmits(_hubManager.Connection.Send); }
                         catch (Exception ex) { MozaLog.Warn($"[Moza] Hub PendingResponseTracker tick failed: {ex.Message}"); }
                     }
+                    // Each standalone-peripheral pipe retransmits its own tracked
+                    // reads on its own Send (same per-pipe isolation as the hub).
+                    try { _peripheralRegistry?.TickRetransmits(); }
+                    catch (Exception ex) { MozaLog.Warn($"[Moza] Standalone peripheral retransmit tick failed: {ex.Message}"); }
                 };
                 _retryTimer.AutoReset = true;
                 _retryTimer.Start();
@@ -977,6 +994,14 @@ namespace MozaPlugin
                     // Slice I: reconnect-timer mBooster Refresh re-enabled.
                     try { _mboosterRegistry?.Refresh(); }
                     catch (Exception ex) { MozaLog.Debug($"[Moza/mBooster] Refresh: {ex.Message}"); }
+
+                    // Standalone pedals/handbrake on their own ports (registry-
+                    // only, same Wine guard as the other dedicated lanes).
+                    if (registryHasMoza)
+                    {
+                        try { _peripheralRegistry?.Refresh(); }
+                        catch (Exception ex) { MozaLog.Debug($"[Moza] Standalone peripheral refresh: {ex.Message}"); }
+                    }
                 };
                 _reconnectTimer.AutoReset = true;
                 if (_settings.ConnectionEnabled)
@@ -1168,6 +1193,9 @@ namespace MozaPlugin
             // Dispose every mBooster controller — same reason: stop workers
             // before the connections they own get torn down.
             try { _mboosterRegistry?.Dispose(); _mboosterRegistry = null; } catch { }
+            // Dispose every standalone-peripheral connection (drops ownership +
+            // closes each dedicated pipe).
+            try { _peripheralRegistry?.Dispose(); _peripheralRegistry = null; } catch { }
 
             // Tear down SDK emulation BEFORE the wire / data layers so the
             // CoAP receive thread can't dispatch into half-disposed handlers.
@@ -1583,6 +1611,9 @@ namespace MozaPlugin
             // each connection. Must happen before MozaData is torn down so the
             // position-merge path (which writes to _data) doesn't race.
             try { _mboosterRegistry?.Dispose(); _mboosterRegistry = null; } catch { }
+            // Standalone pedals/handbrake connections — close before MozaData
+            // teardown so the response path (which writes to _data) can't race.
+            try { _peripheralRegistry?.Dispose(); _peripheralRegistry = null; } catch { }
 
             // Tear down SDK emulation up-front. The CoAP receive thread holds
             // references into MozaData and HardwareApplier; stop it before the
