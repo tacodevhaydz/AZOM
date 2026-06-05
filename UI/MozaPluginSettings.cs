@@ -82,6 +82,10 @@ namespace MozaPlugin
         public int DashDisplayBrightness { get; set; } = 100;
         public int DashDisplayStandbyMin { get; set; } = 5;
 
+        // CM2 dash (dual-screen): the dashboard the user selected for the CM2's
+        // own pipeline, independent of the wheel's selection. Empty = catalog default.
+        public string Cm2SelectedDashboard { get; set; } = "";
+
         // Wheelbase ambient LED settings (R21/R25/R27 family — 18 LEDs / 2 strips).
         // Defaults match observed R25 capture (rainbow mode, brightness 100,
         // startup/shutdown #66B8FF). See docs/protocol/leds/base-ambient-0x20-0x22.md.

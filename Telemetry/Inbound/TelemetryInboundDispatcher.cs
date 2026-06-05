@@ -34,7 +34,11 @@ namespace MozaPlugin.Telemetry.Inbound
             // dash-side answer paths both reach the dispatcher.
             if (data[0] != 0xC3) return;
             bool targetMatches = data[1] == _sender.TargetDeviceIdSwapped;
-            if (!targetMatches && _sender.IsStandaloneDashboardTarget)
+            // When two pipelines share one connection (e.g. wheel + bus-CM2), each
+            // sender must consume ONLY its own device's replies — no fan-in, or both
+            // would process the same frame. The broad standalone fan-in below is for
+            // the single-pipeline case only.
+            if (!targetMatches && !_sender.StrictInboundFilter && _sender.IsStandaloneDashboardTarget)
             {
                 // TODO(cm2): narrow this fan-in once CM2 wire-traces nail down
                 // exactly which dev-ids CM2 answers on for each command family.

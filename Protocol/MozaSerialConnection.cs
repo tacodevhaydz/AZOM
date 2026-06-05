@@ -76,7 +76,15 @@ namespace MozaPlugin.Protocol
 
     public class MozaSerialConnection : IDisposable
     {
-        private const int StreamSlotCount = 18;
+        // Stream-slot lanes (latest-wins coalescing). Layout:
+        //   0..10  — tier-def pipeline at slot-base 0 (TierDash0-7, Enable, Sequence,
+        //            Mode) — the WHEEL screen pipeline, or an FSR1 driver's records.
+        //   11..17 — AB9 / mBooster (absolute, per StreamKind).
+        //   18..28 — a SECOND tier-def pipeline at slot-base 18 (a bus-attached CM2
+        //            dash sharing this connection). See TelemetrySender.StreamSlotBase.
+        // A CM2 on its own USB connection runs at base 0 on THAT connection, so the
+        // second block is only used when two pipelines share one connection.
+        private const int StreamSlotCount = 32;
 
         // Ports held by a live connection — probe path skips these (Wine pty
         // doesn't enforce O_EXCL, so a second Open would steal the device).
@@ -605,6 +613,19 @@ namespace MozaPlugin.Protocol
                 Interlocked.Exchange(ref _streamSlots[k], null);
             // Defer the OS-buffer discard to the write thread (see _flushRequested).
             _flushRequested = true;
+        }
+
+        /// <summary>
+        /// Clear only one pipeline's stream-slot lane (slots [from, from+count)),
+        /// leaving the shared queues, OS buffer, and the OTHER pipeline's slots
+        /// intact. Used when one of two senders sharing this connection stops/
+        /// restarts so it doesn't blank the co-resident pipeline's frames.
+        /// </summary>
+        public void ClearStreamSlots(int from, int count)
+        {
+            int end = Math.Min(from + count, _streamSlots.Length);
+            for (int k = Math.Max(0, from); k < end; k++)
+                Interlocked.Exchange(ref _streamSlots[k], null);
         }
 
         // Record an I/O failure. Throttles log spam and force-closes the port

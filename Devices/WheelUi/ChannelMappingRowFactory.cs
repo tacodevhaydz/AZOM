@@ -87,6 +87,21 @@ namespace MozaPlugin.Devices.WheelUi
             return new BuildResult(rows, status);
         }
 
+        /// <summary>
+        /// Build rows for the CM2 dash pipeline from the CM2 sender's own
+        /// catalog-synthesised profile (tier-def channels — never FSR1). Independent
+        /// of the wheel's profile/catalog.
+        /// </summary>
+        public static BuildResult BuildForCm2(MozaPlugin plugin, Telemetry.TelemetrySender? cm2Sender)
+        {
+            if (plugin == null) return new BuildResult(null, "");
+            var profile = cm2Sender?.Profile;
+            if (profile == null || profile.Tiers.Count == 0)
+                return new BuildResult(null, "(CM2: waiting for the dash to advertise its channels…)");
+            var props = plugin.GetAllSimHubPropertyNames();
+            return BuildFromProfile(profile, props);
+        }
+
         private static BuildResult BuildFromCatalog(MozaPlugin plugin, IReadOnlyList<string> props)
         {
             var catalog = plugin.WheelChannelCatalogForDiagnostics;

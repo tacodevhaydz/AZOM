@@ -37,7 +37,9 @@ namespace MozaPlugin.Devices
             using (_suppressor.Begin())
             {
                 InitializeComponent();
-                DashMgmtHostCm2.Content = new WheelUi.DashboardManagementControl();
+                // This control configures the CM2 dash pipeline (its own sender +
+                // CM2-keyed mappings), independent of the wheel page.
+                DashMgmtHostCm2.Content = new WheelUi.DashboardManagementControl { IsCm2Target = true };
 
                 if (ResolvePlugin())
                     BuildColorSwatches();

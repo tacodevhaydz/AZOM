@@ -191,6 +191,10 @@ namespace MozaPlugin.Telemetry
 
             sender.StandaloneDashboardMode = standaloneDashboard;
             sender.TargetDeviceId = targetDeviceId;
+            // The main sender always uses lane base 0. Its strict-inbound / shares-
+            // connection flags (set when a co-resident _cm2Sender shares the bus) are
+            // owned by MozaPlugin.EnsureCm2Pipeline, not reset here.
+            sender.StreamSlotBase = 0;
 
             // Source from the current wheel's overlay (single source of truth).
             // When no wheel is identified yet, ActiveTelemetry* return defaults
@@ -583,22 +587,25 @@ namespace MozaPlugin.Telemetry
         }
 
         /// <summary>Slot-aware dashboard switch: emits FF kind=4, awaits echo, then Stop+Start.</summary>
-        public void OnDashboardSwitched(uint slot)
-        {
-            ClearPendingDashboardKey();
+        public void OnDashboardSwitched(uint slot) => OnDashboardSwitched(slot, _plugin.TelemetrySender);
 
-            var sender = _plugin.TelemetrySender;
-            if (sender != null && sender.Enabled)
-            {
-                MozaLog.Debug(
-                    $"[Moza] OnDashboardSwitched(slot={slot}): scheduling switch + Stop+Start pipeline cycle");
-                // Stage profile + mzdash content first so post-Start cold-start
-                // builds tier-def from the right channels.
-                ApplyTelemetrySettings();
-                // SwitchToProfile emits FF kind=4 then runs Stop+Start; profile
-                // already staged so pass null to keep current.
-                sender.SwitchToProfile(slot, null);
-            }
+        /// <summary>Switch a specific sender's dashboard to <paramref name="slot"/>
+        /// (FF kind=4 + Stop/Start). The wheel sender and the CM2 sender each switch
+        /// their own device independently.</summary>
+        public void OnDashboardSwitched(uint slot, TelemetrySender? sender)
+        {
+            if (sender == null || !sender.Enabled) return;
+            bool isWheel = ReferenceEquals(sender, _plugin.TelemetrySender);
+            MozaLog.Debug(
+                $"[Moza] OnDashboardSwitched(slot={slot}, target={(isWheel ? "wheel" : "cm2")}): scheduling switch + Stop+Start");
+            // Stage the target's settings first so the post-Start cold-start builds
+            // tier-def from the right channels (wheel: ApplyTelemetrySettings; CM2:
+            // EnsureCm2Pipeline re-applies its policy/resolver/mapping target).
+            if (isWheel) { ClearPendingDashboardKey(); ApplyTelemetrySettings(); }
+            else _plugin.EnsureCm2Pipeline();
+            // SwitchToProfile emits FF kind=4 then runs Stop+Start; profile already
+            // staged so pass null to keep current.
+            sender.SwitchToProfile(slot, null);
         }
 
         /// <summary>
@@ -753,19 +760,14 @@ namespace MozaPlugin.Telemetry
                 && !_detectionState.OldWheelDetected
                 && !standaloneDashboard) return;
 
-            // FSR V1 (group-0x42 display push) bypasses the dashboard-capability and
-            // display-probe gates below: it has a screen but never answers the
-            // 0x43-wrapped display probe and does not speak the tier-def protocol, so
-            // ShouldDriveDashboard()/IsDisplayDetected would defer it forever. We
-            // still honour the connection / wheel-detected / FramesSent / dispatch
-            // guards. TelemetrySender.Fsr1Mode routes Start() to the 0x42 path.
-            bool fsr1 = _plugin.IsFsr1DisplayWheel;
-            t.Fsr1Mode = fsr1;
+            // FSR V1 (group-0x42 display push) is driven by the standalone
+            // Telemetry/Fsr1DisplayDriver (started from MozaPlugin), NOT by this
+            // tier-def sender — so it is not handled here at all.
 
             // Capability gate: known displayless wheels never get the dashboard
             // pipeline; unknown models fall back to the runtime probe. CM2
             // standalone is always a dashboard — skip the wheel-display gate.
-            if (!standaloneDashboard && !fsr1 && !_plugin.ShouldDriveDashboard())
+            if (!standaloneDashboard && !_plugin.ShouldDriveDashboard())
             {
                 MozaLog.Info(
                     $"[Moza] Wheel '{_data?.WheelModelName}' has no display " +
@@ -787,7 +789,7 @@ namespace MozaPlugin.Telemetry
             // detected but the display isn't — so deferring here is safe
             // and self-recovering. Standalone CM2 dashboards skip this gate
             // (they ARE the dashboard target, no separate sub-device boot).
-            if (!standaloneDashboard && !fsr1 && !_plugin.IsDisplayDetected)
+            if (!standaloneDashboard && !_plugin.IsDisplayDetected)
             {
                 MozaLog.Debug(
                     $"[Moza] Display sub-device not yet detected " +
