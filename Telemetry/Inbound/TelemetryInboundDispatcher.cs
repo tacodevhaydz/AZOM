@@ -205,6 +205,16 @@ namespace MozaPlugin.Telemetry.Inbound
                 // Mgmt session engagement signal — data flow on sess=MgmtPort
                 // is the strongest possible proof the session is alive.
                 _sender.Watchdog.NoteSession01Engaged();
+                // Wheel-reported dashboard slot tracker. CS-family wheels echo
+                // the type-04 slot record on sess=FlagByte (0x02); W13/FSR2
+                // reports it on the mgmt session (0x01) instead. Listen on both
+                // so WheelReportedSlot converges and the slot round-trip can
+                // succeed — without this the W13's report is never absorbed,
+                // WheelReportedSlot stays -1, and the DisplayWatchdog
+                // force-restarts a healthy display after every kind=4. The
+                // strict padding/bound validation rejects the mgmt session's
+                // 0x06 acks and 0x04 catalog-URL records.
+                _sender.SlotTracker.TryAbsorbType04Slot(chunkPayload);
             }
 
             // File-transfer candidate sessions (0x04..0x08): ack ALL, forward to
