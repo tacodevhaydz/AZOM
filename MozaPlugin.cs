@@ -427,6 +427,20 @@ namespace MozaPlugin
                 + $"{Cm1DecideAfter.TotalSeconds:F0}s — treating as CM1 (group-0x35); handing off to CM1 driver");
             DashIsCm1 = true;
             SaveSettings();
+
+            // This bus-bridged dash is a CM1, not a CM2 — deploy the CM1 device
+            // definition (its own GUID/tab) and drop the speculative CM2 copy that
+            // MarkDashDetected wrote before we could tell them apart. The removal
+            // is guarded against a real USB CM2, so it doesn't break dual setups.
+            try
+            {
+                string? pid = _connection?.DiscoveredPid;
+                if (Devices.DeviceDefinitionDeployer.DeployCm1Dashboard(pid))
+                    DeviceDefinitionDeployed = true;
+                Devices.DeviceDefinitionDeployer.RemoveSpeculativeCm2Dashboard();
+            }
+            catch (Exception ex) { MozaLog.Debug($"[Moza] CM1 device-definition deploy skipped: {ex.Message}"); }
+
             try { cm2.Stop(); } catch { }
             if (_telemetrySender != null)
             {
