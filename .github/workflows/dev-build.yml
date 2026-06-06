@@ -107,16 +107,13 @@ jobs:
           fail_on_unmatched_files: true
           files: MozaPlugin_dev.zip
           body: |
-            ⚠️ **Pre-release — expect rough edges.** Use the latest stable release if you need reliability.
+            **Pre-release — expect possible bugs.**
 
-            **Version:** `${{ steps.vars.outputs.dev_version }}`
-            **Built:** ${{ steps.vars.outputs.build_timestamp }}
-            **Commits in this build (${{ steps.vars.outputs.commit_count }}):**
+            **Version:** `${{ steps.vars.outputs.dev_version }}` (${{ steps.vars.outputs.build_timestamp }})
+            **Commits in this build: `${{ steps.vars.outputs.commit_count }}`**
             ${{ steps.vars.outputs.commit_list }}
 
             **Changes since ${{ steps.vars.outputs.latest_tag }}:** https://github.com/${{ github.repository }}/compare/${{ steps.vars.outputs.latest_tag }}...${{ github.sha }}
-
-            Stable link to most recent dev build: https://github.com/${{ github.repository }}/releases/tag/dev-latest
 
       - name: Reset dev-latest release
         env:
@@ -134,13 +131,12 @@ jobs:
           fail_on_unmatched_files: true
           files: MozaPlugin_dev.zip
           body: |
-            ⚠️ **Pre-release — expect rough edges.** Use the latest stable release if you need reliability.
+            **Pre-release — expect possible bugs.**
 
             Rolling pointer to newest dev build. For history, see [all dev releases](https://github.com/${{ github.repository }}/releases?q=dev-&expanded=true).
 
-            **Version:** `${{ steps.vars.outputs.dev_version }}`
-            **Built:** ${{ steps.vars.outputs.build_timestamp }}
-            **Commits in this build (${{ steps.vars.outputs.commit_count }}):**
+            **Version:** `${{ steps.vars.outputs.dev_version }}` (${{ steps.vars.outputs.build_timestamp }})
+            **Commits in this build: `${{ steps.vars.outputs.commit_count }}`**
             ${{ steps.vars.outputs.commit_list }}
 
             **Changes since ${{ steps.vars.outputs.latest_tag }}:** https://github.com/${{ github.repository }}/compare/${{ steps.vars.outputs.latest_tag }}...${{ github.sha }}
@@ -179,12 +175,11 @@ jobs:
             --arg release_url  "$release_url" \
             '{
               embeds: [{
-                title: (("Moza SimHub Plugin — dev build " + $dev_version)[0:250]),
+                title: (("Moza SimHub Plugin — " + $dev_version)[0:250]),
                 url: $release_url,
                 description: ((
                   "**Commits in this build (" + $commit_count + "):**\n" +
                   $commit_list +
-                  "\n\n**Built:** " + $built +
                   "\n[Download release](" + $release_url + ")"
                 )[0:4090]),
                 color: 3447003
