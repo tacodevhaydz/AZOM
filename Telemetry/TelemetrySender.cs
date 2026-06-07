@@ -613,6 +613,22 @@ namespace MozaPlugin.Telemetry
         /// <summary>Display sub-device model name, e.g. "Display". Empty if not detected.</summary>
         public string DisplayModelName => _displayModelName;
 
+        /// <summary>Pre-calibration hint for which u32 field the type-04 slot
+        /// record uses; <see cref="WheelSlotTracker"/> auto-detects the real
+        /// value from the wheel's kind=4 echo and overrides this. W13/FSR2 is the
+        /// LONE other-format wheel (slot in field B [5..9]); W17/W18/CS/KS and
+        /// every other — including future — 2026-era wheel use field A [1..5]. So
+        /// default to field A and treat W13/FSR as the exception.</summary>
+        internal bool SlotInFieldA
+        {
+            get
+            {
+                string m = (MozaPlugin.Instance?.Data?.WheelModelName ?? "")
+                    .ToUpperInvariant();
+                return !(m.Contains("W13") || m.Contains("FSR"));
+            }
+        }
+
         // Pre-cached frames (built once, reused every tick)
         private byte[] _cachedEnableFrame = null!;
         private byte[] _cachedModeFrame = null!;
