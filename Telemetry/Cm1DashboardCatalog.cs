@@ -137,7 +137,7 @@ namespace MozaPlugin.Telemetry
             return d;
         }
 
-        public static Cm1FieldDef ByFieldId(string fieldId) =>
+        public static Cm1FieldDef? ByFieldId(string fieldId) =>
             fieldId != null && _byId.TryGetValue(fieldId, out var f) ? f : null;
     }
 }

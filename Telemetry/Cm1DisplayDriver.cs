@@ -32,13 +32,13 @@ namespace MozaPlugin.Telemetry
         private readonly MozaSerialConnection _connection;
         private readonly Func<string, double> _resolve;
 
-        private System.Timers.Timer _timer;
+        private System.Timers.Timer? _timer;
         private int _tickInProgress;
         private volatile bool _running;
         private bool _lastConnected;
         private int _tickCounter;
 
-        private volatile StatusDataBase _latestGameData;
+        private volatile StatusDataBase? _latestGameData;
         private volatile bool _gameRunning;
 
         public Cm1DisplayDriver(MozaSerialConnection connection, Func<string, double> resolve)
@@ -48,7 +48,7 @@ namespace MozaPlugin.Telemetry
         }
 
         public bool IsRunning => _running;
-        public void UpdateGameData(StatusDataBase data) => _latestGameData = data;
+        public void UpdateGameData(StatusDataBase? data) => _latestGameData = data;
         public void SetGameRunning(bool running) => _gameRunning = running;
 
         public void Start()
