@@ -273,6 +273,9 @@
   <data name="Button_OpenReleaseNotes" xml:space="preserve"><value>Release-Notes öffnen</value></data>
   <data name="Button_SkipThisVersion" xml:space="preserve"><value>Diese Version überspringen</value></data>
   <data name="Button_DismissUpdate" xml:space="preserve"><value>Verwerfen</value></data>
+  <data name="Banner_SdkSuggestionText" xml:space="preserve"><value>Wenn Sie verhindern möchten, dass MOZA Pit House gestartet wird, aktivieren Sie die SDK-Unterstützung.</value></data>
+  <data name="Button_ConfigureSdk" xml:space="preserve"><value>SDK konfigurieren</value></data>
+  <data name="Button_Dismiss" xml:space="preserve"><value>Verwerfen</value></data>
   <data name="Button_RestartSimHub" xml:space="preserve"><value>SimHub neu starten</value></data>
   <data name="Label_WhatsNew" xml:space="preserve"><value>Neu in v{0}</value></data>
   <data name="Label_CheckForUpdates" xml:space="preserve"><value>Automatisch nach Updates suchen</value></data>

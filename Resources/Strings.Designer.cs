@@ -340,6 +340,9 @@ namespace MozaPlugin.Resources
         public static string Button_OpenReleaseNotes => Get("Button_OpenReleaseNotes");
         public static string Button_SkipThisVersion => Get("Button_SkipThisVersion");
         public static string Button_DismissUpdate => Get("Button_DismissUpdate");
+        public static string Banner_SdkSuggestionText => Get("Banner_SdkSuggestionText");
+        public static string Button_ConfigureSdk => Get("Button_ConfigureSdk");
+        public static string Button_Dismiss => Get("Button_Dismiss");
         public static string Button_RestartSimHub => Get("Button_RestartSimHub");
         public static string Label_WhatsNew => Get("Label_WhatsNew");
         public static string Label_CheckForUpdates => Get("Label_CheckForUpdates");

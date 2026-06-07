@@ -354,6 +354,37 @@
             </Grid>
         </Border>
 
+        <!-- One-time nudge for users without SDK support enabled: enabling it
+             lets the plugin stand in for MOZA Pit House so SDK apps don't
+             launch it. Cross-tab like the update banner above; dismissal is
+             persisted (SdkPromptDismissed) so it never reappears once acted on.
+             Driven by SettingsControl.Sdk.cs via RefreshSdkPromptBanner(). -->
+        <Border x:Name="SdkPromptBanner" DockPanel.Dock="Top"
+                Visibility="Collapsed" Margin="22,8,22,0"
+                BorderBrush="{StaticResource CyanBrush}" BorderThickness="1"
+                Background="{StaticResource BgDeepBrush}" CornerRadius="4" Padding="12,8">
+            <Grid>
+                <Grid.ColumnDefinitions>
+                    <ColumnDefinition Width="*"/>
+                    <ColumnDefinition Width="Auto"/>
+                </Grid.ColumnDefinitions>
+                <TextBlock Grid.Column="0"
+                           Text="{x:Static res:Strings.Banner_SdkSuggestionText}"
+                           FontFamily="{StaticResource FontUi}" FontSize="12.5" FontWeight="SemiBold"
+                           Foreground="{StaticResource CyanBrush}"
+                           TextWrapping="Wrap" VerticalAlignment="Center"/>
+                <StackPanel Grid.Column="1" Orientation="Horizontal"
+                            VerticalAlignment="Center" Margin="12,0,0,0">
+                    <Button x:Name="SdkPromptConfigureButton"
+                            Content="{x:Static res:Strings.Button_ConfigureSdk}"
+                            Click="SdkPromptConfigure_Click" Margin="0,0,8,0"/>
+                    <Button x:Name="SdkPromptDismissButton"
+                            Content="{x:Static res:Strings.Button_Dismiss}"
+                            Click="SdkPromptDismiss_Click"/>
+                </StackPanel>
+            </Grid>
+        </Border>
+
         <!-- Tabs -->
         <TabControl x:Name="MainTabs" Style="{StaticResource MozaTabControl}">
 
@@ -2247,7 +2278,7 @@
                 </ScrollViewer>
             </TabItem>
 
-            <TabItem Header="{x:Static res:Strings.TabHeader_Sdk}">
+            <TabItem x:Name="SdkTab" Header="{x:Static res:Strings.TabHeader_Sdk}">
                 <ScrollViewer VerticalScrollBarVisibility="Auto" Padding="22,18,22,8">
                     <StackPanel>
 

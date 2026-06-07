@@ -282,6 +282,13 @@ namespace MozaPlugin
         // plugin restart — Stream 7 wires the actual server lifecycle.
         public bool SdkEmulationEnabled { get; set; } = false;
 
+        // One-time UI nudge: when the CoAP SDK server is disabled, the plugin
+        // pane shows a banner suggesting the user enable it (prevents MOZA Pit
+        // House from being launched by SDK apps). Set true once the user
+        // dismisses the banner or clicks Configure SDK — persisted so it never
+        // reappears.
+        public bool SdkPromptDismissed { get; set; } = false;
+
         // Always bind to loopback (127.0.0.1) only. Hidden from the UI in v1
         // because exposing the partner-API to LAN traffic has no legitimate
         // use case and only adds attack surface — but plumbed through so a
