@@ -177,8 +177,9 @@ namespace MozaPlugin.Telemetry.Inbound
 
                 // First inbound on sess=FlagByte = engagement gate.
                 _sender.Watchdog.NoteSession02FirstInbound();
-                // Wheel-reported dashboard slot tracker.
-                _sender.SlotTracker.TryAbsorbType04Slot(chunkPayload);
+                // Wheel-reported dashboard slot tracker. FlagByte (0x02) is the
+                // CS-family slot session → the slot lives in field A.
+                _sender.SlotTracker.TryAbsorbType04Slot(chunkPayload, slotInFieldA: true);
 
                 // Capture wheel's post-subscription response (5 s window).
                 if (_sender.SubscriptionResponseDeadlineTicksField != 0
@@ -213,8 +214,9 @@ namespace MozaPlugin.Telemetry.Inbound
                 // WheelReportedSlot stays -1, and the DisplayWatchdog
                 // force-restarts a healthy display after every kind=4. The
                 // strict padding/bound validation rejects the mgmt session's
-                // 0x06 acks and 0x04 catalog-URL records.
-                _sender.SlotTracker.TryAbsorbType04Slot(chunkPayload);
+                // 0x06 acks and 0x04 catalog-URL / backref records. The mgmt
+                // session is the W13/FSR2 slot session → the slot lives in field B.
+                _sender.SlotTracker.TryAbsorbType04Slot(chunkPayload, slotInFieldA: false);
             }
 
             // File-transfer candidate sessions (0x04..0x08): ack ALL, forward to

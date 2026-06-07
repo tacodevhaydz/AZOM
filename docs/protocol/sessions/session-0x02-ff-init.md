@@ -60,6 +60,71 @@ master tables. Until the host receives both kind=10 and kind=16, the
 wheel will not echo `kind=4` dashboard-switch records and will not bind
 post-switch tier-defs to display widgets.
 
+## Wheel-reported active dashboard slot (type-04 record)
+
+After a switch the wheel announces the slot it is now showing via a
+13-byte b2h record (also emitted standalone when the user navigates
+dashboards on the wheel itself). The host consumes it in
+`Telemetry/Display/WheelSlotTracker.TryAbsorbType04Slot` to drive
+`WheelReportedSlot` — used to make the SimHub UI follow wheel-initiated
+switches and as **positive** confirmation for the `DisplayWatchdog`. The
+wheel's reported slot is authoritative: any valid reported slot proves the
+display is engaged. A slot that differs from the host's last `kind=4`
+(the user switched on the wheel), or a not-yet-reported slot (`-1` during a
+slow cold-start), no longer forces a recovery restart — that misfired and
+killed working displays. Display non-engagement is judged by establishment
+(no channel catalog / no configJson state), not by slot match.
+
+Record layout (the 13-byte session-data chunk payload):
+
+```
+[0]      = 0x04            record tag
+[1..5]   = u32 LE field A
+[5..9]   = u32 LE field B
+[9..13]  = CRC32(payload[0..9])   little-endian
+```
+
+The active slot index lives in **exactly one** of the two u32 fields; the
+other is a zero reserved field (both-zero ⇒ slot 0). **The two wheel
+families disagree on which field carries the slot, AND report on different
+b2h sessions** — verified against captured switch sequences:
+
+| Wheel family | Slot field | Reserved field | b2h session it rides |
+|--------------|------------|----------------|----------------------|
+| **W17 / CS-Pro** (and CS-family) | A = `[1..5]` | B = `[5..9]` | **0x02** (FlagByte) |
+| **W13 / FSR-V2** | B = `[5..9]` | A = `[1..5]` | **0x01** (MgmtPort) |
+
+Evidence: a CS-Pro capture cycled slots 0,1,2,3,4,5,10–14 with the value
+in field A (field B zero) on session 0x02; FSR-V2 captures cycled slots
+0–5 with the value in field B (field A zero) on session 0x01.
+
+**Decode by session, not by "whichever field is non-zero."** The decoder
+selects the slot field from the session the chunk arrived on — `0x02`
+(FlagByte) ⇒ field A, `0x01` (MgmtPort) ⇒ field B — and **requires the
+other field to be the zero pad**. That pad-check is load-bearing:
+
+- The channel catalog emits **backref records of the identical 13-byte
+  shape**: `04 <chan-idx> 00 00 00 00 00 00 00` (field A = a channel index,
+  field B = 0). On a W13 these arrive on the mgmt session (0x01) as
+  standalone 13-byte chunks. A permissive `fieldA | fieldB` read decodes
+  them as bogus dashboard slots (2,3,4,…); reading field B on 0x01 under an
+  `A == 0` pad-check rejects them.
+- **CRC cannot disambiguate**: the slot record and the backref are both
+  well-formed 9-byte-body + CRC32 chunks, so both pass CRC. Session +
+  pad-check is the only reliable discriminator.
+- W17 batches its catalog backrefs into larger multi-record chunks, so the
+  exact 13-byte length check already excludes them on 0x02; the field-A
+  read there sees only genuine slot records.
+
+> History (2026-06-06): the original decoder hard-coded the FSR-V2 layout
+> (slot at `[5..9]`, reserved-zero check on `[1..5]`), pinning every
+> non-zero CS-Pro slot at 0 (its slot is in `[1..5]`). The first fix — a
+> family-agnostic `fieldA | fieldB` read — corrected CS-Pro but
+> **regressed W13**: it misread the mgmt-session catalog backrefs as
+> dashboard slots, corrupting `WheelReportedSlot`. The session-aware field
+> select + opposite-field pad-check fixes both families without the backref
+> false-positives.
+
 ## Why the host must send kind=8 / kind=11
 
 `kind=2` (`init_nonce`) and `kind=7` (`init_enum`) alone are insufficient.

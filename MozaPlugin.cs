@@ -37,6 +37,8 @@ namespace MozaPlugin
         // process exit or on wheel unplug (Init checks "still connected?").
         private static MozaSerialConnection? s_persistentConnection;
         private static TelemetrySender? s_persistentTelemetrySender;
+        // One-shot guard so the stale-instance DataUpdate fallback warns once.
+        private bool _warnedStaleDataFeed;
 
         // CoAP stub child-process manager. Persistent for the same reason the
         // wire is: stopping and restarting the stub on every plugin reload is
@@ -1720,8 +1722,24 @@ namespace MozaPlugin
         public void DataUpdate(PluginManager pluginManager, ref GameData data)
         {
             if (IsShuttingDown) return;
-            _telemetrySender?.UpdateGameData(data.NewData);
-            _telemetrySender?.SetGameRunning(data.GameRunning);
+            // Persistent-wire reload guard. On a SimHub plugin reload, End()
+            // keeps the telemetry sender alive in s_persistentTelemetrySender
+            // (the next Init reuses it) but nulls the reloaded instance's
+            // _telemetrySender. If SimHub then keeps driving DataUpdate on a
+            // stale instance, _telemetrySender is null and the game-data feed
+            // silently stops — the persistent sender keeps emitting its last
+            // snapshot forever, freezing the dashboard on stale data while the
+            // wire/binding look healthy (observed 2026-06-06, W13). Route the
+            // feed to the persistent sender so it always reaches the emitter.
+            var sender = _telemetrySender ?? s_persistentTelemetrySender;
+            if (_telemetrySender == null && sender != null && !_warnedStaleDataFeed)
+            {
+                _warnedStaleDataFeed = true;
+                MozaLog.Warn("[Moza] DataUpdate fired with _telemetrySender=null — routing game " +
+                             "data to the persistent sender (stale post-reload instance).");
+            }
+            sender?.UpdateGameData(data.NewData);
+            sender?.SetGameRunning(data.GameRunning);
             _fsr1Driver?.UpdateGameData(data.NewData);
             _fsr1Driver?.SetGameRunning(data.GameRunning);
             _cm2Sender?.UpdateGameData(data.NewData);

@@ -385,35 +385,20 @@ namespace MozaPlugin.Telemetry.Watchdog
             if (!_sender.ConfigJsonHasLastState)
                 return (true, "no configJson device-init/state past grace");
 
-            // Context B — slot round-trip (the decisive live signal). Only
-            // judged once the host has emitted a kind=4 and its window elapsed.
-            // This is what was missing: it catches both the user's symptom
-            // (switch / Test produced no display response) and a wheel that
-            // never bound (the cold-start resync probe emits a kind=4 at
-            // startup when a profile slot resolves, so WheelReportedSlot=-1
-            // here surfaces as a failed round-trip).
-            long emitTs = Interlocked.Read(ref _lastKind4EmitUtcTicks);
-            if (emitTs != 0)
-            {
-                long ageMs = (nowUtc - emitTs) / TimeSpan.TicksPerMillisecond;
-                if (ageMs >= SlotRoundTripWindowMs)
-                {
-                    // Use the slot captured atomically with THIS emit timestamp
-                    // (not the slot tracker's static LastEmittedKind4Slot, which
-                    // can also be mutated by wheel-initiated-switch detection).
-                    int target = _lastKind4Slot;
-                    int reported = _sender.WheelReportedSlot;
-                    if (target >= 0 && reported != target)
-                    {
-                        string detail = reported < 0
-                            ? "wheel never reported any dashboard slot"
-                            : $"WheelReportedSlot={reported}";
-                        return (true,
-                            $"slot round-trip failed: emitted kind=4 to slot {target}, " +
-                            $"{detail} after {ageMs} ms (transport alive, display unbound)");
-                    }
-                }
-            }
+            // Context B — slot round-trip is POSITIVE confirmation only, never a
+            // restart trigger. The wheel's reported slot is AUTHORITATIVE: any
+            // valid reported slot means a live, bound display — whether it echoed
+            // our kind=4 or the user switched the dash on the wheel itself (a
+            // wheel-initiated switch always wins; the wheel is wherever it says it
+            // is). Demanding reported == last-kind4 target force-restarted WORKING
+            // displays during normal use: (a) the user switching on the wheel
+            // (reported is a different valid slot), and (b) a slow cold-start where
+            // the wheel had not yet echoed a slot (reported=-1, observed on RBR
+            // while the dash was binding fine). Neither is proof the display is
+            // dead, so slot state no longer drives a NOT-engaged verdict. Genuine
+            // non-establishment is still caught by Context A above; a frozen-after-
+            // bind display would need a corroborated signal (e.g. value-frame
+            // stall), not a slot mismatch.
 
             // Liveness/rejection fusion is reinforcement only: a content-proven
             // wheel (catalog + state + slot round-trip OK above) is engaged even
@@ -636,18 +621,16 @@ namespace MozaPlugin.Telemetry.Watchdog
                 roundTrip = "n/a (no switch emitted)";
             else if (reported == target)
                 roundTrip = "ok";
+            else if (reported >= 0)
+                roundTrip = $"ok (wheel authoritative on slot {reported})";
             else
-            {
-                long emitTs = Interlocked.Read(ref _lastKind4EmitUtcTicks);
-                long ageMs = emitTs == 0 ? 0 : (DateTime.UtcNow.Ticks - emitTs) / TimeSpan.TicksPerMillisecond;
-                roundTrip = ageMs >= SlotRoundTripWindowMs ? "FAILED" : "pending";
-            }
+                roundTrip = "pending (no echo yet)";
 
-            bool engaged = catalog > 0 && state && roundTrip != "FAILED";
-            string note = (catalog > 0 && state && roundTrip == "FAILED")
-                ? "  ← display NOT bound — transport alive"
-                : "";
-            return $"{(engaged ? "yes" : "no")} (catalog={catalog} state={state} slotRoundTrip={roundTrip}){note}";
+            // Slot state is authoritative / positive-only and no longer gates the
+            // engagement verdict (see EvaluateEngagement Context B); engagement is
+            // catalog + configJson establishment.
+            bool engaged = catalog > 0 && state;
+            return $"{(engaged ? "yes" : "no")} (catalog={catalog} state={state} slotRoundTrip={roundTrip})";
         }
 
         // ───── Helpers ────────────────────────────────────────────────────

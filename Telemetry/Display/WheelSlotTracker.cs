@@ -88,41 +88,46 @@ namespace MozaPlugin.Telemetry.Display
         }
 
         /// <summary>
-        /// Parse a sess=0x02 b2h session-data chunk for a wheel-reported
-        /// dashboard slot indicator (type-04 record). Updates
+        /// Parse a b2h session-data chunk for a wheel-reported dashboard slot
+        /// indicator (type-04 record). <paramref name="slotInFieldA"/> selects
+        /// the per-family field layout (see body). Updates
         /// <see cref="WheelReportedSlot"/> if found; raises
         /// <see cref="TelemetrySender.WheelInitiatedSwitch"/> when the slot
         /// change is a wheel-side action (not an echo of the host's kind=4).
         /// </summary>
-        public void TryAbsorbType04Slot(byte[] chunkPayload)
+        public void TryAbsorbType04Slot(byte[] chunkPayload, bool slotInFieldA)
         {
-            // type-04 slot record (exactly 13 bytes) on b2h — sess=0x02 for
-            // CS-family wheels, sess=0x01 for W13/FSR2:
+            // type-04 slot record (exactly 13 bytes) on b2h:
             //   payload[0]    = 0x04 (record type)
-            //   payload[1..5] = reserved — MUST be zero (this is the field that
-            //                   discriminates the slot record from the longer
-            //                   0x04 catalog-URL records, whose [1] is a
-            //                   non-zero URL length)
-            //   payload[5..9] = slot (uint32 LE)
+            //   payload[1..5] = u32 LE field A
+            //   payload[5..9] = u32 LE field B
             //   payload[9..13]= CRC32 over payload[0..9]
-            // The slot is at [5..9], NOT [1..5]: verified against captured
-            // records that cycle slots 0..5 with the incrementing value at
-            // [5..9] and a matching CRC32 over the 9-byte body (the earlier
-            // layout read the always-zero reserved field as the slot and
-            // pad-checked the real slot, so every non-zero slot was dropped
-            // and WheelReportedSlot could only ever converge to 0).
+            // The slot lives in ONE field; the other is a zero pad — the families
+            // MIRROR each other AND report on different sessions:
+            //   W17/CS-Pro → FlagByte session (0x02), slot in field A (B = 0)
+            //   W13/FSR2   → mgmt session (0x01),     slot in field B (A = 0)
+            // The caller passes slotInFieldA per session. The OTHER field MUST be
+            // the zero pad — that pad-check is LOAD-BEARING: the channel catalog
+            // emits backref records of the SAME shape — 04 <chan-idx> 00 00 00 00
+            // 00 00 00 (field A set, B zero) — and on W13 those ride the mgmt
+            // session as standalone 13-byte chunks. Reading "whichever field is
+            // non-zero" made W13 decode its field-A backrefs as bogus dashboard
+            // slots 2,3,… (verified misparse, 2026-06-06); selecting the field by
+            // session and padding the other rejects them. CRC can't help here —
+            // both the slot record and a backref are well-formed 9-byte-body +
+            // CRC chunks, so both pass. (W17 batches backrefs into larger catalog
+            // chunks, so the 13-byte length check already excludes them there.)
             if (chunkPayload == null || chunkPayload.Length != 13) return;
             if (chunkPayload[0] != 0x04) return;
-            // Reserved must be zero — rejects the longer catalog-URL 0x04
-            // records (non-zero URL length at [1]) and any other 0x04 record.
-            if (chunkPayload[1] != 0 || chunkPayload[2] != 0
-                || chunkPayload[3] != 0 || chunkPayload[4] != 0) return;
-            int slot = chunkPayload[5]
-                     | (chunkPayload[6] << 8)
-                     | (chunkPayload[7] << 16)
-                     | (chunkPayload[8] << 24);
-            // Real slot indices are u8 in practice; reject implausibly large values.
-            if (slot < 0 || slot > 255) return;
+            uint fieldA = (uint)(chunkPayload[1] | (chunkPayload[2] << 8)
+                               | (chunkPayload[3] << 16) | (chunkPayload[4] << 24));
+            uint fieldB = (uint)(chunkPayload[5] | (chunkPayload[6] << 8)
+                               | (chunkPayload[7] << 16) | (chunkPayload[8] << 24));
+            uint slotField = slotInFieldA ? fieldA : fieldB;
+            uint padField  = slotInFieldA ? fieldB : fieldA;
+            if (padField != 0) return;          // non-slot field must be the zero pad
+            if (slotField > 255) return;        // real slot indices are u8
+            int slot = (int)slotField;
             if (slot == _wheelReportedSlot) return;
 
             int prevSlot = _wheelReportedSlot;
