@@ -131,10 +131,20 @@ namespace MozaPlugin.Telemetry.Dashboard
             // compression and SimHubField mapping.
             var perTier = new Dictionary<int, List<ChannelDefinition>>();
             var stringChannels = new List<ChannelDefinition>();
+            // Dedup by URL. The wheel re-advertises a dash's channels at fresh
+            // catalog idxs (a 2nd generation within one switch), and
+            // ChannelCatalogParser.CommitLiveSet's same-burst UNION keeps both
+            // idx ranges. Without this guard each duplicate URL becomes a
+            // redundant channel — Marco synthesised 127ch/6t for ~75 real
+            // channels, doubling every value frame and the fast-tier count,
+            // which lags the wheel's per-tick render. Keep the first
+            // occurrence; genuinely-new URLs in later batches still pass.
+            var seenUrls = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
             foreach (var url in catalog)
             {
                 if (string.IsNullOrEmpty(url)) continue;
                 if (!includeRadarTrackMap && IsRadarTrackMapChannel(url)) continue;
+                if (!seenUrls.Add(url)) continue;
                 string suffix = url.Substring(url.LastIndexOf('/') + 1);
                 ChannelDefinition ch;
                 int packageLevel;

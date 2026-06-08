@@ -22,7 +22,7 @@ namespace MozaPlugin.Telemetry.Dashboard
         private static readonly Dictionary<string, string> ToMoza =
             new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase)
             {
-                ["AssettoCorsa"]             = "AC",
+                ["AssettoCorsa"]             = "AssettoCorsa",
                 ["AssettoCorsaCompetizione"] = "ACC",
                 ["Automobilista2"]           = "Automobilista 2",
                 ["rFactor2"]                 = "rFactor 2",

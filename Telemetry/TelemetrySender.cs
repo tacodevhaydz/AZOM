@@ -2181,7 +2181,20 @@ namespace MozaPlugin.Telemetry
             byte mgmt = _mgmtPort != 0 ? _mgmtPort : (byte)0x01;
             byte flag = FlagByte;
             if (_catalogParser.HasRealCatalogOnSession(mgmt)) return mgmt;
-            if (flag != 0 && flag != mgmt && _catalogParser.HasRealCatalogOnSession(flag)) return flag;
+            // Only FOLLOW the catalog onto the flag session for a wheel whose
+            // policy actually puts the tier-def there (Form B). A MgmtPort-policy
+            // wheel (Form A — CS-Pro) binds the subscription on mgmt (0x01); after
+            // a power cycle its first catalog can land on the flag session (0x02),
+            // but echoing the tier-def there left the wheel unbound — host kind=4
+            // ignored, test mode dead — until a watchdog recovery nudged the
+            // catalog back to 0x01 (verified 2026-06-07: tier-def 0x02 → no bind;
+            // 0x01 → binds). Keep the tier-def on mgmt regardless of which session
+            // the cold-start catalog arrived on; the parser still ingests it from
+            // whichever session carried it, and ResolveFfSession keeps FF on the
+            // opposite (flag) session per the Form-A pairing.
+            if (_policy.TierDefSession == TierDefSessionPolicy.FlagByte
+                && flag != 0 && flag != mgmt
+                && _catalogParser.HasRealCatalogOnSession(flag)) return flag;
             return _policy.TierDefSession == TierDefSessionPolicy.FlagByte
                 ? (flag != 0 ? flag : (byte)0x02) : mgmt;
         }
