@@ -307,6 +307,14 @@ namespace MozaPlugin.Telemetry
                 (keepExistingSynth ? " (keeping existing synth — catalog-only mode unchanged)" : ""));
             if (!keepExistingSynth)
                 sender.Profile = profile;
+            // Re-point the tier frame builders at the resolver we just assigned.
+            // When keepExistingSynth kept the profile (so the Profile setter above
+            // did NOT run), the builders still hold whatever resolver they were
+            // last built with — on a plugin reload that's the dead old instance's,
+            // which freezes the live dashboard at 0 while test mode (TestSignal,
+            // not the resolver) keeps working. Self-guards: no-op unless the
+            // resolver instance actually changed.
+            sender.RebindFrameBuildersToResolver();
             sender.MzdashContent = mzdashContent;
             sender.MzdashName = mzdashName;
 

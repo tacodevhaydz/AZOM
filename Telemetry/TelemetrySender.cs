@@ -449,6 +449,31 @@ namespace MozaPlugin.Telemetry
                     type02NConvention: false,
                     deviceId: _targetDeviceId);
             }
+            _builtWithResolverTarget = PropertyResolver?.Target;
+        }
+
+        // Delegate Target (= the SimHubPropertyResolver instance) that the current
+        // tier frame builders captured their value resolver from. On a SimHub
+        // plugin reload the persistent sender is reused but its builders still hold
+        // the dead OLD instance's resolver, and keepExistingSynth skips the Profile
+        // setter that would rebuild them — so live channels resolved through the
+        // dead plugin and froze at 0 (test mode unaffected: it reads ch.TestSignal,
+        // not the resolver). Tracked so RebindFrameBuildersToResolver re-points them
+        // exactly once when the resolver instance actually changes.
+        private object? _builtWithResolverTarget;
+
+        /// <summary>Re-point each tier frame builder's captured value resolver to
+        /// the current <see cref="PropertyResolver"/>, host-side only — no tier-def
+        /// re-emit, no wire traffic. No-op unless the resolver INSTANCE changed, so
+        /// the common same-instance ApplyTelemetrySettings path costs one ref
+        /// compare. Call after (re)assigning PropertyResolver; the load-bearing case
+        /// is the persistent sender reused across a plugin reload under
+        /// keepExistingSynth (which otherwise leaves the builders on the dead
+        /// instance's resolver and freezes the live dashboard).</summary>
+        internal void RebindFrameBuildersToResolver()
+        {
+            if (ReferenceEquals(PropertyResolver?.Target, _builtWithResolverTarget)) return;
+            RebuildFrameBuildersForTargetDevice();
         }
 
         // Session 0x09 configJson RPC. Device pushes dashboard state; we reply
@@ -1067,6 +1092,7 @@ namespace MozaPlugin.Telemetry
                         OriginalTotalBytes = tier.TotalBytes,
                     };
                 }
+                _builtWithResolverTarget = PropertyResolver?.Target;
                 MozaLog.Debug(tierDiag.ToString());
 
                 // Apply the catalog-driven filter + sort + FrameBuilder
