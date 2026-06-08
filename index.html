@@ -1,0 +1,750 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>AZOM — The MOZA Bridge for SimHub</title>
+<meta name="description" content="AZOM is an unofficial, open-source SimHub plugin that turns SimHub into complete replacement software for your MOZA sim racing hardware — LED effects, LCD dashboard telemetry, and full device configuration on Linux and Windows." />
+<meta property="og:title" content="AZOM — The MOZA Bridge for SimHub" />
+<meta property="og:description" content="Reverse-engineered, open-source SimHub plugin for MOZA hardware. LED effects, dashboard telemetry, full device control." />
+<meta property="og:type" content="website" />
+<link rel="preconnect" href="https://fonts.googleapis.com" />
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+<link href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@400;500;600;700&family=Space+Mono:wght@400;700&display=swap" rel="stylesheet" />
+<style>
+  :root{
+    --bg:#070809;
+    --bg-2:#0b0d10;
+    --panel:#0e1116;
+    --panel-2:#11151b;
+    --line:#1c2027;
+    --line-2:#262b34;
+    --ink:#eef1f6;
+    --ink-2:#c3c9d4;
+    --sub:#848b99;
+    --faint:#5a616e;
+    --accent:#b8ff2e;
+    --accent-dim:#7fae2a;
+    --amber:#ffb43d;
+    --red:#ff4d4d;
+    --maxw:1180px;
+    --grotesk:"Space Grotesk",system-ui,sans-serif;
+    --mono:"Space Mono",ui-monospace,monospace;
+  }
+  *{ box-sizing:border-box; }
+  html{ scroll-behavior:smooth; }
+  html,body{ margin:0; }
+  body{
+    background:var(--bg);
+    color:var(--ink);
+    font-family:var(--grotesk);
+    line-height:1.55;
+    -webkit-font-smoothing:antialiased;
+    overflow-x:hidden;
+  }
+  a{ color:inherit; text-decoration:none; }
+  img{ display:block; max-width:100%; }
+  ::selection{ background:var(--accent); color:#07080a; }
+
+  .wrap{ width:100%; max-width:var(--maxw); margin:0 auto; padding:0 28px; }
+  section{ position:relative; }
+
+  /* ---------- shared bits ---------- */
+  .eyebrow{
+    font-family:var(--mono); font-size:12px; letter-spacing:.32em; text-transform:uppercase;
+    color:var(--sub); display:flex; align-items:center; gap:13px; margin:0 0 22px;
+  }
+  .eyebrow::before{ content:""; width:26px; height:1px; background:var(--line-2); }
+  .eyebrow.center{ justify-content:center; }
+  .eyebrow .dot{ color:var(--accent); }
+
+  .leds{ display:inline-flex; gap:5px; align-items:center; }
+  .leds i{ width:7px; height:7px; border-radius:50%; background:var(--line-2); display:block; }
+  .leds i.g{ background:var(--accent); box-shadow:0 0 8px rgba(184,255,46,.55); }
+  .leds i.a{ background:var(--amber); box-shadow:0 0 8px rgba(255,180,61,.5); }
+  .leds i.r{ background:var(--red); box-shadow:0 0 8px rgba(255,77,77,.5); }
+
+  h1,h2,h3{ margin:0; font-weight:700; letter-spacing:-0.01em; text-wrap:balance; }
+  .h2{ font-size:clamp(30px,4.3vw,46px); line-height:1.04; }
+  .lede{ color:var(--ink-2); font-size:18px; max-width:62ch; }
+
+  /* ---------- buttons ---------- */
+  .btn{
+    display:inline-flex; align-items:center; gap:10px; font-family:var(--grotesk);
+    font-weight:600; font-size:15px; padding:13px 20px; border-radius:9px;
+    border:1px solid var(--line-2); color:var(--ink); background:transparent;
+    cursor:pointer; transition:.18s ease; white-space:nowrap;
+  }
+  .btn .arw{ transition:transform .18s ease; }
+  .btn:hover{ border-color:var(--accent); color:#fff; transform:translateY(-1px); }
+  .btn:hover .arw{ transform:translate(2px,-2px); }
+  .btn.primary{ background:var(--accent); color:#08090a; border-color:var(--accent); font-weight:700; }
+  .btn.primary:hover{ background:#c9ff52; border-color:#c9ff52; box-shadow:0 8px 30px -10px rgba(184,255,46,.55); color:#08090a; }
+  .btn.sm{ padding:10px 15px; font-size:13.5px; }
+
+  /* ---------- wheel mark ---------- */
+  .mark{ display:block; color:#fff; }
+
+  /* ---------- nav ---------- */
+  header.nav{
+    position:sticky; top:0; z-index:50;
+    background:rgba(7,8,9,.72); backdrop-filter:blur(14px);
+    border-bottom:1px solid transparent; transition:border-color .25s, background .25s;
+  }
+  header.nav.scrolled{ border-bottom-color:var(--line); background:rgba(7,8,9,.86); }
+  .nav-in{ display:flex; align-items:center; justify-content:space-between; height:66px; }
+  .brand{ display:flex; align-items:center; gap:12px; }
+  .brand .mark{ width:40px; height:40px; }
+  .brand b{ font-size:21px; letter-spacing:.06em; font-weight:700; }
+  .nav-links{ display:flex; align-items:center; gap:30px; }
+  .nav-links a.lk{ font-size:14.5px; color:var(--sub); transition:color .15s; }
+  .nav-links a.lk:hover{ color:var(--ink); }
+  .nav-cta{ display:flex; align-items:center; gap:12px; }
+  .spon-btn .hrt{ color:var(--accent); font-size:13px; line-height:1; transition:transform .18s ease; }
+  .spon-btn:hover{ border-color:var(--accent); }
+  .spon-btn:hover .hrt{ transform:scale(1.18); }
+  .menu-btn{ display:none; }
+
+  /* ---------- backdrop ---------- */
+  .grid-bg{
+    position:absolute; inset:0; pointer-events:none; z-index:0;
+    background-image:linear-gradient(var(--line) 1px,transparent 1px),linear-gradient(90deg,var(--line) 1px,transparent 1px);
+    background-size:64px 64px; opacity:.18;
+    -webkit-mask-image:radial-gradient(120% 80% at 50% 0%,#000 30%,transparent 78%);
+            mask-image:radial-gradient(120% 80% at 50% 0%,#000 30%,transparent 78%);
+  }
+
+  /* ---------- hero ---------- */
+  .hero{ padding:74px 0 64px; overflow:hidden; }
+  .hero-glow{ position:absolute; top:-220px; left:50%; transform:translateX(-50%); width:900px; height:620px;
+    background:radial-gradient(circle, rgba(184,255,46,.12), transparent 62%); pointer-events:none; z-index:0; }
+  .hero-watermark{ position:absolute; right:-160px; top:40px; width:560px; color:#fff; opacity:.035; z-index:0; pointer-events:none; }
+  .hero-in{ position:relative; z-index:2; text-align:center; display:flex; flex-direction:column; align-items:center; }
+  .hero .lockup{ display:flex; align-items:center; justify-content:center; gap:26px; }
+  .hero .lockup .mark{ width:104px; height:104px; filter:drop-shadow(0 6px 26px rgba(0,0,0,.6)); }
+  .hero .lockup h1{ font-size:clamp(64px,11vw,118px); letter-spacing:.06em; line-height:.9; }
+  .hero .tagrule{ display:flex; align-items:center; gap:16px; margin:22px 0 0; }
+  .hero .tagrule span{ font-family:var(--mono); font-size:13px; letter-spacing:.30em; text-transform:uppercase; color:var(--ink-2); white-space:nowrap; }
+  .hero .tagrule .ln{ width:46px; height:1px; background:var(--line-2); }
+  .hero .sub2{ font-family:var(--mono); font-size:12px; letter-spacing:.22em; text-transform:uppercase; color:var(--faint); margin-top:9px; }
+  .hero .pitch{ font-size:clamp(19px,2.3vw,23px); color:var(--ink-2); max-width:46ch; margin:30px auto 0; line-height:1.5; }
+  .hero .pitch b{ color:var(--ink); font-weight:600; }
+  .hero .ctas{ display:flex; gap:14px; justify-content:center; flex-wrap:wrap; margin-top:34px; }
+  .hero .rpm{ margin-top:46px; }
+
+  /* rpm strip */
+  .rpmbar{ display:flex; gap:6px; align-items:center; justify-content:center; }
+  .rpmbar i{ width:13px; height:24px; border-radius:3px; background:#14181e; border:1px solid var(--line); transition:background .08s, box-shadow .08s, border-color .08s; }
+  .rpmbar i.on.g{ background:var(--accent); border-color:var(--accent); box-shadow:0 0 12px rgba(184,255,46,.5); }
+  .rpmbar i.on.a{ background:var(--amber); border-color:var(--amber); box-shadow:0 0 12px rgba(255,180,61,.45); }
+  .rpmbar i.on.r{ background:var(--red); border-color:var(--red); box-shadow:0 0 12px rgba(255,77,77,.5); }
+  .rpm .cap{ font-family:var(--mono); font-size:11px; letter-spacing:.26em; text-transform:uppercase; color:var(--faint); margin-top:14px; }
+
+  /* live badges */
+  .badges{ display:flex; flex-wrap:wrap; gap:8px; justify-content:center; align-items:center; margin-top:28px; min-height:20px; }
+  .badges a{ display:inline-flex; transition:transform .15s, opacity .15s; opacity:.92; }
+  .badges a:hover{ transform:translateY(-1px); opacity:1; }
+  .badges img{ height:20px; display:block; border-radius:4px; }
+
+  /* stat pills */
+  .pills{ display:flex; flex-wrap:wrap; gap:10px; justify-content:center; margin-top:42px; }
+  .pill{ display:inline-flex; align-items:center; gap:9px; font-family:var(--mono); font-size:12.5px; letter-spacing:.04em;
+    color:var(--ink-2); padding:8px 14px; border:1px solid var(--line); border-radius:100px; background:rgba(255,255,255,.012); }
+  .pill .k{ color:var(--accent); }
+
+  /* ---------- generic section frame ---------- */
+  .band{ padding:96px 0; border-top:1px solid var(--line); }
+  .band.alt{ background:linear-gradient(180deg,var(--bg-2),var(--bg)); }
+  .sec-head{ max-width:760px; }
+  .sec-head .h2{ margin-bottom:18px; }
+
+  /* ---------- why ---------- */
+  .why-grid{ display:grid; grid-template-columns:1.05fr 1fr; gap:54px; align-items:center; }
+  .why-points{ list-style:none; margin:26px 0 0; padding:0; display:flex; flex-direction:column; gap:16px; }
+  .why-points li{ display:flex; gap:14px; align-items:flex-start; color:var(--ink-2); font-size:15.5px; }
+  .why-points li::before{ content:""; flex:none; width:7px; height:7px; margin-top:8px; border-radius:50%; background:var(--accent); box-shadow:0 0 9px rgba(184,255,46,.5); }
+  .credit{ margin-top:30px; font-size:14px; color:var(--sub); }
+  .credit a{ color:var(--ink-2); border-bottom:1px solid var(--line-2); }
+  .credit a:hover{ color:var(--accent); border-color:var(--accent); }
+
+  /* screenshot frame */
+  .shot{ border:1px solid var(--line); border-radius:13px; overflow:hidden; background:var(--panel); box-shadow:0 30px 60px -30px rgba(0,0,0,.8); }
+  .shot .bar{ display:flex; align-items:center; gap:7px; padding:11px 14px; border-bottom:1px solid var(--line); background:var(--panel-2); }
+  .shot .bar i{ width:10px; height:10px; border-radius:50%; background:#272c35; }
+  .shot .bar .ttl{ font-family:var(--mono); font-size:11.5px; color:var(--sub); margin-left:8px; letter-spacing:.06em; }
+  .shot img{ width:100%; }
+
+  /* ---------- features ---------- */
+  .feat-grid{ display:grid; grid-template-columns:repeat(4,1fr); gap:16px; margin-top:14px; }
+  .card{
+    grid-column:span 1; border:1px solid var(--line); border-radius:13px; background:var(--panel);
+    padding:26px 24px 28px; position:relative; overflow:hidden; transition:border-color .2s, transform .2s, background .2s;
+  }
+  .card::after{ content:""; position:absolute; left:0; top:0; height:2px; width:0; background:var(--accent); transition:width .3s ease; }
+  .card:hover{ border-color:var(--line-2); transform:translateY(-3px); background:var(--panel-2); }
+  .card:hover::after{ width:100%; }
+  .card .idx{ font-family:var(--mono); font-size:12px; color:var(--accent); letter-spacing:.1em; }
+  .card h3{ font-size:19px; margin:16px 0 10px; letter-spacing:-0.01em; }
+  .card p{ margin:0; color:var(--sub); font-size:14.5px; line-height:1.55; }
+  .card.wide{ grid-column:span 2; }
+  .card .tags{ display:flex; flex-wrap:wrap; gap:7px; margin-top:16px; }
+  .tag{ font-family:var(--mono); font-size:11px; letter-spacing:.05em; color:var(--ink-2); padding:4px 9px; border:1px solid var(--line); border-radius:6px; }
+
+  /* hardware chips */
+  .hw{ margin-top:30px; }
+  .chips{ display:flex; flex-wrap:wrap; gap:9px; margin-top:18px; }
+  .chip{ font-family:var(--mono); font-size:12.5px; color:var(--ink-2); padding:8px 13px; border:1px solid var(--line); border-radius:8px; background:var(--panel); transition:.16s; }
+  .chip:hover{ border-color:var(--accent); color:#fff; }
+  .chip .ok{ color:var(--accent); margin-right:7px; }
+
+  /* ---------- gallery ---------- */
+  .gallery{ display:grid; grid-template-columns:1fr 1fr; gap:22px; margin-top:14px; }
+  .gallery .shot.span{ grid-column:1 / -1; }
+  .cap{ font-family:var(--mono); font-size:12px; color:var(--sub); letter-spacing:.04em; margin-top:13px; }
+  .cap b{ color:var(--ink-2); font-weight:400; }
+
+  /* ---------- install ---------- */
+  .install-grid{ display:grid; grid-template-columns:1.1fr .9fr; gap:48px; align-items:start; }
+  .steps{ list-style:none; counter-reset:s; margin:0; padding:0; display:flex; flex-direction:column; gap:2px; }
+  .steps li{ counter-increment:s; display:grid; grid-template-columns:auto 1fr; gap:20px; padding:22px 0; border-top:1px solid var(--line); }
+  .steps li:first-child{ border-top:none; }
+  .steps .num{ font-family:var(--mono); font-size:14px; color:var(--accent); padding-top:2px; }
+  .steps .num::before{ content:counter(s,decimal-leading-zero); }
+  .steps h4{ margin:0 0 5px; font-size:17px; font-weight:600; }
+  .steps p{ margin:0; color:var(--sub); font-size:14.5px; }
+  code.path{ font-family:var(--mono); font-size:13px; color:var(--accent); background:#101319; border:1px solid var(--line); border-radius:6px; padding:2px 7px; }
+
+  .admon{ border:1px solid var(--line); border-left-width:3px; border-radius:10px; padding:18px 20px; background:var(--panel); margin-bottom:14px; }
+  .admon .lbl{ font-family:var(--mono); font-size:11px; letter-spacing:.2em; text-transform:uppercase; display:flex; align-items:center; gap:9px; margin-bottom:8px; }
+  .admon p{ margin:0; font-size:14px; color:var(--ink-2); }
+  .admon.warn{ border-left-color:var(--amber); }
+  .admon.warn .lbl{ color:var(--amber); }
+  .admon.danger{ border-left-color:var(--red); }
+  .admon.danger .lbl{ color:var(--red); }
+  .admon .dev{ color:var(--sub); }
+  .admon a{ color:var(--accent); border-bottom:1px solid rgba(184,255,46,.35); }
+
+  /* ---------- atsr ---------- */
+  .atsr{ border:1px solid var(--line); border-radius:14px; background:linear-gradient(120deg,var(--panel),var(--bg-2)); padding:34px; display:grid; grid-template-columns:auto 1fr auto; gap:30px; align-items:center; }
+  .atsr img{ width:210px; }
+  .atsr h3{ font-size:21px; margin-bottom:8px; }
+  .atsr p{ margin:0; color:var(--sub); font-size:15px; max-width:54ch; }
+
+  /* ---------- data (props/actions) ---------- */
+  .data-grid{ display:grid; grid-template-columns:repeat(3,1fr); gap:16px; margin-top:14px; }
+  .stat{ border:1px solid var(--line); border-radius:13px; padding:30px 26px; background:var(--panel); }
+  .stat .big{ font-size:44px; font-weight:700; letter-spacing:-0.02em; }
+  .stat .big .u{ color:var(--accent); }
+  .stat .lab{ font-family:var(--mono); font-size:12px; letter-spacing:.16em; text-transform:uppercase; color:var(--sub); margin-top:6px; }
+  .stat p{ margin:14px 0 0; color:var(--sub); font-size:14px; }
+  .codechips{ display:flex; flex-wrap:wrap; gap:8px; margin-top:16px; }
+  .codechips span{ font-family:var(--mono); font-size:12px; color:var(--ink-2); padding:5px 9px; border:1px solid var(--line); border-radius:6px; }
+
+  /* ---------- sponsor ---------- */
+  .sponsor-head{ text-align:center; max-width:720px; margin:0 auto 44px; }
+  .sponsor-head .eyebrow{ justify-content:center; }
+  .sponsor-head .lede{ margin:18px auto 0; }
+  .sponsor-grid{ display:grid; grid-template-columns:1fr 1fr; gap:18px; max-width:860px; margin:0 auto; }
+  .spon{ display:flex; flex-direction:column; border:1px solid var(--line); border-radius:14px; background:var(--panel); padding:30px 30px 28px; transition:border-color .2s, transform .2s, background .2s; }
+  .spon:hover{ border-color:var(--line-2); transform:translateY(-3px); background:var(--panel-2); }
+  .spon .top{ display:flex; align-items:center; gap:13px; margin-bottom:16px; }
+  .spon .ic{ width:42px; height:42px; flex:none; border-radius:10px; display:grid; place-items:center; border:1px solid var(--line-2); }
+  .spon .ic svg{ width:22px; height:22px; display:block; }
+  .spon.gh .ic{ background:#11151b; color:#fff; }
+  .spon.kofi .ic{ background:#11151b; color:#ff5e5b; }
+  .spon h3{ font-size:19px; }
+  .spon .sub{ font-family:var(--mono); font-size:11px; letter-spacing:.16em; text-transform:uppercase; color:var(--faint); margin-top:3px; }
+  .spon p{ margin:0 0 22px; color:var(--sub); font-size:14.5px; line-height:1.55; flex:1; }
+  .spon .btn{ align-self:flex-start; }
+  .sponsor-foot{ text-align:center; font-size:13.5px; color:var(--faint); margin:34px auto 0; max-width:60ch; }
+  .sponsor-foot .heart{ color:var(--accent); }
+
+  /* ---------- footer ---------- */
+  footer{ border-top:1px solid var(--line); padding:70px 0 46px; background:var(--bg-2); }
+  .foot-top{ display:grid; grid-template-columns:1.4fr 1fr 1fr 1fr; gap:40px; }
+  .foot-brand .brand{ margin-bottom:16px; }
+  .foot-brand p{ color:var(--sub); font-size:13.5px; max-width:34ch; margin:0; }
+  .fcol h5{ font-family:var(--mono); font-size:11px; letter-spacing:.2em; text-transform:uppercase; color:var(--faint); margin:0 0 16px; font-weight:400; }
+  .fcol a{ display:block; color:var(--ink-2); font-size:14px; padding:5px 0; transition:color .15s; }
+  .fcol a:hover{ color:var(--accent); }
+  .disclaimer{ margin-top:54px; padding-top:26px; border-top:1px solid var(--line); display:flex; justify-content:space-between; gap:30px; flex-wrap:wrap; }
+  .disclaimer p{ margin:0; color:var(--faint); font-size:12.5px; max-width:74ch; line-height:1.6; }
+  .disclaimer .meta{ font-family:var(--mono); font-size:12px; color:var(--faint); white-space:nowrap; }
+
+  /* reveal */
+  .reveal{ opacity:0; transform:translateY(14px); transition:opacity .7s cubic-bezier(.2,.7,.2,1), transform .7s cubic-bezier(.2,.7,.2,1); }
+  .reveal.in{ opacity:1; transform:none; }
+
+  /* ---------- responsive ---------- */
+  @media (max-width:980px){
+    .why-grid,.install-grid{ grid-template-columns:1fr; gap:34px; }
+    .feat-grid{ grid-template-columns:repeat(2,1fr); }
+    .data-grid{ grid-template-columns:1fr; }
+    .gallery{ grid-template-columns:1fr; }
+    .atsr{ grid-template-columns:1fr; text-align:center; justify-items:center; }
+    .sponsor-grid{ grid-template-columns:1fr; }
+    .foot-top{ grid-template-columns:1fr 1fr; gap:32px; }
+    .hero-watermark{ display:none; }
+  }
+  @media (max-width:680px){
+    .nav-links{ display:none; }
+    .nav-cta .btn.sm:not(.spon-btn):not(.primary){ display:none; }
+    .feat-grid{ grid-template-columns:1fr; }
+    .card.wide{ grid-column:span 1; }
+    .band{ padding:70px 0; }
+    .hero .lockup{ gap:16px; }
+    .hero .lockup .mark{ width:74px; height:74px; }
+    .foot-top{ grid-template-columns:1fr; }
+    .disclaimer{ flex-direction:column; }
+    .rpmbar i{ width:10px; }
+  }
+  @media (prefers-reduced-motion:reduce){
+    .reveal{ opacity:1; transform:none; transition:none; }
+    html{ scroll-behavior:auto; }
+  }
+</style>
+</head>
+<body>
+
+<!-- ===== reusable wheel mark ===== -->
+<svg width="0" height="0" style="position:absolute" aria-hidden="true">
+  <symbol id="azom-wheel" viewBox="-4 -4 248 248">
+    <mask id="awm" maskUnits="userSpaceOnUse" x="-4" y="-4" width="248" height="248">
+      <rect x="-4" y="-4" width="248" height="248" fill="black"/>
+      <path fill="white" d="M120 59.796 C138.96 59.796 162.619 61.39 176.88 63.24 C185.6 64.371 192.128 65.002 197.77 67.42 C202.233 69.332 205.348 71.131 208.68 75.08 C213.705 81.036 219.158 93.188 221.68 102.47 C224.041 111.16 224.598 120.366 224 128.94 C223.422 137.219 221.451 145.183 218.43 153.08 C215.197 161.531 209.84 173.848 204.73 177.92 C201.674 180.354 197.823 180.838 194.98 180.71 C192.71 180.608 190.703 179.682 188.95 178.38 C187.008 176.938 184.96 174.482 184.07 172.12 C183.182 169.761 182.957 167.317 183.61 164.22 C184.683 159.129 191.556 150.924 193.36 145.19 C194.708 140.903 196.706 135.328 194.98 133.35 C193.245 131.362 186.24 132.564 182.91 133.35 C180.326 133.96 178.176 134.53 176.41 136.6 C173.65 139.836 173.746 149.614 171.07 153.54 C169.14 156.372 167.635 158.023 163.88 159.35 C155.7 162.242 134.627 159.35 120 159.35 C105.373 159.35 84.3 162.242 76.12 159.35 C72.365 158.023 70.86 156.372 68.93 153.54 C66.254 149.614 66.35 139.836 63.59 136.6 C61.824 134.53 59.674 133.96 57.09 133.35 C53.76 132.564 46.755 131.362 45.02 133.35 C43.294 135.328 45.292 140.903 46.64 145.19 C48.444 150.924 55.317 159.129 56.39 164.22 C57.043 167.317 56.818 169.761 55.93 172.12 C55.04 174.482 52.992 176.938 51.05 178.38 C49.297 179.682 47.29 180.608 45.02 180.71 C42.177 180.838 38.326 180.354 35.27 177.92 C30.16 173.848 24.803 161.531 21.57 153.08 C18.549 145.183 16.578 137.219 16 128.94 C15.402 120.366 15.959 111.16 18.32 102.47 C20.842 93.188 26.295 81.036 31.32 75.08 C34.652 71.131 37.767 69.332 42.23 67.42 C47.872 65.002 54.4 64.371 63.12 63.24 C77.381 61.39 101.04 59.796 120 59.796 Z"/>
+      <g fill="black">
+        <path d="M181.52 90.63 C183.754 90.597 186.679 90.747 188.48 92.03 C190.368 93.376 191.199 96.014 192.43 98.76 C194.143 102.582 196.537 109.76 197.07 113.15 C197.35 114.932 197.609 116.149 197.07 117.33 C196.504 118.57 195.366 119.687 193.59 120.35 C190.16 121.631 179.84 121.631 176.41 120.35 C174.634 119.687 173.725 119.072 172.93 117.33 C171.2 113.539 171.607 99.554 172.93 95.51 C173.518 93.712 174.253 92.839 175.48 92.03 C176.951 91.06 179.432 90.661 181.52 90.63 Z"/>
+        <path d="M64.52 92.03 C65.747 92.839 66.482 93.712 67.07 95.51 C68.393 99.554 68.8 113.539 67.07 117.33 C66.275 119.072 65.366 119.687 63.59 120.35 C60.16 121.631 49.84 121.631 46.41 120.35 C44.634 119.687 43.496 118.57 42.93 117.33 C42.391 116.149 42.65 114.932 42.93 113.15 C43.463 109.76 45.857 102.582 47.57 98.76 C48.801 96.014 49.632 93.376 51.52 92.03 C53.321 90.747 56.246 90.597 58.48 90.63 C60.568 90.661 63.049 91.06 64.52 92.03 Z"/>
+        <rect x="74" y="72" width="92" height="49" rx="5"/>
+      </g>
+    </mask>
+    <rect x="-4" y="-4" width="248" height="248" fill="currentColor" mask="url(#awm)"/>
+  </symbol>
+</svg>
+
+<!-- ===== nav ===== -->
+<header class="nav" id="nav">
+  <div class="wrap nav-in">
+    <a class="brand" href="#top">
+      <svg class="mark"><use href="#azom-wheel"/></svg>
+      <b>AZOM</b>
+    </a>
+    <nav class="nav-links">
+      <a class="lk" href="#why">Why</a>
+      <a class="lk" href="#features">Features</a>
+      <a class="lk" href="#screens">Screens</a>
+      <a class="lk" href="#install">Install</a>
+      <a class="lk" href="#data">Data</a>
+    </nav>
+    <div class="nav-cta">
+      <a class="btn sm spon-btn" href="#sponsor"><span class="hrt">♥</span> Sponsor</a>
+      <a class="btn sm" href="https://github.com/giantorth/moza-simhub-plugin" target="_blank" rel="noopener">GitHub</a>
+      <a class="btn sm primary" href="https://github.com/giantorth/moza-simhub-plugin/releases/latest" target="_blank" rel="noopener">Download</a>
+    </div>
+  </div>
+</header>
+
+<!-- ===== hero ===== -->
+<section class="hero" id="top">
+  <div class="grid-bg"></div>
+  <div class="hero-glow"></div>
+  <svg class="hero-watermark"><use href="#azom-wheel"/></svg>
+  <div class="wrap hero-in">
+    <div class="lockup reveal">
+      <svg class="mark"><use href="#azom-wheel"/></svg>
+      <h1>AZOM</h1>
+    </div>
+    <div class="tagrule reveal"><span class="ln"></span><span>The MOZA Bridge for SimHub</span><span class="ln"></span></div>
+    <div class="sub2 reveal">Reverse-Engineered · Race-Ready</div>
+
+    <p class="pitch reveal">Complete replacement software for your <b>MOZA</b> sim racing hardware — LED effects, LCD dashboard telemetry, and full device configuration, driven entirely through <b>SimHub</b>.</p>
+
+    <div class="ctas reveal">
+      <a class="btn primary" href="https://github.com/giantorth/moza-simhub-plugin/releases/latest" target="_blank" rel="noopener">Download latest release <span class="arw">↗</span></a>
+      <a class="btn" href="https://github.com/giantorth/moza-simhub-plugin" target="_blank" rel="noopener">View source</a>
+      <a class="btn" href="https://discord.gg/J4enw43e62" target="_blank" rel="noopener">Join Discord</a>
+    </div>
+
+    <div class="badges reveal">
+      <a href="https://github.com/giantorth/moza-simhub-plugin/releases/latest" target="_blank" rel="noopener"><img src="https://img.shields.io/github/v/release/giantorth/moza-simhub-plugin?style=flat-square&labelColor=0e1116&color=b8ff2e&label=release" alt="Latest release" loading="lazy" /></a>
+      <a href="https://github.com/giantorth/moza-simhub-plugin/releases" target="_blank" rel="noopener"><img src="https://img.shields.io/github/downloads/giantorth/moza-simhub-plugin/total?style=flat-square&labelColor=0e1116&color=eef1f6&label=downloads" alt="Total downloads" loading="lazy" /></a>
+      <a href="https://github.com/giantorth/moza-simhub-plugin/stargazers" target="_blank" rel="noopener"><img src="https://img.shields.io/github/stars/giantorth/moza-simhub-plugin?style=flat-square&labelColor=0e1116&color=eef1f6&label=stars" alt="GitHub stars" loading="lazy" /></a>
+      <a href="https://github.com/giantorth/moza-simhub-plugin/commits/main" target="_blank" rel="noopener"><img src="https://img.shields.io/github/last-commit/giantorth/moza-simhub-plugin?style=flat-square&labelColor=0e1116&color=eef1f6&label=last%20commit" alt="Last commit" loading="lazy" /></a>
+      <a href="https://github.com/giantorth/moza-simhub-plugin/blob/main/LICENSE" target="_blank" rel="noopener"><img src="https://img.shields.io/github/license/giantorth/moza-simhub-plugin?style=flat-square&labelColor=0e1116&color=eef1f6" alt="License" loading="lazy" /></a>
+    </div>
+
+    <div class="rpm reveal">
+      <div class="rpmbar" id="rpmbar" aria-hidden="true"></div>
+      <div class="cap">Runs on Windows &amp; Linux · Requires SimHub 9.11.8+</div>
+    </div>
+
+    <div class="pills reveal">
+      <span class="pill"><span class="k">◢</span> GPL-3.0 licensed</span>
+      <span class="pill"><span class="k">◢</span> 10 languages</span>
+      <span class="pill"><span class="k">◢</span> Linux &amp; Windows</span>
+      <span class="pill"><span class="k">◢</span> Full SimHub support</span>
+    </div>
+  </div>
+</section>
+
+<!-- ===== why ===== -->
+<section class="band alt" id="why">
+  <div class="wrap why-grid">
+    <div class="reveal">
+      <p class="eyebrow">Why it exists</p>
+      <h2 class="h2">MOZA hardware, finally fluent in SimHub.</h2>
+      <p class="lede" style="margin-top:18px">MOZA makes excellent sim racing hardware — but Pithouse, their companion software, is Windows-only. Linux users had no official way to manage LED effects or stream telemetry to their wheel's dashboard.</p>
+      <ul class="why-points">
+        <li>SimHub runs on Linux via Proton/Wine — this plugin opens MOZA hardware to its entire ecosystem.</li>
+        <li>Map any of the thousands of SimHub data points to your wheel's LCD dashboard.</li>
+        <li>Drive your LEDs through SimHub's full effects pipeline — superb paired with ATSR-EVO.</li>
+        <li>Cross-platform hardware control with first-class, built-in telemetry.</li>
+      </ul>
+      <p class="credit">Built on the work of <a href="https://github.com/Lawstorant/boxflat" target="_blank" rel="noopener">Boxflat</a>, the Linux MOZA control project.</p>
+    </div>
+    <div class="reveal">
+      <div class="shot">
+        <div class="bar"><i></i><i></i><i></i><span class="ttl">SimHub › Plugins › MOZA Control</span></div>
+        <img src="docs/Screenshot.png" alt="The MOZA Control plugin panel inside SimHub, showing steering angle, temperatures, FFB settings and equalizer" loading="lazy" />
+      </div>
+      <p class="cap"><b>The plugin panel</b> — wheelbase, FFB, EQ and output curves, mirroring Pithouse.</p>
+    </div>
+  </div>
+</section>
+
+<!-- ===== features ===== -->
+<section class="band" id="features">
+  <div class="wrap">
+    <div class="sec-head reveal">
+      <p class="eyebrow">Capabilities</p>
+      <h2 class="h2">Everything Pithouse does — and everything SimHub adds.</h2>
+    </div>
+    <div class="feat-grid">
+      <div class="card reveal">
+        <div class="idx">01</div>
+        <h3>SimHub Device Integration</h3>
+        <p>Wheels &amp; dashboards register as native SimHub devices. Drive LEDs through the full Button &amp; Telemetry effects pipeline — RPM, flags, limiter animations, scripted effects. Per-model definitions deploy automatically.</p>
+      </div>
+      <div class="card reveal">
+        <div class="idx">02</div>
+        <h3>LCD Dashboard Telemetry</h3>
+        <p>Stream speed, RPM, gear, lap times, fuel and tyre wear to your wheel's LCD via MOZA's binary telemetry protocol. Auto-detect layouts, hot-reload, per-channel mapping, UTF-8 text fields.</p>
+      </div>
+      <div class="card reveal">
+        <div class="idx">03</div>
+        <h3>Hardware Configuration</h3>
+        <p>Read/write control of wheelbase, wheel, handbrake, pedals and hub — rotation, FFB strength, damping, EQ, output curves. Tabs auto-show based on what's connected.</p>
+      </div>
+      <div class="card reveal">
+        <div class="idx">04</div>
+        <h3>Per-Game Profiles</h3>
+        <p>Every setting is stored per game through SimHub's profile system and switches automatically the moment you launch a different title.</p>
+      </div>
+      <div class="card reveal">
+        <div class="idx">05</div>
+        <h3>AB9 Active Shifter</h3>
+        <p>Full configuration: 5+R / 6+R / 7+R / sequential patterns, resistance, spring, damping and friction feel sliders, plus engine and gear-shift vibration.</p>
+      </div>
+      <div class="card reveal">
+        <div class="idx">06</div>
+        <h3>mBooster Pedal Haptics</h3>
+        <p>Host-rendered pedal effects from live telemetry — ABS pulse, tyre lockup, brake-threshold feedback and RPM-driven continuous vibration, per assigned pedal.</p>
+      </div>
+      <div class="card reveal">
+        <div class="idx">07</div>
+        <h3>Wheelbase Ambient LEDs</h3>
+        <p>R21 / R25 bases expose their 18-LED ambient ring as a dedicated SimHub device — standby animations, sleep mode, brightness and startup colors.</p>
+      </div>
+      <div class="card reveal">
+        <div class="idx">08</div>
+        <h3>Automatic Dashboard Switching</h3>
+        <p>Have your dashboard automatically load with the game. Even supports per-car profiles for even greater customization.</p>
+      </div>
+    </div>
+
+    <div class="hw reveal">
+      <p class="eyebrow" style="margin-top:54px">Tested hardware</p>
+      <div class="chips">
+        <span class="chip"><span class="ok">✓</span>ES-series wheels</span>
+        <span class="chip"><span class="ok">✓</span>Vision GS</span>
+        <span class="chip"><span class="ok">✓</span>GS V2P</span>
+        <span class="chip"><span class="ok">✓</span>TSW</span>
+        <span class="chip"><span class="ok">✓</span>KS Pro</span>
+        <span class="chip"><span class="ok">✓</span>CS Pro</span>
+        <span class="chip"><span class="ok">✓</span>FSR V2</span>
+        <span class="chip"><span class="ok">✓</span>R3 thru R25 bases</span>
+        <span class="chip"><span class="ok">✓</span>Universal Hub</span>
+        <span class="chip"><span class="ok">✓</span>AB9 active shifter</span>
+        <span class="chip"><span class="ok">✓</span>mBooster pedals</span>
+        <span class="chip"><span class="ok">✓</span>Handbrake</span>
+        <span class="chip"><span class="ok">✓</span>CM1 / CM2 Racing Dash</span>
+      </div>
+      <p class="credit">Also includes 360 Hz + LFE control SDK support (iRacing), gearshift bump-through-the-wheel, live wheel hotswap, and serial recovery after sleep/resume.</p>
+    </div>
+  </div>
+</section>
+
+<!-- ===== screens ===== -->
+<section class="band alt" id="screens">
+  <div class="wrap">
+    <div class="sec-head reveal">
+      <p class="eyebrow">A closer look</p>
+      <h2 class="h2">Real panels. Real hardware. Real telemetry.</h2>
+    </div>
+    <div class="gallery">
+      <div class="reveal">
+        <div class="shot">
+          <div class="bar"><i></i><i></i><i></i><span class="ttl">Devices › MOZA wheel</span></div>
+          <img src="docs/Device.png" alt="MOZA wheel registered as a native SimHub device" loading="lazy" />
+        </div>
+        <p class="cap"><b>Native device</b> — your wheel shows up in SimHub's Devices section, ready for effects.</p>
+      </div>
+      <div class="reveal">
+        <div class="shot">
+          <div class="bar"><i></i><i></i><i></i><span class="ttl">Effects › Choose effect</span></div>
+          <img src="docs/Effects.png" alt="SimHub effect picker listing RPM, flags, speed limiter and status LED effects" loading="lazy" />
+        </div>
+        <p class="cap"><b>Full effects library</b> — RPMs, flags, limiter animations and status LEDs target the hardware.</p>
+      </div>
+      <div class="reveal">
+        <div class="shot">
+          <div class="bar"><i></i><i></i><i></i><span class="ttl">Wheel › Knobs &amp; idle</span></div>
+          <img src="docs/Knobs.png" alt="Per-wheel knob, idle and sleep effect configuration tabs" loading="lazy" />
+        </div>
+        <p class="cap"><b>Onboard idle effects</b> — RPM / Buttons / Knobs / Sleep animations that play on the wheel itself.</p>
+      </div>
+      <div class="reveal">
+        <div class="shot">
+          <div class="bar"><i></i><i></i><i></i><span class="ttl">Dashboard › Channels</span></div>
+          <img src="docs/DashChannels.png" alt="Dashboard channel mapping between SimHub properties and wheel display channels" loading="lazy" />
+        </div>
+        <p class="cap"><b>Channel mapping</b> — bind any SimHub property to each LCD dashboard channel.</p>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- ===== install ===== -->
+<section class="band" id="install">
+  <div class="wrap install-grid">
+    <div class="reveal">
+      <p class="eyebrow">Get started</p>
+      <h2 class="h2">Installed in four steps.</h2>
+      <ol class="steps">
+        <li><span class="num"></span><div><h4>Download the release</h4><p>Grab the latest <code class="path">MozaPlugin_&lt;version&gt;.zip</code> from the Releases page.</p></div></li>
+        <li><span class="num"></span><div><h4>Drop in the DLL</h4><p>Extract <code class="path">MozaPlugin.dll</code> into your SimHub directory — defaults to <code class="path">C:\Program Files (x86)\SimHub\</code>.</p></div></li>
+        <li><span class="num"></span><div><h4>Restart SimHub</h4><p>The plugin appears under <b>Settings › Plugins</b> as “MOZA Control”.</p></div></li>
+        <li><span class="num"></span><div><h4>Connect &amp; detect</h4><p>Plug in your hardware and restart once more. Devices are auto-detected, definitions deployed — then add them under Devices. Requires SimHub&nbsp;9.11.8+.</p></div></li>
+      </ol>
+    </div>
+    <div class="reveal">
+      <div class="admon warn">
+        <div class="lbl"><span class="leds"><i class="a"></i></span> Close Pithouse first</div>
+        <p>Both apps talk to MOZA hardware over the same serial port and can't run together. Pithouse must be fully closed — not just minimized — before SimHub can connect.</p>
+      </div>
+      <div class="admon danger">
+        <div class="lbl"><span class="leds"><i class="r"></i></span> Use at your own risk</div>
+        <p>This software drives force-feedback hardware capable of high torque. It's provided “as is”, without warranty. You accept full responsibility for any damage or injury arising from its use.</p>
+      </div>
+      <div class="admon">
+        <div class="lbl" style="color:var(--sub)"><span class="leds"><i class="g"></i></span> Development builds</div>
+        <p class="dev">The latest in-progress build is published as a pre-release: <a href="https://github.com/giantorth/moza-simhub-plugin/releases/download/dev-latest/MozaPlugin_dev.zip" target="_blank" rel="noopener">MozaPlugin_dev.zip</a>. Expect bugs — use the stable release if you need reliability.</p>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- ===== ATSR callout ===== -->
+<section class="band alt">
+  <div class="wrap">
+    <div class="atsr reveal">
+      <a href="https://github.com/ATSR-Alex/ATSR-Hub-EVO/" target="_blank" rel="noopener"><img src="docs/atsr-logomark-mono-white-lrg.webp" alt="ATSR-EVO" loading="lazy" /></a>
+      <div>
+        <p class="eyebrow">Better together</p>
+        <h3>Supercharge your LEDs with ATSR-EVO</h3>
+        <p>ATSR-Hub EVO's custom LED framework unlocks advanced telemetry- and input-driven effects and animations. Drive your wheel LEDs in incredibly sophisticated ways.</p>
+      </div>
+      <a class="btn" href="https://github.com/ATSR-Alex/ATSR-Hub-EVO/" target="_blank" rel="noopener">ATSR-EVO <span class="arw">↗</span></a>
+    </div>
+  </div>
+</section>
+
+<!-- ===== data ===== -->
+<section class="band" id="data">
+  <div class="wrap">
+    <div class="sec-head reveal">
+      <p class="eyebrow">For dashboard authors</p>
+      <h2 class="h2">Telemetry out. Controls in.</h2>
+      <p class="lede" style="margin-top:18px">The plugin exposes live MOZA properties for your SimHub dashboards and overlays, plus a deep set of bindable actions you can map to wheel buttons.</p>
+    </div>
+    <div class="data-grid">
+      <div class="stat reveal">
+        <div class="big">17<span class="u">+</span></div>
+        <div class="lab">SimHub properties</div>
+        <p>Base connection, MCU / MOSFET / motor temps, FFB strength, live steering angle &amp; position, pedal and paddle inputs — updating even with no game running.</p>
+        <div class="codechips">
+          <span>Moza.SteeringAngle</span>
+          <span>Moza.MotorTemp</span>
+          <span>Moza.Throttle</span>
+        </div>
+      </div>
+      <div class="stat reveal">
+        <div class="big">40<span class="u">+</span></div>
+        <div class="lab">Bindable actions</div>
+        <p>FFB strength, torque limit, rotation, display brightness, dashboard switching, work mode, AB9 vibration — each with fine and coarse steps, bindable to any button.</p>
+        <div class="codechips">
+          <span>Moza.FfbStrengthUp</span>
+          <span>Moza.DashboardNext</span>
+          <span>Moza.ClearLeds</span>
+        </div>
+      </div>
+      <div class="stat reveal">
+        <div class="big">10</div>
+        <div class="lab">Languages</div>
+        <p>EN · DE · EL · ES · FR · IT · NB · RU · VI · ZH. Follows SimHub's culture setting, with a manual override — all embedded in the DLL, no extra files.</p>
+        <div class="codechips">
+          <span>auto-detect</span>
+          <span>per-pane override</span>
+        </div>
+      </div>
+    </div>
+    <p class="credit reveal" style="margin-top:26px">Full property and action reference lives in the <a href="https://github.com/giantorth/moza-simhub-plugin#simhub-properties" target="_blank" rel="noopener">README</a>.</p>
+  </div>
+</section>
+
+<!-- ===== sponsor ===== -->
+<section class="band alt" id="sponsor">
+  <div class="wrap">
+    <div class="sponsor-head reveal">
+      <p class="eyebrow">Support the project</p>
+      <h2 class="h2">Keep the reverse-engineering going.</h2>
+      <p class="lede">AZOM is free, open-source, and built in spare time — decoding MOZA's serial protocol byte by byte, testing across a wall of hardware. If it earned a place in your rig, a little support keeps new devices, fixes and features coming.</p>
+    </div>
+
+    <div class="sponsor-grid">
+      <div class="spon gh reveal">
+        <div class="top">
+          <span class="ic">
+            <svg viewBox="0 0 16 16" fill="currentColor" aria-hidden="true"><path d="M8 0C3.58 0 0 3.58 0 8c0 3.54 2.29 6.53 5.47 7.59.4.07.55-.17.55-.38 0-.19-.01-.82-.01-1.49-2.01.37-2.53-.49-2.69-.94-.09-.23-.48-.94-.82-1.13-.28-.15-.68-.52-.01-.53.63-.01 1.08.58 1.23.82.72 1.21 1.87.87 2.33.66.07-.52.28-.87.51-1.07-1.78-.2-3.64-.89-3.64-3.95 0-.87.31-1.59.82-2.15-.08-.2-.36-1.02.08-2.12 0 0 .67-.21 2.2.82.64-.18 1.32-.27 2-.27.68 0 1.36.09 2 .27 1.53-1.04 2.2-.82 2.2-.82.44 1.1.16 1.92.08 2.12.51.56.82 1.27.82 2.15 0 3.07-1.87 3.75-3.65 3.95.29.25.54.73.54 1.48 0 1.07-.01 1.93-.01 2.2 0 .21.15.46.55.38A8.01 8.01 0 0 0 16 8c0-4.42-3.58-8-8-8z"/></svg>
+          </span>
+          <div>
+            <h3>GitHub Sponsors</h3>
+            <div class="sub">Monthly or one-time</div>
+          </div>
+        </div>
+        <p>Sponsor directly on GitHub — recurring or one-off. Zero platform fees, and your support sits right alongside the code it funds.</p>
+        <a class="btn primary" href="https://github.com/sponsors/giantorth" target="_blank" rel="noopener">Become a sponsor <span class="arw">↗</span></a>
+      </div>
+
+      <div class="spon kofi reveal">
+        <div class="top">
+          <span class="ic">
+            <svg viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M23.88 8.94c-.46-2.42-2.2-3.6-4.86-3.6H2.78c-.42 0-.78.34-.78.76 0 0-.02 6.2.02 9.96.03 2.7 2.22 4.9 4.92 4.92 2.4.02 6.2.02 6.2.02 2.7 0 5-1.94 5.5-4.5 2.9-.16 5.06-2.06 4.24-7.56-.34 0 0 0 0 0zM7.7 14.66c-1.42-1.1-3.06-2.4-3.06-4.18 0-1.02.84-1.78 1.84-1.78.7 0 1.18.38 1.5.78.32-.4.8-.78 1.5-.78 1 0 1.84.76 1.84 1.78 0 1.78-1.64 3.08-3.06 4.18-.18.14-.42.14-.6 0zm10.74.62c-.42 0-.76-.04-.76-.04V9.32h.9c1.32 0 1.96.66 1.96 2.04 0 1.5-.78 3.92-2.1 3.92z"/></svg>
+          </span>
+          <div>
+            <h3>Ko-fi</h3>
+            <div class="sub">Buy a coffee</div>
+          </div>
+        </div>
+        <p>Prefer a quick one-time tip? Drop a coffee on Ko-fi — no account needed, and every bit goes toward more hardware to test against.</p>
+        <a class="btn" href="https://ko-fi.com/giantorth" target="_blank" rel="noopener">Tip on Ko-fi <span class="arw">↗</span></a>
+      </div>
+    </div>
+
+    <p class="sponsor-foot reveal">Not able to chip in? Starring the repo, filing good bug reports, and sharing your hardware results help just as much. <span class="heart">★</span></p>
+  </div>
+</section>
+
+<!-- ===== footer ===== -->
+<footer>
+  <div class="wrap">
+    <div class="foot-top">
+      <div class="foot-brand">
+        <a class="brand" href="#top">
+          <svg class="mark" style="width:36px;height:36px"><use href="#azom-wheel"/></svg>
+          <b style="font-size:19px">AZOM</b>
+        </a>
+        <p>An unofficial, open-source SimHub plugin for MOZA sim racing hardware.</p>
+      </div>
+      <div class="fcol">
+        <h5>Project</h5>
+        <a href="https://github.com/giantorth/moza-simhub-plugin" target="_blank" rel="noopener">GitHub repository</a>
+        <a href="https://github.com/giantorth/moza-simhub-plugin/releases/latest" target="_blank" rel="noopener">Latest release</a>
+        <a href="https://github.com/giantorth/moza-simhub-plugin/blob/main/docs/DEVELOPMENT.md" target="_blank" rel="noopener">Development docs</a>
+        <a href="https://github.com/giantorth/moza-simhub-plugin/blob/main/docs/protocol/README.md" target="_blank" rel="noopener">Protocol reference</a>
+      </div>
+      <div class="fcol">
+        <h5>Community</h5>
+        <a href="https://discord.gg/J4enw43e62" target="_blank" rel="noopener">Discord server</a>
+        <a href="https://www.youtube.com/watch?v=KwLeVaii0TY" target="_blank" rel="noopener">Video guide</a>
+        <a href="https://github.com/sponsors/giantorth" target="_blank" rel="noopener">Sponsor</a>
+        <a href="https://ko-fi.com/giantorth" target="_blank" rel="noopener">Ko-fi</a>
+      </div>
+      <div class="fcol">
+        <h5>Built with</h5>
+        <a href="https://github.com/Lawstorant/boxflat" target="_blank" rel="noopener">Boxflat</a>
+        <a href="https://www.simhub.com/" target="_blank" rel="noopener">SimHub</a>
+        <a href="https://github.com/ATSR-Alex/ATSR-Hub-EVO/" target="_blank" rel="noopener">ATSR-EVO</a>
+      </div>
+    </div>
+    <div class="disclaimer">
+      <p>MOZA is a registered trademark of Gudsen Technology Co., Ltd. This project is not affiliated with, endorsed by, or sponsored by MOZA or Gudsen Technology. All trademarks are the property of their respective owners. Software provided “as is”, without warranty of any kind.</p>
+      <div class="meta">GPL-3.0 · <span id="yr"></span></div>
+    </div>
+  </div>
+</footer>
+
+<script>
+(function(){
+  // nav shadow on scroll
+  var nav = document.getElementById('nav');
+  var onScroll = function(){ nav.classList.toggle('scrolled', window.scrollY > 8); };
+  onScroll(); window.addEventListener('scroll', onScroll, {passive:true});
+
+  // year
+  document.getElementById('yr').textContent = new Date().getFullYear();
+
+  // reveal on scroll — scroll/load based for reliability across environments
+  var reveals = Array.prototype.slice.call(document.querySelectorAll('.reveal'));
+  reveals.forEach(function(el,i){ el.style.transitionDelay = Math.min(i%6*55, 280) + 'ms'; });
+  function checkReveals(){
+    var vh = window.innerHeight || document.documentElement.clientHeight;
+    for(var i=reveals.length-1;i>=0;i--){
+      var el = reveals[i];
+      if(el.getBoundingClientRect().top < vh*0.92){ el.classList.add('in'); reveals.splice(i,1); }
+    }
+  }
+  checkReveals();
+  window.addEventListener('scroll', checkReveals, {passive:true});
+  window.addEventListener('resize', checkReveals);
+  window.addEventListener('load', checkReveals);
+  // safety net: never leave content hidden
+  setTimeout(function(){ document.querySelectorAll('.reveal:not(.in)').forEach(function(el){
+    if(el.getBoundingClientRect().top < (window.innerHeight||800)) el.classList.add('in'); }); }, 700);
+
+  // RPM shift-light strip
+  var bar = document.getElementById('rpmbar');
+  var N = 16, cells = [];
+  for(var i=0;i<N;i++){
+    var c = document.createElement('i');
+    c.className = i < 9 ? 'g' : (i < 13 ? 'a' : 'r');
+    bar.appendChild(c); cells.push(c);
+  }
+  var reduce = window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+  if(reduce){
+    cells.forEach(function(c,i){ if(i<11) c.classList.add('on'); });
+  } else {
+    var t = 0;
+    setInterval(function(){
+      t += 0.045;
+      // smooth rev oscillation 0..1 with a quick blip back to idle
+      var phase = (t % 1);
+      var rev = phase < 0.82 ? Math.pow(phase/0.82, 0.7) : (1 - (phase-0.82)/0.18);
+      var lit = Math.round(rev * N);
+      for(var i=0;i<N;i++){ cells[i].classList.toggle('on', i < lit); }
+    }, 60);
+  }
+})();
+</script>
+</body>
+</html>
