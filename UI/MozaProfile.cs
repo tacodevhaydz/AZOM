@@ -55,6 +55,9 @@ namespace MozaPlugin
         public int WheelClutchPoint { get; set; } = -1;
         public int WheelKnobMode { get; set; } = -1;
         public int WheelStickMode { get; set; } = -1;
+        // Per-knob signal modes (wheels reporting WheelKnobSignalModeSupported);
+        // up to 5 knobs, -1 per slot = no override. Overlay-only like WheelKnobMode.
+        public int[]? WheelKnobSignalModes { get; set; }
 
         // Colors (packed)
         public int[]? WheelRpmColors { get; set; }
@@ -93,6 +96,7 @@ namespace MozaPlugin
                 WheelClutchPoint = WheelClutchPoint,
                 WheelKnobMode = WheelKnobMode,
                 WheelStickMode = WheelStickMode,
+                WheelKnobSignalModes = WheelKnobSignalModes != null ? (int[])WheelKnobSignalModes.Clone() : null,
                 WheelRpmColors = WheelRpmColors != null ? (int[])WheelRpmColors.Clone() : null,
                 WheelRpmBlinkColors = WheelRpmBlinkColors != null ? (int[])WheelRpmBlinkColors.Clone() : null,
                 WheelButtonColors = WheelButtonColors != null ? (int[])WheelButtonColors.Clone() : null,
@@ -119,6 +123,23 @@ namespace MozaPlugin
     /// (matching the on-wire single-byte payload range). Stored per-profile so a
     /// user can save game-specific feel presets alongside wheelbase FFB tuning.
     /// </summary>
+    /// <summary>
+    /// One user assignment of a SimHub property to an FSR V1 dashboard field, with
+    /// the source input range mapped onto the field's full-scale output capability.
+    /// </summary>
+    public sealed class Fsr1FieldMapping
+    {
+        /// <summary>SimHub property path (empty = unmapped → field sends 0).</summary>
+        public string Property { get; set; } = "";
+        /// <summary>Source value mapped to the field's minimum (0).</summary>
+        public double InMin { get; set; } = 0;
+        /// <summary>Source value mapped to the field's full-scale output.</summary>
+        public double InMax { get; set; } = 1;
+
+        public Fsr1FieldMapping Clone() =>
+            new Fsr1FieldMapping { Property = Property, InMin = InMin, InMax = InMax };
+    }
+
     public sealed class Ab9Settings
     {
         public Ab9Mode Mode { get; set; } = Ab9Mode.SevenPlusR_L1;
@@ -225,6 +246,10 @@ namespace MozaPlugin
         // GearshiftDebounceMs) — this one controls the wheelbase's own rumble.
         public int GearshiftVibration { get; set; } = -1;
 
+        // Performance output (cmd 0x1E base): 0 = Reserved, 1 = Full. Per-profile
+        // so each game keeps its own bandwidth-mode preference.
+        public int TempStrategy { get; set; } = -1;
+
         // ===== Wheel LED settings =====
         public int WheelTelemetryMode { get; set; } = -1;
         public int WheelKnobLedMode { get; set; } = -1;
@@ -250,6 +275,10 @@ namespace MozaPlugin
         public int DashFlagsBrightness { get; set; } = -1;
         public int DashDisplayBrightness { get; set; } = -1;
         public int DashDisplayStandbyMin { get; set; } = -1;
+        // Indicator/display modes (raw device-stored values, sentinel = leave alone).
+        public int DashRpmIndicatorMode { get; set; } = -1;
+        public int DashRpmDisplayMode { get; set; } = -1;
+        public int DashFlagsIndicatorMode { get; set; } = -1;
 
         // ===== FFB Equalizer (6 bands) =====
         public int Equalizer1 { get; set; } = -1000;
@@ -276,9 +305,15 @@ namespace MozaPlugin
 
         // ===== Pedal settings =====
         public int PedalsThrottleDir { get; set; } = -1;
+        public int PedalsThrottleMin { get; set; } = -1;   // range start, 0-100
+        public int PedalsThrottleMax { get; set; } = -1;   // range end, 0-100
         public int PedalsBrakeDir { get; set; } = -1;
+        public int PedalsBrakeMin { get; set; } = -1;
+        public int PedalsBrakeMax { get; set; } = -1;
         public int PedalsBrakeAngleRatio { get; set; } = -1; // 0=angle sensor, 100=load cell
         public int PedalsClutchDir { get; set; } = -1;
+        public int PedalsClutchMin { get; set; } = -1;
+        public int PedalsClutchMax { get; set; } = -1;
         public int[]? PedalsThrottleCurve { get; set; }          // [5] values 0-100
         public int[]? PedalsBrakeCurve { get; set; }             // [5] values 0-100
         public int[]? PedalsClutchCurve { get; set; }            // [5] values 0-100
@@ -341,6 +376,26 @@ namespace MozaPlugin
         public Dictionary<Guid, Dictionary<string, Dictionary<string, string>>> TelemetryChannelMappings { get; set; }
             = new Dictionary<Guid, Dictionary<string, Dictionary<string, string>>>();
 
+        // ===== FSR V1 group-0x42 dashboard field mappings =====
+        // The FSR V1 display wheel renders fixed-schema records, not tier-def
+        // channels, so its per-field assignments need their own store (each value
+        // carries an input range for scaling — see Fsr1FieldMapping).
+        // Outer key  = wheel page DescriptorUniqueId GUID
+        // Middle key = record-type key (Fsr1DashboardCatalog.Key, e.g. "type-02")
+        // Inner key  = field id (Fsr1FieldDef.FieldId, e.g. "rpmBar")
+        // Absent entry = use the catalog default for that field.
+        public Dictionary<Guid, Dictionary<string, Dictionary<string, Fsr1FieldMapping>>> Fsr1DashboardMappings { get; set; }
+            = new Dictionary<Guid, Dictionary<string, Dictionary<string, Fsr1FieldMapping>>>();
+
+        // CM1 base-bridged dash (group-0x35) field mappings. Flat — the CM1 streams one
+        // keyed field set regardless of selected dashboard, so there is no per-dashboard
+        // record-key level:
+        //   Outer key = dash device GUID (MozaDeviceConstants.DashGuid)
+        //   Inner key = field id (Cm1FieldDef.FieldId, e.g. "f54d")
+        // Reuses Fsr1FieldMapping (only Property is used; InMin/InMax unused for CM1).
+        public Dictionary<Guid, Dictionary<string, Fsr1FieldMapping>> Cm1FieldMappings { get; set; }
+            = new Dictionary<Guid, Dictionary<string, Fsr1FieldMapping>>();
+
         // ===== Wheelbase ambient LED (per-profile) =====
         // Moved out of MozaPluginSettings 2026-05-14 so each game can pick its own
         // ambient palette. -1 sentinel = "leave the persisted base value alone".
@@ -377,6 +432,7 @@ namespace MozaPlugin
             GameInertia = p.GameInertia; GameSpring = p.GameSpring;
             WorkMode = p.WorkMode;
             GearshiftVibration = p.GearshiftVibration;
+            TempStrategy = p.TempStrategy;
 
             // Wheel LED
             WheelTelemetryMode = p.WheelTelemetryMode;
@@ -396,6 +452,8 @@ namespace MozaPlugin
             // Dashboard
             DashRpmBrightness = p.DashRpmBrightness; DashFlagsBrightness = p.DashFlagsBrightness;
             DashDisplayBrightness = p.DashDisplayBrightness; DashDisplayStandbyMin = p.DashDisplayStandbyMin;
+            DashRpmIndicatorMode = p.DashRpmIndicatorMode; DashRpmDisplayMode = p.DashRpmDisplayMode;
+            DashFlagsIndicatorMode = p.DashFlagsIndicatorMode;
 
             // FFB Equalizer
             Equalizer1 = p.Equalizer1; Equalizer2 = p.Equalizer2; Equalizer3 = p.Equalizer3;
@@ -413,6 +471,9 @@ namespace MozaPlugin
 
             // Pedals
             PedalsThrottleDir = p.PedalsThrottleDir; PedalsBrakeDir = p.PedalsBrakeDir; PedalsClutchDir = p.PedalsClutchDir;
+            PedalsThrottleMin = p.PedalsThrottleMin; PedalsThrottleMax = p.PedalsThrottleMax;
+            PedalsBrakeMin = p.PedalsBrakeMin; PedalsBrakeMax = p.PedalsBrakeMax;
+            PedalsClutchMin = p.PedalsClutchMin; PedalsClutchMax = p.PedalsClutchMax;
             PedalsBrakeAngleRatio = p.PedalsBrakeAngleRatio;
             PedalsThrottleCurve = CloneArray(p.PedalsThrottleCurve);
             PedalsBrakeCurve = CloneArray(p.PedalsBrakeCurve);
@@ -475,6 +536,40 @@ namespace MozaPlugin
                 }
             }
 
+            // FSR V1 dashboard field mappings (deep clone)
+            Fsr1DashboardMappings = new Dictionary<Guid, Dictionary<string, Dictionary<string, Fsr1FieldMapping>>>();
+            if (p.Fsr1DashboardMappings != null)
+            {
+                foreach (var kvp in p.Fsr1DashboardMappings)
+                {
+                    if (kvp.Value == null) continue;
+                    var middle = new Dictionary<string, Dictionary<string, Fsr1FieldMapping>>(StringComparer.OrdinalIgnoreCase);
+                    foreach (var rec in kvp.Value)
+                    {
+                        if (rec.Value == null) continue;
+                        var inner = new Dictionary<string, Fsr1FieldMapping>(StringComparer.OrdinalIgnoreCase);
+                        foreach (var fld in rec.Value)
+                            if (fld.Value != null) inner[fld.Key] = fld.Value.Clone();
+                        middle[rec.Key] = inner;
+                    }
+                    Fsr1DashboardMappings[kvp.Key] = middle;
+                }
+            }
+
+            // CM1 dash field mappings (deep clone)
+            Cm1FieldMappings = new Dictionary<Guid, Dictionary<string, Fsr1FieldMapping>>();
+            if (p.Cm1FieldMappings != null)
+            {
+                foreach (var kvp in p.Cm1FieldMappings)
+                {
+                    if (kvp.Value == null) continue;
+                    var inner = new Dictionary<string, Fsr1FieldMapping>(StringComparer.OrdinalIgnoreCase);
+                    foreach (var fld in kvp.Value)
+                        if (fld.Value != null) inner[fld.Key] = fld.Value.Clone();
+                    Cm1FieldMappings[kvp.Key] = inner;
+                }
+            }
+
             // Base ambient
             BaseAmbientBrightness = p.BaseAmbientBrightness;
             BaseAmbientStandbyMode = p.BaseAmbientStandbyMode;
@@ -520,6 +615,7 @@ namespace MozaPlugin
             GameInertia = data.GameInertia; GameSpring = data.GameSpring;
             WorkMode = data.WorkMode;
             GearshiftVibration = data.GearshiftVibration;
+            TempStrategy = data.TempStrategy;
 
             // FFB Equalizer
             Equalizer1 = data.Equalizer1; Equalizer2 = data.Equalizer2; Equalizer3 = data.Equalizer3;
@@ -537,6 +633,9 @@ namespace MozaPlugin
 
             // Pedals
             PedalsThrottleDir = data.PedalsThrottleDir; PedalsBrakeDir = data.PedalsBrakeDir; PedalsClutchDir = data.PedalsClutchDir;
+            PedalsThrottleMin = data.PedalsThrottleMin; PedalsThrottleMax = data.PedalsThrottleMax;
+            PedalsBrakeMin = data.PedalsBrakeMin; PedalsBrakeMax = data.PedalsBrakeMax;
+            PedalsClutchMin = data.PedalsClutchMin; PedalsClutchMax = data.PedalsClutchMax;
             PedalsBrakeAngleRatio = data.PedalsBrakeAngleRatio;
             PedalsThrottleCurve = (int[])data.PedalsThrottleCurve.Clone();
             PedalsBrakeCurve = (int[])data.PedalsBrakeCurve.Clone();

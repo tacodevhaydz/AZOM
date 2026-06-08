@@ -21,11 +21,14 @@ namespace MozaPlugin.Devices
     {
         private const string DashResource = "MozaPlugin.Devices.Dash.device.json";
         private const string DashCm2Resource = "MozaPlugin.Devices.DashCm2.device.json";
+        private const string DashCm1Resource = "MozaPlugin.Devices.DashCm1.device.json";
         private const string OldProtoResource = "MozaPlugin.Devices.WheelOldProto.device.json";
         private const string BaseAmbientResource = "MozaPlugin.Devices.WheelBase.device.json";
         private const string DashDeviceName = "MOZA Dashboard";
         private const string DashCm2DeviceName = "MOZA CM2 Racing Dash";
         private const string DashCm2ProductName = "CM2 Racing Dash";
+        private const string DashCm1DeviceName = "MOZA CM1 Racing Dash";
+        private const string DashCm1ProductName = "CM1 Racing Dash";
         private const string OldProtoDeviceName = "MOZA Old Protocol Wheel";
         private const string BaseAmbientDeviceName = "MOZA Wheel Base";
 
@@ -69,6 +72,51 @@ namespace MozaPlugin.Devices
             return cm2
                 ? DeployFromResource(DashCm2DeviceName, DashCm2Resource, discoveredPid, MozaDeviceConstants.DashCm2Guid)
                 : DeployFromResource(DashDeviceName, DashResource, discoveredPid, MozaDeviceConstants.DashGuid);
+        }
+
+        /// <summary>
+        /// Deploy the CM1 base-bridged dash definition (its own GUID, distinct
+        /// from CM2/legacy). Called once the CM1 discriminator confirms a
+        /// bus-bridged dash speaks group-0x35 rather than tier-def. Returns true
+        /// if a definition was written (SimHub restart required to pick it up).
+        /// </summary>
+        public static bool DeployCm1Dashboard(string? discoveredPid)
+            => DeployFromResource(DashCm1DeviceName, DashCm1Resource, discoveredPid, MozaDeviceConstants.DashCm1Guid);
+
+        /// <summary>
+        /// Remove the CM2 dash definition that <see cref="DeployDashboard"/> wrote
+        /// speculatively for a bus-bridged dash, once that dash turns out to be a
+        /// CM1. Guarded so a REAL standalone-USB CM2 (PID 0x0025) is never removed
+        /// — only the base-bridged speculative copy (whose PID is the base's) is
+        /// deleted. This is the duplicate-entry fix; it does NOT make CM1/CM2
+        /// mutually exclusive (both templates remain embedded and deployable).
+        /// </summary>
+        public static bool RemoveSpeculativeCm2Dashboard()
+        {
+            try
+            {
+                var simHubDir = AppDomain.CurrentDomain.BaseDirectory;
+                var deviceDir = Path.Combine(simHubDir, "DevicesDefinitions", "User", DashCm2DeviceName);
+                var deviceJsonPath = Path.Combine(deviceDir, "device.json");
+                if (!File.Exists(deviceJsonPath)) return false;
+
+                // Only remove the base-bridged speculative copy. A genuine USB CM2
+                // carries PID 0x0025; leave that one alone.
+                string? existingPid = JObject.Parse(File.ReadAllText(deviceJsonPath))
+                    .SelectToken("HardwareInterface.HardwareInterface.DeviceDetection.Pid")
+                    ?.Value<string>();
+                if (string.Equals(existingPid, MozaUsbIds.PidDashboardCm2, StringComparison.OrdinalIgnoreCase))
+                    return false;
+
+                Directory.Delete(deviceDir, recursive: true);
+                MozaLog.Info($"[Moza] Removed speculative CM2 dash definition (this dash is a CM1; restart SimHub to drop the stale entry)");
+                return true;
+            }
+            catch (Exception ex)
+            {
+                MozaLog.Warn($"[Moza] Could not remove speculative CM2 dash definition: {ex.Message}");
+                return false;
+            }
         }
 
         /// <summary>
@@ -309,16 +357,20 @@ namespace MozaPlugin.Devices
                             !string.Equals(existingPid, expectedPid, StringComparison.OrdinalIgnoreCase)
                             || !string.Equals(existingDescriptorId, expectedDescriptorId, StringComparison.OrdinalIgnoreCase);
 
-                        // CM2-specific guard: a user-renamed JSON (ProductName
-                        // changed from "CM2 Racing Dash") signals manual
-                        // intervention; rewrite to the shipped template.
-                        if (!stale
-                            && string.Equals(deviceName, DashCm2DeviceName, StringComparison.Ordinal))
+                        // CM-dash guard: a user-renamed JSON (ProductName changed
+                        // from the shipped "CM2 Racing Dash" / "CM1 Racing Dash")
+                        // signals manual intervention; rewrite to the shipped
+                        // template.
+                        string? expectedProduct =
+                            string.Equals(deviceName, DashCm2DeviceName, StringComparison.Ordinal) ? DashCm2ProductName
+                            : string.Equals(deviceName, DashCm1DeviceName, StringComparison.Ordinal) ? DashCm1ProductName
+                            : null;
+                        if (!stale && expectedProduct != null)
                         {
                             string? productName = existing
                                 .SelectToken("DeviceDescription.ProductName")
                                 ?.Value<string>();
-                            if (!string.Equals(productName, DashCm2ProductName, StringComparison.Ordinal))
+                            if (!string.Equals(productName, expectedProduct, StringComparison.Ordinal))
                                 stale = true;
                         }
                     }

@@ -20,6 +20,19 @@ namespace MozaPlugin.Telemetry
         private readonly MozaHidReader _hidReader;
         private bool _allPropertiesNamesWarned;
 
+        // Process-wide monotonic millisecond clock backing the
+        // @internal/TimeStamp channel (v1/preset/TimeStamp). Community
+        // dashboards (kenobi LMU GT3, General) read this as a render clock to
+        // flash an element for a fixed window after a watched value changes:
+        //   tt = Telemetry.get("v1/preset/TimeStamp").value;
+        //   return changed && (tt - lastChangeTt) < 1200;   // ms
+        // The dashboard only uses differences, so the epoch is irrelevant;
+        // it must be monotonic and in milliseconds. Stopwatch is monotonic
+        // (unaffected by wall-clock changes) and static so the clock is
+        // continuous across plugin recycle within a SimHub process.
+        private static readonly System.Diagnostics.Stopwatch _monotonicClock =
+            System.Diagnostics.Stopwatch.StartNew();
+
         public SimHubPropertyResolver(PluginManager pluginManager, MozaData data, MozaHidReader hidReader)
         {
             _pluginManager = pluginManager;
@@ -46,6 +59,8 @@ namespace MozaPlugin.Telemetry
             if (string.IsNullOrEmpty(path)) return null;
             if (path.StartsWith("@internal/", StringComparison.Ordinal))
             {
+                var str = ResolveInternalStringChannel(path);
+                if (str != null) return str;
                 return ResolveInternalChannel(path)
                     .ToString("R", System.Globalization.CultureInfo.InvariantCulture);
             }
@@ -112,9 +127,31 @@ namespace MozaPlugin.Telemetry
         {
             if (string.IsNullOrEmpty(path)) return null;
             if (path!.StartsWith("@internal/", StringComparison.Ordinal))
-                return ResolveInternalChannel(path);
+                return ResolveInternalStringChannel(path) ?? (object)ResolveInternalChannel(path);
             try { return _pluginManager?.GetPropertyValue(path); }
             catch { return null; }
+        }
+
+        /// <summary>
+        /// Plugin-computed channels whose value is a string rather than a
+        /// number (the numeric counterpart is <see cref="ResolveInternalChannel"/>).
+        /// Returns null for paths that are not string-valued so callers fall
+        /// through to the numeric resolver.
+        /// </summary>
+        private string? ResolveInternalStringChannel(string path)
+        {
+            switch (path)
+            {
+                case "@internal/GameName":
+                {
+                    string? game = null;
+                    try { game = _pluginManager?.GameName; }
+                    catch { /* older SimHub / not yet running a game */ }
+                    return Dashboard.GameNameMap.Resolve(game);
+                }
+                default:
+                    return null;
+            }
         }
 
         public double ResolveInternalChannel(string path)
@@ -129,6 +166,16 @@ namespace MozaPlugin.Telemetry
                     if (hid == null || maxAngleDeg <= 0) return 0.0;
                     return hid.GetCurrentAngleDegrees(maxAngleDeg);
                 }
+                case "@internal/TimeStamp":
+                    // Monotonic ms clock for v1/preset/TimeStamp. Packed as
+                    // float (compression 0x07 — the only ✓-verified 32-bit
+                    // numeric code; matches MOZA's own v1/preset/* channels.
+                    // uint32_t's 0x09 is an inferred code the firmware also
+                    // uses for 64-bit location_t, which mis-sizes the tier).
+                    // float is exact to 2^24 ms (~4.7 h uptime), then degrades
+                    // gracefully; the dashboard only consumes sub-second
+                    // differences, so coarsening past that is harmless.
+                    return _monotonicClock.ElapsedMilliseconds;
                 default:
                     return 0.0;
             }

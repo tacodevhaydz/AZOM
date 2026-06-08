@@ -180,7 +180,7 @@ namespace MozaPlugin.Telemetry
 
             // Point the sender at the connection that owns the screen: the
             // dedicated dashboard connection for a standalone-USB CM2, else the
-            // wheelbase connection (wheel-hosted 0x17 / base-bridged CM2 0x14).
+            // wheelbase connection (wheel-hosted 0x17 / base-bridged CM2 0x12).
             // Rebinding requires Idle; if the sender is mid-session, defer to the
             // next apply (a connection swap mid-stream isn't safe anyway).
             var desired = _plugin.DashboardUsbConnected
@@ -191,6 +191,10 @@ namespace MozaPlugin.Telemetry
 
             sender.StandaloneDashboardMode = standaloneDashboard;
             sender.TargetDeviceId = targetDeviceId;
+            // The main sender always uses lane base 0. Its strict-inbound / shares-
+            // connection flags (set when a co-resident _cm2Sender shares the bus) are
+            // owned by MozaPlugin.EnsureCm2Pipeline, not reset here.
+            sender.StreamSlotBase = 0;
 
             // Source from the current wheel's overlay (single source of truth).
             // When no wheel is identified yet, ActiveTelemetry* return defaults
@@ -261,19 +265,19 @@ namespace MozaPlugin.Telemetry
             }
             // else: catalog-only mode — profile stays null; sender synthesises post-preamble.
 
-            // Apply user channel mappings for the selected dashboard (active profile × current wheel page).
-            var channelMap = _plugin.GetActiveChannelMappings();
-            if (profile != null && channelMap != null)
-            {
-                foreach (var dashKey in _plugin.GetActiveDashboardKeyCandidates())
-                {
-                    if (channelMap.TryGetValue(dashKey, out var overrides) && overrides != null)
-                    {
-                        DashboardProfileStore.ApplyUserMappings(profile, overrides);
-                        break;
-                    }
-                }
-            }
+            // Telemetry channels ALWAYS come from the wheel's live catalog
+            // (catalog-only synthesis). The parsed mzdash profile is never used
+            // to drive the subscription: trusting it over the wheel's
+            // advertisement misaligned channels and dropped catalog channels the
+            // wheel actually wants (e.g. the wheel's "Core" page advertises Rpm
+            // at idx 4, but a local "Core" mzdash that omits Rpm left the RPM
+            // widget dead). The wheel's catalog is authoritative — Telemetry.json
+            // supplies compression/property/test-signal per URL and the synth
+            // applies user channel mappings itself (see TelemetrySender catalog
+            // synthesis). mzdashContent / mzdashName resolved above are retained
+            // ONLY for the upload path. FSR1 uses neither catalog nor mzdash and
+            // is driven by its own emitter, so this is a no-op there.
+            profile = null;
 
             sender.PropertyResolver = _plugin.PropertyResolver.ResolveAsDouble;
             sender.PropertyStringResolver = _plugin.PropertyResolver.ResolveAsString;
@@ -303,6 +307,14 @@ namespace MozaPlugin.Telemetry
                 (keepExistingSynth ? " (keeping existing synth — catalog-only mode unchanged)" : ""));
             if (!keepExistingSynth)
                 sender.Profile = profile;
+            // Re-point the tier frame builders at the resolver we just assigned.
+            // When keepExistingSynth kept the profile (so the Profile setter above
+            // did NOT run), the builders still hold whatever resolver they were
+            // last built with — on a plugin reload that's the dead old instance's,
+            // which freezes the live dashboard at 0 while test mode (TestSignal,
+            // not the resolver) keeps working. Self-guards: no-op unless the
+            // resolver instance actually changed.
+            sender.RebindFrameBuildersToResolver();
             sender.MzdashContent = mzdashContent;
             sender.MzdashName = mzdashName;
 
@@ -498,7 +510,15 @@ namespace MozaPlugin.Telemetry
                 // unless the catalog re-sync probe fired (forces Stop+Start to re-advertise).
                 bool wheelOnTargetSlot = sender.WheelReportedSlot == slot;
                 bool weEmittedThisSlot = sender.LastEmittedKind4Slot == slot;
-                if (wheelOnTargetSlot || weEmittedThisSlot)
+                // "Already bound" only holds once the host has emitted at least
+                // one kind=4 this session — the display latches our value frames
+                // (test or live) only after a host-initiated switch. At first
+                // launch the wheel sits on its last slot (wheelOnTargetSlot) but
+                // the host has never engaged it (LastEmittedKind4Slot < 0); the
+                // old skip there left the dash blank until the user manually
+                // switched to a different dashboard. Force the initial kind=4.
+                bool hostEverEngaged = sender.LastEmittedKind4Slot >= 0;
+                if ((wheelOnTargetSlot || weEmittedThisSlot) && hostEverEngaged)
                 {
                     string bindEvidence = wheelOnTargetSlot
                         ? "wheel-reported slot"
@@ -575,22 +595,25 @@ namespace MozaPlugin.Telemetry
         }
 
         /// <summary>Slot-aware dashboard switch: emits FF kind=4, awaits echo, then Stop+Start.</summary>
-        public void OnDashboardSwitched(uint slot)
-        {
-            ClearPendingDashboardKey();
+        public void OnDashboardSwitched(uint slot) => OnDashboardSwitched(slot, _plugin.TelemetrySender);
 
-            var sender = _plugin.TelemetrySender;
-            if (sender != null && sender.Enabled)
-            {
-                MozaLog.Debug(
-                    $"[Moza] OnDashboardSwitched(slot={slot}): scheduling switch + Stop+Start pipeline cycle");
-                // Stage profile + mzdash content first so post-Start cold-start
-                // builds tier-def from the right channels.
-                ApplyTelemetrySettings();
-                // SwitchToProfile emits FF kind=4 then runs Stop+Start; profile
-                // already staged so pass null to keep current.
-                sender.SwitchToProfile(slot, null);
-            }
+        /// <summary>Switch a specific sender's dashboard to <paramref name="slot"/>
+        /// (FF kind=4 + Stop/Start). The wheel sender and the CM2 sender each switch
+        /// their own device independently.</summary>
+        public void OnDashboardSwitched(uint slot, TelemetrySender? sender)
+        {
+            if (sender == null || !sender.Enabled) return;
+            bool isWheel = ReferenceEquals(sender, _plugin.TelemetrySender);
+            MozaLog.Debug(
+                $"[Moza] OnDashboardSwitched(slot={slot}, target={(isWheel ? "wheel" : "cm2")}): scheduling switch + Stop+Start");
+            // Stage the target's settings first so the post-Start cold-start builds
+            // tier-def from the right channels (wheel: ApplyTelemetrySettings; CM2:
+            // EnsureCm2Pipeline re-applies its policy/resolver/mapping target).
+            if (isWheel) { ClearPendingDashboardKey(); ApplyTelemetrySettings(); }
+            else _plugin.EnsureCm2Pipeline();
+            // SwitchToProfile emits FF kind=4 then runs Stop+Start; profile already
+            // staged so pass null to keep current.
+            sender.SwitchToProfile(slot, null);
         }
 
         /// <summary>
@@ -627,8 +650,9 @@ namespace MozaPlugin.Telemetry
         }
 
         /// <summary>
-        /// Handler for <see cref="TelemetrySender.WheelInitiatedSwitch"/>: stages the
-        /// matching profile on the sender. Does NOT persist — wheel-side nav is transient.
+        /// Handler for <see cref="TelemetrySender.WheelInitiatedSwitch"/>: clears the
+        /// staged profile so the catalog-only synth rebuilds for the new dash. Does
+        /// NOT persist — wheel-side nav is transient.
         /// </summary>
         public void OnWheelInitiatedSwitch(int slot)
         {
@@ -656,40 +680,32 @@ namespace MozaPlugin.Telemetry
                     return;
                 }
 
-                // Resolve to a MultiStreamProfile and stage it on the sender.
-                // NO writes to persisted settings — the saved profile preference
-                // (TelemetryDashboardKey) is the user's intent; wheel-side
-                // navigation must not clobber it.
-                var resolved = _plugin.ResolveDashboardProfileByName(newName);
-                if (resolved == null)
-                {
-                    // Catalog-only mode (no mzdash folder configured): the
-                    // profile can't be resolved by name, but the wheel will
-                    // re-emit its catalog for the new dash and TelemetrySender's
-                    // tick-path MaybeSwapProfileForCatalog will rebuild the
-                    // synthesised profile from the fresh URLs. Clear the
-                    // current synthesised profile so the tick path notices it
-                    // needs to rebuild AND so the UI grid empties immediately
-                    // (signature-based refresh keys on the profile ref) until
-                    // the rebuild completes. Then raise the selection-changed
-                    // event so the UI dropdown reflects the wheel's choice.
-                    if (sender.Profile != null
-                        && sender.Profile.Name == TelemetrySender.CatalogProfileName)
-                    {
-                        sender.Profile = null;
-                    }
-                    MozaLog.Info(
-                        $"[Moza] WheelInitiatedSwitch slot={slot} ('{newName}'): " +
-                        $"no mzdash resolved — relying on catalog-only synthesis from " +
-                        $"post-switch wheel catalog");
-                    _plugin.RaiseDashboardSelectionChangedInternal();
-                    return;
-                }
+                // Wheel-side navigation is transient and ALWAYS catalog-only:
+                // rebuild the subscription from the wheel's live catalog for the
+                // new dash, exactly like a host switch (ApplyTelemetrySettings
+                // forces profile=null — the mzdash never drives channels). This
+                // used to resolve a builtin/cache profile and stage it, which
+                // (a) sent that profile's channel set instead of the wheel's —
+                // an 8-channel builtin "Core" while the wheel's Core catalog has
+                // 72 — and (b) stuck, because the synth tick-path refuses to
+                // replace a non-synth profile (MaybeSwapProfileForCatalog
+                // returns early): after a Core→Marco wheel switch the host kept
+                // emitting Core's 8 channels while the wheel displayed Marco.
+                //
+                // Clear ANY non-synth profile (not only the CatalogProfileName
+                // synth) so the tick path rebuilds for the new dash AND a
+                // previously-stuck staged profile recovers on the next switch.
+                // Safe because the catalog-only path never leaves a user mzdash
+                // in sender.Profile (ApplyTelemetrySettings forces it null), so
+                // the only non-null value here is the synth or a stale staged
+                // one. NO writes to persisted settings — the saved profile
+                // preference is the user's intent; wheel nav must not clobber it.
+                if (sender.Profile != null)
+                    sender.Profile = null;
 
                 MozaLog.Info(
                     $"[Moza] WheelInitiatedSwitch slot={slot} ('{newName}'): " +
-                    $"staging resolved profile on sender (saved profile preference unchanged)");
-                sender.Profile = resolved;
+                    $"catalog-only — rebuilding synthesised profile from post-switch wheel catalog");
 
                 // UI dropdown reads sender.WheelReportedSlot directly when building
                 // the selection (not ActiveTelemetryProfileName), so the dropdown
@@ -744,6 +760,11 @@ namespace MozaPlugin.Telemetry
             if (!_detectionState.NewWheelDetected
                 && !_detectionState.OldWheelDetected
                 && !standaloneDashboard) return;
+
+            // FSR V1 (group-0x42 display push) is driven by the standalone
+            // Telemetry/Fsr1DisplayDriver (started from MozaPlugin), NOT by this
+            // tier-def sender — so it is not handled here at all.
+
             // Capability gate: known displayless wheels never get the dashboard
             // pipeline; unknown models fall back to the runtime probe. CM2
             // standalone is always a dashboard — skip the wheel-display gate.

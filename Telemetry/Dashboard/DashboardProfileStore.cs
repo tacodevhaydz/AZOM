@@ -88,9 +88,41 @@ namespace MozaPlugin.Telemetry.Dashboard
             return ch;
         }
 
+        // Bulky track-map / radar position channels gated behind the radar
+        // setting: the per-opponent location array (patch/Location,
+        // patch/Location_N) and radar index channels (patch/riN).
+        // OpponentCount / PlayerIndex are deliberately NOT gated — they are
+        // 1-byte scalar session fields ordinary dashboards read for
+        // car-count / grid-position display (the FSR2 "LD - Marco" dash
+        // shows patch/OpponentCount+1 as the entry count), so they must
+        // emit regardless of the radar setting. Other patch/ channels
+        // (TrackPositionPercent, TrackName) and non-patch Heading untouched.
+        internal static bool IsRadarTrackMapChannel(string url)
+        {
+            if (string.IsNullOrEmpty(url) || url.IndexOf("/patch/", StringComparison.Ordinal) < 0)
+                return false;
+            string suffix = url.Substring(url.LastIndexOf('/') + 1);
+            if (suffix == "Location")
+                return true;
+            if (suffix.StartsWith("Location_", StringComparison.Ordinal))
+                return AllDigits(suffix, "Location_".Length);
+            if (suffix.StartsWith("ri", StringComparison.Ordinal) && suffix.Length > 2)
+                return AllDigits(suffix, 2);
+            return false;
+        }
+
+        private static bool AllDigits(string s, int start)
+        {
+            if (start >= s.Length) return false;
+            for (int i = start; i < s.Length; i++)
+                if (s[i] < '0' || s[i] > '9') return false;
+            return true;
+        }
+
         public MultiStreamProfile BuildProfileFromCatalog(
             IReadOnlyList<string> catalog,
-            string profileName = "WheelCatalog")
+            string profileName = "WheelCatalog",
+            bool includeRadarTrackMap = true)
         {
             var telemetryMap = GetTelemetryMap();
             // Build a ChannelDefinition per catalog URL, looking up each
@@ -99,9 +131,20 @@ namespace MozaPlugin.Telemetry.Dashboard
             // compression and SimHubField mapping.
             var perTier = new Dictionary<int, List<ChannelDefinition>>();
             var stringChannels = new List<ChannelDefinition>();
+            // Dedup by URL. The wheel re-advertises a dash's channels at fresh
+            // catalog idxs (a 2nd generation within one switch), and
+            // ChannelCatalogParser.CommitLiveSet's same-burst UNION keeps both
+            // idx ranges. Without this guard each duplicate URL becomes a
+            // redundant channel — Marco synthesised 127ch/6t for ~75 real
+            // channels, doubling every value frame and the fast-tier count,
+            // which lags the wheel's per-tick render. Keep the first
+            // occurrence; genuinely-new URLs in later batches still pass.
+            var seenUrls = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
             foreach (var url in catalog)
             {
                 if (string.IsNullOrEmpty(url)) continue;
+                if (!includeRadarTrackMap && IsRadarTrackMapChannel(url)) continue;
+                if (!seenUrls.Add(url)) continue;
                 string suffix = url.Substring(url.LastIndexOf('/') + 1);
                 ChannelDefinition ch;
                 int packageLevel;
@@ -170,19 +213,46 @@ namespace MozaPlugin.Telemetry.Dashboard
             var sortedLevels = new List<int>(perTier.Keys);
             sortedLevels.Sort((a, b) => b.CompareTo(a));
 
+            // Split each package_level's channels into sub-tiers whose value
+            // frame stays within MaxTierDataBytes. A value frame is a single
+            // group-0x43 packet, so it must (a) keep its 1-byte length field
+            // (N = 10 + dataLen) from overflowing, and (b) fit the wheel's
+            // value-frame buffer — PitHouse never exceeds 55 B (measured
+            // across FSR2 captures) and splits big channel sets accordingly
+            // (e.g. 64-bit location_t track-map channels at 6/flag, 48 B), so
+            // we match it at 55 B. The sub-tiers all ride in ONE broadcast
+            // with ONE END marker (see TierDefinitionBuilder
+            // .DetectSubTiersPerBroadcast) — the layout PitHouse emits and the
+            // wheel binds. Each sub-tier shares the package_level (same emit
+            // rate) and gets its own consecutive flag downstream.
+            const int MaxTierDataBytes = 55;
             var tiers = new List<DashboardProfile>();
             foreach (var level in sortedLevels)
             {
                 var chs = perTier[level];
-                int bits = chs.Sum(c => c.BitWidth);
-                tiers.Add(new DashboardProfile
+                int start = 0;
+                while (start < chs.Count)
                 {
-                    Name = $"L{level}",
-                    Channels = chs,
-                    PackageLevel = level,
-                    TotalBits = bits,
-                    TotalBytes = (bits + 7) / 8,
-                });
+                    int subBits = 0, end = start;
+                    while (end < chs.Count)
+                    {
+                        int next = subBits + chs[end].BitWidth;
+                        // Always take at least one channel; otherwise stop
+                        // before this sub-tier would exceed the byte cap.
+                        if (end > start && (next + 7) / 8 > MaxTierDataBytes) break;
+                        subBits = next;
+                        end++;
+                    }
+                    tiers.Add(new DashboardProfile
+                    {
+                        Name = start == 0 ? $"L{level}" : $"L{level}_{start}",
+                        Channels = chs.GetRange(start, end - start),
+                        PackageLevel = level,
+                        TotalBits = subBits,
+                        TotalBytes = (subBits + 7) / 8,
+                    });
+                    start = end;
+                }
             }
 
             // Always emit at least one tier (firmware expects subscription).
@@ -781,6 +851,36 @@ namespace MozaPlugin.Telemetry.Dashboard
                         name ?? url, compression, packageLevel, simHubProp ?? "", scale, field,
                         rangeStr, dataType);
                 }
+
+                // Drift guard for the deterministic tyre codec families. These
+                // regressed once — stale "float" in the JSON silently overrode
+                // the firmware codec, leaving tyre-pressure/temp widgets dead
+                // (issue #43). The codec is uniquely determined by the URL and
+                // wheel-model-independent (verified W13 + W17 against PitHouse:
+                // tyre_pressure_1 = 0x16/12, tyre_temp_1 = 0x11/14), so a
+                // base-unit TyrePressure*/TyreTemp* channel set to anything else
+                // is almost certainly a mistake. Unit variants (&unit=F, &kpa,
+                // &B) use raw float (different scaling) and are skipped.
+                var tyreDrift = new List<string>();
+                foreach (var kv in result)
+                {
+                    string chUrl = kv.Key;
+                    if (chUrl.IndexOf('&') >= 0) continue;
+                    string suffix = chUrl.Contains('/')
+                        ? chUrl.Substring(chUrl.LastIndexOf('/') + 1) : chUrl;
+                    string? expected =
+                        suffix.StartsWith("TyrePressure", StringComparison.OrdinalIgnoreCase) ? "tyre_pressure_1" :
+                        suffix.StartsWith("TyreTemp", StringComparison.OrdinalIgnoreCase) ? "tyre_temp_1" :
+                        null;
+                    if (expected != null && !string.Equals(kv.Value.Compression, expected,
+                            StringComparison.OrdinalIgnoreCase))
+                        tyreDrift.Add($"{suffix}=\"{kv.Value.Compression}\" (expected {expected})");
+                }
+                if (tyreDrift.Count > 0)
+                    MozaLog.Warn(
+                        $"[Moza] Telemetry.json tyre codec drift — {tyreDrift.Count} channel(s) not using "
+                        + "the firmware codec PitHouse emits; these widgets will not render: "
+                        + string.Join(", ", tyreDrift));
             }
             catch (Exception ex)
             {

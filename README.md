@@ -1,9 +1,10 @@
 [![Release](https://img.shields.io/github/v/release/giantorth/moza-simhub-plugin)](https://github.com/giantorth/moza-simhub-plugin/releases/latest)
-[![Build](https://img.shields.io/github/actions/workflow/status/giantorth/moza-simhub-plugin/build.yml?branch=main&label=build)](https://github.com/giantorth/moza-simhub-plugin/actions/workflows/build.yml)
 [![Dev Release](https://img.shields.io/badge/dynamic/json?url=https://api.github.com/repos/giantorth/moza-simhub-plugin/releases/tags/dev-latest&query=%24.name&label=dev&color=orange)](https://github.com/giantorth/moza-simhub-plugin/releases/tag/dev-latest)
 [![License: GPL v3](https://img.shields.io/github/license/giantorth/moza-simhub-plugin)](LICENSE)
 [![Discord](https://img.shields.io/discord/1494517781016608888?label=Discord&logo=discord&logoColor=white&color=5865F2)](https://discord.gg/J4enw43e62)
 [![Stars](https://img.shields.io/github/stars/giantorth/moza-simhub-plugin?label=Star&logo=github&color=yellow)](https://github.com/giantorth/moza-simhub-plugin/stargazers)
+[![Sponsor](https://img.shields.io/github/sponsors/giantorth?label=Sponsor&logo=github&color=ea4aaa)](https://github.com/sponsors/giantorth)
+[![Ko-fi](https://img.shields.io/badge/Ko--fi-Support-ff5e5b?logo=ko-fi&logoColor=white)](https://ko-fi.com/giantorth)
 # Unofficial MOZA SimHub Plugin
 
 > [!NOTE]
@@ -106,9 +107,9 @@ Tested:
 - Universal Hub (port enumeration + child-device routing)
 - AB9 active shifter (mode + feel sliders)
 - Dashboard telemetry + screen updates (confirmed on Vision GS, CS Pro, KS Pro, and FSR V2)
+- Stand-alone dashboards (CM1 and CM2 Racing Dash, standalone-USB or bridged behind the wheelbase)
 
 TBD:
-- Stand-alone dashboards
 - Older generation wheels not in the list below
 
 ### Dashboard Support
@@ -134,7 +135,7 @@ All settings are stored per-game via SimHub's profile system and switch automati
 
 ### Languages
 
-The plugin UI is localized into **English, Deutsch, Ελληνικά, Español, Français, Italiano, Русский, Tiếng Việt, and 简体中文** (9 languages). By default the plugin follows SimHub's own language setting (Settings > General > Culture in SimHub); if SimHub is set to a language the plugin doesn't ship yet, it falls back to your OS UI language, then English. A **Language** picker in the plugin's Options tab lets you override that auto-detection — useful if you want SimHub in one language and the MOZA pane in another.
+The plugin UI is localized into **English, Deutsch, Ελληνικά, Español, Français, Italiano, Norsk bokmål, Русский, Tiếng Việt, and 简体中文** (10 languages). By default the plugin follows SimHub's own language setting (Settings > General > Culture in SimHub); if SimHub is set to a language the plugin doesn't ship yet, it falls back to your OS UI language, then English. A **Language** picker in the plugin's Options tab lets you override that auto-detection — useful if you want SimHub in one language and the MOZA pane in another.
 
 All translations are embedded directly into `MozaPlugin.dll` — no per-culture satellite assemblies, no extra files to deploy. Translations live in `Resources/Strings.<culture>.resx`. PRs adding a new language are welcome — see the i18n section in [DEVELOPMENT.md](docs/DEVELOPMENT.md) for the four-step recipe.
 
@@ -235,6 +236,8 @@ Each *step* setting has four actions: `…Up` / `…Down` apply a fine step, and
 | `Moza.DashboardTelemetryToggle` | Toggle dashboard telemetry on/off for the active wheel page |
 | `Moza.DashboardTelemetryOn` | Enable dashboard telemetry for the active wheel page |
 | `Moza.DashboardTelemetryOff` | Disable dashboard telemetry for the active wheel page |
+| `Moza.DisplayToggle` | Toggle the wheel screen on/off (remembers the on-brightness so toggling back on restores it) |
+| `Moza.TestModeToggle` | Toggle telemetry test mode (synthetic signal sweep) for the active wheel page |
 | `Moza.ClearLeds` | Blank all wheel and dash LEDs |
 
 ## Building from Source

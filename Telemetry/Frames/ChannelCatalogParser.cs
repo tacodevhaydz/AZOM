@@ -944,10 +944,13 @@ namespace MozaPlugin.Telemetry.Frames
                     }
 
                     // Accepted URL prefixes on the wire:
-                    //   "v1/"            literal (no abbreviation)
+                    //   "v1/"            literal (may embed \s, see below)
                     //   0x01             abbreviation for "v1/gameData/"
                     //   0x5C 0x31  "\1"  abbreviation for "v1/gameData/"
                     //   0x5C 0x70  "\p"  abbreviation for "v1/gameData/patch/"
+                    // Embedded (mid-URL, inside a literal "v1/"):
+                    //   0x5C 0x73  "\s"  abbreviation for "preset/" — handled
+                    //                    in the literal branch below.
                     // The `\p` form was missing — channels like
                     // `patch/TrackPositionPercent` were emitted by the wheel
                     // as `\pTrackPositionPercent` and rejected here, never
@@ -956,15 +959,26 @@ namespace MozaPlugin.Telemetry.Frames
                     // the wheel but invisible to host synth → channel missing
                     // from the channel-mapping grid and from the live tier-
                     // def we sub back).
-                    bool plausible = urlLen >= 3
-                        && ((buffer[urlStart] == (byte)'v'
-                             && buffer[urlStart + 1] == (byte)'1'
-                             && buffer[urlStart + 2] == (byte)'/')
-                            || buffer[urlStart] == 0x01
-                            || (buffer[urlStart] == 0x5C
-                                && urlLen >= 4
-                                && (buffer[urlStart + 1] == 0x31
-                                    || buffer[urlStart + 1] == 0x70)));
+                    // 0x5C abbreviation second-byte codes the wheel emits:
+                    //   \1 (0x31) → v1/gameData/        \p (0x70) → v1/gameData/patch/
+                    //   \l (0x6C) → v1/gameData/patch/Location_<suffix>  (track-map nodes)
+                    //   \L (0x4C) → v1/gameData/patch/Location           (track-map base)
+                    // \l/\L were previously unhandled: every track-map record hit
+                    // plausReject and the i++ resync below then walked 1 byte at a
+                    // time through the rest of the buffer, mis-framing real records
+                    // after it (a CS-Pro track-map dash emits 64 Location records →
+                    // 64 plausReject + cascade, dropping channels that follow).
+                    bool abbr5c = buffer[urlStart] == 0x5C && urlLen >= 2
+                        && ((urlLen >= 4 && (buffer[urlStart + 1] == 0x31
+                                             || buffer[urlStart + 1] == 0x70))
+                            || (urlLen >= 3 && buffer[urlStart + 1] == 0x6C)
+                            || (urlLen >= 2 && buffer[urlStart + 1] == 0x4C));
+                    bool plausible = abbr5c
+                        || (urlLen >= 3
+                            && ((buffer[urlStart] == (byte)'v'
+                                 && buffer[urlStart + 1] == (byte)'1'
+                                 && buffer[urlStart + 2] == (byte)'/')
+                                || buffer[urlStart] == 0x01));
                     if (!plausible) { sPlausReject++; i++; continue; }
 
                     // Stricter check: validate every byte of the URL body is in
@@ -986,7 +1000,9 @@ namespace MozaPlugin.Telemetry.Frames
                     }
                     else if (buffer[urlStart] == 0x5C
                              && (buffer[urlStart + 1] == 0x31
-                                 || buffer[urlStart + 1] == 0x70))
+                                 || buffer[urlStart + 1] == 0x70
+                                 || buffer[urlStart + 1] == 0x6C
+                                 || buffer[urlStart + 1] == 0x4C))
                     {
                         scanStart = urlStart + 2; scanLen = urlLen - 2;
                     }
@@ -1047,9 +1063,43 @@ namespace MozaPlugin.Telemetry.Frames
                             buffer, urlStart + 2, urlLen - 2);
                         sAbbr++;
                     }
+                    else if (buffer[urlStart] == 0x5C && buffer[urlStart + 1] == 0x6C)
+                    {
+                        // \l (0x5C 0x6C) → v1/gameData/patch/Location_<suffix>,
+                        // the track-map node ring (\l0..\l62). Suffix is the ASCII
+                        // decimal index. Wire-verified CS-Pro track-map dash
+                        // 2026-06-07. Filtered out of the subscription by
+                        // IsRadarTrackMapChannel unless radar channels are enabled;
+                        // decoding it keeps the buffer walk aligned regardless.
+                        url = "v1/gameData/patch/Location_" + Encoding.ASCII.GetString(
+                            buffer, urlStart + 2, urlLen - 2);
+                        sAbbr++;
+                    }
+                    else if (buffer[urlStart] == 0x5C && buffer[urlStart + 1] == 0x4C)
+                    {
+                        // \L (0x5C 0x4C) → v1/gameData/patch/Location, the track-map
+                        // base channel (no node suffix).
+                        url = "v1/gameData/patch/Location";
+                        sAbbr++;
+                    }
                     else
                     {
-                        url = Encoding.ASCII.GetString(buffer, urlStart, urlLen);
+                        // Literal "v1/" URL. The wheel still embeds the
+                        // abbreviation code \s (0x5C 0x73) for the "preset/"
+                        // path segment, e.g. "v1/\sTimeStamp" for
+                        // v1/preset/TimeStamp (the preset namespace: TimeStamp,
+                        // CurrentTorque, SteeringWheelAngle). Wire-verified both
+                        // ways: the SAME TimeStamp channel appears as the full
+                        // literal "v1/preset/TimeStamp" (moza-wire
+                        // 20260602-212424 idx 35) AND abbreviated as
+                        // "v1/\sTimeStamp" (20260602-184935 idx 2), so \s →
+                        // "preset/" reproduces the known URL. Expanding here
+                        // (rather than storing "v1/\sTimeStamp" verbatim) lets
+                        // the catalog URL match Telemetry.json + the channel-
+                        // mapping UI. A backslash never occurs in a fully-
+                        // expanded URL, so this is a no-op on normal literals.
+                        url = Encoding.ASCII.GetString(buffer, urlStart, urlLen)
+                            .Replace("\\s", "preset/");
                         sFull++;
                     }
                     if (idx >= 1)

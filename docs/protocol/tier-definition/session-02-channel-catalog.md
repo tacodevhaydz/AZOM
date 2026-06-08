@@ -38,20 +38,45 @@ distribution). Examples: `v1/gameData/Rpm`, `v1/gameData/Brake`,
 
 ### URL encoding forms
 
-The wheel can emit a URL body in any of four shapes to save bytes on the
+The wheel can emit a URL body in any of six shapes to save bytes on the
 wire. The plugin's `ChannelCatalogParser` expands each to the full
 `v1/gameData/...` form before storing in `_catalog`. Any URL form the
-parser doesn't recognise gets dropped silently (the plausibility check
+parser doesn't recognise gets dropped (the plausibility check
 short-circuits and increments `sPlausReject` in the per-pass stats), so
 adding a new prefix the wheel uses requires touching the parser too —
 not just the docs.
 
+**A dropped record doesn't skip its own bytes — it shreds what follows.**
+On a `sPlausReject` reject the parser advances a single byte (`i++`) and
+re-scans, so a *contiguous block* of unrecognised records mis-frames the
+**valid** records after them, not just itself. A CS-Pro track-map dash
+emits 64 `\l`/`\L` Location records in one burst; before those codes were
+handled (2026-06-07) the 64 rejects walked the buffer one byte at a time
+and corrupted the real channels that followed, collapsing the catalog to a
+minimal set (symptom: dashboard/test-mode could only drive a handful of
+channels). Handling every abbreviation the wheel emits is therefore
+load-bearing for the whole catalog, not just the dropped records.
+
 | Wire bytes (URL body) | Form | Expansion | Counter |
 |---|---|---|---|
-| `76 31 2F …` (`v1/…`) | literal | URL as-is | `sFull` |
+| `76 31 2F …` (`v1/…`) | literal | URL as-is, but the embedded code `\s` (`5C 73`) → `preset/` is expanded (see `\s` note below) | `sFull` |
 | `01 …` | `0x01` prefix | `"v1/gameData/" + rest` | `sPrefix` |
 | `5C 31 …` (`\1…`) | `\1` abbreviation | `"v1/gameData/" + rest`, with `\t` → `TyreTemp`, `\P` → `TyrePressure`, `\b` → `BrakeTemp` (inferred, see below), `{FL}`/`{FR}`/`{RL}`/`{RR}` → `FrontLeft`/`FrontRight`/`RearLeft`/`RearRight` placeholder expansion | `sAbbr` |
 | `5C 70 …` (`\p…`) | `\p` abbreviation | `"v1/gameData/patch/" + rest` — used for the `patch/*` channels documented in [`../telemetry/channels.md`](../telemetry/channels.md) (`patch/TrackPositionPercent`, `patch/TrackName`, `patch/DisplayTrackName`, `patch/GameName`, etc.) | `sAbbr` |
+| `5C 6C …` (`\l…`) | `\l` abbreviation | `"v1/gameData/patch/Location_" + rest` — the track-map node ring; `rest` is the ASCII decimal index, so `\l0`…`\l62` → `patch/Location_0`…`patch/Location_62`. Filtered out of the subscription by `IsRadarTrackMapChannel` unless radar/track-map channels are enabled. | `sAbbr` |
+| `5C 4C` (`\L`) | `\L` abbreviation | `"v1/gameData/patch/Location"` — the track-map base channel; 2-byte body, no `rest` suffix. | `sAbbr` |
+
+Discovery of `\l`/`\L` (2026-06-07, wire-verified): a CS-Pro track-map dash
+advertises its node ring as `\l0`…`\l62` (`5C 6C` + ASCII decimal) plus a
+base `\L` (`5C 4C`) — 64 records in one sess-0x02 burst. The pre-2026-06-07
+plausibility check accepted only `\1` and `\p` as `5C` abbreviations, so all
+64 were `sPlausReject`-ed; and because each reject does `i++` (not a
+full-record skip), the block mis-framed the valid channel records that
+followed it (see the cascade note above the table). These channels are
+track-map data, filtered from the subscription by `IsRadarTrackMapChannel`
+unless radar is enabled — so decoding them mainly keeps the parser aligned
+through the burst; the visible payoff is the *other* channels no longer
+getting shredded.
 
 Discovery of `\b` (2026-05-26, inferred not directly observed): issue #43
 user's diagnostics bundle showed 4 corrupted catalog entries
@@ -79,6 +104,25 @@ track-completion-% slot vanished from every catalog-synthesised tier-def
 the host pushed back. Symptom: the wheel showed the layout but the track
 position slot rendered as zero. Adding `\p` recognition with the
 `v1/gameData/patch/` expansion fixed it without touching anything else.
+
+Discovery of `\s` (2026-06-03, wire-verified both ways): the `v1/preset/*`
+namespace (`TimeStamp`, `CurrentTorque`, `SteeringWheelAngle`) is abbreviated
+**embedded inside a literal `v1/`** rather than as a whole-prefix code like
+`\1`/`\p`. The wheel emits `\s` (`5C 73`) for the `preset/` path segment: URL
+body `76 31 2F 5C 73 …` = `v1/` + `\s` + suffix. Unlike `\1`/`\p`, the body
+starts with `v1/`, so it passes plausibility via the literal branch — but that
+branch did no expansion, storing `v1/\sTimeStamp` verbatim. Symptom: the
+channel-mapping UI showed `\sTimeStamp`, and the verbatim URL did not match the
+`v1/preset/TimeStamp` key in `Data/Telemetry.json`, so catalog synth fell to
+the heuristic fallback and the host fed the wheel a constant 0 (breaking the
+`(tt - lastTt) < 1200` ms flash-on-change logic in community dashboards).
+**Wire-verified, not inferred**: the same `TimeStamp` channel appears as the
+full literal `v1/preset/TimeStamp` (moza-wire `20260602-212424`, idx 35) AND as
+`v1/\sTimeStamp` (`20260602-184935`, idx 2), so `\s` → `preset/` reproduces the
+known URL exactly. Fix: expand `\s` → `preset/` in the literal branch of
+`ChannelCatalogParser`. The `v1/preset/TimeStamp` value source is the
+plugin-computed `@internal/TimeStamp` monotonic ms clock (see
+[`../telemetry/channels.md`](../telemetry/channels.md)).
 
 ### Channel indexing
 

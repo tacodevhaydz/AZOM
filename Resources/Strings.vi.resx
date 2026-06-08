@@ -242,7 +242,7 @@
   <data name="Button_Delete" xml:space="preserve"><value>XÓA</value></data>
   <data name="Tooltip_DeleteDisabled" xml:space="preserve"><value>Tạm thời vô hiệu hóa.</value></data>
   <data name="Section_CoapServer" xml:space="preserve"><value>MÁY CHỦ COAP</value></data>
-  <data name="Subtitle_CoapServer" xml:space="preserve"><value>// máy chủ CoAP nhúng trên loopback</value></data>
+  <data name="Subtitle_CoapServer" xml:space="preserve"><value>// bật tùy chọn này để ngăn PitHouse tự động khởi chạy</value></data>
   <data name="Hint_CoapServerEnabled" xml:space="preserve"><value>Cung cấp hỗ trợ SDK MOZA chính thức cho các game yêu cầu, chẳng hạn như iRacing hoặc bất kỳ game nào dùng chế độ 360 Hz. Để làm vậy, plugin chạy một máy chủ điều khiển SDK CoAP nhúng trên loopback.</value></data>
   <data name="Hint_CoapStubProcessName" xml:space="preserve"><value>Khi được bật, plugin chạy một tiến trình thay thế nhỏ xuất hiện trong danh sách tiến trình với tên "MOZA Pit House.exe". Đây là điều bình thường — nó giúp các ứng dụng MOZA SDK tìm thấy PitHouse theo tên. Nó tự thoát khi bạn tắt mục này hoặc đóng SimHub.</value></data>
   <data name="SliderLabel_EnableCoapServer" xml:space="preserve"><value>Bật máy chủ CoAP SDK</value></data>
@@ -273,6 +273,9 @@
   <data name="Button_OpenReleaseNotes" xml:space="preserve"><value>Mở ghi chú phát hành</value></data>
   <data name="Button_SkipThisVersion" xml:space="preserve"><value>Bỏ qua phiên bản này</value></data>
   <data name="Button_DismissUpdate" xml:space="preserve"><value>Đóng</value></data>
+  <data name="Banner_SdkSuggestionText" xml:space="preserve"><value>Nếu bạn muốn ngăn MOZA Pit House khởi chạy, hãy bật hỗ trợ SDK.</value></data>
+  <data name="Button_ConfigureSdk" xml:space="preserve"><value>Cấu hình SDK</value></data>
+  <data name="Button_Dismiss" xml:space="preserve"><value>Đóng</value></data>
   <data name="Button_RestartSimHub" xml:space="preserve"><value>Khởi động lại SimHub</value></data>
   <data name="Label_WhatsNew" xml:space="preserve"><value>Có gì mới trong v{0}</value></data>
   <data name="Label_CheckForUpdates" xml:space="preserve"><value>Tự động kiểm tra cập nhật</value></data>

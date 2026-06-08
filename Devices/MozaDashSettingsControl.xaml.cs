@@ -37,7 +37,9 @@ namespace MozaPlugin.Devices
             using (_suppressor.Begin())
             {
                 InitializeComponent();
-                DashMgmtHostCm2.Content = new WheelUi.DashboardManagementControl();
+                // This control configures the CM2 dash pipeline (its own sender +
+                // CM2-keyed mappings), independent of the wheel page.
+                DashMgmtHostCm2.Content = new WheelUi.DashboardManagementControl { IsCm2Target = true };
 
                 if (ResolvePlugin())
                     BuildColorSwatches();
@@ -315,6 +317,7 @@ namespace MozaPlugin.Devices
             if (display < 0 || display > 2) return;
             int stored = IndicatorMode.ToDashStored((IndicatorDisplayMode)display);
             _data!.DashRpmIndicatorMode = stored;
+            _plugin.UpdateActiveProfile(p => p.DashRpmIndicatorMode = stored);
             _plugin.WriteIfDashDetected("dash-rpm-indicator-mode", stored);
             _plugin.SaveSettings();
         }
@@ -324,6 +327,7 @@ namespace MozaPlugin.Devices
             if (_suppressEvents || _plugin == null) return;
             int val = DashRpmDisplayCombo.SelectedIndex;
             _data!.DashRpmDisplayMode = val;
+            _plugin.UpdateActiveProfile(p => p.DashRpmDisplayMode = val);
             _plugin.WriteIfDashDetected("dash-rpm-display-mode", val);
             _plugin.SaveSettings();
         }
@@ -335,6 +339,7 @@ namespace MozaPlugin.Devices
             if (display < 0 || display > 2) return;
             int stored = IndicatorMode.ToDashStored((IndicatorDisplayMode)display);
             _data!.DashFlagsIndicatorMode = stored;
+            _plugin.UpdateActiveProfile(p => p.DashFlagsIndicatorMode = stored);
             _plugin.WriteIfDashDetected("dash-flags-indicator-mode", stored);
             _plugin.SaveSettings();
         }

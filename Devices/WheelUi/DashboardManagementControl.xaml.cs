@@ -75,6 +75,8 @@ namespace MozaPlugin.Devices.WheelUi
             {
                 try { _dashEventSubscribedPlugin.DashboardSelectionChanged -= OnPluginDashboardSelectionChanged; }
                 catch { }
+                try { _dashEventSubscribedPlugin.Fsr1ActiveIndexChanged -= OnFsr1ActiveIndexChanged; }
+                catch { }
                 _dashEventSubscribedPlugin = null;
             }
 
@@ -112,6 +114,32 @@ namespace MozaPlugin.Devices.WheelUi
             PopulateChannelMappingList();
         }
 
+        // FSR V1: the wheel reported a dashboard switch (parsed from its Param-6 log,
+        // or our own select was applied) — re-select the dropdown to match.
+        private void OnFsr1ActiveIndexChanged(object? sender, EventArgs e)
+        {
+            if (!Dispatcher.CheckAccess())
+            {
+                Dispatcher.BeginInvoke(new Action(() => OnFsr1ActiveIndexChanged(sender, e)));
+                return;
+            }
+            if (_plugin == null || !_plugin.IsFsr1DisplayWheel) return;
+            PopulateDashboardCombo();
+        }
+
+        // CM1 base-bridged dash reported a page switch (Param-6 log) or our select was
+        // applied — re-select the dropdown on the CM2/CM1 page to match.
+        private void OnCm1ActiveIndexChanged(object? sender, EventArgs e)
+        {
+            if (!Dispatcher.CheckAccess())
+            {
+                Dispatcher.BeginInvoke(new Action(() => OnCm1ActiveIndexChanged(sender, e)));
+                return;
+            }
+            if (!IsCm1) return;
+            PopulateDashboardCombo();
+        }
+
         private bool ResolvePlugin()
         {
             _plugin = MozaPlugin.Instance;
@@ -127,8 +155,14 @@ namespace MozaPlugin.Devices.WheelUi
                 {
                     try { _dashEventSubscribedPlugin.DashboardSelectionChanged -= OnPluginDashboardSelectionChanged; }
                     catch { }
+                    try { _dashEventSubscribedPlugin.Fsr1ActiveIndexChanged -= OnFsr1ActiveIndexChanged; }
+                    catch { }
+                    try { _dashEventSubscribedPlugin.Cm1ActiveIndexChanged -= OnCm1ActiveIndexChanged; }
+                    catch { }
                 }
                 _plugin.DashboardSelectionChanged += OnPluginDashboardSelectionChanged;
+                _plugin.Fsr1ActiveIndexChanged += OnFsr1ActiveIndexChanged;
+                _plugin.Cm1ActiveIndexChanged += OnCm1ActiveIndexChanged;
                 _dashEventSubscribedPlugin = _plugin;
                 MozaLog.Debug(
                     $"[Moza] UI: subscribed to DashboardSelectionChanged (plugin hash={System.Runtime.CompilerServices.RuntimeHelpers.GetHashCode(_plugin)})");
@@ -137,9 +171,48 @@ namespace MozaPlugin.Devices.WheelUi
             return true;
         }
 
+        /// <summary>When true this control configures the CM2 dash pipeline
+        /// (<see cref="MozaPlugin.Cm2Sender"/>, keyed under the CM2 device GUID),
+        /// not the wheel. Set by the CM2 device page. Default false = wheel.</summary>
+        internal bool IsCm2Target { get; set; }
+
+        /// <summary>The telemetry sender this control configures (wheel or CM2).</summary>
+        private global::MozaPlugin.Telemetry.TelemetrySender? ActiveSender =>
+            _plugin == null ? null : (IsCm2Target ? _plugin.ActiveCm2Sender : _plugin.TelemetrySender);
+
+        /// <summary>True when this (CM2) page's dash is a confirmed CM1 (group-0x35) —
+        /// it's driven by the Cm1DisplayDriver with a flat field set, not tier-def.</summary>
+        private bool IsCm1 => IsCm2Target && (_plugin?.DashIsCm1 ?? false);
+
         private void RefreshDashboardManagement()
         {
             if (!ResolvePlugin()) return;
+            // CM2 page: refresh its dashboard dropdown (from the CM2 sender's reported
+            // list) + channel-mapping list. Skip the wheel-only status / display /
+            // files sections.
+            if (IsCm2Target)
+            {
+                InitTelemetryUI();
+                // CM1: static page list (group-0x35) + flat field rows — no tier-def
+                // slot / ConfigJsonList to track.
+                if (IsCm1)
+                {
+                    PopulateDashboardCombo();
+                    long sigc = ComputeMappingDataSignature();
+                    if (sigc != _lastMappingDataSignature) PopulateChannelMappingList();
+                    return;
+                }
+                int cm2Slot = ActiveSender?.WheelReportedSlot ?? -1;
+                bool cm2StateReady = (ActiveSender?.WheelState?.ConfigJsonList?.Count ?? 0) > 0;
+                if (cm2Slot != _lastPopulatedWheelSlot || (cm2StateReady && !_dashComboFromWheelState))
+                {
+                    if (cm2StateReady) _dashComboFromWheelState = true;
+                    PopulateDashboardCombo();
+                }
+                long sig = ComputeMappingDataSignature();
+                if (sig != _lastMappingDataSignature) PopulateChannelMappingList();
+                return;
+            }
             InitTelemetryUI();
             RefreshTelemetryStatus();
             RefreshFilesTab();
@@ -186,7 +259,6 @@ namespace MozaPlugin.Devices.WheelUi
                 TelemetryEnabledCheck.IsChecked = _plugin.ActiveTelemetryEnabled;
 
                 PopulateDashboardCombo();
-                    UpdateFolderInfo();
                 // CHANNEL MAPPINGS is always-on (no expander gate). Bind the
                 // ItemsControl to its ObservableCollection once, then seed the
                 // list + start the 2 Hz value poller.
@@ -205,22 +277,65 @@ namespace MozaPlugin.Devices.WheelUi
         {
             if (_plugin == null) return;
 
+            // CM1 base-bridged dash: built-in pages selected via the 0x32/0x81 switch
+            // (1-based 1..N); no tier-def ConfigJsonList. Mirrors the FSR1 branch.
+            if (IsCm1)
+            {
+                using (_suppressor.Begin())
+                {
+                    TelemetryProfileCombo.Items.Clear();
+                    int min = global::MozaPlugin.Telemetry.Cm1DisplayEmitter.MinDashboardIndex;
+                    int max = global::MozaPlugin.Telemetry.Cm1DisplayEmitter.MaxDashboardIndex;
+                    for (int i = min; i <= max; i++)
+                        TelemetryProfileCombo.Items.Add($"Dashboard {i}");
+                    int active = _plugin.GetActiveCm1Index();
+                    int idx = active - min;
+                    TelemetryProfileCombo.SelectedIndex = (idx >= 0 && idx < TelemetryProfileCombo.Items.Count) ? idx : 0;
+                    _lastPopulatedWheelSlot = -1;
+                }
+                return;
+            }
+
+            // FSR V1: the dropdown selects which built-in dashboard (group-0x42
+            // record type) the plugin streams — there is no wheel-reported
+            // configJsonList. List the catalog's live dashboards. (Wheel target only;
+            // a CM2 is always tier-def.)
+            if (!IsCm2Target && _plugin.IsFsr1DisplayWheel)
+            {
+                // 19 built-in dashboard positions (index 0..18). Selecting one sends
+                // the group-0x32/0x81 select command; the wheel can also switch itself
+                // (auto-followed via OnFsr1ActiveIndexChanged).
+                using (_suppressor.Begin())
+                {
+                    TelemetryProfileCombo.Items.Clear();
+                    int max = global::MozaPlugin.Telemetry.Fsr1DisplayEmitter.MaxDashboardIndex;
+                    for (int i = 0; i <= max; i++)
+                        TelemetryProfileCombo.Items.Add($"Dashboard {i + 1}");
+                    int active = _plugin.GetActiveFsr1Index();
+                    TelemetryProfileCombo.SelectedIndex = (active >= 0 && active <= max) ? active : 0;
+                    _lastPopulatedWheelSlot = -1;
+                }
+                return;
+            }
+
             using (_suppressor.Begin())
             {
                 TelemetryProfileCombo.Items.Clear();
 
-                var state = _plugin.WheelStateForDiagnostics;
+                // Source dashboards from the target's OWN sender state (wheel sender
+                // for the wheel page, CM2 sender for the CM2 page).
+                var sender = ActiveSender;
+                var state = sender?.WheelState;
                 if (state != null && state.ConfigJsonList.Count > 0)
                 {
-                    // Wheel-reported dashboards in configJsonList order
-                    // (alphabetical). Dropdown index = configJsonList slot
-                    // used by SendDashboardSwitch.
+                    // Device-reported dashboards in configJsonList order.
+                    // Dropdown index = configJsonList slot used by the switch command.
                     foreach (var name in state.ConfigJsonList)
                         TelemetryProfileCombo.Items.Add(name);
                 }
-                else
+                else if (!IsCm2Target)
                 {
-                    // Fallback: cached dashboard names (wheel state not available yet).
+                    // Wheel-only fallback: cached dashboard names (state not up yet).
                     TelemetryProfileCombo.Items.Add("(none)");
                     if (_plugin.DashCache != null)
                     {
@@ -233,19 +348,19 @@ namespace MozaPlugin.Devices.WheelUi
                                 _plugin.ActiveTelemetryMzdashPath) + "]");
                 }
 
-                // Show wheel-reported slot (ground truth); fall back to saved profile name.
+                // Show the device-reported slot (ground truth); fall back to the
+                // target's saved selection name.
                 string? selectedName = null;
-                var sender = _plugin.TelemetrySender;
                 if (sender != null && state != null && state.ConfigJsonList != null
                     && sender.WheelReportedSlot >= 0
                     && sender.WheelReportedSlot < state.ConfigJsonList.Count)
                 {
-                    string wheelName = state.ConfigJsonList[sender.WheelReportedSlot];
-                    if (!string.IsNullOrEmpty(wheelName))
-                        selectedName = wheelName;
+                    string reportedName = state.ConfigJsonList[sender.WheelReportedSlot];
+                    if (!string.IsNullOrEmpty(reportedName))
+                        selectedName = reportedName;
                 }
                 if (string.IsNullOrEmpty(selectedName))
-                    selectedName = _plugin.ActiveTelemetryProfileName;
+                    selectedName = IsCm2Target ? _plugin.ActiveCm2DashboardName : _plugin.ActiveTelemetryProfileName;
                 if (!string.IsNullOrEmpty(selectedName))
                 {
                     for (int i = 0; i < TelemetryProfileCombo.Items.Count; i++)
@@ -306,8 +421,14 @@ namespace MozaPlugin.Devices.WheelUi
         private long ComputeMappingDataSignature()
         {
             if (_plugin == null) return -2;
-            var profile = _plugin.TelemetrySender?.Profile;
-            int catalogCount = _plugin.WheelChannelCatalogForDiagnostics?.Count ?? 0;
+            // CM1 rows come from the static flat catalog — fixed signature (populate once).
+            if (IsCm1) return -4;
+            // FSR V1 rows come from the static catalog, not a tier profile —
+            // a fixed signature so the list populates once and doesn't churn.
+            if (!IsCm2Target && _plugin.IsFsr1DisplayWheel) return -3;
+            var profile = ActiveSender?.Profile;
+            // CM2 has no wheel-catalog fallback — its list comes from its own profile.
+            int catalogCount = IsCm2Target ? 0 : (_plugin.WheelChannelCatalogForDiagnostics?.Count ?? 0);
             if (profile == null) return ((long)catalogCount << 40);
             int tiers = profile.Tiers.Count;
             int channels = 0;
@@ -358,8 +479,7 @@ namespace MozaPlugin.Devices.WheelUi
 
             bool enabled = _plugin.ActiveTelemetryEnabled;
             var active = _plugin.TelemetrySender;
-            bool testMode = active?.TestMode ?? false;
-            int framesSent = _plugin.FramesSentForDiagnostics;
+            bool testMode = _plugin.DashboardTestPatternActive;
 
             // Sync checkbox to overlay each tick so game/profile switches reflect immediately.
             if (TelemetryEnabledCheck.IsChecked != enabled)
@@ -378,33 +498,37 @@ namespace MozaPlugin.Devices.WheelUi
             // truthful instead of mislabeling a parked pipeline as "Connecting…" forever.
             var phase = active?.Phase ?? PipelinePhase.Idle;
             if (!enabled)
-                TelemetryStatusLabel.Text = "Disabled";
+                DashboardTelemetryCard.Subtitle = "Disabled";
             else if (testMode)
-                TelemetryStatusLabel.Text = $"Test pattern — {framesSent} frames sent";
+                DashboardTelemetryCard.Subtitle = "Test pattern";
             else if (phase == PipelinePhase.Parked)
-                TelemetryStatusLabel.Text = (active?.Recovery?.ParkIsDegraded ?? false)
+                DashboardTelemetryCard.Subtitle = (active?.Recovery?.ParkIsDegraded ?? false)
                     ? global::MozaPlugin.Resources.Strings.Status_DegradedScreenless
                     : global::MozaPlugin.Resources.Strings.Status_TelemetryParked;
             else if (phase == PipelinePhase.Recovery)
-                TelemetryStatusLabel.Text = global::MozaPlugin.Resources.Strings.Status_Recovering;
+                DashboardTelemetryCard.Subtitle = global::MozaPlugin.Resources.Strings.Status_Recovering;
             else if (active != null && !active.IsActive)
-                TelemetryStatusLabel.Text = inCooldown
+                DashboardTelemetryCard.Subtitle = inCooldown
                     ? "Switching dashboard… (post-emit silence)"
                     : "Connecting to wheel…";
             else if (pendingApply)
             {
                 string? why = _plugin?.PendingDashboardApplyDescription;
-                TelemetryStatusLabel.Text = string.IsNullOrEmpty(why)
-                    ? $"Switching dashboard… — {framesSent} frames sent"
-                    : $"Switching dashboard… ({why}) — {framesSent} frames sent";
+                DashboardTelemetryCard.Subtitle = string.IsNullOrEmpty(why)
+                    ? "Switching dashboard…"
+                    : $"Switching dashboard… ({why})";
             }
             else if (inCooldown)
-                TelemetryStatusLabel.Text = $"Switching dashboard… — {framesSent} frames sent";
+                DashboardTelemetryCard.Subtitle = "Switching dashboard…";
             else
-                TelemetryStatusLabel.Text = $"Sending — {framesSent} frames sent";
+                DashboardTelemetryCard.Subtitle = "Connected";
 
-            TelemetryTestStopBtn.IsEnabled = testMode && senderReady;
-            TelemetryTestStartBtn.IsEnabled = !testMode && senderReady;
+            // The standalone FSR1/CM1 drivers render the pattern without a tier-def
+            // sender, so the button is live whenever any display pipeline is running.
+            TelemetryTestBtn.IsEnabled = senderReady || (_plugin?.IsAnyDashboardDisplayRunning ?? false);
+            TelemetryTestBtn.Content = testMode
+                ? global::MozaPlugin.Resources.Strings.Button_StopTest
+                : global::MozaPlugin.Resources.Strings.Button_SendTestPattern;
             TelemetryProfileCombo.IsEnabled = senderReady;
 
             // Refresh profile info — auto-renegotiate may have swapped
@@ -491,6 +615,51 @@ namespace MozaPlugin.Devices.WheelUi
             if (selected == null) return;
 
             int idx = TelemetryProfileCombo.SelectedIndex;
+
+            // CM1 base-bridged dash: selecting a page sends the group-0x32/0x81 select to
+            // dev 0x14 (1-based page = combo index + min). Checked before the FSR1 branch
+            // because the wheel may itself be an FSR1 (this is the dash page).
+            if (IsCm1)
+            {
+                int min = global::MozaPlugin.Telemetry.Cm1DisplayEmitter.MinDashboardIndex;
+                int page = idx + min;
+                if (idx >= 0 && page <= global::MozaPlugin.Telemetry.Cm1DisplayEmitter.MaxDashboardIndex)
+                {
+                    _plugin.SetActiveCm1Index(page, sendToWheel: true);
+                    PopulateChannelMappingList();
+                    TelemetryMappingStatus.Text = $"CM1 → Dashboard {page}";
+                }
+                return;
+            }
+
+            // FSR V1: selecting a dashboard sends the group-0x32/0x81 select command
+            // (index = combo position). The wheel switches its displayed page.
+            if (!IsCm2Target && _plugin.IsFsr1DisplayWheel)
+            {
+                if (idx >= 0 && idx <= global::MozaPlugin.Telemetry.Fsr1DisplayEmitter.MaxDashboardIndex)
+                {
+                    _plugin.SetActiveFsr1Index(idx, sendToWheel: true);
+                    TelemetryMappingStatus.Text = $"Switched to Dashboard {idx + 1}";
+                }
+                return;
+            }
+
+            // CM2 page: switch the CM2's OWN dashboard (its sender's reported list),
+            // persist the CM2's selection, and emit FF kind=4 on the CM2 sender.
+            if (IsCm2Target)
+            {
+                var cm2State = _plugin.ActiveCm2Sender?.WheelState;
+                if (cm2State != null && idx >= 0 && idx < cm2State.ConfigJsonList.Count)
+                {
+                    _plugin.ActiveCm2DashboardName = selected;
+                    _plugin.SaveSettings();
+                    _plugin.OnCm2DashboardSwitched((uint)idx);
+                    PopulateChannelMappingList();
+                    TelemetryMappingStatus.Text = $"CM2 → {selected}";
+                }
+                return;
+            }
+
             var active = _plugin.TelemetrySender;
             var state = _plugin.WheelStateForDiagnostics;
 
@@ -561,167 +730,37 @@ namespace MozaPlugin.Devices.WheelUi
             PopulateChannelMappingList();
         }
 
-        private void TelemetryLoadMzdash_Click(object sender, RoutedEventArgs e)
-        {
-            if (_plugin == null) return;
-            var dlg = new Microsoft.Win32.OpenFileDialog
-            {
-                Title = "Open .mzdash dashboard file",
-                Filter = "MOZA Dashboard|*.mzdash|All Files|*.*",
-                DefaultExt = ".mzdash"
-            };
-            if (dlg.ShowDialog() != true) return;
-
-            _plugin.ActiveTelemetryMzdashPath = dlg.FileName;
-            _plugin.ActiveTelemetryProfileName = "";
-            _plugin.SaveSettings();
-            // Hot-reload tier def on the existing session — mirrors PitHouse's
-            // mid-game dash-change burst on session 0x01.
-            _plugin.OnDashboardSwitched();
-
-            using (_suppressor.Begin())
-            {
-                string label = "[Custom: " + System.IO.Path.GetFileName(dlg.FileName) + "]";
-                for (int i = TelemetryProfileCombo.Items.Count - 1; i >= 0; i--)
-                    if (TelemetryProfileCombo.Items[i]?.ToString()?.StartsWith("[Custom:") == true)
-                        TelemetryProfileCombo.Items.RemoveAt(i);
-                TelemetryProfileCombo.Items.Add(label);
-                TelemetryProfileCombo.SelectedIndex = TelemetryProfileCombo.Items.Count - 1;
-            }
-
-            PopulateChannelMappingList();
-        }
-
-        private void TelemetrySetFolder_Click(object sender, RoutedEventArgs e)
-        {
-            if (_plugin == null) return;
-            using (var dlg = new System.Windows.Forms.FolderBrowserDialog())
-            {
-                dlg.Description = "Select folder containing .mzdash dashboard files";
-                dlg.ShowNewFolderButton = false;
-                if (!string.IsNullOrEmpty(_plugin.ActiveTelemetryMzdashFolder)
-                    && System.IO.Directory.Exists(_plugin.ActiveTelemetryMzdashFolder))
-                    dlg.SelectedPath = _plugin.ActiveTelemetryMzdashFolder;
-
-                if (dlg.ShowDialog() != System.Windows.Forms.DialogResult.OK) return;
-
-                _plugin.ActiveTelemetryMzdashFolder = dlg.SelectedPath;
-                _plugin.SaveSettings();
-                _plugin.DashCache?.LoadFromFolder(dlg.SelectedPath);
-                PopulateDashboardCombo();
-                _plugin.ApplyTelemetrySettings();
-                UpdateFolderInfo();
-            }
-        }
-
-        private void TelemetryAutoDetect_Click(object sender, RoutedEventArgs e)
+        // Single toggle: Send Test Pattern ⇄ Stop Test. Button content + enabled
+        // state are kept in sync each tick by RefreshTelemetryStatus.
+        private void TelemetryTestToggle_Click(object sender, RoutedEventArgs e)
         {
             if (_plugin == null) return;
 
-            string dashesRoot = System.IO.Path.Combine(
-                Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
-                "MOZA Pit House", "_dashes");
+            bool turningOn = !_plugin.DashboardTestPatternActive;
+            // Drives every display pipeline: tier-def senders via TestMode, the
+            // standalone FSR1/CM1 drivers via the shared flag (they pick it up on
+            // their next tick — no start needed while they're already running).
+            _plugin.SetDashboardTestPattern(turningOn);
 
-            if (!System.IO.Directory.Exists(dashesRoot))
-            {
-                MessageBox.Show(
-                    $"MOZA Pit House dashboard folder not found at:\n{dashesRoot}\n\n" +
-                    "Install MOZA Pit House and load a dashboard, or use Set Folder… to point at a custom location.",
-                    "Auto-detect dashboard folder",
-                    MessageBoxButton.OK, MessageBoxImage.Warning);
-                return;
-            }
-
-            byte[] uid = _plugin.Data?.WheelMcuUid ?? Array.Empty<byte>();
-            string uidHex = uid.Length == 12 ? UidToHex(uid) : "";
-
-            string? picked = null;
-            string? failReason = null;
-
-            if (!string.IsNullOrEmpty(uidHex))
-            {
-                // Match the UID-named subfolder case-insensitively. PitHouse
-                // normalizes these to lowercase, but a case-sensitive FS
-                // (Linux/Wine, case-sensitive NTFS) would still miss a
-                // mismatched case from older installs or manual copies.
-                string? match = System.IO.Directory.EnumerateDirectories(dashesRoot)
-                    .FirstOrDefault(p => string.Equals(
-                        new System.IO.DirectoryInfo(p).Name,
-                        uidHex,
-                        StringComparison.OrdinalIgnoreCase));
-                if (match != null)
-                    picked = match;
-                else
-                    failReason = $"No dashboard folder for the connected wheel (UID {uidHex}).\n" +
-                                 $"Looked under:\n{dashesRoot}\n\n" +
-                                 "Open a dashboard in MOZA Pit House for this wheel first.";
-            }
-            else
-            {
-                var guidDirs = System.IO.Directory.GetDirectories(dashesRoot)
-                    .Where(p => System.Text.RegularExpressions.Regex.IsMatch(
-                        new System.IO.DirectoryInfo(p).Name, "^[0-9a-fA-F]{24}$"))
-                    .ToList();
-                if (guidDirs.Count == 1)
-                    picked = guidDirs[0];
-                else if (guidDirs.Count == 0)
-                    failReason = "No wheel-specific dashboard folders found under _dashes. " +
-                                 "Open MOZA Pit House and load a dashboard, then try again.";
-                else
-                    failReason = $"Multiple dashboard folders found ({guidDirs.Count}) and no wheel is connected. " +
-                                 "Connect your wheel and try again, or use Set Folder… to choose manually.";
-            }
-
-            if (picked == null)
-            {
-                MessageBox.Show(failReason, "Auto-detect dashboard folder",
-                    MessageBoxButton.OK, MessageBoxImage.Information);
-                return;
-            }
-
-            // Per-wheel-page overlay carries the folder. _plugin's helper writes
-            // into the current wheel's overlay; legacy WheelMzdashFolderByUid is
-            // no longer maintained.
-            _plugin.ActiveTelemetryMzdashFolder = picked;
-            _plugin.SaveSettings();
-            _plugin.DashCache?.LoadFromFolder(picked);
-            PopulateDashboardCombo();
-            _plugin.ApplyTelemetrySettings();
-            UpdateFolderInfo();
-        }
-
-        private void UpdateFolderInfo()
-        {
-            if (_plugin == null) return;
-            var folder = _plugin.ActiveTelemetryMzdashFolder;
-            TelemetryFolderInfo.Text = string.IsNullOrEmpty(folder) ? "" : $"Folder: {folder}";
-        }
-
-        private void TelemetryTestStart_Click(object sender, RoutedEventArgs e)
-        {
-            if (_plugin == null) return;
+            // A tier-def DISPLAY wheel (W17/W18) renders only while its sender is
+            // Active; bring it up on demand. Never start it for an FSR1 (its screen
+            // is the 0x42 driver — starting the idle wheel sender kicks a phantom
+            // cold-start) or for a wheel whose screen isn't the tier-def sender.
             var active = _plugin.TelemetrySender;
-            if (active == null) return;
-            active.TestMode = true;
-            if (!_plugin.ActiveTelemetryEnabled)
+            if (active != null && _plugin.WheelUsesTierDefDisplaySender && !_plugin.ActiveTelemetryEnabled)
             {
-                _plugin.ApplyTelemetrySettings();
-                System.Threading.ThreadPool.QueueUserWorkItem(_ => active.Start());
+                if (turningOn && !active.IsActive)
+                {
+                    _plugin.ApplyTelemetrySettings();
+                    System.Threading.ThreadPool.QueueUserWorkItem(_ => active.Start());
+                }
+                else if (!turningOn && active.IsActive)
+                {
+                    active.Stop();
+                }
             }
-            TelemetryTestStartBtn.IsEnabled = false;
-            TelemetryTestStopBtn.IsEnabled = true;
-        }
 
-        private void TelemetryTestStop_Click(object sender, RoutedEventArgs e)
-        {
-            if (_plugin == null) return;
-            var active = _plugin.TelemetrySender;
-            if (active == null) return;
-            active.TestMode = false;
-            if (!_plugin.ActiveTelemetryEnabled)
-                active.Stop();
-            TelemetryTestStartBtn.IsEnabled = true;
-            TelemetryTestStopBtn.IsEnabled = false;
+            RefreshTelemetryStatus();
         }
 
         // ===== Channel mappings =====
@@ -770,12 +809,36 @@ namespace MozaPlugin.Devices.WheelUi
         private void TelemetryResetMappings_Click(object sender, RoutedEventArgs e)
         {
             if (_plugin == null) return;
-            // Restore each channel to its Telemetry.json default before clearing
-            // the override dict — otherwise the live profile keeps the user's
-            // last typed value until the next telemetry restart.
+
+            // CM1 base-bridged dash: clear all flat field mappings.
+            if (IsCm1)
+            {
+                _plugin.ClearCm1Mappings();
+                PopulateChannelMappingList();
+                TelemetryMappingStatus.Text = $"Reset to defaults at {DateTime.Now:HH:mm:ss}";
+                return;
+            }
+
+            // FSR V1: clear each field override (reverts to catalog defaults).
+            if (!IsCm2Target && _plugin.IsFsr1DisplayWheel)
+            {
+                foreach (var row in _channelRows)
+                    _plugin.SetFsr1FieldMapping(row.RecordKey, row.FieldId, "", 0, 0);
+                PopulateChannelMappingList();
+                TelemetryMappingStatus.Text = $"Reset to defaults at {DateTime.Now:HH:mm:ss}";
+                return;
+            }
+
+            // Restore each channel to its catalog default before clearing the
+            // override dict — otherwise the live profile keeps the user's last typed
+            // value until the next telemetry restart. CM2 targets its own sender/keys.
+            var resetSender = IsCm2Target ? _plugin.ActiveCm2Sender : null;
             foreach (var row in _channelRows)
-                _plugin.UpdateActiveChannelMapping(row.Url, "");
-            _plugin.ClearCurrentDashboardMappings();
+                _plugin.UpdateActiveChannelMapping(row.Url, "", resetSender);
+            if (IsCm2Target)
+                _plugin.ClearCurrentDashboardMappings(MozaPlugin.Cm2PageGuid, MozaPlugin.Cm2DashKey);
+            else
+                _plugin.ClearCurrentDashboardMappings();
             PopulateChannelMappingList();
             TelemetryMappingStatus.Text = $"Reset to defaults at {DateTime.Now:HH:mm:ss}";
         }
@@ -847,10 +910,38 @@ namespace MozaPlugin.Devices.WheelUi
         private void OnMappingRowPropertyChanged(object? sender, PropertyChangedEventArgs e)
         {
             if (_plugin == null) return;
-            if (e.PropertyName != nameof(ChannelMappingRow.SimHubProperty)) return;
             if (sender is not ChannelMappingRow row) return;
+
+            // FSR V1 dashboard fields persist to the dedicated per-field store
+            // (property + input scale). React to the property OR either scale bound.
+            if (row.IsFsr1)
+            {
+                if (e.PropertyName != nameof(ChannelMappingRow.SimHubProperty)
+                    && e.PropertyName != nameof(ChannelMappingRow.InMin)
+                    && e.PropertyName != nameof(ChannelMappingRow.InMax)) return;
+                if (string.IsNullOrEmpty(row.RecordKey) || string.IsNullOrEmpty(row.FieldId)) return;
+                _plugin.SetFsr1FieldMapping(row.RecordKey, row.FieldId, row.SimHubProperty, row.InMin, row.InMax);
+                TelemetryMappingStatus.Text = $"Saved at {DateTime.Now:HH:mm:ss}";
+                return;
+            }
+
+            // CM1 base-bridged dash: flat field store keyed by field id.
+            if (row.IsCm1)
+            {
+                if (e.PropertyName != nameof(ChannelMappingRow.SimHubProperty)) return;
+                if (string.IsNullOrEmpty(row.FieldId)) return;
+                _plugin.SetCm1FieldMapping(row.FieldId, row.SimHubProperty);
+                TelemetryMappingStatus.Text = $"Saved at {DateTime.Now:HH:mm:ss}";
+                return;
+            }
+
+            if (e.PropertyName != nameof(ChannelMappingRow.SimHubProperty)) return;
             if (string.IsNullOrEmpty(row.Url)) return;
-            _plugin.SetChannelMapping(row.Url, row.SimHubProperty);
+            if (IsCm2Target)
+                _plugin.SetChannelMapping(row.Url, row.SimHubProperty,
+                    MozaPlugin.Cm2PageGuid, MozaPlugin.Cm2DashKey, _plugin.ActiveCm2Sender);
+            else
+                _plugin.SetChannelMapping(row.Url, row.SimHubProperty);
             TelemetryMappingStatus.Text = $"Saved at {DateTime.Now:HH:mm:ss}";
         }
 
@@ -872,7 +963,11 @@ namespace MozaPlugin.Devices.WheelUi
                 return;
             }
 
-            var result = ChannelMappingRowFactory.Build(_plugin);
+            var result = IsCm1
+                ? ChannelMappingRowFactory.BuildForCm1(_plugin)
+                : IsCm2Target
+                    ? ChannelMappingRowFactory.BuildForCm2(_plugin, _plugin.ActiveCm2Sender)
+                    : ChannelMappingRowFactory.Build(_plugin);
             if (result.Rows == null)
             {
                 // No profile + no catalog yet — show loading state, leave the

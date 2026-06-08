@@ -34,7 +34,11 @@ namespace MozaPlugin.Telemetry.Inbound
             // dash-side answer paths both reach the dispatcher.
             if (data[0] != 0xC3) return;
             bool targetMatches = data[1] == _sender.TargetDeviceIdSwapped;
-            if (!targetMatches && _sender.IsStandaloneDashboardTarget)
+            // When two pipelines share one connection (e.g. wheel + bus-CM2), each
+            // sender must consume ONLY its own device's replies — no fan-in, or both
+            // would process the same frame. The broad standalone fan-in below is for
+            // the single-pipeline case only.
+            if (!targetMatches && !_sender.StrictInboundFilter && _sender.IsStandaloneDashboardTarget)
             {
                 // TODO(cm2): narrow this fan-in once CM2 wire-traces nail down
                 // exactly which dev-ids CM2 answers on for each command family.
@@ -201,6 +205,16 @@ namespace MozaPlugin.Telemetry.Inbound
                 // Mgmt session engagement signal — data flow on sess=MgmtPort
                 // is the strongest possible proof the session is alive.
                 _sender.Watchdog.NoteSession01Engaged();
+                // Wheel-reported dashboard slot tracker. CS-family wheels echo
+                // the type-04 slot record on sess=FlagByte (0x02); W13/FSR2
+                // reports it on the mgmt session (0x01) instead. Listen on both
+                // so WheelReportedSlot converges and the slot round-trip can
+                // succeed — without this the W13's report is never absorbed,
+                // WheelReportedSlot stays -1, and the DisplayWatchdog
+                // force-restarts a healthy display after every kind=4. The
+                // strict padding/bound validation rejects the mgmt session's
+                // 0x06 acks and 0x04 catalog-URL records.
+                _sender.SlotTracker.TryAbsorbType04Slot(chunkPayload);
             }
 
             // File-transfer candidate sessions (0x04..0x08): ack ALL, forward to

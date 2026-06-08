@@ -35,11 +35,99 @@ namespace MozaPlugin.Devices.WheelUi
             // Snapshot the SimHub property list once so all rows share the same
             // backing list (avoids N copies of a 500-entry list).
             var props = plugin.GetAllSimHubPropertyNames();
+
+            // FSR V1 renders fixed-schema group-0x42 dashboards, not tier-def
+            // channels — map its built-in dashboard FIELDS from the catalog.
+            if (plugin.IsFsr1DisplayWheel)
+                return BuildFromFsr1Catalog(plugin, props);
+
             var profile = plugin.TelemetrySender?.Profile;
 
             if (profile == null || profile.Tiers.Count == 0)
                 return BuildFromCatalog(plugin, props);
 
+            return BuildFromProfile(profile, props);
+        }
+
+        /// <summary>
+        /// Build rows for the FSR V1's built-in dashboards (group-0x42 record types),
+        /// grouped by dashboard. One row per user-mappable field; engine-flag anchor
+        /// fields are protocol-filled and omitted. Each row carries the field's
+        /// current mapping (user override or catalog default) + input scale range.
+        /// </summary>
+        private static BuildResult BuildFromFsr1Catalog(MozaPlugin plugin, IReadOnlyList<string> props)
+        {
+            var rows = new List<ChannelMappingRow>();
+            foreach (var dash in Telemetry.Fsr1DashboardCatalog.LiveDashboards)
+            {
+                foreach (var f in dash.Fields)
+                {
+                    if (!f.IsUserMappable) continue;
+                    var m = plugin.GetFsr1FieldMapping(dash.Key, f.FieldId);
+                    bool direct = f.Kind == Telemetry.Fsr1FieldKind.Direct;
+                    rows.Add(new ChannelMappingRow
+                    {
+                        AllProperties = props,
+                        IsFsr1 = true,
+                        RecordKey = dash.Key,
+                        FieldId = f.FieldId,
+                        Name = $"{dash.Label} · {f.Label}" + (f.Decoded ? "" : "  (raw)"),
+                        Url = dash.Key + "/" + f.FieldId,
+                        Compression = f.Encoding.ToString(),
+                        CapabilityText = direct ? "direct value" : $"0–{f.OutputMax}",
+                        InMin = m?.InMin ?? f.DefaultInMin,
+                        InMax = m?.InMax ?? f.DefaultInMax,
+                        SimHubProperty = m?.Property ?? f.DefaultProperty,
+                    });
+                }
+            }
+            string status = rows.Count == 0
+                ? "(FSR V1: no mappable dashboard fields)"
+                : $"(FSR V1: {rows.Count} dashboard fields across built-in dashboards)";
+            return new BuildResult(rows, status);
+        }
+
+        /// <summary>
+        /// Build rows for a CM1 base-bridged dash (group-0x35) — the flat
+        /// <see cref="Telemetry.Cm1DashboardCatalog"/> field set. Each row maps a 16-bit
+        /// field key to a SimHub property; values are streamed as big-endian float32.
+        /// Default mappings are blank (best-effort labels only) so users assign channels.
+        /// </summary>
+        public static BuildResult BuildForCm1(MozaPlugin plugin)
+        {
+            if (plugin == null) return new BuildResult(null, "");
+            var props = plugin.GetAllSimHubPropertyNames();
+            var rows = new List<ChannelMappingRow>();
+            foreach (var f in Telemetry.Cm1DashboardCatalog.Fields)
+            {
+                var m = plugin.GetCm1FieldMapping(f.FieldId);
+                rows.Add(new ChannelMappingRow
+                {
+                    AllProperties = props,
+                    IsCm1 = true,
+                    FieldId = f.FieldId,
+                    Name = f.Label + (f.Decoded ? "" : "  (raw)"),
+                    Url = "cm1/" + f.FieldId,
+                    Compression = "float32",
+                    CapabilityText = "float",
+                    SimHubProperty = m?.Property ?? f.DefaultProperty,
+                });
+            }
+            return new BuildResult(rows, $"(CM1: {rows.Count} dash fields — assign SimHub channels)");
+        }
+
+        /// <summary>
+        /// Build rows for the CM2 dash pipeline from the CM2 sender's own
+        /// catalog-synthesised profile (tier-def channels — never FSR1). Independent
+        /// of the wheel's profile/catalog.
+        /// </summary>
+        public static BuildResult BuildForCm2(MozaPlugin plugin, Telemetry.TelemetrySender? cm2Sender)
+        {
+            if (plugin == null) return new BuildResult(null, "");
+            var profile = cm2Sender?.Profile;
+            if (profile == null || profile.Tiers.Count == 0)
+                return new BuildResult(null, "(CM2: waiting for the dash to advertise its channels…)");
+            var props = plugin.GetAllSimHubPropertyNames();
             return BuildFromProfile(profile, props);
         }
 

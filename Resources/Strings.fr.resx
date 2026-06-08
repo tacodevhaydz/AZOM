@@ -242,7 +242,7 @@
   <data name="Button_Delete" xml:space="preserve"><value>SUPPRIMER</value></data>
   <data name="Tooltip_DeleteDisabled" xml:space="preserve"><value>Désactivé temporairement.</value></data>
   <data name="Section_CoapServer" xml:space="preserve"><value>SERVEUR COAP</value></data>
-  <data name="Subtitle_CoapServer" xml:space="preserve"><value>// serveur CoAP intégré sur loopback</value></data>
+  <data name="Subtitle_CoapServer" xml:space="preserve"><value>// activez cette option pour empêcher PitHouse de démarrer automatiquement</value></data>
   <data name="Hint_CoapServerEnabled" xml:space="preserve"><value>Lorsqu'activé, le plugin exécute un serveur de contrôle SDK CoAP intégré.</value></data>
   <data name="Hint_CoapStubProcessName" xml:space="preserve"><value>Lorsqu'il est activé, le plugin exécute un petit processus de substitution qui apparaît dans la liste des processus sous le nom « MOZA Pit House.exe ». C'est normal : cela permet aux applications du SDK MOZA de trouver PitHouse par son nom. Il se ferme automatiquement lorsque vous le désactivez ou fermez SimHub.</value></data>
   <data name="SliderLabel_EnableCoapServer" xml:space="preserve"><value>Activer le serveur SDK CoAP</value></data>
@@ -273,6 +273,9 @@
   <data name="Button_OpenReleaseNotes" xml:space="preserve"><value>Ouvrir les notes de version</value></data>
   <data name="Button_SkipThisVersion" xml:space="preserve"><value>Ignorer cette version</value></data>
   <data name="Button_DismissUpdate" xml:space="preserve"><value>Rejeter</value></data>
+  <data name="Banner_SdkSuggestionText" xml:space="preserve"><value>Si vous souhaitez empêcher le lancement de MOZA Pit House, activez la prise en charge du SDK.</value></data>
+  <data name="Button_ConfigureSdk" xml:space="preserve"><value>Configurer le SDK</value></data>
+  <data name="Button_Dismiss" xml:space="preserve"><value>Rejeter</value></data>
   <data name="Button_RestartSimHub" xml:space="preserve"><value>Redémarrer SimHub</value></data>
   <data name="Label_WhatsNew" xml:space="preserve"><value>Nouveautés de la v{0}</value></data>
   <data name="Label_CheckForUpdates" xml:space="preserve"><value>Rechercher les mises à jour automatiquement</value></data>

@@ -38,6 +38,13 @@ namespace MozaPlugin.Protocol
         public const string PidMBoosterPedals  = "0x0008";
         public const string PidWheelbaseR5     = "0x0004";
         public const string PidWheelbaseR3     = "0x0005";
+        // "+0x0010" high-nibble variants of existing devices. Same device
+        // class, different firmware/hardware revision; the host reports a
+        // PID 0x10 above the original. Confirmed from user hardware:
+        // R9 (0x0012, see usb-ids.md), R12 base (0x0016), CRP2 (0x0011).
+        public const string PidPedalsCrp2Var   = "0x0011";
+        public const string PidWheelbaseR9Var  = "0x0012";
+        public const string PidWheelbaseR12Var = "0x0016";
         public const string PidShifterHgp      = "0x001E";
         public const string PidHandbrakeHbp    = "0x001F";
         public const string PidHub             = "0x0020";
@@ -60,6 +67,9 @@ namespace MozaPlugin.Protocol
                 [0x0005] = new InventoryEntry(MozaDeviceCategory.Wheelbase, "R3 (unconfirmed)"),
                 [0x0006] = new InventoryEntry(MozaDeviceCategory.Wheelbase, "R12 / R12v2"),
                 [0x0008] = new InventoryEntry(MozaDeviceCategory.MBooster,  "mBooster Pedals"),
+                [0x0011] = new InventoryEntry(MozaDeviceCategory.Pedals,    "CRP2 (variant)"),
+                [0x0012] = new InventoryEntry(MozaDeviceCategory.Wheelbase, "R9 (variant)"),
+                [0x0016] = new InventoryEntry(MozaDeviceCategory.Wheelbase, "R12 (variant)"),
                 [0x001E] = new InventoryEntry(MozaDeviceCategory.Shifter,   "HGP shifter (unconfirmed)"),
                 [0x001F] = new InventoryEntry(MozaDeviceCategory.Handbrake, "HBP handbrake (unconfirmed)"),
                 [0x0020] = new InventoryEntry(MozaDeviceCategory.Hub,       "Universal HUB"),

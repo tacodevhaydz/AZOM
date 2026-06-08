@@ -27,9 +27,29 @@ namespace MozaPlugin.Telemetry.Frames
         // Per-channel encode path resolved once at construction (a channel's
         // compression code never changes), so the per-frame loop skips the three
         // CompressionTable string-dictionary lookups TelemetryEncoder would do.
-        private enum EncKind : byte { Float, Double, Bits }
+        private enum EncKind : byte { Float, Double, Bits, LocationPair, RadarPair }
         private readonly EncKind[] _encKind;
         private readonly Func<double, ulong>?[] _encFn;
+        // For LocationPair / RadarPair channels: the source car index.
+        // LocationPair: -1 = local car (patch/Location); >=0 = opponent index.
+        // RadarPair: >=0 = opponent index (patch/ri<N>).
+        // NotLocation for every other channel.
+        private readonly int[] _locIndex;
+        private const int NotLocation = int.MinValue;
+
+        /// <summary>True when any channel in this builder's profile is a
+        /// LocationPair/RadarPair — i.e. it actually reads the snapshot's per-car
+        /// position arrays. Lets the caller skip GameDataSnapshot's reflection +
+        /// per-opponent allocation entirely when no channel consumes them
+        /// (the shipped default, with radar/track-map channels disabled).</summary>
+        public bool NeedsCarPositions { get; private set; }
+        // Fixed-point scale for radar relative coordinates (metres → int16
+        // counts). The ri wire format packs two int16; this constant maps
+        // SimHub's RelativeCoordinatesToPlayer (metres) onto that range.
+        // TUNABLE: starting estimate from the PitHouse FSR2 radar capture
+        // (nearby cars read ~±2000–8000 counts); confirm against known car
+        // gaps on hardware and adjust.
+        private const float RadarFixedPointScale = 100f;
 
         // Pre-allocated buffers reused every frame to avoid GC pressure
         private readonly byte[] _frameBuffer;
@@ -84,6 +104,7 @@ namespace MozaPlugin.Telemetry.Frames
             _resolvers = new Func<GameDataSnapshot, double>[profile.Channels.Count];
             _encKind = new EncKind[profile.Channels.Count];
             _encFn = new Func<double, ulong>?[profile.Channels.Count];
+            _locIndex = new int[profile.Channels.Count];
             for (int i = 0; i < profile.Channels.Count; i++)
             {
                 var ch = profile.Channels[i];
@@ -120,6 +141,34 @@ namespace MozaPlugin.Telemetry.Frames
                 {
                     _encKind[i] = EncKind.Bits;
                     _encFn[i] = CompressionTable.TryGetByName(ch.Compression, out var be) ? be.Encode : null;
+                }
+
+                // Track-map override: patch/Location[_N] channels carry a
+                // packed (X, Z) coordinate pair (two float32 in the 64-bit
+                // location_t slot), not a scalar SimHub property. Detect by
+                // the location_t compression + URL and resolve from the
+                // snapshot's per-car positions instead. Wire format verified
+                // from the PitHouse FSR2 capture (each slot = [f32 X | f32 Z]).
+                int locIdx = ParseLocationIndex(ch.Url);
+                int riIdx = ParseRadarIndex(ch.Url);
+                if (locIdx != NotLocation && ch.Compression == "location_t")
+                {
+                    _encKind[i] = EncKind.LocationPair;
+                    _locIndex[i] = locIdx;
+                    NeedsCarPositions = true;
+                }
+                else if (riIdx != NotLocation && ch.Compression == "uint32_t")
+                {
+                    // Radar: patch/ri<N> carries car N's player-relative (X, Y)
+                    // packed as two int16 in the 32-bit slot. Verified from the
+                    // PitHouse FSR2 radar capture.
+                    _encKind[i] = EncKind.RadarPair;
+                    _locIndex[i] = riIdx;
+                    NeedsCarPositions = true;
+                }
+                else
+                {
+                    _locIndex[i] = NotLocation;
                 }
             }
 
@@ -166,6 +215,19 @@ namespace MozaPlugin.Telemetry.Frames
                 case EncKind.Double:
                     _bitWriter!.WriteDouble(value);
                     break;
+                case EncKind.LocationPair:
+                    // Reached only via the test-frame path (live frames
+                    // resolve the real pair in BuildFrameFromSnapshot). Drive
+                    // the test signal onto X and hold Z at 0 so the slot still
+                    // consumes its full 64 bits and the map shows motion.
+                    _bitWriter!.WriteFloat((float)value);
+                    _bitWriter!.WriteFloat(0f);
+                    break;
+                case EncKind.RadarPair:
+                    // Test-frame path only. Drive the test signal onto the X
+                    // int16, hold Y at 0; consumes the full 32 bits.
+                    _bitWriter!.WriteBits((uint)(ushort)ClampInt16(value), 32);
+                    break;
                 default:
                     var fn = _encFn[i];
                     uint enc;
@@ -181,9 +243,105 @@ namespace MozaPlugin.Telemetry.Frames
             }
         }
 
+        // Pack one track-map slot as two little-endian float32 (X low, Z high)
+        // = the 64-bit location_t the wheel expects. Absent cars (index past
+        // the live opponent list) pack (0, 0); the wheel masks them out via
+        // OpponentCount. Bypasses WriteChannel's NaN/Inf sanitiser so genuine
+        // coordinate bit patterns are preserved exactly.
+        private void WriteLocationPair(int locIndex, in GameDataSnapshot snap)
+        {
+            float x, y;
+            if (locIndex < 0)
+            {
+                x = snap.PlayerLocation.X;
+                y = snap.PlayerLocation.Y;
+            }
+            else if (snap.CarLocations != null && locIndex < snap.CarLocations.Length)
+            {
+                x = snap.CarLocations[locIndex].X;
+                y = snap.CarLocations[locIndex].Y;
+            }
+            else
+            {
+                x = 0f;
+                y = 0f;
+            }
+            // Never emit NaN/Inf: a non-finite coordinate (car in the pits /
+            // not yet spawned) makes the wheel's Map.qml plot a dot at NaN and
+            // can crash the display. PitHouse only ever sends finite values;
+            // fall back to (0,0) = the empty-slot marker.
+            if (float.IsNaN(x) || float.IsInfinity(x) || float.IsNaN(y) || float.IsInfinity(y))
+            {
+                x = 0f;
+                y = 0f;
+            }
+            _bitWriter!.WriteFloat(x);
+            _bitWriter!.WriteFloat(y);
+        }
+
+        // Resolve a channel URL to its track-map car index:
+        //   patch/Location        → -1  (local car)
+        //   patch/Location_<N>    →  N  (opponent index)
+        //   anything else         → NotLocation
+        // Guards against false matches like patch/LocationFoo.
+        private static int ParseLocationIndex(string? url)
+        {
+            if (string.IsNullOrEmpty(url)) return NotLocation;
+            const string marker = "patch/Location";
+            int p = url!.IndexOf(marker, StringComparison.Ordinal);
+            if (p < 0) return NotLocation;
+            int rest = p + marker.Length;
+            if (rest >= url.Length) return -1;          // patch/Location → local car
+            if (url[rest] != '_') return NotLocation;   // e.g. patch/LocationFoo
+            return int.TryParse(url.Substring(rest + 1), out int n) && n >= 0
+                ? n
+                : NotLocation;
+        }
+
+        // Pack one radar slot as two int16 (relX low, relY high) into the
+        // 32-bit ri uint32 — the player-relative format reverse-engineered
+        // from the PitHouse FSR2 radar capture. (0,0) when SimHub has no
+        // relative coordinate for the car (out of radar range), matching the
+        // wire's sparse empty-slot behaviour.
+        private void WriteRadarPair(int carIndex, in GameDataSnapshot snap)
+        {
+            float x = 0f, y = 0f;
+            if (snap.CarRelative != null && carIndex >= 0 && carIndex < snap.CarRelative.Length)
+            {
+                x = snap.CarRelative[carIndex].X;
+                y = snap.CarRelative[carIndex].Y;
+            }
+            uint lo = (uint)(ushort)ClampInt16(x * RadarFixedPointScale);
+            uint hi = (uint)(ushort)ClampInt16(y * RadarFixedPointScale);
+            _bitWriter!.WriteBits(lo | (hi << 16), 32);
+        }
+
+        // Resolve a channel URL to its radar car index: patch/ri<N> → N,
+        // anything else → NotLocation.
+        private static int ParseRadarIndex(string? url)
+        {
+            if (string.IsNullOrEmpty(url)) return NotLocation;
+            const string marker = "patch/ri";
+            int p = url!.IndexOf(marker, StringComparison.Ordinal);
+            if (p < 0) return NotLocation;
+            int rest = p + marker.Length;
+            if (rest >= url.Length) return NotLocation;
+            return int.TryParse(url.Substring(rest), out int n) && n >= 0
+                ? n
+                : NotLocation;
+        }
+
+        private static short ClampInt16(double v)
+        {
+            if (double.IsNaN(v)) return 0;
+            if (v > short.MaxValue) return short.MaxValue;
+            if (v < short.MinValue) return short.MinValue;
+            return (short)v;
+        }
+
         /// <summary>Build frame from live game data.</summary>
         public byte[] BuildFrame(StatusDataBase? gameData, byte flagByte) =>
-            BuildFrameFromSnapshot(GameDataSnapshot.FromStatusData(gameData), flagByte);
+            BuildFrameFromSnapshot(GameDataSnapshot.FromStatusData(gameData, NeedsCarPositions), flagByte);
 
         /// <summary>Build frame from a pre-populated snapshot (test patterns, etc.).</summary>
         public byte[] BuildFrameFromSnapshot(GameDataSnapshot snapshot, byte flagByte)
@@ -196,6 +354,16 @@ namespace MozaPlugin.Telemetry.Frames
 
                 for (int i = 0; i < _profile.Channels.Count; i++)
                 {
+                    if (_encKind[i] == EncKind.LocationPair)
+                    {
+                        WriteLocationPair(_locIndex[i], in snapshot);
+                        continue;
+                    }
+                    if (_encKind[i] == EncKind.RadarPair)
+                    {
+                        WriteRadarPair(_locIndex[i], in snapshot);
+                        continue;
+                    }
                     double value = _resolvers[i](snapshot);
                     if (double.IsNaN(value) || double.IsInfinity(value)) value = 0.0;
                     WriteChannel(i, value, _profile.Channels[i].BitWidth);

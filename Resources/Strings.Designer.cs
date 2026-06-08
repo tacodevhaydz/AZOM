@@ -37,6 +37,7 @@ namespace MozaPlugin.Resources
                 { "es", new ResourceManager("MozaPlugin.Resources.Strings.es", typeof(Strings).Assembly) },
                 { "fr", new ResourceManager("MozaPlugin.Resources.Strings.fr", typeof(Strings).Assembly) },
                 { "it", new ResourceManager("MozaPlugin.Resources.Strings.it", typeof(Strings).Assembly) },
+                { "nb", new ResourceManager("MozaPlugin.Resources.Strings.nb", typeof(Strings).Assembly) },
                 { "ru", new ResourceManager("MozaPlugin.Resources.Strings.ru", typeof(Strings).Assembly) },
                 { "vi", new ResourceManager("MozaPlugin.Resources.Strings.vi", typeof(Strings).Assembly) },
                 { "zh-Hans", new ResourceManager("MozaPlugin.Resources.Strings.zh-Hans", typeof(Strings).Assembly) },
@@ -339,6 +340,9 @@ namespace MozaPlugin.Resources
         public static string Button_OpenReleaseNotes => Get("Button_OpenReleaseNotes");
         public static string Button_SkipThisVersion => Get("Button_SkipThisVersion");
         public static string Button_DismissUpdate => Get("Button_DismissUpdate");
+        public static string Banner_SdkSuggestionText => Get("Banner_SdkSuggestionText");
+        public static string Button_ConfigureSdk => Get("Button_ConfigureSdk");
+        public static string Button_Dismiss => Get("Button_Dismiss");
         public static string Button_RestartSimHub => Get("Button_RestartSimHub");
         public static string Label_WhatsNew => Get("Label_WhatsNew");
         public static string Label_CheckForUpdates => Get("Label_CheckForUpdates");

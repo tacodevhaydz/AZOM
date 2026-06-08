@@ -84,7 +84,7 @@ namespace MozaPlugin.Telemetry.TestMode
             Add("SessionTimeLeft",      TestSignal.Elapsed());
             Add("LastPitStopDuration",  TestSignal.Elapsed());
             Add("IsInPitSince",         TestSignal.Elapsed());
-            Add("TimeAbsolute",         TestSignal.Elapsed());
+            Add("TimeAbsolute",         TestSignal.Sweep(0, 86400, periodMs: 60000));
             Add("TimeOfDay",            TestSignal.Elapsed());
 
             Add("SectorIndex",          TestSignal.Step(0, 2, stepMs: 10000));
@@ -296,11 +296,11 @@ namespace MozaPlugin.Telemetry.TestMode
             Add("Location",         TestSignal.Sweep(0, 1, periodMs: 10000));
 
             // --- Truck-sim oddities ---
-            Add("NavigationSpeedLimit", TestSignal.Constant_(90));
+            Add("NavigationSpeedLimit", TestSignal.Sweep(0, 130, periodMs: 12000));
             Add("JobSpeedLimitValue",   TestSignal.Constant_(90));
             Add("CruiseControlMs",      TestSignal.Constant_(25));
             Add("CruiseControlMph",     TestSignal.Constant_(55));
-            Add("Odometer",             TestSignal.Constant_(125000));
+            Add("Odometer",             TestSignal.Sweep(0, 999999, periodMs: 30000));
             Add("SessionOdo",           TestSignal.Sweep(0, 200, periodMs: 60000));
             Add("SessionOdo&M",         TestSignal.Sweep(0, 124, periodMs: 60000));
             Add("StintOdo",             TestSignal.Sweep(0, 50, periodMs: 60000));

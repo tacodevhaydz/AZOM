@@ -5,7 +5,6 @@ using System.Diagnostics;
 using System.IO;
 using System.IO.Ports;
 using System.Linq;
-using System.Runtime.InteropServices;
 using System.Threading;
 using HidSharp;
 using MozaPlugin.Diagnostics;
@@ -62,11 +61,29 @@ namespace MozaPlugin.Protocol
         // to the hub when no wheelbase port exists — so this target never claims
         // a hub the primary already holds (the _activePorts guard enforces it).
         HubOnly,
+        // Standalone-USB pedals / handbrake on their OWN dedicated connection
+        // (pedals PID 0x0001/0x0003/0x0011, handbrake 0x001F), one per
+        // MozaStandalonePeripheralRegistry controller. Like MBooster, discovery
+        // is registry-only by design (the PIDs are registered, so the registry
+        // always classifies them) and the serial-probe fallback is force-
+        // disabled — these targets never write scan bytes to unclassified COM
+        // ports. Kept as distinct values so the probe shape stays honest if the
+        // fallback is ever enabled; no probe-emission branch is wired today.
+        PedalsOnly,
+        HandbrakeOnly,
     }
 
     public class MozaSerialConnection : IDisposable
     {
-        private const int StreamSlotCount = 18;
+        // Stream-slot lanes (latest-wins coalescing). Layout:
+        //   0..10  — tier-def pipeline at slot-base 0 (TierDash0-7, Enable, Sequence,
+        //            Mode) — the WHEEL screen pipeline, or an FSR1 driver's records.
+        //   11..17 — AB9 / mBooster (absolute, per StreamKind).
+        //   18..28 — a SECOND tier-def pipeline at slot-base 18 (a bus-attached CM2
+        //            dash sharing this connection). See TelemetrySender.StreamSlotBase.
+        // A CM2 on its own USB connection runs at base 0 on THAT connection, so the
+        // second block is only used when two pipelines share one connection.
+        private const int StreamSlotCount = 32;
 
         // Ports held by a live connection — probe path skips these (Wine pty
         // doesn't enforce O_EXCL, so a second Open would steal the device).
@@ -101,26 +118,6 @@ namespace MozaPlugin.Protocol
         private static readonly ConcurrentDictionary<string, byte> _probeInFlight =
             new ConcurrentDictionary<string, byte>();
 
-        // Probe-readiness settle gate (see IsSerialProbeReady). Stopwatch ticks
-        // of when the base HID was first observed continuously present; 0 = the
-        // base HID is not currently present. Static: detection runs on a shared
-        // reconnect timer, and the settle window must persist across ticks.
-        private static long _baseHidPresentSinceTicks;
-        // How long the base HID must be continuously present (after a fresh
-        // enumeration) before we trust the serial port to have finished binding.
-        // The crash window is the first few seconds of USB enumeration.
-        private const int ProbeHidSettleMs = 9_000;
-        // Timeout for an out-of-process (Wine) probe. Must cover child-process
-        // launch overhead under Wine (~1-2 s for a .NET exe) ON TOP of the
-        // probe's internal ~500 ms budget, hence much larger than the in-process
-        // timeout. A genuinely-hung helper is killed at this deadline.
-        private const int IsolatedProbeTimeoutMs = 4_000;
-        // Wine-detection latch (-1 unknown, 0 native Windows, 1 Wine). The
-        // serial-open crash is Wine-specific; on native Windows the settle gate
-        // is pure dead latency (probing a not-ready port there just throws and
-        // is caught). The field-bundle research showed the vast majority of
-        // users are on native Windows — they must pay ZERO gate latency.
-        private static int _isWine = -1;
         // Priority lane: unpaced FIFO for tiny, time-critical frames (fc:00 session
         // acks). Drained ahead of one-shot every WriteLoop iteration so an ack
         // can't get buried behind a 1000-chunk tier-def burst — the wheel times
@@ -420,20 +417,6 @@ namespace MozaPlugin.Protocol
                     && (_pidFilter == null || _pidFilter(FormatPid(info.Pid))))
                 {
                     DiscoveredPid = FormatPid(info.Pid);
-                    // Honor the same crash-safety gate as the probe path: NEVER
-                    // open a serial port until the base USB has settled. Without
-                    // this, a saved LastWheelbasePort gets opened on the very
-                    // first reconnect tick of a freshly-powered base — re-entering
-                    // the mid-enumeration Open() crash window the gate exists to
-                    // avoid. (On an empty-registry Wine base TryGetByPort fails so
-                    // this branch isn't reached; this guards registry-populated
-                    // setups where it is.)
-                    if (!IsSerialProbeReady(out _))
-                    {
-                        MozaLog.Debug(
-                            $"[Moza] Cached port {_lastPortName} open deferred — base USB not settled yet.");
-                        return false;
-                    }
                     if (TryOpen(_lastPortName))
                         return true;
                     MozaLog.Debug(
@@ -620,6 +603,19 @@ namespace MozaPlugin.Protocol
                 Interlocked.Exchange(ref _streamSlots[k], null);
             // Defer the OS-buffer discard to the write thread (see _flushRequested).
             _flushRequested = true;
+        }
+
+        /// <summary>
+        /// Clear only one pipeline's stream-slot lane (slots [from, from+count)),
+        /// leaving the shared queues, OS buffer, and the OTHER pipeline's slots
+        /// intact. Used when one of two senders sharing this connection stops/
+        /// restarts so it doesn't blank the co-resident pipeline's frames.
+        /// </summary>
+        public void ClearStreamSlots(int from, int count)
+        {
+            int end = Math.Min(from + count, _streamSlots.Length);
+            for (int k = Math.Max(0, from); k < end; k++)
+                Interlocked.Exchange(ref _streamSlots[k], null);
         }
 
         // Record an I/O failure. Throttles log spam and force-closes the port
@@ -1197,26 +1193,6 @@ namespace MozaPlugin.Protocol
                 MozaLog.Debug(
                     $"[Moza] Registry classifies {registryByPort.Count} of {ports.Length} COM port(s); probing the remainder");
 
-            // Crash-safety gate: do NOT open/probe any COM port until the MOZA
-            // base USB has settled. A freshly-powered base enumerates its USB
-            // interfaces over several seconds; opening its CDC-ACM serial port
-            // mid-enumeration SEGFAULTS Wine — uncatchable, kills all of SimHub
-            // (the "crashes on a freshly-powered base" bug; neither SerialPort
-            // nor a native CreateFile open survives it). The base's HID
-            // interface comes up BEFORE its serial port is ready, so we gate on
-            // "base HID present continuously for ProbeHidSettleMs" as a safe
-            // proxy for "serial port has finished binding". HID enumeration is
-            // safe during the window — only the serial open crashes. Deferred
-            // probes retry on the next reconnect tick (~5 s).
-            if (!IsSerialProbeReady(out int settleWaitedMs))
-            {
-                MozaLog.Debug(
-                    $"[Moza] Serial probe deferred — waiting for base USB to settle " +
-                    $"(base HID present {settleWaitedMs}ms / {ProbeHidSettleMs}ms); avoids " +
-                    "opening a mid-enumeration CDC-ACM port that crashes Wine.");
-                return (null, null, false);
-            }
-
             // 600ms budget per port — SerialPort.Open can hang indefinitely under Wine
             // if another process holds the tty. Background-thread the probe so one bad
             // port can't block all detection.
@@ -1369,126 +1345,16 @@ namespace MozaPlugin.Protocol
             return (null, null, false);
         }
 
-        // ProbeKind, the probe frames, and the open+probe core moved to the
-        // shared SerialProbeCore (Protocol/SerialProbeCore.cs) so the exact same
-        // code is compiled into the out-of-process MozaProbeHelper.exe with zero
-        // wire-constant drift.
-
-        /// <summary>
-        /// Probe a port with a hard time budget. On timeout the outer thread closes
-        /// the SerialPort to unblock any inner syscall.
-        /// </summary>
-        /// <summary>Is a MOZA wheelbase HID interface currently enumerated?
-        /// Cheap VID/PID scan over the HID device list — does NOT open the
-        /// serial port (HID enumeration is safe during USB bring-up; the serial
-        /// open is what crashes Wine). Reused as the "USB is up" signal.</summary>
-        private static bool IsBaseHidPresent()
-        {
-            try
-            {
-                foreach (var dev in DeviceList.Local.GetHidDevices())
-                {
-                    try
-                    {
-                        if (dev.VendorID != MozaPortDiscovery.MozaVid) continue;
-                        if (MozaUsbIds.Categorize((ushort)dev.ProductID) == MozaDeviceCategory.Wheelbase)
-                            return true;
-                    }
-                    catch { /* per-device descriptor hiccup — keep scanning */ }
-                }
-            }
-            catch { /* HidSharp enumeration failure — treat as "not present" */ }
-            return false;
-        }
-
-        [DllImport("kernel32.dll", CharSet = CharSet.Ansi, SetLastError = false)]
-        private static extern IntPtr GetModuleHandle(string lpModuleName);
-
-        [DllImport("kernel32.dll", CharSet = CharSet.Ansi, SetLastError = false)]
-        private static extern IntPtr GetProcAddress(IntPtr hModule, string procName);
-
-        /// <summary>Are we running under Wine/Proton? Canonical check: the
-        /// <c>wine_get_version</c> export in ntdll. Latched. The serial-open
-        /// crash this whole gate exists for is Wine-specific; on native Windows
-        /// the gate would only add dead latency (probing a not-ready port there
-        /// throws and is caught, it doesn't crash), so we skip it entirely.</summary>
-        private static bool IsRunningUnderWine()
-        {
-            int v = _isWine;
-            if (v >= 0) return v == 1;
-            bool wine = false;
-            try
-            {
-                IntPtr ntdll = GetModuleHandle("ntdll.dll");
-                if (ntdll != IntPtr.Zero)
-                    wine = GetProcAddress(ntdll, "wine_get_version") != IntPtr.Zero;
-            }
-            catch { wine = false; }
-            _isWine = wine ? 1 : 0;
-            try { MozaLog.Debug($"[Moza] Runtime: {(wine ? "Wine/Proton" : "native Windows")} (serial-probe settle gate {(wine ? "ENABLED" : "disabled")})"); } catch { }
-            return wine;
-        }
-
-        /// <summary>Gate that decides whether it is safe to OPEN a serial port.
-        ///
-        /// <para>Native Windows: always ready — there is no Wine serial-open
-        /// crash to avoid, so we add zero latency (the field-bundle majority).</para>
-        ///
-        /// <para>Wine: avoid the freshly-powered-base SerialPort.Open segfault.
-        /// The base HID enumerates before its CDC-ACM serial port is ready, so we
-        /// use HID presence as a safe "USB is up" proxy (HID scan never crashes).
-        /// WARM start (base HID present continuously since the first check, never
-        /// observed absent) ⇒ the device was already bound before we launched ⇒
-        /// ready immediately, NO settle. FRESH enumeration (HID seen absent then
-        /// present — power-cycle / replug / cold plug) ⇒ require the base HID to
-        /// be continuously present for <see cref="ProbeHidSettleMs"/> before we
-        /// trust the serial port to have finished binding.</para></summary>
-        private static bool IsSerialProbeReady(out int waitedMs)
-        {
-            waitedMs = 0;
-
-            // Native Windows: no Wine crash to gate against — open immediately.
-            if (!IsRunningUnderWine())
-                return true;
-
-            bool present = IsBaseHidPresent();
-            if (!present)
-            {
-                _baseHidPresentSinceTicks = 0; // restart the settle clock
-                return false;
-            }
-
-            // ALWAYS require the settle under Wine. (An earlier "warm-fast"
-            // shortcut — skip the settle if the HID was present at the first
-            // check — was UNSOUND and reintroduced the crash: on a fresh
-            // power-cycle the base HID enumerates within ~1-2 s, i.e. BEFORE
-            // SimHub's first ~5 s reconnect tick, so it looks "present since
-            // startup" even though its serial port is NOT yet bound. There is
-            // no reliable HID-only warm/fresh discriminator, so we pay the
-            // settle on every Wine connect. Native Windows already returned
-            // early above, so this latency only affects Wine/Proton users.)
-            long now = Stopwatch.GetTimestamp();
-            long since = _baseHidPresentSinceTicks;
-            if (since == 0)
-            {
-                _baseHidPresentSinceTicks = now;
-                return false;
-            }
-            waitedMs = (int)((now - since) * 1000L / Stopwatch.Frequency);
-            return waitedMs >= ProbeHidSettleMs;
-        }
+        // ProbeKind, the probe frames, and the open+probe core live in the
+        // shared SerialProbeCore (Protocol/SerialProbeCore.cs).
 
         private static (bool responded, bool reachable) ProbeWithTimeout(string portName, int timeoutMs, ProbeKind kind)
         {
-            // Under Wine, run the open+probe in a child process so a Wine
-            // serial-open SEGFAULT on a not-ready CDC-ACM port kills only the
-            // helper, never SimHub (the freshly-powered-base crash is
-            // uncatchable in-process). A hung helper is killed at the deadline —
-            // safe, because it's a separate process, unlike an in-proc Open
-            // thread we cannot cancel. Native Windows has no such crash, so it
-            // falls through to the in-process path below (no launch latency).
-            if (IsRunningUnderWine())
-                return SerialProbeHelperLauncher.ProbeViaHelper(portName, kind, IsolatedProbeTimeoutMs);
+            // The open+probe runs on a throwaway background thread so a hung
+            // SerialPort.Open() on a not-ready CDC-ACM port (Wine's freshly-
+            // powered-base wedge) doesn't block detection: the thread is
+            // abandoned at the deadline (see _probeInFlight docs) and self-cleans
+            // when the syscall finally returns.
 
             // A prior probe on this port hung in Open() and was abandoned (see
             // _probeInFlight docs). Its SerialPort still owns the OS handle, so
@@ -1515,9 +1381,7 @@ namespace MozaPlugin.Protocol
                     // on THIS thread (no cross-thread dispose — that segfaults
                     // Wine mid-Open). On the abandoned-timeout path the thread is
                     // simply left running; it self-cleans here when Open finally
-                    // returns. NOTE: this is the IN-PROCESS path used on native
-                    // Windows; under Wine ProbeWithTimeout routes to the
-                    // out-of-process helper instead (see the Wine branch above).
+                    // returns.
                     (responded, reachable) = SerialProbeCore.ProbeOnePort(
                         portName, kind, m => MozaLog.Debug($"[Moza] {m}"));
                 }

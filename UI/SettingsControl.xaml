@@ -108,7 +108,7 @@
                  right edge of the card. -->
             <Style x:Key="SettingSlider" TargetType="Slider" BasedOn="{StaticResource MozaSlider}">
                 <Setter Property="HorizontalAlignment" Value="Stretch"/>
-                <Setter Property="MinWidth" Value="160"/>
+                <Setter Property="MinWidth" Value="80"/>
                 <Setter Property="IsSnapToTickEnabled" Value="True"/>
             </Style>
             <!-- Accent-colored slider variants. Foreground cascades to the
@@ -223,8 +223,8 @@
                         BorderThickness="0,0,1,0" BorderBrush="{StaticResource BorderBrush}"
                         Padding="0,0,18,0" Margin="0,0,18,0">
                     <StackPanel Orientation="Horizontal">
-                        <Rectangle Width="28" Height="28" Fill="{StaticResource CyanBrush}"
-                                   RadiusX="3" RadiusY="3" Margin="0,0,10,0"/>
+                        <Image Width="32" Height="32" Margin="0,0,10,0"
+                               Source="{StaticResource MozaWheelBrandIcon}"/>
                         <StackPanel VerticalAlignment="Center">
                             <TextBlock Text="{x:Static res:Strings.Brand_Unofficial}"
                                        FontSize="8" FontWeight="SemiBold"
@@ -350,6 +350,37 @@
                     <Button x:Name="HeaderUpdateDismissButton"
                             Content="{x:Static res:Strings.Button_DismissUpdate}"
                             Click="HeaderUpdateDismiss_Click"/>
+                </StackPanel>
+            </Grid>
+        </Border>
+
+        <!-- One-time nudge for users without SDK support enabled: enabling it
+             lets the plugin stand in for MOZA Pit House so SDK apps don't
+             launch it. Cross-tab like the update banner above; dismissal is
+             persisted (SdkPromptDismissed) so it never reappears once acted on.
+             Driven by SettingsControl.Sdk.cs via RefreshSdkPromptBanner(). -->
+        <Border x:Name="SdkPromptBanner" DockPanel.Dock="Top"
+                Visibility="Collapsed" Margin="22,8,22,0"
+                BorderBrush="{StaticResource CyanBrush}" BorderThickness="1"
+                Background="{StaticResource BgDeepBrush}" CornerRadius="4" Padding="12,8">
+            <Grid>
+                <Grid.ColumnDefinitions>
+                    <ColumnDefinition Width="*"/>
+                    <ColumnDefinition Width="Auto"/>
+                </Grid.ColumnDefinitions>
+                <TextBlock Grid.Column="0"
+                           Text="{x:Static res:Strings.Banner_SdkSuggestionText}"
+                           FontFamily="{StaticResource FontUi}" FontSize="12.5" FontWeight="SemiBold"
+                           Foreground="{StaticResource CyanBrush}"
+                           TextWrapping="Wrap" VerticalAlignment="Center"/>
+                <StackPanel Grid.Column="1" Orientation="Horizontal"
+                            VerticalAlignment="Center" Margin="12,0,0,0">
+                    <Button x:Name="SdkPromptConfigureButton"
+                            Content="{x:Static res:Strings.Button_ConfigureSdk}"
+                            Click="SdkPromptConfigure_Click" Margin="0,0,8,0"/>
+                    <Button x:Name="SdkPromptDismissButton"
+                            Content="{x:Static res:Strings.Button_Dismiss}"
+                            Click="SdkPromptDismiss_Click"/>
                 </StackPanel>
             </Grid>
         </Border>
@@ -2247,7 +2278,7 @@
                 </ScrollViewer>
             </TabItem>
 
-            <TabItem Header="{x:Static res:Strings.TabHeader_Sdk}">
+            <TabItem x:Name="SdkTab" Header="{x:Static res:Strings.TabHeader_Sdk}">
                 <ScrollViewer VerticalScrollBarVisibility="Auto" Padding="22,18,22,8">
                     <StackPanel>
 

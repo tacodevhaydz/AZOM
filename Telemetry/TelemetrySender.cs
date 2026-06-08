@@ -299,6 +299,16 @@ namespace MozaPlugin.Telemetry
         internal const string CatalogProfileName = "WheelCatalog";
         private uint _catalogEndMarkerAtSynthesis;
         private int _catalogCountAtSynthesis;
+        // Concatenated catalog URLs at the last synthesis. The wheel streams
+        // its catalog via abbreviated/back-ref chunks the parser reconstructs
+        // and corrects IN PLACE, so the channel set can change while count and
+        // END marker stay constant. Without tracking content, an early synth
+        // built against an incomplete catalog (channels whose URLs hadn't yet
+        // resolved → empty SimHubProperty → live value 0) was never refreshed
+        // until a dashboard switch bumped the END marker — live game data
+        // stayed blank while test mode (which bypasses property resolution)
+        // worked. Re-synthesise when this signature changes too.
+        private string _catalogSignatureAtSynthesis = "";
 
         // CRC32 reject counters for catalog (sess=0x01/FlagByte) and tile-server
         // (sess=0x03/0x0b) chunks. Surfaced via diagnostics for link-quality.
@@ -439,6 +449,31 @@ namespace MozaPlugin.Telemetry
                     type02NConvention: false,
                     deviceId: _targetDeviceId);
             }
+            _builtWithResolverTarget = PropertyResolver?.Target;
+        }
+
+        // Delegate Target (= the SimHubPropertyResolver instance) that the current
+        // tier frame builders captured their value resolver from. On a SimHub
+        // plugin reload the persistent sender is reused but its builders still hold
+        // the dead OLD instance's resolver, and keepExistingSynth skips the Profile
+        // setter that would rebuild them — so live channels resolved through the
+        // dead plugin and froze at 0 (test mode unaffected: it reads ch.TestSignal,
+        // not the resolver). Tracked so RebindFrameBuildersToResolver re-points them
+        // exactly once when the resolver instance actually changes.
+        private object? _builtWithResolverTarget;
+
+        /// <summary>Re-point each tier frame builder's captured value resolver to
+        /// the current <see cref="PropertyResolver"/>, host-side only — no tier-def
+        /// re-emit, no wire traffic. No-op unless the resolver INSTANCE changed, so
+        /// the common same-instance ApplyTelemetrySettings path costs one ref
+        /// compare. Call after (re)assigning PropertyResolver; the load-bearing case
+        /// is the persistent sender reused across a plugin reload under
+        /// keepExistingSynth (which otherwise leaves the builders on the dead
+        /// instance's resolver and freezes the live dashboard).</summary>
+        internal void RebindFrameBuildersToResolver()
+        {
+            if (ReferenceEquals(PropertyResolver?.Target, _builtWithResolverTarget)) return;
+            RebuildFrameBuildersForTargetDevice();
         }
 
         // Session 0x09 configJson RPC. Device pushes dashboard state; we reply
@@ -602,6 +637,22 @@ namespace MozaPlugin.Telemetry
 
         /// <summary>Display sub-device model name, e.g. "Display". Empty if not detected.</summary>
         public string DisplayModelName => _displayModelName;
+
+        /// <summary>Pre-calibration hint for which u32 field the type-04 slot
+        /// record uses; <see cref="WheelSlotTracker"/> auto-detects the real
+        /// value from the wheel's kind=4 echo and overrides this. W13/FSR2 is the
+        /// LONE other-format wheel (slot in field B [5..9]); W17/W18/CS/KS and
+        /// every other — including future — 2026-era wheel use field A [1..5]. So
+        /// default to field A and treat W13/FSR as the exception.</summary>
+        internal bool SlotInFieldA
+        {
+            get
+            {
+                string m = (MozaPlugin.Instance?.Data?.WheelModelName ?? "")
+                    .ToUpperInvariant();
+                return !(m.Contains("W13") || m.Contains("FSR"));
+            }
+        }
 
         // Pre-cached frames (built once, reused every tick)
         private byte[] _cachedEnableFrame = null!;
@@ -1041,6 +1092,7 @@ namespace MozaPlugin.Telemetry
                         OriginalTotalBytes = tier.TotalBytes,
                     };
                 }
+                _builtWithResolverTarget = PropertyResolver?.Target;
                 MozaLog.Debug(tierDiag.ToString());
 
                 // Apply the catalog-driven filter + sort + FrameBuilder
@@ -1129,6 +1181,67 @@ namespace MozaPlugin.Telemetry
 
         private volatile int _framesSent;
         public int FramesSent => _framesSent;
+
+        /// <summary>
+        /// Base offset into the connection's stream-slot array for this sender's
+        /// periodic frames, so two senders can share one <see cref="MozaSerialConnection"/>
+        /// without colliding. 0 (default) = the wheel/primary lane (slots 0..10); a
+        /// bus-attached CM2 pipeline sharing the wheelbase connection uses 18 (slots
+        /// 18..28). A pipeline on its own connection stays at 0. See
+        /// <c>MozaSerialConnection</c> stream-slot layout.
+        /// </summary>
+        internal int StreamSlotBase { get; set; }
+
+        /// <summary>
+        /// When true, the inbound dispatcher accepts only frames whose device id
+        /// matches this sender's target exactly (no CM2 fan-in) — required when two
+        /// pipelines share one connection so each consumes only its own device's
+        /// replies. See <see cref="Inbound.TelemetryInboundDispatcher"/>.
+        /// </summary>
+        public volatile bool StrictInboundFilter;
+
+        /// <summary>
+        /// Page GUID this sender's channel mappings are stored under (null = the
+        /// current wheel page). A CM2 sender sets this to the CM2 device GUID so its
+        /// catalog-synth applies the CM2's mappings, not the wheel's.
+        /// </summary>
+        internal Guid? MappingPageGuid;
+
+        /// <summary>
+        /// Fixed dashboard-key list this sender uses to look up channel mappings
+        /// (null = the wheel's GetActiveDashboardKeyCandidates). A CM2 sender uses a
+        /// single fixed key since it catalog-synthesises one dashboard.
+        /// </summary>
+        internal System.Collections.Generic.IReadOnlyList<string>? MappingDashKeys;
+
+        /// <summary>Send a periodic frame on this sender's lane (slot = base + logical).</summary>
+        private void SendStreamSlot(int logicalSlot, byte[] frame) =>
+            _connection.SendStream((StreamKind)(StreamSlotBase + logicalSlot), frame);
+
+        /// <summary>Number of stream slots a tier-def pipeline occupies (TierDash0-7 +
+        /// Enable + Sequence + Mode).</summary>
+        private const int StreamBlockSize = 11;
+
+        /// <summary>
+        /// True when this sender shares its <see cref="MozaSerialConnection"/> with a
+        /// second pipeline (wheel + bus-CM2). When set, Stop() clears only this
+        /// sender's slot lane instead of flushing the whole connection, so stopping/
+        /// restarting one pipeline doesn't blank the co-resident one.
+        /// </summary>
+        public volatile bool SharesConnection;
+
+        /// <summary>
+        /// When true, the no-catalog engagement watchdog is suppressed for this sender.
+        /// Set while a base-bridged dash's type is undetermined: a CM1 (group-0x35) dash
+        /// never advertises a tier-def catalog, so the watchdog would otherwise loop
+        /// restarts. <see cref="MozaPlugin.TickCm1Discriminator"/> clears it (or hands off
+        /// to the CM1 driver) once the type is known.
+        /// </summary>
+        public volatile bool SuppressDisplayWatchdog;
+
+        // FSR V1 (group-0x42) display push is handled by the standalone
+        // Telemetry/Fsr1DisplayDriver — this sender is pure tier-def.
+
         /// <summary>True between Start() and Stop(). Exposed for diagnostics panel.
         /// Preserves the prior `_enabled` boolean's external semantics — anything
         /// other than Idle counts as "running".</summary>
@@ -1675,9 +1788,37 @@ namespace MozaPlugin.Telemetry
             try { System.Threading.Thread.Sleep(100); } catch { }
         }
 
+        // Top frames of the call chain into Stop(), for diagnosing which path
+        // (watchdog / detection / switch) triggered a cooldown. Best-effort.
+        private static string DescribeStopCaller()
+        {
+            try
+            {
+                var st = new System.Diagnostics.StackTrace(2, false); // skip this + Stop
+                var frames = st.GetFrames();
+                if (frames == null) return "unknown";
+                var sb = new System.Text.StringBuilder();
+                int shown = 0;
+                foreach (var f in frames)
+                {
+                    var m = f.GetMethod();
+                    if (m == null) continue;
+                    if (shown > 0) sb.Append(" ← ");
+                    sb.Append(m.DeclaringType?.Name).Append('.').Append(m.Name);
+                    if (++shown >= 4) break;
+                }
+                return sb.Length > 0 ? sb.ToString() : "unknown";
+            }
+            catch { return "unknown"; }
+        }
+
         public void Stop()
         {
-            TransitionTo(TelemetryState.Idle, "Stop()");
+            // Capture the call chain that led here — Stop()→Idle is the cooldown
+            // path; several watchdogs and the device-detection/reconnect logic can
+            // all reach it, and the bare "Stop()" reason didn't say which. The
+            // top frames name the culprit in the diagnostics bundle.
+            TransitionTo(TelemetryState.Idle, "Stop() ← " + DescribeStopCaller());
             _connection.MessageReceived -= _inboundDispatcher.OnMessageDuringPreamble;
             if (_sendTimer != null)
             {
@@ -1689,8 +1830,13 @@ namespace MozaPlugin.Telemetry
 
             // Drop anything already queued or sitting in the OS write buffer —
             // otherwise frames keep flowing to the wheel for ~1.4 s after stop
-            // (16 KB WriteBufferSize at 115200 baud).
-            _connection.FlushPendingWrites();
+            // (16 KB WriteBufferSize at 115200 baud). When two pipelines share this
+            // connection, clear only THIS sender's slot lane so stopping/restarting
+            // one doesn't blank the co-resident pipeline's frames.
+            if (SharesConnection)
+                _connection.ClearStreamSlots(StreamSlotBase, StreamBlockSize);
+            else
+                _connection.FlushPendingWrites();
 
             // Now that the queue is clear and the timer can't enqueue more,
             // emit the shutdown SessionClose triplet so the wheel sees a clean
@@ -1875,7 +2021,7 @@ namespace MozaPlugin.Telemetry
         /// or still inside the post-emit cooldown window — in which case
         /// the wheel state has not changed and no follow-up restart is
         /// required.</returns>
-        public bool SendDashboardSwitch(uint slotIndex)
+        public bool SendDashboardSwitch(uint slotIndex, bool anchorSlotRoundTrip = true)
         {
             if (!_connection.IsConnected) return false;
             // Block kind=4 emission during the post-emit silence window or
@@ -1912,8 +2058,15 @@ namespace MozaPlugin.Telemetry
             // racing to the same slot is the common case).
             _slotTracker.NoteHostEmittedKind4((int)slotIndex);
             // Anchor the display watchdog's slot round-trip window for every
-            // kind=4 source (resync probe, SwitchToProfile, convergence nudge).
-            _watchdog.NoteHostEmittedKind4((int)slotIndex);
+            // kind=4 source (resync probe, SwitchToProfile, convergence nudge)
+            // — EXCEPT a convergence nudge to a slot the wheel already reports
+            // it's on (anchorSlotRoundTrip=false). Re-stamping the window and
+            // clearing the not-engaged debounce on an already-bound slot is
+            // pointless churn, and it slows the watchdog's reaction if the
+            // wheel later drifts off-slot. The slot-tracker note above still
+            // fires so redundant-emit detection stays accurate.
+            if (anchorSlotRoundTrip)
+                _watchdog.NoteHostEmittedKind4((int)slotIndex);
             MozaLog.Debug(
                 $"[Moza] Sent dashboard-switch FF-record: slot={slotIndex} " +
                 $"on FF session 0x{ResolveFfSession():X2} (mirror of tier-def session)");
@@ -2054,7 +2207,20 @@ namespace MozaPlugin.Telemetry
             byte mgmt = _mgmtPort != 0 ? _mgmtPort : (byte)0x01;
             byte flag = FlagByte;
             if (_catalogParser.HasRealCatalogOnSession(mgmt)) return mgmt;
-            if (flag != 0 && flag != mgmt && _catalogParser.HasRealCatalogOnSession(flag)) return flag;
+            // Only FOLLOW the catalog onto the flag session for a wheel whose
+            // policy actually puts the tier-def there (Form B). A MgmtPort-policy
+            // wheel (Form A — CS-Pro) binds the subscription on mgmt (0x01); after
+            // a power cycle its first catalog can land on the flag session (0x02),
+            // but echoing the tier-def there left the wheel unbound — host kind=4
+            // ignored, test mode dead — until a watchdog recovery nudged the
+            // catalog back to 0x01 (verified 2026-06-07: tier-def 0x02 → no bind;
+            // 0x01 → binds). Keep the tier-def on mgmt regardless of which session
+            // the cold-start catalog arrived on; the parser still ingests it from
+            // whichever session carried it, and ResolveFfSession keeps FF on the
+            // opposite (flag) session per the Form-A pairing.
+            if (_policy.TierDefSession == TierDefSessionPolicy.FlagByte
+                && flag != 0 && flag != mgmt
+                && _catalogParser.HasRealCatalogOnSession(flag)) return flag;
             return _policy.TierDefSession == TierDefSessionPolicy.FlagByte
                 ? (flag != 0 ? flag : (byte)0x02) : mgmt;
         }
@@ -2948,12 +3114,25 @@ namespace MozaPlugin.Telemetry
             if (_catalogParser.LastWheelEndMarker == 0)
                 return;
 
-            // Re-synthesis trigger: catalog count grew OR wheel committed a new
-            // tier-def generation (END marker bumped — happens on dashboard
-            // switch). Skip when neither moved.
+            // Re-synthesis trigger: catalog count grew or the catalog body
+            // changed (signature — e.g. the parser corrected back-ref/
+            // abbreviated URLs in place, or a dashboard switch rebound idxs to
+            // new URLs). Skip when BOTH count and signature are unchanged.
+            //
+            // The wheel's END marker is DELIBERATELY excluded: it is a
+            // cumulative counter that advances on every catalog re-advertisement
+            // (keepalive), even when the channel set is byte-for-byte identical
+            // (observed END 68→136→244 for the same 68-channel catalog). Keying
+            // re-synthesis on END advance made every keepalive look like a new
+            // generation → re-arm → re-emit → the wheel re-advertised (END++) →
+            // re-arm again: a feedback loop that marched the flag base without
+            // end (0x00→0x3F over 64 emissions) and let partial re-advertisements
+            // collapse the bound channel set. A real dashboard switch always
+            // changes count or signature, so content-keying still catches it.
+            string catalogSignature = string.Join("\n", catalog);
             if (currentIsSynthesised
                 && _catalogCountAtSynthesis == catalog.Count
-                && _catalogEndMarkerAtSynthesis == _catalogParser.LastWheelEndMarker
+                && _catalogSignatureAtSynthesis == catalogSignature
                 && !force)
                 return;
 
@@ -2964,7 +3143,8 @@ namespace MozaPlugin.Telemetry
             MultiStreamProfile synthesised;
             try
             {
-                synthesised = store.BuildProfileFromCatalog(catalog, CatalogProfileName);
+                bool includeRadar = MozaPlugin.Instance?.Settings?.EnableRadarTrackMapChannels ?? false;
+                synthesised = store.BuildProfileFromCatalog(catalog, CatalogProfileName, includeRadar);
             }
             catch (Exception ex)
             {
@@ -2984,10 +3164,11 @@ namespace MozaPlugin.Telemetry
             int mappedCount = 0;
             if (plugin != null)
             {
-                var channelMap = plugin.GetActiveChannelMappings();
+                var channelMap = plugin.GetActiveChannelMappings(MappingPageGuid);
                 if (channelMap != null)
                 {
-                    foreach (var dashKey in plugin.GetActiveDashboardKeyCandidates())
+                    var keys = MappingDashKeys ?? plugin.GetActiveDashboardKeyCandidates();
+                    foreach (var dashKey in keys)
                     {
                         if (channelMap.TryGetValue(dashKey, out var overrides) && overrides != null)
                         {
@@ -3006,14 +3187,46 @@ namespace MozaPlugin.Telemetry
                 $"+ {synthesised.StringChannels.Count} strings (catalog={catalog.Count}, " +
                 $"endMarker={_catalogParser.LastWheelEndMarker}, userMappings={mappedCount})");
 
+            // Did the catalog actually advance to a new generation? Capture
+            // BEFORE updating the tracking fields. NOTE: the dedup near the top
+            // of this method is bypassed when force=true (the hot-switch burst
+            // re-emits with force), so reaching here does NOT imply a real
+            // change — we must compare explicitly or the re-arm below loops
+            // forever on every forced burst frame.
+            // Content-keyed (NOT END-keyed) — see the dedup guard above: the
+            // wheel's END marker advances on every keepalive re-advertisement, so
+            // re-arming on END advance self-perpetuates a flag-base-marching
+            // feedback loop. A genuine new generation (catalog grew, or switch
+            // rebound idxs) always changes count or signature.
+            bool generationChanged =
+                _catalogCountAtSynthesis != catalog.Count
+                || _catalogSignatureAtSynthesis != catalogSignature;
+
             _catalogEndMarkerAtSynthesis = _catalogParser.LastWheelEndMarker;
             _catalogCountAtSynthesis = catalog.Count;
+            _catalogSignatureAtSynthesis = catalogSignature;
 
             // Going through the Profile setter so multi-broadcast expansion
             // and _tiers allocation match the mzdash path exactly. The setter
             // preserves Name, so subsequent calls can detect the synthesised
             // profile by Profile.Name == CatalogProfileName.
             Profile = synthesised;
+
+            // Re-arm the hot-switch burst ONLY when the catalog genuinely
+            // advanced to a new generation. On a dashboard switch the wheel
+            // builds its catalog up across several generations (e.g. END
+            // 6→80→97 over ~3 s), but the switch's emission burst is a fixed
+            // 3–8 frames ~1 s apart — so the burst can finish on a PARTIAL
+            // generation (5 ch) before the final one (the 21-ch radar set)
+            // commits, and the complete tier-def never reaches the wheel until
+            // the user switches again. Re-arming on each real advance fixes
+            // that, and converges because a stable catalog stops advancing.
+            // Gating on generationChanged is essential: the forced burst
+            // re-emissions hit this path with the SAME generation, and an
+            // unconditional re-arm there self-perpetuates the burst forever
+            // (flagBase marches without end — observed 2026-06-04).
+            if (generationChanged)
+                _hotSwitch.ArmBurst(countsAsSwitch: false);
 
             // Notify the UI that the channel set has changed. The
             // DashboardSelectionChanged event is normally raised at the
@@ -3359,7 +3572,13 @@ namespace MozaPlugin.Telemetry
                 TickEmitLedStatePolls();
                 TickEmitRetransmits();
                 _tierDefEmitter.TickEmitTierDefBlindRetransmits();
-                _watchdog.TickDisplayWatchdog();
+                // A base-bridged dash whose type is still unknown (could be a CM1
+                // group-0x35 device that never advertises a tier-def catalog) must NOT
+                // trip the no-catalog engagement watchdog — it would burn restarts and
+                // spam tier-def opens while the CM1 discriminator decides. See
+                // MozaPlugin.TickCm1Discriminator.
+                if (!SuppressDisplayWatchdog)
+                    _watchdog.TickDisplayWatchdog();
                 TickGrowSubscriptionIfCatalogStable();
                 TickPostSwitchCatalogConvergence();
 
@@ -3570,9 +3789,20 @@ namespace MozaPlugin.Telemetry
         /// test/live within the loop).</summary>
         private void TickEmitValueFrames(TierState[] tiers)
         {
+            // Only build the per-car track-map/radar arrays when an active tier
+            // actually has a Location/Radar channel. With those channels disabled
+            // (the shipped default) this skips GameDataSnapshot's reflection chain
+            // and per-opponent allocation/loop — dead work that scaled with the
+            // game's car count (e.g. open-world traffic). Cheap to recompute: a
+            // few bool reads over the 1-4 tiers.
+            bool needCarPositions = false;
+            for (int t = 0; t < tiers.Length; t++)
+            {
+                if (tiers[t].Builder?.NeedsCarPositions == true) { needCarPositions = true; break; }
+            }
             GameDataSnapshot snapshot = TestMode
                 ? default
-                : GameDataSnapshot.FromStatusData(_latestGameData);
+                : GameDataSnapshot.FromStatusData(_latestGameData, needCarPositions);
 
             bool liveOk = _gameRunning && _profileTelemetryEnabled;
             bool useV0Values = _policy.Encoding == TierDefEncoding.V0Url;
@@ -3639,7 +3869,7 @@ namespace MozaPlugin.Telemetry
                 // overwrite it so the wheel gets the freshest snapshot instead
                 // of a growing backlog.
                 if (i < 8)
-                    _connection.SendStream((StreamKind)((int)StreamKind.TierDash0 + i), frame);
+                    SendStreamSlot((int)StreamKind.TierDash0 + i, frame);
                 else
                     _connection.Send(frame);
 
@@ -3650,22 +3880,22 @@ namespace MozaPlugin.Telemetry
             }
         }
 
-        /// <summary>Out-of-band string-channel value push on sess=0x01
-        /// type=0x05. Strings (Telemetry.json compression=string — TrackId,
-        /// CarModel, SessionTypeName, etc.) cannot be bit-packed into the
-        /// value frame; they ride a separate sub-msg on the management
-        /// session. Cadence: emit immediately on value change with a
-        /// 15-second keepalive floor for unchanged channels — matches the
-        /// 14.76 s mean cadence observed in PitHouse capture
-        /// bridge-20260514-204307.jsonl. Format and discovery in
-        /// docs/protocol/sessions/session-0x01-channel-protocol.md.
+        /// <summary>Out-of-band string-channel value push, type=0x05. Strings
+        /// (Telemetry.json compression=string — TrackId, CarModel,
+        /// SessionTypeName, etc.) cannot be bit-packed into the value frame;
+        /// they ride a separate sub-msg on the tier-def/catalog session
+        /// (ResolveTierDefSession() — 0x01 or the FlagByte session, whichever
+        /// the wheel advertised its catalog on, matching PitHouse). Cadence:
+        /// emit immediately on value change with a 15-second keepalive floor
+        /// for unchanged channels — matches the 14.76 s mean cadence observed
+        /// in PitHouse capture bridge-20260514-204307.jsonl. Format and
+        /// discovery in docs/protocol/sessions/session-0x01-channel-protocol.md.
         ///
-        /// _session01SeqLock is acquired around each emit. Today the only
-        /// other writer of _session01OutboundSeq is SendTierDefinition() also
-        /// on the tick handler (single-entry via _tickInProgress), so a race
-        /// is not reachable — but locking here matches SendTierDefinition's
-        /// pattern and is future-proof against off-tick sess=0x01 writers
-        /// being added later.</summary>
+        /// The resolved session's seq lock is acquired around each emit, the
+        /// same lock SendTierDefinition and the value-frame/FF paths take on
+        /// that session, so string chunks reserve a contiguous seq range and
+        /// cannot interleave into another chunk train. Emission is on the tick
+        /// handler (single-entry via _tickInProgress).</summary>
         private void TickEmitStringValues()
         {
             if (!TestMode && (!_gameRunning || !_profileTelemetryEnabled)) return;
@@ -3752,20 +3982,38 @@ namespace MozaPlugin.Telemetry
         private void EmitOneStringValue(byte channelIdx, string value)
         {
             byte[] msg = Frames.StringValueBuilder.Build(channelIdx, value);
-            lock (_session01SeqLock)
+
+            // Strings ride the SAME session as the tier-def/catalog, NOT a
+            // hardcoded 0x01. PitHouse puts type-0x05 string pushes on the
+            // tier-def session (W13/FSR2: catalog+tier-def+strings on 0x02,
+            // FF-records on 0x01). When the wheel advertises its catalog on the
+            // FlagByte session, ResolveTierDefSession() returns it and the
+            // tier-def follows — strings must follow too, or the wheel never
+            // binds them (same failure SendTierDefinition documents: emit on
+            // the wrong session → wheel acks then closes it). On wheels whose
+            // catalog is on 0x01 (e.g. CS Pro) this resolves to 0x01 and
+            // behaviour is unchanged. Mirrors SendTierDefinition's session/seq
+            // selection so chunks share the per-session seq + lock.
+            byte session = ResolveTierDefSession();
+            bool onFlagByte = session == FlagByte && FlagByte != 0;
+            object seqLock = onFlagByte ? _session02SeqLock : _session01SeqLock;
+            lock (seqLock)
             {
+                int seq = onFlagByte
+                    ? Math.Max(2, _session02OutboundSeq)
+                    : Math.Max(2, _session01OutboundSeq);
                 var frames = Frames.TierDefinitionBuilder.ChunkMessage(
-                    msg, session: 0x01, seq: ref _session01OutboundSeq, deviceId: _targetDeviceId);
-                // SendAndTrackChunk instead of Send: strings ride sess=0x01 just
-                // like tier-def and FF-record property pushes (PropertyPushQueue
-                // already uses Track), so a lost string chunk gets retransmitted
-                // until acked instead of waiting for the 15 s keepalive to
-                // re-send a fresh value. Wheel acks sess=0x01 chunks at 10-90%
-                // across PH bridge captures, so most strings will be acked-and-
-                // dropped from the retransmit queue on the first send; the
+                    msg, session, ref seq, deviceId: _targetDeviceId);
+                // SendAndTrackChunk instead of Send: strings ride the tier-def
+                // session just like tier-def and FF-record property pushes, so a
+                // lost string chunk gets retransmitted until acked instead of
+                // waiting for the 15 s keepalive to re-send a fresh value. Most
+                // strings are acked-and-dropped on the first send; the
                 // protection only fires when one actually gets lost.
                 foreach (var f in frames)
                     SendAndTrackChunk(f);
+                if (onFlagByte) _session02OutboundSeq = seq;
+                else _session01OutboundSeq = seq;
             }
         }
 
@@ -3784,9 +4032,9 @@ namespace MozaPlugin.Telemetry
         private void TickEmitEnableAndSequence()
         {
             if (!TestMode && (!_gameRunning || !_profileTelemetryEnabled)) return;
-            _connection.SendStream(StreamKind.Enable, _cachedEnableFrame);
+            SendStreamSlot((int)StreamKind.Enable, _cachedEnableFrame);
             if (SendSequenceCounter)
-                _connection.SendStream(StreamKind.Sequence, BuildSequenceCounterFrame());
+                SendStreamSlot((int)StreamKind.Sequence, BuildSequenceCounterFrame());
         }
 
         /// <summary>Peripheral output polls (handbrake + pedals) at ~1 Hz,
@@ -4098,11 +4346,15 @@ namespace MozaPlugin.Telemetry
                         $"{Lifecycle.PostSwitchCatalogConvergence.StableSampleThreshold}");
                     try
                     {
-                        // Bypass wheel-on-target shortcut by calling
-                        // SendDashboardSwitch directly. SendDashboardSwitch
-                        // gates on state/cooldown only; it has no slot-equality
-                        // check.
-                        SendDashboardSwitch((uint)targetSlot);
+                        // Bypass the wheel-on-target shortcut for the kind=4
+                        // EMISSION (the nudge's job is to make the wheel
+                        // re-advertise its catalog regardless of slot), but do
+                        // NOT re-anchor the watchdog's slot round-trip window
+                        // when the wheel already reports it's on this slot —
+                        // re-arming a window that has already round-tripped
+                        // just keeps a no-op timer alive.
+                        SendDashboardSwitch((uint)targetSlot,
+                            anchorSlotRoundTrip: _slotTracker.WheelReportedSlot != targetSlot);
                     }
                     catch (Exception ex)
                     {
@@ -4208,7 +4460,7 @@ namespace MozaPlugin.Telemetry
             // Hot-swap detection still works via PollStatus's wheel-model probe.
             SendDashKeepalive();
             if (SendTelemetryMode)
-                _connection.SendStream(StreamKind.Mode, _cachedModeFrame);
+                SendStreamSlot((int)StreamKind.Mode, _cachedModeFrame);
             if ((_slowCounter & 1) == 1)
                 SendDisplayConfig();
             else if (_slowCounter % 8 == 0)

@@ -94,13 +94,24 @@ namespace MozaPlugin.Telemetry.Lifecycle
         /// pacing gate. The pending counter is set to <see cref="MaxEmissions"/>
         /// up front; <see cref="MarkEmission"/> clamps it down based on
         /// per-emission bind reports.</summary>
-        public void ArmBurst()
+        /// <param name="countsAsSwitch">True for a real dashboard switch: bumps
+        /// ArmCount, which the catalog parser's live-set tracker treats as a
+        /// switch boundary and REPLACES the live-set. False re-arms the
+        /// emission burst WITHOUT bumping ArmCount, so the live-set keeps
+        /// ACCUMULATING (unioning) channels across catalog generations until an
+        /// actual switch — the wheel ships one dashboard's channels across
+        /// several END-marker generations, so treating each generation as a
+        /// switch drops the earlier ones (e.g. OpponentCount / PlayerIndex when
+        /// the radar dots land in a later generation). Used by the
+        /// generation-advance re-arm in MaybeSwapProfileForCatalog.</param>
+        public void ArmBurst(bool countsAsSwitch = true)
         {
             _armTickMs = Environment.TickCount;
             _lastEmissionTickMs = 0;
             Interlocked.Exchange(ref _emissionsSent, 0);
             Interlocked.Exchange(ref _pendingReemit, MaxEmissions);
-            Interlocked.Increment(ref _armCount);
+            if (countsAsSwitch)
+                Interlocked.Increment(ref _armCount);
         }
 
         /// <summary>

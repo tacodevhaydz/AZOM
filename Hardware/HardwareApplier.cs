@@ -119,6 +119,12 @@ namespace MozaPlugin.Hardware
             if (clutchPoint >= 0) _data.WheelClutchPoint     = clutchPoint;
             if (knobMode  >= 0) _data.WheelKnobMode          = knobMode;
             if (stickMode >= 0) _data.WheelStickMode         = stickMode;
+            // Per-knob signal modes — overlay-only (no profile baseline), mirrored
+            // for UI display like the other input modes. Not re-pushed to hardware
+            // here; the wheel firmware persists them (newer FW drops readback).
+            if (ov?.WheelKnobSignalModes != null)
+                for (int i = 0; i < Math.Min(_data.WheelKnobSignalModes.Length, ov.WheelKnobSignalModes.Length); i++)
+                    if (ov.WheelKnobSignalModes[i] >= 0) _data.WheelKnobSignalModes[i] = ov.WheelKnobSignalModes[i];
 
             int[]? rpmColors          = EffArr(ov?.WheelRpmColors, profile.WheelRpmColors);
             int[]? rpmBlinkColors     = EffArr(ov?.WheelRpmBlinkColors, profile.WheelRpmBlinkColors);
@@ -218,7 +224,7 @@ namespace MozaPlugin.Hardware
                 WriteColorArray(rpmColors, "wheel-rpm-color", rpmCount);
                 if (hasRpm)
                     WriteColorArray(rpmBlinkColors, "wheel-rpm-blink-color", Math.Min(10, rpmCount));
-                WriteColorArray(buttonColors, "wheel-button-color", btnCount);
+                WriteButtonStaticColors(buttonColors, model);
                 if (_detectionState.DashDetected)
                     WriteColorArray(flagColors, "dash-flag-color", 6);
                 if (idleColor != null && idleColor.Length > 0 && hasSleepLight)
@@ -278,6 +284,9 @@ namespace MozaPlugin.Hardware
             if (profile.DashFlagsBrightness   >= 0) _data.DashFlagsBrightness   = profile.DashFlagsBrightness;
             if (profile.DashDisplayBrightness >= 0) _data.DashDisplayBrightness = profile.DashDisplayBrightness;
             if (profile.DashDisplayStandbyMin >= 0) _data.DashDisplayStandbyMin = profile.DashDisplayStandbyMin;
+            if (profile.DashRpmIndicatorMode   >= 0) _data.DashRpmIndicatorMode   = profile.DashRpmIndicatorMode;
+            if (profile.DashRpmDisplayMode     >= 0) _data.DashRpmDisplayMode     = profile.DashRpmDisplayMode;
+            if (profile.DashFlagsIndicatorMode >= 0) _data.DashFlagsIndicatorMode = profile.DashFlagsIndicatorMode;
             MozaProfile.UnpackColorsInto(profile.DashRpmColors, _data.DashRpmColors);
             MozaProfile.UnpackColorsInto(profile.DashRpmBlinkColors, _data.DashRpmBlinkColors);
             MozaProfile.UnpackColorsInto(profile.DashFlagColors, _data.DashFlagColors);
@@ -309,9 +318,15 @@ namespace MozaPlugin.Hardware
             }
             else
             {
-                // Legacy SHDP dashboard: dash-flags-indicator-mode forced to 1
-                // (firmware default 0 silently drops flag colour writes).
-                _deviceManager.WriteSetting("dash-flags-indicator-mode", 1);
+                if (profile.DashRpmIndicatorMode >= 0)
+                    _deviceManager.WriteSetting("dash-rpm-indicator-mode", profile.DashRpmIndicatorMode);
+                if (profile.DashRpmDisplayMode >= 0)
+                    _deviceManager.WriteSetting("dash-rpm-display-mode", profile.DashRpmDisplayMode);
+                // Legacy SHDP dashboard: dash-flags-indicator-mode defaults to 1
+                // when the profile has no stored value (firmware default 0 silently
+                // drops flag colour writes); a saved profile value wins.
+                _deviceManager.WriteSetting("dash-flags-indicator-mode",
+                    profile.DashFlagsIndicatorMode >= 0 ? profile.DashFlagsIndicatorMode : 1);
 
                 WriteColorArray(profile.DashRpmColors, "dash-rpm-color", 10);
                 WriteColorArray(profile.DashRpmBlinkColors, "dash-rpm-blink-color", 10);
@@ -369,13 +384,15 @@ namespace MozaPlugin.Hardware
             if (profile.DashRpmBrightness >= 0)
                 _deviceManager.WriteSetting("cm2-indicator-brightness", profile.DashRpmBrightness);
 
-            // 16 stored per-LED colors. The legacy SHDP profile only has 10
-            // RPM + 6 flag colors; map them across the 16 physical CM2
-            // positions: RPM colors 1-10 → cm2-stored-color1..10; flag colors
-            // 1-6 → cm2-stored-color11..16. This makes the existing dash UI
-            // continue to drive useful colors until a CM2-specific 16-color
-            // settings field replaces it. CM2.md confirms 1B 00 FF <i> + RGB
-            // visibly updates the matching LED at dev=0x12.
+            // STANDBY per-LED colors only (idle appearance, shown when no game
+            // is running). rs21_parameter.db: SetIndicatorGroupStandbyModeColor
+            // (0x1B 00 FF <i>) + RGB. RPM colors 1-10 → cm2-stored-color1..10,
+            // flag colors 1-6 → cm2-stored-color11..16.
+            //
+            // The LIVE/active colors (0x0B) are NOT written here — they are
+            // pushed per-frame through the SimHub LED pipeline
+            // (MozaDashLedDeviceManager.SendCm2LiveColors), exactly like the
+            // wheel's RPM LEDs. Config sets up the device + idle look only.
             if (profile.DashRpmColors != null)
             {
                 int rpmCount = System.Math.Min(profile.DashRpmColors.Length, 10);
@@ -460,8 +477,14 @@ namespace MozaPlugin.Hardware
             if (profile == null) return;
 
             if (profile.PedalsThrottleDir      >= 0) _data.PedalsThrottleDir      = profile.PedalsThrottleDir;
+            if (profile.PedalsThrottleMin      >= 0) _data.PedalsThrottleMin      = profile.PedalsThrottleMin;
+            if (profile.PedalsThrottleMax      >= 0) _data.PedalsThrottleMax      = profile.PedalsThrottleMax;
             if (profile.PedalsBrakeDir         >= 0) _data.PedalsBrakeDir         = profile.PedalsBrakeDir;
+            if (profile.PedalsBrakeMin         >= 0) _data.PedalsBrakeMin         = profile.PedalsBrakeMin;
+            if (profile.PedalsBrakeMax         >= 0) _data.PedalsBrakeMax         = profile.PedalsBrakeMax;
             if (profile.PedalsClutchDir        >= 0) _data.PedalsClutchDir        = profile.PedalsClutchDir;
+            if (profile.PedalsClutchMin        >= 0) _data.PedalsClutchMin        = profile.PedalsClutchMin;
+            if (profile.PedalsClutchMax        >= 0) _data.PedalsClutchMax        = profile.PedalsClutchMax;
             if (profile.PedalsBrakeAngleRatio  >= 0) _data.PedalsBrakeAngleRatio  = profile.PedalsBrakeAngleRatio;
             if (profile.PedalsThrottleCurve != null)
                 for (int i = 0; i < Math.Min(5, profile.PedalsThrottleCurve.Length); i++)
@@ -476,8 +499,14 @@ namespace MozaPlugin.Hardware
             if (!_detectionState.PedalsDetected) return;
             var dm = PedalsManager;
             if (profile.PedalsThrottleDir      >= 0) dm.WriteSetting("pedals-throttle-dir", profile.PedalsThrottleDir);
+            if (profile.PedalsThrottleMin      >= 0) dm.WriteSetting("pedals-throttle-min", profile.PedalsThrottleMin);
+            if (profile.PedalsThrottleMax      >= 0) dm.WriteSetting("pedals-throttle-max", profile.PedalsThrottleMax);
             if (profile.PedalsBrakeDir         >= 0) dm.WriteSetting("pedals-brake-dir", profile.PedalsBrakeDir);
+            if (profile.PedalsBrakeMin         >= 0) dm.WriteSetting("pedals-brake-min", profile.PedalsBrakeMin);
+            if (profile.PedalsBrakeMax         >= 0) dm.WriteSetting("pedals-brake-max", profile.PedalsBrakeMax);
             if (profile.PedalsClutchDir        >= 0) dm.WriteSetting("pedals-clutch-dir", profile.PedalsClutchDir);
+            if (profile.PedalsClutchMin        >= 0) dm.WriteSetting("pedals-clutch-min", profile.PedalsClutchMin);
+            if (profile.PedalsClutchMax        >= 0) dm.WriteSetting("pedals-clutch-max", profile.PedalsClutchMax);
             if (profile.PedalsBrakeAngleRatio  >= 0) dm.WriteFloat("pedals-brake-angle-ratio", profile.PedalsBrakeAngleRatio);
             if (profile.PedalsThrottleCurve != null)
                 for (int i = 0; i < Math.Min(5, profile.PedalsThrottleCurve.Length); i++)
@@ -586,6 +615,9 @@ namespace MozaPlugin.Hardware
             Apply(() => profile.GearshiftVibration, v => profile.GearshiftVibration = v,
                   () => _data.GearshiftVibration,   v => _data.GearshiftVibration   = v,
                   "base-gearshift-vibration");
+            Apply(() => profile.TempStrategy,       v => profile.TempStrategy       = v,
+                  () => _data.TempStrategy,         v => _data.TempStrategy         = v,
+                  "base-temp-strategy");
 
             // Local helper — does seed + mirror + write in one pass. Closes
             // over `profile` and `_data` via the enclosing scope so callers
@@ -1040,6 +1072,31 @@ namespace MozaPlugin.Hardware
         }
 
         /// <summary>
+        /// Write the persisted static button colours. <c>WheelButtonColors</c> is
+        /// protocol-indexed (14 slots); on a non-contiguous wheel (e.g. CS V2.1 →
+        /// protocol indices 0,1,3,6,8,9) a flat 0..N-1 loop writes phantom slots and
+        /// skips the high physical buttons. Drive each mapped protocol index directly
+        /// (`wheel-button-color{p+1}` addresses protocol index p) so 6/8/9 aren't lost.
+        /// Contiguous-button wheels (ButtonLedMap == null) keep the flat write.
+        /// </summary>
+        private void WriteButtonStaticColors(int[]? packedColors, WheelModelInfo model)
+        {
+            if (packedColors == null) return;
+            int[]? map = model.ButtonLedMap;
+            if (map == null)
+            {
+                WriteColorArray(packedColors, "wheel-button-color", model.ButtonLedCount);
+                return;
+            }
+            foreach (int p in map)
+            {
+                if (p < 0 || p >= packedColors.Length) continue;
+                var rgb = MozaProfile.UnpackColor(packedColors[p]);
+                _deviceManager.WriteColor($"wheel-button-color{p + 1}", rgb[0], rgb[1], rgb[2]);
+            }
+        }
+
+        /// <summary>
         /// Push per-knob "bulk Inactive default" + per-knob "Active" colors. No-op
         /// unless the active wheel exposes knob LED rings (W17 CS Pro / W18 KS Pro).
         /// Bulk Inactive fans out to all ring LEDs via per-LED writes (cmd 0x1F 0x03 0x01);
@@ -1130,10 +1187,14 @@ namespace MozaPlugin.Hardware
         public void ClearLedsOnHardware()
         {
             if (_plugin.Connection == null || !_plugin.Connection.IsConnected) return;
-            int rpmCount = _plugin.WheelModelInfo?.RpmLedCount ?? 0;
+            var modelInfo = _plugin.WheelModelInfo;
+            int rpmCount = modelInfo?.RpmLedCount ?? 0;
+            int rpmWindow = rpmCount > 0 ? (1 << rpmCount) - 1 : 0;
+            // 8-byte active+window form (active=0 = all off), matching the live path.
             _deviceManager.WriteArray("wheel-send-rpm-telemetry",
-                MozaLedDeviceManager.BuildRpmBitmaskBytes(0, rpmCount));
-            _deviceManager.WriteArray("wheel-send-buttons-telemetry", new byte[] { 0, 0 });
+                MozaLedDeviceManager.BuildWindowedBitmaskBytes(0, rpmWindow));
+            _deviceManager.WriteArray("wheel-send-buttons-telemetry",
+                MozaLedDeviceManager.BuildWindowedBitmaskBytes(0, modelInfo?.ButtonWindowMask ?? 0));
             _deviceManager.WriteSetting("wheel-old-send-telemetry", 0);
             _deviceManager.WriteSetting("dash-send-telemetry", 0);
         }

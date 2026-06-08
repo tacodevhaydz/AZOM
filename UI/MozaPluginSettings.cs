@@ -82,6 +82,10 @@ namespace MozaPlugin
         public int DashDisplayBrightness { get; set; } = 100;
         public int DashDisplayStandbyMin { get; set; } = 5;
 
+        // CM2 dash (dual-screen): the dashboard the user selected for the CM2's
+        // own pipeline, independent of the wheel's selection. Empty = catalog default.
+        public string Cm2SelectedDashboard { get; set; } = "";
+
         // Wheelbase ambient LED settings (R21/R25/R27 family — 18 LEDs / 2 strips).
         // Defaults match observed R25 capture (rainbow mode, brightness 100,
         // startup/shutdown #66B8FF). See docs/protocol/leds/base-ambient-0x20-0x22.md.
@@ -193,6 +197,14 @@ namespace MozaPlugin
         [Newtonsoft.Json.JsonIgnore]
         public bool EnableWireTraceFileSink { get; set; } = false;
 
+        // Radar (patch/ri*, OpponentCount, PlayerIndex) + track-map
+        // (patch/Location*) channels. Code-only toggle — not serialized, no UI.
+        // TEMPORARILY true to test opponent-position + heading data on the wheel
+        // (no tier-def enable-handshake change — that broke binding); set back to
+        // false before shipping until the feature is verified.
+        [Newtonsoft.Json.JsonIgnore]
+        public bool EnableRadarTrackMapChannels { get; set; } = false;
+
         [Newtonsoft.Json.JsonIgnore]
         public bool EnableAutoTestOnConnect { get; set; } = false;
 
@@ -269,6 +281,13 @@ namespace MozaPlugin
         // Plugin-global (not per-game / per-wheel). Takes effect on next
         // plugin restart — Stream 7 wires the actual server lifecycle.
         public bool SdkEmulationEnabled { get; set; } = false;
+
+        // One-time UI nudge: when the CoAP SDK server is disabled, the plugin
+        // pane shows a banner suggesting the user enable it (prevents MOZA Pit
+        // House from being launched by SDK apps). Set true once the user
+        // dismisses the banner or clicks Configure SDK — persisted so it never
+        // reappears.
+        public bool SdkPromptDismissed { get; set; } = false;
 
         // Always bind to loopback (127.0.0.1) only. Hidden from the UI in v1
         // because exposing the partner-API to LAN traffic has no legitimate
@@ -462,6 +481,36 @@ namespace MozaPlugin
             DefaultValueHandling = Newtonsoft.Json.DefaultValueHandling.Ignore)]
         public Dictionary<string, Dictionary<string, Dictionary<string, string>>> TelemetryChannelMappingsByWheel { get; set; }
             = new Dictionary<string, Dictionary<string, Dictionary<string, string>>>(StringComparer.OrdinalIgnoreCase);
+
+        /// <summary>
+        /// FSR V1 active built-in dashboard/page index (0..18), keyed by wheel-page
+        /// GUID. The plugin selects it by sending the group-0x32 cmd-0x81 index write
+        /// (<see cref="MozaPlugin.Telemetry.Fsr1DisplayEmitter.BuildSelect"/>); the
+        /// wheel also changes it via its HID button combo and reports it back. Absent
+        /// = default 0. Per-wheel (not per-game) — the wheel shows one dashboard.
+        /// </summary>
+        [Newtonsoft.Json.JsonProperty(NullValueHandling = Newtonsoft.Json.NullValueHandling.Ignore,
+            DefaultValueHandling = Newtonsoft.Json.DefaultValueHandling.Ignore)]
+        public Dictionary<Guid, int> Fsr1ActiveDashboardByWheelGuid { get; set; }
+            = new Dictionary<Guid, int>();
+
+        /// <summary>
+        /// Latched per dash GUID: true once a base-bridged dash is confirmed to be a CM1
+        /// (group-0x35, no tier-def catalog) rather than a tier-def CM2. Lets subsequent
+        /// boots route straight to the CM1 driver instead of re-running the tier-def probe.
+        /// See <see cref="MozaPlugin.TickCm1Discriminator"/>.
+        /// </summary>
+        [Newtonsoft.Json.JsonProperty(NullValueHandling = Newtonsoft.Json.NullValueHandling.Ignore,
+            DefaultValueHandling = Newtonsoft.Json.DefaultValueHandling.Ignore)]
+        public Dictionary<Guid, bool> DashIsCm1ByGuid { get; set; }
+            = new Dictionary<Guid, bool>();
+
+        /// <summary>CM1 selected dashboard page index (1-based), per dash GUID. Set via the
+        /// 0x32/0x81 select command and reported back by the dash's Param-6 log. Absent = 1.</summary>
+        [Newtonsoft.Json.JsonProperty(NullValueHandling = Newtonsoft.Json.NullValueHandling.Ignore,
+            DefaultValueHandling = Newtonsoft.Json.DefaultValueHandling.Ignore)]
+        public Dictionary<Guid, int> Cm1ActiveDashboardByGuid { get; set; }
+            = new Dictionary<Guid, int>();
 
         /// <summary>
         /// One-shot migration: copy entries from the legacy single-level

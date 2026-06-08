@@ -43,16 +43,20 @@ namespace MozaPlugin.Devices
         internal static readonly string[] NewWheelCoreReadCommands = new[]
         {
             "wheel-telemetry-mode",
-            // Sleep-light reads — captured into MozaData and seeded into the
-            // per-wheel-page WheelSleepByPageGuid bundle via
-            // SeedSleepBundleFromResponse. Common to every new-protocol wheel.
-            // The matching idle-*-interval (speed) commands are write-only on
-            // the wire (RxGroup=0xFF) so they're not read here.
-            "wheel-idle-mode", "wheel-idle-timeout", "wheel-idle-speed",
-            "wheel-idle-color",
             // Input modes — paddles/clutch/stick exist on every new-protocol wheel.
             // Knob input modes (wheel-knob-mode, wheel-knob-signal-modeN) are
             // gated below on WheelModelInfo.KnobCount.
+            //
+            // Sleep-light reads (wheel-idle-mode/timeout/speed/color) are
+            // deliberately NOT here. This list is issued at first wheel-detect,
+            // before wheel-model-name resolves, so it cannot be gated on
+            // capability. The legacy bare-"CS" wheel (HasSleepLight=false) does
+            // not implement those parameters — reading them drives its firmware
+            // into a Table 8 read-fail storm that makes it intermittently stop
+            // answering presence polls (the plugin then resets it ~every 20 s in
+            // a loop). The idle reads are deferred to
+            // BuildNewWheelLedReadCommands, gated on WheelModelInfo.HasSleepLight,
+            // once the model is known.
             "wheel-paddles-mode", "wheel-clutch-point", "wheel-stick-mode",
         };
 
@@ -72,6 +76,25 @@ namespace MozaPlugin.Devices
         {
             info ??= WheelModelInfo.Default;
             var cmds = new List<string>();
+
+            // Sleep-light (idle breathing) settings — read only on wheels that
+            // implement the feature. Captured into MozaData and seeded into the
+            // per-wheel-page WheelSleepByPageGuid bundle via
+            // SeedSleepBundleFromResponse. Deferred here (rather than the
+            // model-blind NewWheelCoreReadCommands) so they can be gated on
+            // HasSleepLight: the legacy bare-"CS" wheel lacks these parameters,
+            // and reading them triggers a Table 8 read-fail storm in its
+            // firmware that makes it periodically stop answering presence polls.
+            // The matching idle-*-interval commands are write-only on the wire
+            // (RxGroup=0xFF) so they're not read here; idle-speed (0x22) is
+            // readable and is.
+            if (info.HasSleepLight)
+            {
+                cmds.Add("wheel-idle-mode");
+                cmds.Add("wheel-idle-timeout");
+                cmds.Add("wheel-idle-speed");
+                cmds.Add("wheel-idle-color");
+            }
 
             // Per-zone LED modes + brightness + idle effect, gated on whether
             // the wheel actually has that zone.
@@ -222,9 +245,9 @@ namespace MozaPlugin.Devices
             if (_detectionState.DashDetected) return;
             _detectionState.DashDetected = true;
 
-            // CM2 reached through the wheelbase lives at the meter id 0x14
-            // (0x12 is the base main). Deploy the CM2 profile and probe its
-            // display identity at 0x14.
+            // CM2 reached through the wheelbase is driven at the bridge/main id
+            // 0x12 (where PitHouse sends its LED config + telemetry stream).
+            // Deploy the CM2 profile and probe its display identity.
             bool cm2BehindBase = _plugin.IsCm2BehindBaseCandidate;
             if (cm2BehindBase)
                 _deviceManager.SendDisplayProbe(MozaProtocol.DeviceDash);
@@ -248,10 +271,20 @@ namespace MozaPlugin.Devices
                 try { _plugin.ApplyTelemetrySettings(); _plugin.StartTelemetryIfReady(); }
                 catch (Exception ex) { MozaLog.Debug($"[Moza] CM2-on-base telemetry start skipped: {ex.Message}"); }
             }
+
+            // Dual-screen: a wheel that has its OWN screen (FSR1 / tier-def display wheel)
+            // plus a bus-bridged dash → ensure the concurrent dash pipeline spins up so the
+            // CM1 discriminator (or the tier-def CM2 sender) starts. Idempotent / gated.
+            try { _plugin.EnsureCm2Pipeline(); }
+            catch (Exception ex) { MozaLog.Debug($"[Moza] EnsureCm2Pipeline on dash-detect skipped: {ex.Message}"); }
         }
 
-        /// <summary>First-sight detection cascade for the handbrake sub-device.</summary>
-        public void MarkHandbrakeDetected()
+        /// <summary>First-sight detection cascade for the handbrake sub-device.
+        /// <paramref name="issueReads"/> false skips the settings-read cascade —
+        /// used by a standalone pipe that has confirmed presence (connect or PID)
+        /// but not yet that the device answers our binary protocol, so doomed
+        /// reads don't spam the pending tracker.</summary>
+        public void MarkHandbrakeDetected(bool issueReads = true)
         {
             if (_detectionState.HandbrakeDetected) return;
             // Record the owning pipe BEFORE flipping the flag so HardwareApplier
@@ -260,12 +293,14 @@ namespace MozaPlugin.Devices
             _detectionState.HandbrakeOwner = _deviceManager;
             _detectionState.HandbrakeDetected = true;
             _plugin.ApplyHandbrakeToHardware(_plugin.Settings?.ProfileStore?.CurrentProfile);
-            _deviceManager.ReadSettings(HandbrakeSettingsReadCommands);
+            if (issueReads)
+                _deviceManager.ReadSettings(HandbrakeSettingsReadCommands);
             MozaLog.Info("[Moza] Handbrake detected");
         }
 
-        /// <summary>First-sight detection cascade for the pedals sub-device.</summary>
-        public void MarkPedalsDetected()
+        /// <summary>First-sight detection cascade for the pedals sub-device.
+        /// See <see cref="MarkHandbrakeDetected"/> for <paramref name="issueReads"/>.</summary>
+        public void MarkPedalsDetected(bool issueReads = true)
         {
             if (_detectionState.PedalsDetected) return;
             // Owner first, then flag (see MarkHandbrakeDetected). The owning
@@ -274,7 +309,8 @@ namespace MozaPlugin.Devices
             _detectionState.PedalsOwner = _deviceManager;
             _detectionState.PedalsDetected = true;
             _plugin.ApplyPedalsToHardware(_plugin.Settings?.ProfileStore?.CurrentProfile);
-            _deviceManager.ReadSettings(PedalsSettingsReadCommands);
+            if (issueReads)
+                _deviceManager.ReadSettings(PedalsSettingsReadCommands);
             MozaLog.Info("[Moza] Pedals detected");
         }
 
@@ -588,6 +624,16 @@ namespace MozaPlugin.Devices
                                 _plugin.DeviceDefinitionDeployed = true;
                             try { _plugin.ApplyTelemetrySettings(); }
                             catch (Exception ex) { MozaLog.Debug($"[Moza] CM2-on-base ApplyTelemetrySettings skipped: {ex.Message}"); }
+                            // Push the CM2 meter LED config (modes/thresholds/colors,
+                            // group 0x32) now that the base-bridged CM2 is CONFIRMED.
+                            // The earlier MarkDashDetected apply races ahead of this —
+                            // it runs before the profile is loaded and before
+                            // IsCm2BehindBaseCandidate is true, so ApplyCm2DashboardConfig
+                            // never fires there. Without this re-apply the meter is never
+                            // put into telemetry LED mode and its RPM/flag LEDs stay dark
+                            // (KS+CM2 bundle 2026-06-06: zero group-0x32 frames on the wire).
+                            try { _plugin.ApplyDashToHardware(_plugin.Settings?.ProfileStore?.CurrentProfile); }
+                            catch (Exception ex) { MozaLog.Debug($"[Moza] CM2-on-base ApplyDashToHardware skipped: {ex.Message}"); }
                         }
                         // Re-arm the wedge-recovery one-shot now that we know
                         // a display is responsive — a future wheel hot-swap
