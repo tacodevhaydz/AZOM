@@ -25,12 +25,19 @@ The CM2 (USB PID `0x0025`) connects in one of two topologies:
 - **The CM2 is driven by the group-`0x43` telemetry session pipeline** — tier
   definitions on session `0x01`, value frames on session `0x02`, routed by
   FlagByte. It acks host session opens with `fc:00` on sessions `0x01`/`0x02`.
-- **The legacy group-`0x33` dash-LED surface below does not drive the CM2** — its
-  per-LED RPM/flag colour and indicator-mode writes have no visible effect on a
-  CM2, so they are not sent to a CM2 device. CM2 stored-LED config uses group
-  `0x32` on the bridge/main at `0x12` (brightness `17 00 FF`, stored colors
-  `1B 00 FF <idx>`, mode/threshold family `18`/`19`/`11`/`0D`/`0E`/`05`); see
-  [`main-hub-0x12.md`](main-hub-0x12.md) § "CM2 bridge/main routing".
+  For a base-bridged CM2 the whole pipeline targets dev `0x14`; PitHouse runs the
+  session + value stream there and `0x14` answers with b2h session chunks
+  (`cm2.pcapng` 2026-06-08).
+- **CM2 RPM/flag LEDs are driven by the `dash-send-telemetry` on/off bitmask** —
+  group `0x41` cmd `FD DE`, dev `0x14`, sent per telemetry frame; the firmware
+  lights each set bit in its stored colour. PitHouse drives the base-bridged CM2
+  exactly this way (`cm2.pcapng` 2026-06-08: per-frame `7E .. 41 14 FD DE <u32
+  bitmask>`). The per-LED COLOURS and RPM thresholds are a separate one-time
+  group-`0x32` config push (`1B 00 FF <idx>` stored colours, `05`/`0E` thresholds,
+  `18`/`11`/`0D` modes); see [`main-hub-0x12.md`](main-hub-0x12.md) § "CM2
+  bridge/main routing". The plugin does NOT stream per-LED colour per frame — an
+  earlier build streamed group-`0x32` sub `0x0B` to dev `0x12`, which the firmware
+  ignores, so CM2 LEDs never lit until the bitmask path was restored.
 
 ### CM1 Racing Dash — group `0x35` keyed value stream
 

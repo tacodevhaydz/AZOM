@@ -429,10 +429,14 @@ namespace MozaPlugin
                 case "dash":     return MozaProtocol.DeviceDash;
                 case "hub":      return MozaProtocol.DeviceHub;
                 case "main":     return MozaProtocol.DeviceMain;
-                // CM2 standalone dashboard: meter-config commands address the
-                // CM2 bridge/main at dev=0x12 (verified working in usb-capture/CM2.md
-                // lab 2026-05-21); distinct from legacy dash commands at dev=0x14.
-                case "cm2-main": return MozaProtocol.DeviceMain;
+                // CM2 meter-config commands (stored colours, thresholds, modes)
+                // follow the dashboard target: dev=0x14 for a base-bridged CM2,
+                // dev=0x12 for a standalone-USB CM2 — same as the telemetry/LED
+                // stream. (A dedicated standalone pipe is handled by the override
+                // above.)
+                case "cm2-main":
+                    return MozaPlugin.Instance?.PreferredStandaloneDashboardTargetDeviceId
+                        ?? MozaProtocol.DeviceMain;
                 case "handbrake": return MozaProtocol.DeviceHandbrake;
                 case "ab9":      return MozaProtocol.DeviceAb9;
                 default:         return MozaProtocol.DeviceBase;

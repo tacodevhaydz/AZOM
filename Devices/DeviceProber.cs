@@ -245,9 +245,10 @@ namespace MozaPlugin.Devices
             if (_detectionState.DashDetected) return;
             _detectionState.DashDetected = true;
 
-            // CM2 reached through the wheelbase is driven at the bridge/main id
-            // 0x12 (where PitHouse sends its LED config + telemetry stream).
-            // Deploy the CM2 profile and probe its display identity.
+            // CM2 reached through the wheelbase is the meter at 0x14 (0x12 is
+            // the base main). PitHouse cm2.pcapng drives this CM2's session +
+            // telemetry on 0x14. Deploy the CM2 profile and probe display
+            // identity at 0x14.
             bool cm2BehindBase = _plugin.IsCm2BehindBaseCandidate;
             if (cm2BehindBase)
                 _deviceManager.SendDisplayProbe(MozaProtocol.DeviceDash);
