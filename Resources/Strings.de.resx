@@ -79,7 +79,7 @@
   <data name="Label_Combined" xml:space="preserve"><value>Kombiniert</value></data>
   <data name="Section_Buttons" xml:space="preserve"><value>Tasten</value></data>
   <data name="Section_PaddleSettings" xml:space="preserve"><value>SCHALTWIPPEN-EINSTELLUNGEN</value></data>
-  <data name="SliderLabel_PaddlesMode" xml:space="preserve"><value>SCHALTWIPPEN-Modus</value></data>
+  <data name="SliderLabel_PaddlesMode" xml:space="preserve"><value>Schaltwippen-Modus</value></data>
   <data name="Option_Buttons" xml:space="preserve"><value>Tasten</value></data>
   <data name="Option_Combined" xml:space="preserve"><value>Kombiniert</value></data>
   <data name="Option_Split" xml:space="preserve"><value>Geteilt</value></data>
