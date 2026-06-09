@@ -84,6 +84,12 @@ namespace MozaPlugin.UI
             sb.Append("  |  Hub ");
             sb.Append(string.IsNullOrEmpty(hubPort) ? "(disconnected)" : "→ " + hubPort);
             sb.AppendLine();
+            // Base-aux pipe only exists after a base→hub migration (broken base,
+            // wheel on hub); omit the line entirely in the common case.
+            string baseAuxPort = plugin.BaseAuxConnection?.IsConnected == true
+                ? plugin.BaseAuxConnection.LastPortName ?? "" : "";
+            if (!string.IsNullOrEmpty(baseAuxPort))
+                sb.AppendLine($"                Base(aux) → {baseAuxPort}  (wheel driven via hub)");
 
             // Classified open-failure surface. AccessDenied here is the
             // "port held by another app" footgun (PitHouse etc.); a stuck

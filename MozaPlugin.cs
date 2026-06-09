@@ -97,6 +97,12 @@ namespace MozaPlugin
         // Dedicated connection for a Universal Hub when a wheelbase is also
         // present (base = primary, hub enumerates its own peripherals).
         private MozaHubDeviceManager _hubManager = null!;
+        // Dedicated connection for the wheelbase AFTER a base→hub primary
+        // migration (broken base + wheel on hub): keeps base-only traffic
+        // (temps/state/FFB/ambient) on the base port while the primary drives the
+        // wheel over the hub. The mirror of _hubManager. Dormant (never opens)
+        // while the base IS the primary — gated on PrimaryBoundToHub.
+        private MozaBaseDeviceManager _baseManager = null!;
         private MozaMBoosterRegistry? _mboosterRegistry;
         // Dedicated lane for peripherals plugged STRAIGHT into the PC (their own
         // USB port + PID) rather than through a base/hub — one connection per
@@ -153,6 +159,25 @@ namespace MozaPlugin
         // _data + DetectionState with the primary prober; drivesTelemetry:false
         // so it never touches the singular TelemetrySender.
         private DeviceProber _hubDeviceProber = null!;
+        // Base-only prober for the dedicated base-aux pipe (post base→hub
+        // migration). Shares _data + DetectionState; drivesTelemetry:false so it
+        // never touches the singular TelemetrySender (telemetry runs on the hub).
+        private DeviceProber _baseDeviceProber = null!;
+        // ===== base→hub primary migration state (broken base, wheel on hub) =====
+        // Stamped (ticks) the first reconnect tick the primary is base-bound with
+        // no wheel detected; the migration waits a grace window past this. 0 = unset.
+        private long _baseBoundNoWheelUtcTicks;
+        // Stamped (ticks) when a wheel-MCU probe is answered on the HUB pipe —
+        // positive evidence the wheel is reachable via the hub. 0 = none seen.
+        private long _hubWheelSeenUtcTicks;
+        // The wheelbase port the primary migrated AWAY from because it had no
+        // wheel. MigratePrimaryToWheelbaseIfNeeded must skip it so it can't rip the
+        // primary straight back to the dead base. Null = no migration in effect.
+        private volatile string? _wheellessBasePort;
+        // Grace window: base must be wheel-less for this long (and a wheel must
+        // have answered on the hub) before migrating the primary to the hub. Long
+        // enough that a slow-booting wheel on a HEALTHY base detects first.
+        private const int BaseWheelGraceMs = 15000;
         private DashboardBindingCoordinator _dashboardBindingCoordinator = null!;
         internal DashboardBindingCoordinator DashboardBindingCoordinator => _dashboardBindingCoordinator;
 
@@ -849,6 +874,10 @@ namespace MozaPlugin
         /// <summary>The dedicated Universal Hub connection (present when a base + hub coexist), or null.</summary>
         internal MozaSerialConnection? HubConnection => _hubManager?.Connection;
 
+        /// <summary>The dedicated base-aux connection (present only after a base→hub
+        /// primary migration — broken base, wheel on hub), or null.</summary>
+        internal MozaSerialConnection? BaseAuxConnection => _baseManager?.Connection;
+
         /// <summary>True when a standalone-USB dashboard (CM2, PID 0x0025) is connected on its own port.</summary>
         internal bool DashboardUsbConnected =>
             _dashboardManager?.IsConnected == true
@@ -1220,6 +1249,16 @@ namespace MozaPlugin
                 _hubManager.MessageReceived += OnHubMessageReceived;
                 _hubManager.Connection.Disconnected += OnHubDisconnected;
 
+                // Mirror of _hubManager for the broken-base case: a dedicated
+                // base pipe that only comes up AFTER the primary has migrated to
+                // the hub (PrimaryBoundToHub), carrying base-only telemetry on the
+                // base port so motor temps / FFB / ambient survive the migration.
+                _baseManager = new MozaBaseDeviceManager();
+                if (!string.IsNullOrEmpty(_settings.LastBaseAuxPort))
+                    _baseManager.Connection.LastPortName = _settings.LastBaseAuxPort;
+                _baseManager.MessageReceived += OnBaseMessageReceived;
+                _baseManager.Connection.Disconnected += OnBaseDisconnected;
+
                 // AB9 engine-vibration worker — tick gates on connection/detection state.
                 _ab9Worker = new Ab9EngineVibrationWorker(
                     _ab9Manager,
@@ -1277,6 +1316,11 @@ namespace MozaPlugin
                         try { _hubManager.PendingResponses?.TickRetransmits(_hubManager.Connection.Send); }
                         catch (Exception ex) { MozaLog.Warn($"[Moza] Hub PendingResponseTracker tick failed: {ex.Message}"); }
                     }
+                    if (_baseManager != null && _baseManager.IsConnected)
+                    {
+                        try { _baseManager.PendingResponses?.TickRetransmits(_baseManager.Connection.Send); }
+                        catch (Exception ex) { MozaLog.Warn($"[Moza] Base-aux PendingResponseTracker tick failed: {ex.Message}"); }
+                    }
                     // Each standalone-peripheral pipe retransmits its own tracked
                     // reads on its own Send (same per-pipe isolation as the hub).
                     try { _peripheralRegistry?.TickRetransmits(); }
@@ -1292,11 +1336,19 @@ namespace MozaPlugin
                     if (!_connection.IsConnected)
                         TryConnect();
                     else
-                        // Primary already latched — if it grabbed a hub before the
-                        // wheelbase enumerated (wrong latch order), hand it off to
-                        // the base now. Runs before TryConnectHub so the freed hub
-                        // port is claimed by the hub manager in this same tick.
+                    {
+                        // Primary already latched. Two complementary self-heals:
+                        //  1. base→hub: the base has no wheel but one answered on
+                        //     the hub (broken base) → run the wheel pipeline over
+                        //     the hub. Runs FIRST and sets _wheellessBasePort so (2)
+                        //     can't immediately undo it.
+                        //  2. hub→base: the primary grabbed a hub before the
+                        //     wheelbase enumerated (wrong latch order) → hand it
+                        //     back to the base. Runs before TryConnectHub so the
+                        //     freed hub port is claimed by the hub manager this tick.
+                        MigratePrimaryToHubIfNeeded();
                         MigratePrimaryToWheelbaseIfNeeded();
+                    }
                     // AB9 probe is microseconds when registry is populated.
                     // On Wine/Proton (no registry) the fallback would scan
                     // every wine COM symlink and lock up SimHub; suppress when
@@ -1319,6 +1371,14 @@ namespace MozaPlugin
                     // and no-ops when the hub port is already held by the primary.
                     if (registryHasMoza && !_hubManager.IsConnected)
                         TryConnectHub();
+
+                    // Dedicated base-aux pipe — only when the primary has migrated
+                    // to the hub (broken base). Gated on PrimaryBoundToHub so it
+                    // never opens while the base IS the primary (the primary holds
+                    // the base port anyway). Reclaims the base port the primary
+                    // freed, keeping base temps/FFB/ambient alive.
+                    if (registryHasMoza && PrimaryBoundToHub && !_baseManager.IsConnected)
+                        TryConnectBase();
 
                     // Slice I: reconnect-timer mBooster Refresh re-enabled.
                     try { _mboosterRegistry?.Refresh(); }
@@ -1361,6 +1421,13 @@ namespace MozaPlugin
                 // drivesTelemetry:false keeps it off the primary TelemetrySender.
                 _hubDeviceProber = new DeviceProber(
                     this, _hubManager.Connection, _hubManager.DeviceManager, _data, DetectionState,
+                    drivesTelemetry: false);
+                // Base-pipe prober: same _data + DetectionState, bound to the
+                // base-aux connection + DM so its base detection cascade and base
+                // settings reads go out on the base pipe and record BaseOwner there.
+                // drivesTelemetry:false keeps it off the hub-bound TelemetrySender.
+                _baseDeviceProber = new DeviceProber(
+                    this, _baseManager.Connection, _baseManager.DeviceManager, _data, DetectionState,
                     drivesTelemetry: false);
                 _dashboardBindingCoordinator = new DashboardBindingCoordinator(this, _data, _connection, DetectionState);
 
@@ -1629,9 +1696,15 @@ namespace MozaPlugin
                     _hubManager.MessageReceived -= OnHubMessageReceived;
                     _hubManager.Connection.Disconnected -= OnHubDisconnected;
                 }
+                if (_baseManager != null)
+                {
+                    _baseManager.MessageReceived -= OnBaseMessageReceived;
+                    _baseManager.Connection.Disconnected -= OnBaseDisconnected;
+                }
             }
             catch { }
             try { _hubManager?.Dispose(); } catch { }
+            try { _baseManager?.Dispose(); } catch { }
             try { _pollTimer?.Dispose(); } catch { }
             try { _retryTimer?.Dispose(); } catch { }
             try { _reconnectTimer?.Dispose(); } catch { }
@@ -2158,9 +2231,15 @@ namespace MozaPlugin
                     _hubManager.MessageReceived -= OnHubMessageReceived;
                     _hubManager.Connection.Disconnected -= OnHubDisconnected;
                 }
+                if (_baseManager != null)
+                {
+                    _baseManager.MessageReceived -= OnBaseMessageReceived;
+                    _baseManager.Connection.Disconnected -= OnBaseDisconnected;
+                }
             }
             catch { }
             _hubManager?.Dispose();
+            _baseManager?.Dispose();
 
             // 7. Dispose timers after I/O is gone.
             _saveDebounceTimer?.Dispose();
@@ -2581,6 +2660,9 @@ namespace MozaPlugin
                 // so a user who toggled Connection off then on after a wedge
                 // gets a fresh recovery attempt.
                 DisplayWedgeRecoveryFired = false;
+                // Re-arm base→hub migration: a user toggling Connection wants a
+                // clean re-evaluation of where the wheel actually is.
+                ResetHubWheelMigrationState();
                 MozaLog.Info("[Moza] Connection enabled");
             }
             else
@@ -2611,8 +2693,11 @@ namespace MozaPlugin
                 DetectionState.Ab9Detected = false;
                 DetectionState.PedalsOwner = null;
                 DetectionState.HandbrakeOwner = null;
+                DetectionState.BaseOwner = null;
                 _ab9Manager?.Disconnect();
                 _hubManager?.Disconnect();
+                _baseManager?.Disconnect();
+                ResetHubWheelMigrationState();
                 if (_telemetrySender != null)
                 {
                     _telemetrySender.DetectedDeviceMask = 0;
@@ -3379,7 +3464,13 @@ namespace MozaPlugin
                     _firmwareDebugLog.Clear();
                     MozaLog.Info("[Moza] Connected to MOZA device");
                     MarkStandaloneDashboardDetectedFromUsb("serial connect");
-                    _deviceManager.ReadSettings(StatusPollCommands);
+                    // Base temps/state are dev-0x13 reads the base main controller
+                    // answers — pointless (and retransmit-forever noise) on a
+                    // hub-bound primary (hub-only, or post base→hub migration where
+                    // the dedicated base-aux pipe owns these). Base-bound primary
+                    // still polls them to drive base detection.
+                    if (!PrimaryBoundToHub)
+                        _deviceManager.ReadSettings(StatusPollCommands);
                     _deviceManager.ProbeWheelDetection();
                     _deviceManager.ReadSetting("dash-rpm-indicator-mode");
                     _deviceManager.ReadSetting("handbrake-direction");
@@ -3573,6 +3664,153 @@ namespace MozaPlugin
         }
 
         /// <summary>
+        /// Open the wheelbase's COM port on the dedicated base-aux pipe (used only
+        /// after a base→hub primary migration). On success persist the port and
+        /// kick the initial base poll so base-mcu-temp detection fires immediately
+        /// rather than waiting for the next PollStatus tick. Mirror of
+        /// <see cref="TryConnectHub"/>.
+        /// </summary>
+        private void TryConnectBase()
+        {
+            if (_baseManager == null) return;
+            if (_baseManager.TryConnect())
+            {
+                var port = _baseManager.Connection.LastPortName;
+                if (!string.IsNullOrEmpty(port) && _settings.LastBaseAuxPort != port)
+                {
+                    _settings.LastBaseAuxPort = port!;
+                    ScheduleSave();
+                }
+                PollBaseAux();
+            }
+            else if (!string.IsNullOrEmpty(_settings.LastBaseAuxPort)
+                     && string.IsNullOrEmpty(_baseManager.Connection.LastPortName))
+            {
+                MozaLog.Info($"[Moza] Cleared stale saved base-aux port {_settings.LastBaseAuxPort}");
+                _settings.LastBaseAuxPort = "";
+                ScheduleSave();
+            }
+        }
+
+        /// <summary>Clear all base→hub migration state — the grace-window stamp,
+        /// the positive hub-wheel-evidence stamp, and the wheel-less-base latch.
+        /// Called on events that invalidate the "this base has no wheel" judgement:
+        /// USB re-enumeration / base or hub unplug / connection toggle / a wheel
+        /// detected on the base.</summary>
+        private void ResetHubWheelMigrationState()
+        {
+            Interlocked.Exchange(ref _baseBoundNoWheelUtcTicks, 0);
+            Interlocked.Exchange(ref _hubWheelSeenUtcTicks, 0);
+            _wheellessBasePort = null;
+        }
+
+        /// <summary>
+        /// Self-heal the broken-base case: a wheelbase enumerates and answers base
+        /// probes, but no wheel is reachable on it — the wheel is on the Universal
+        /// Hub instead. The mirror of <see cref="MigratePrimaryToWheelbaseIfNeeded"/>.
+        ///
+        /// When the primary is bound to a base, NO wheel has been detected after a
+        /// grace window, AND a wheel actually answered a probe on the hub pipe
+        /// (positive evidence — <see cref="_hubWheelSeenUtcTicks"/>), release the
+        /// hub from the dedicated hub manager and migrate the primary onto it so it
+        /// runs the full wheel/session/telemetry pipeline there (the proven
+        /// hub-only path). The freed base port is reclaimed by the dedicated
+        /// base-aux pipe (<see cref="TryConnectBase"/>) for base telemetry. The
+        /// <see cref="_wheellessBasePort"/> latch stops MigratePrimaryToWheelbase
+        /// from immediately pulling the primary back.
+        ///
+        /// Registry-category gated, same as the wheelbase migration. Healthy
+        /// base+hub never reaches the action: the base detects its wheel first, so
+        /// the no-wheel precondition fails.
+        /// </summary>
+        private void MigratePrimaryToHubIfNeeded()
+        {
+            if (IsShuttingDown) return;
+            if (_connection == null || !_connection.IsConnected) return;
+
+            // Primary must be on a wheelbase (the broken base). If it's already on
+            // the hub there's nothing to migrate.
+            if (MozaUsbIds.Categorize(_connection.DiscoveredPid) != MozaDeviceCategory.Wheelbase)
+                return;
+
+            // A wheel on the base → this is a healthy base; never migrate. Also
+            // clear any stale grace stamp so a later wheel-drop doesn't look like
+            // an instantly-elapsed window.
+            if (DetectionState.NewWheelDetected || DetectionState.OldWheelDetected)
+            {
+                ResetHubWheelMigrationState();
+                return;
+            }
+
+            // Registry must categorize ports (real-HW Windows). Empty = Wine/Proton.
+            var ports = MozaPortDiscovery.Instance.Enumerate();
+            if (ports.Count == 0) return;
+
+            // Arm/measure the grace window: the base must sit wheel-less for
+            // BaseWheelGraceMs before we consider it broken. Stamp on first sight.
+            long now = DateTime.UtcNow.Ticks;
+            Interlocked.CompareExchange(ref _baseBoundNoWheelUtcTicks, now, 0);
+            long stamp = Interlocked.Read(ref _baseBoundNoWheelUtcTicks);
+            if ((now - stamp) / TimeSpan.TicksPerMillisecond < BaseWheelGraceMs) return;
+
+            // Positive evidence: a wheel must have answered on the hub pipe.
+            if (Interlocked.Read(ref _hubWheelSeenUtcTicks) == 0) return;
+
+            // Find a free, registry-classified hub port. It is normally HELD by the
+            // dedicated hub manager — free it first (mirrors how the wheelbase
+            // migration frees the hub at the symmetric site).
+            string? hubPort = null;
+            foreach (var p in ports)
+            {
+                if (p.Category != MozaDeviceCategory.Hub) continue;
+                hubPort = p.PortName;
+                break;
+            }
+            if (hubPort == null) return;
+
+            string basePort = _connection.LastPortName ?? "";
+
+            MozaLog.Info(
+                $"[Moza] Base on {basePort} (PID={_connection.DiscoveredPid}) has no wheel but " +
+                $"a wheel answered on the hub at {hubPort} — migrating primary to the hub " +
+                "(base telemetry continues on the dedicated base-aux pipe)");
+
+            // Release the dedicated hub manager so the primary can claim the hub
+            // port. Manual Disconnect does NOT raise Disconnected, so clear its
+            // tracked reads (including the wheel-evidence probes) explicitly.
+            try { _hubManager?.Disconnect(); } catch { }
+            try { _hubManager?.PendingResponses?.Clear(); } catch { }
+
+            // Latch the wheel-less base BEFORE rebinding so MigratePrimaryToWheelbase
+            // (which runs later this tick) skips it.
+            _wheellessBasePort = string.IsNullOrEmpty(basePort) ? null : basePort;
+
+            // Point the primary directly at the hub port and rebind. The primary's
+            // PID filter accepts the hub PID (same as the hub-only case), so the
+            // cached-port Connect path opens it; FindMozaPort isn't consulted.
+            // TryConnect persists the new (hub) port as LastWheelbasePort — fine,
+            // it self-heals via MigratePrimaryToWheelbase if the base is fixed.
+            _connection.Disconnect();
+            _connection.LastPortName = hubPort;
+
+            // The base is no longer the primary's device; its detection + ownership
+            // must re-land on the base-aux pipe. Clear base flags so the base-aux
+            // prober re-detects (mirrors OnBaseDisconnected's intent without losing
+            // the physical base — it's still plugged in).
+            DetectionState.BaseDetected = false;
+            DetectionState.BaseAmbientLedSupported = false;
+            DetectionState.BaseAmbientProbed = false;
+            DetectionState.BaseOwner = null;
+            _data.BaseSettingsRead = false;
+            try { PendingResponses.Clear(); } catch { }
+
+            // Rebind the primary to the hub; TryConnect probes the wheel there and
+            // (PrimaryBoundToHub) reads hub-port1-power so IsHubConnected flips. The
+            // freed base port is claimed by TryConnectBase later in this same tick.
+            TryConnect();
+        }
+
+        /// <summary>
         /// Self-heal a mis-latched primary connection. The primary (BaseAndHub)
         /// picks its port ONCE via FindMozaPort's wheel-location rule; if a
         /// Universal Hub enumerated before the wheelbase ("wrong latch order"),
@@ -3612,6 +3850,14 @@ namespace MozaPlugin
             foreach (var p in ports)
             {
                 if (p.Category != MozaDeviceCategory.Wheelbase) continue;
+                // Don't pull the primary back to a base we deliberately migrated
+                // AWAY from because it had no wheel (the wheel is on the hub). That
+                // base is owned by the dedicated base-aux pipe; ripping the primary
+                // onto it would kill the hub-driven wheel pipeline and the two
+                // migrations would fight every tick.
+                if (string.Equals(p.PortName, _wheellessBasePort,
+                                  StringComparison.OrdinalIgnoreCase))
+                    continue;
                 // Defensive: if the primary somehow already holds this wheelbase
                 // port the category check above would have returned; treat a
                 // self-match as "nothing to migrate".
@@ -3677,6 +3923,16 @@ namespace MozaPlugin
                 dm.SendPresenceProbe(MozaProtocol.DevicePedals);
             if (!DetectionState.HandbrakeDetected)
                 dm.SendPresenceProbe(MozaProtocol.DeviceHandbrake);
+            // Positive-evidence probe for the broken-base case: while NO wheel has
+            // been detected on the primary (base), also probe the wheel over the
+            // hub pipe. A reply (recognized in OnHubMessageReceived) stamps
+            // _hubWheelSeenUtcTicks, which arms the base→hub primary migration.
+            // Healthy base+hub never reaches this: the base detects its wheel first
+            // (NewWheelDetected flips), gating the probe off. Only fires while the
+            // base IS the primary — once migrated the hub manager is disconnected.
+            if (!DetectionState.NewWheelDetected && !DetectionState.OldWheelDetected
+                && !PrimaryBoundToHub)
+                dm.ProbeWheelDetection();
             // hub-port1-power is the hub-presence trigger (first 0xE4 reply sets
             // HubDetected). Once detected, read the full set so every Hub-tab
             // port-power indicator populates.
@@ -3708,6 +3964,10 @@ namespace MozaPlugin
             // The hub's tracked reads will never be answered now — drop them so
             // they don't retransmit against a reconnected (possibly different) hub.
             try { _hubManager?.PendingResponses?.Clear(); } catch { }
+            // The hub carried our wheel-on-hub evidence; with it gone the base→hub
+            // migration is moot. Clear so a re-plugged hub re-gathers evidence and
+            // MigratePrimaryToWheelbase can reclaim the base for FFB meanwhile.
+            ResetHubWheelMigrationState();
         }
 
         /// <summary>
@@ -3742,6 +4002,19 @@ namespace MozaPlugin
             var r = result.Value;
             if (r.Name == null) return;
 
+            // Positive evidence that the wheel is reachable via the hub (broken
+            // base): a wheel-MCU probe answered on the hub pipe. Stamp the
+            // timestamp that arms MigratePrimaryToHubIfNeeded, then RETURN without
+            // processing — the full wheel pipeline only runs after migration, when
+            // the primary itself is bound to the hub.
+            if (r.Name == "wheel-telemetry-mode" || r.Name == "wheel-rpm-value1")
+            {
+                Interlocked.CompareExchange(ref _hubWheelSeenUtcTicks, DateTime.UtcNow.Ticks, 0);
+                // Ack the tracked probe so it stops retransmitting on the hub pipe.
+                _hubManager.PendingResponses?.NoteResponse(r.Name);
+                return;
+            }
+
             // Scope to peripherals + hub status. Anything else (wheel/base/dash)
             // belongs to the primary pipe and is ignored here.
             if (!(r.Name.StartsWith("pedals-", StringComparison.Ordinal)
@@ -3754,6 +4027,67 @@ namespace MozaPlugin
             if (r.ArrayValue != null)
                 _data.UpdateFromArray(r.Name, r.ArrayValue);
             _hubDeviceProber.DetectDevices(r.Name, r.IntValue, r.DeviceId);
+        }
+
+        /// <summary>
+        /// Poll base-only telemetry on the dedicated base-aux pipe (post base→hub
+        /// migration). StatusPollCommands' base-mcu-temp doubles as the base
+        /// detection trigger (DeviceProber base-mcu-temp case → BaseOwner = base-aux
+        /// DM). No-op unless the base-aux pipe is up. Mirror of PollHubPeripherals.
+        /// </summary>
+        private void PollBaseAux()
+        {
+            if (_baseManager == null || !_baseManager.IsConnected) return;
+            _baseManager.DeviceManager.ReadSettings(StatusPollCommands);
+        }
+
+        /// <summary>Inbound from the dedicated base-aux connection. The INVERSE
+        /// scoping of <see cref="OnHubMessageReceived"/>: only base/motor frames
+        /// (base-* / main-*) are processed; wheel/dash/session/hub/peripheral
+        /// frames belong to the hub-bound primary pipe and are dropped. Detection
+        /// is dispatched to the base prober so BaseOwner lands on this pipe.</summary>
+        private void OnBaseMessageReceived(byte[] data)
+        {
+            if (IsShuttingDown) return;
+            if (data == null || data.Length < 2) return;
+
+            // Firmware debug noise.
+            if (data[0] == MozaProtocol.FirmwareDebugGroup) return;
+
+            var result = MozaResponseParser.Parse(data);
+            if (!result.HasValue) return;
+            var r = result.Value;
+            if (r.Name == null) return;
+
+            // Scope to base/motor. main-* are base FFB-gain / work-mode commands on
+            // dev 0x12 (the wheelbase main controller); the CM2 standalone uses
+            // cm2-* so there is no collision. Everything else is the primary's.
+            if (!(r.Name.StartsWith("base-", StringComparison.Ordinal)
+                  || r.Name.StartsWith("main-", StringComparison.Ordinal)))
+                return;
+
+            _baseManager.PendingResponses?.NoteResponse(r.Name);
+            _data.UpdateFromCommand(r.Name, r.IntValue);
+            if (r.ArrayValue != null)
+                _data.UpdateFromArray(r.Name, r.ArrayValue);
+            _baseDeviceProber.DetectDevices(r.Name, r.IntValue, r.DeviceId);
+        }
+
+        /// <summary>Base-aux pipe unplugged (broken base physically removed after a
+        /// migration) — drop base state owned by this pipe. Mirror of
+        /// OnHubDisconnected.</summary>
+        private void OnBaseDisconnected()
+        {
+            if (IsShuttingDown) return;
+            DetectionState.BaseDetected = false;
+            DetectionState.BaseAmbientLedSupported = false;
+            DetectionState.BaseAmbientProbed = false;
+            _data.IsBaseConnected = false;
+            _data.BaseSettingsRead = false;
+            var baseDm = _baseManager?.DeviceManager;
+            if (baseDm != null && ReferenceEquals(DetectionState.BaseOwner, baseDm))
+                DetectionState.BaseOwner = null;
+            try { _baseManager?.PendingResponses?.Clear(); } catch { }
         }
 
         private const int WheelMissThreshold = 3;
@@ -3774,6 +4108,13 @@ namespace MozaPlugin
             // connection. They'd otherwise keep retrying after reconnect
             // against a fresh wheel that may not even speak the same protocol.
             try { PendingResponses.Clear(); } catch { }
+            // The primary pipe dropped. If we were in the migrated (hub-primary)
+            // state, tear down the dedicated base-aux pipe and clear the migration
+            // latch so the next reconnect re-evaluates from scratch (base reverts
+            // to primary, the wheel is re-probed on it). Harmless no-op when the
+            // base is the primary (base-aux isn't connected).
+            try { _baseManager?.Disconnect(); } catch { }
+            ResetHubWheelMigrationState();
             if (DetectionState.NewWheelDetected || DetectionState.OldWheelDetected || DetectionState.DashDetected)
                 ResetWheelDetection("Serial disconnect — resetting wheel detection");
         }
@@ -3838,6 +4179,9 @@ namespace MozaPlugin
             // (base) connection — a Universal Hub can be present with the base
             // unplugged, or vice versa. No-op when the hub isn't connected.
             PollHubPeripherals();
+            // Likewise the dedicated base-aux pipe (post base→hub migration) is
+            // polled independently for base temps/state. No-op unless connected.
+            PollBaseAux();
 
             if (!_connection.IsConnected) return;
 
@@ -3872,7 +4216,12 @@ namespace MozaPlugin
                 _deviceManager.ProbeOtherWheelIds();
             }
 
-            _deviceManager.ReadSettings(StatusPollCommands);
+            // Base temps/state are dev-0x13 reads the base main controller answers.
+            // A hub-bound primary (post base→hub migration) can't reach the base
+            // over the hub — the dedicated base-aux pipe polls them instead (see
+            // PollBaseAux). A base-bound primary keeps polling them as before.
+            if (!PrimaryBoundToHub)
+                _deviceManager.ReadSettings(StatusPollCommands);
 
             // Device detection probes — only sent until each device is found.
             //

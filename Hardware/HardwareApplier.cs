@@ -39,6 +39,13 @@ namespace MozaPlugin.Hardware
         // for base-attached peripherals).
         private MozaDeviceManager PedalsManager => _detectionState.PedalsOwner ?? _deviceManager;
         private MozaDeviceManager HandbrakeManager => _detectionState.HandbrakeOwner ?? _deviceManager;
+        // Base FFB/motor/ambient writes must target whichever pipe detected the
+        // base. Normally that's the primary; after a base→hub primary migration
+        // (broken base, wheel on hub) the base lives on a dedicated base-aux pipe,
+        // so its writes must NOT follow the now-hub-bound primary _deviceManager.
+        // Null owner → fall back to the primary (today's behavior). Mirrors the
+        // Pedals/Handbrake resolvers above.
+        private MozaDeviceManager BaseManager => _detectionState.BaseOwner ?? _deviceManager;
 
         private static int Eff(int overlayVal, int baselineVal) =>
             overlayVal >= 0 ? overlayVal : baselineVal;
@@ -432,11 +439,11 @@ namespace MozaPlugin.Hardware
             // Per-section gate only — see ApplyWheelToHardware comment for why
             // _data.IsConnected was dropped here.
             if (!_detectionState.BaseAmbientLedSupported) return;
-            if (profile.BaseAmbientBrightness     >= 0) _deviceManager.WriteSetting("base-ambient-brightness", profile.BaseAmbientBrightness);
-            if (profile.BaseAmbientStandbyMode    >= 0) _deviceManager.WriteSetting("base-ambient-standby-mode", profile.BaseAmbientStandbyMode);
-            if (profile.BaseAmbientIndicatorState >= 0) _deviceManager.WriteSetting("base-ambient-indicator-state", profile.BaseAmbientIndicatorState);
-            if (profile.BaseAmbientSleepMode      >= 0) _deviceManager.WriteSetting("base-ambient-sleep-mode", profile.BaseAmbientSleepMode);
-            if (profile.BaseAmbientSleepTimeout   >= 0) _deviceManager.WriteSetting("base-ambient-sleep-timeout", profile.BaseAmbientSleepTimeout);
+            if (profile.BaseAmbientBrightness     >= 0) BaseManager.WriteSetting("base-ambient-brightness", profile.BaseAmbientBrightness);
+            if (profile.BaseAmbientStandbyMode    >= 0) BaseManager.WriteSetting("base-ambient-standby-mode", profile.BaseAmbientStandbyMode);
+            if (profile.BaseAmbientIndicatorState >= 0) BaseManager.WriteSetting("base-ambient-indicator-state", profile.BaseAmbientIndicatorState);
+            if (profile.BaseAmbientSleepMode      >= 0) BaseManager.WriteSetting("base-ambient-sleep-mode", profile.BaseAmbientSleepMode);
+            if (profile.BaseAmbientSleepTimeout   >= 0) BaseManager.WriteSetting("base-ambient-sleep-timeout", profile.BaseAmbientSleepTimeout);
             if (profile.BaseAmbientStartupColor   >= 0) WritePackedColor("base-ambient-startup-color", profile.BaseAmbientStartupColor);
             if (profile.BaseAmbientShutdownColor  >= 0) WritePackedColor("base-ambient-shutdown-color", profile.BaseAmbientShutdownColor);
         }
@@ -642,7 +649,7 @@ namespace MozaPlugin.Hardware
                 dataSet(val);
                 if (_detectionState.BaseDetected)
                     foreach (var cmd in commands)
-                        _deviceManager.WriteSetting(cmd, val);
+                        BaseManager.WriteSetting(cmd, val);
             }
 
             // FFB Equalizer (sentinel = -1000): mirror always, write when live.
@@ -652,7 +659,7 @@ namespace MozaPlugin.Hardware
             {
                 if (val <= -1000) return;
                 setData(val);
-                if (_detectionState.BaseDetected) _deviceManager.WriteSetting(cmd, val);
+                if (_detectionState.BaseDetected) BaseManager.WriteSetting(cmd, val);
             }
             ApplyEq(profile.Equalizer1, v => _data.Equalizer1 = v, "base-equalizer1");
             ApplyEq(profile.Equalizer2, v => _data.Equalizer2 = v, "base-equalizer2");
@@ -670,15 +677,15 @@ namespace MozaPlugin.Hardware
             // Persisted BaseDetected gate (see ApplyBaseSettingIfSet comment).
             if (!_detectionState.BaseDetected) return;
             // X breakpoints always written when live (device doesn't persist them).
-            _deviceManager.WriteSetting("base-ffb-curve-x1", 20);
-            _deviceManager.WriteSetting("base-ffb-curve-x2", 40);
-            _deviceManager.WriteSetting("base-ffb-curve-x3", 60);
-            _deviceManager.WriteSetting("base-ffb-curve-x4", 80);
-            _deviceManager.WriteSetting("base-ffb-curve-y1", _data.FfbCurveY1);
-            _deviceManager.WriteSetting("base-ffb-curve-y2", _data.FfbCurveY2);
-            _deviceManager.WriteSetting("base-ffb-curve-y3", _data.FfbCurveY3);
-            _deviceManager.WriteSetting("base-ffb-curve-y4", _data.FfbCurveY4);
-            _deviceManager.WriteSetting("base-ffb-curve-y5", _data.FfbCurveY5);
+            BaseManager.WriteSetting("base-ffb-curve-x1", 20);
+            BaseManager.WriteSetting("base-ffb-curve-x2", 40);
+            BaseManager.WriteSetting("base-ffb-curve-x3", 60);
+            BaseManager.WriteSetting("base-ffb-curve-x4", 80);
+            BaseManager.WriteSetting("base-ffb-curve-y1", _data.FfbCurveY1);
+            BaseManager.WriteSetting("base-ffb-curve-y2", _data.FfbCurveY2);
+            BaseManager.WriteSetting("base-ffb-curve-y3", _data.FfbCurveY3);
+            BaseManager.WriteSetting("base-ffb-curve-y4", _data.FfbCurveY4);
+            BaseManager.WriteSetting("base-ffb-curve-y5", _data.FfbCurveY5);
         }
 
         /// <summary>
@@ -824,12 +831,12 @@ namespace MozaPlugin.Hardware
         public void WriteIfBaseConnected(string command, int value)
         {
             if (value < 0) return;
-            if (_detectionState.BaseDetected) _deviceManager.WriteSetting(command, value);
+            if (_detectionState.BaseDetected) BaseManager.WriteSetting(command, value);
         }
         public void WriteFloatIfBaseConnected(string command, int value)
         {
             if (value < 0) return;
-            if (_detectionState.BaseDetected) _deviceManager.WriteFloat(command, value);
+            if (_detectionState.BaseDetected) BaseManager.WriteFloat(command, value);
         }
         public void WriteIfHandbrakeDetected(string command, int value)
         {
@@ -854,7 +861,7 @@ namespace MozaPlugin.Hardware
         public void WriteIfBaseAmbientSupported(string command, int value)
         {
             if (value < 0) return;
-            if (_detectionState.BaseAmbientLedSupported) _deviceManager.WriteSetting(command, value);
+            if (_detectionState.BaseAmbientLedSupported) BaseManager.WriteSetting(command, value);
         }
         public void WriteColorIfWheelDetected(string command, byte r, byte g, byte b)
         {
@@ -999,7 +1006,7 @@ namespace MozaPlugin.Hardware
         }
         public void WriteColorIfBaseAmbientSupported(string command, byte r, byte g, byte b)
         {
-            if (_detectionState.BaseAmbientLedSupported) _deviceManager.WriteColor(command, r, g, b);
+            if (_detectionState.BaseAmbientLedSupported) BaseManager.WriteColor(command, r, g, b);
         }
         public void WriteArrayIfWheelDetected(string command, byte[] payload)
         {
@@ -1180,7 +1187,9 @@ namespace MozaPlugin.Hardware
             byte r = (byte)((packed >> 16) & 0xFF);
             byte g = (byte)((packed >> 8) & 0xFF);
             byte b = (byte)(packed & 0xFF);
-            _deviceManager.WriteColor(command, r, g, b);
+            // Only the base-ambient startup/shutdown colours route here — target
+            // the base-owning pipe (see BaseManager).
+            BaseManager.WriteColor(command, r, g, b);
         }
 
         /// <summary>Send all-off to wheel and dash LEDs via the device manager.</summary>

@@ -357,6 +357,11 @@ namespace MozaPlugin.Devices
             // re-apply the profile so base settings get pushed.
             if (commandName == "base-mcu-temp" && !_detectionState.BaseDetected)
             {
+                // Owner first, then flag (mirrors MarkPedalsDetected). The owning
+                // MozaDeviceManager is this prober's pipe — the primary (base) in
+                // the normal case, or the dedicated base-aux pipe after a base→hub
+                // migration. HardwareApplier routes base FFB/ambient writes here.
+                _detectionState.BaseOwner = _deviceManager;
                 _detectionState.BaseDetected = true;
                 MozaLog.Info("[Moza] Base detected");
                 // Writes queue first, reads after — device processes FIFO so
