@@ -29,6 +29,17 @@ namespace MozaPlugin.Devices
         public volatile MozaDeviceManager? PedalsOwner;
         public volatile MozaDeviceManager? HandbrakeOwner;
 
+        // Which MozaDeviceManager owns the base (wheelbase main/motor controller)
+        // — the pipe that answered the base-mcu-temp detection cascade. Normally
+        // the primary pipe (base is the primary connection). After a base→hub
+        // primary migration (broken base, wheel on hub) the base is detected on a
+        // dedicated base-aux pipe instead, so its FFB/ambient WRITES must target
+        // that pipe rather than the hub-bound primary. Null = no opinion →
+        // HardwareApplier falls back to the primary manager (today's behavior).
+        // Set owner-first (then BaseDetected) by DeviceProber; read flag-first by
+        // HardwareApplier. Volatile for cross-thread visibility.
+        public volatile MozaDeviceManager? BaseOwner;
+
         // Flips true on the first base-ambient-brightness response (R21/R25/R27 family).
         public volatile bool BaseAmbientLedSupported;
         // Edge guard: fire the ambient probe at most once per base detect.
@@ -85,6 +96,7 @@ namespace MozaPlugin.Devices
             Ab9Detected = false;
             PedalsOwner = null;
             HandbrakeOwner = null;
+            BaseOwner = null;
         }
 
         /// <summary>

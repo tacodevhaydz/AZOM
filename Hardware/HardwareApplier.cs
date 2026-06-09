@@ -31,6 +31,61 @@ namespace MozaPlugin.Hardware
             _detectionState = detectionState;
         }
 
+        // ── Write-on-change cache for persistent (flash-backed) wheel settings ──
+        // The wheel persists LED / idle / brightness / colour settings to its
+        // parameter flash. ApplyWheelToHardware runs on every (re)detection, so
+        // re-writing unchanged settings each time needlessly wears that flash —
+        // a re-detect loop has been observed to wear it until reads AND writes
+        // start failing (firmware "Table 8: Failed to Read/Write Parameter"),
+        // which kills the wheel's identity readback and bricks it. PitHouse
+        // writes these once. So: only write a persistent setting when its value
+        // actually changed since the last write to THIS wheel. Keyed by MCU UID
+        // so a genuinely different wheel (hot-swap) re-writes its config once.
+        private readonly System.Collections.Generic.Dictionary<string, long> _wheelCfgCache
+            = new System.Collections.Generic.Dictionary<string, long>();
+        private byte[] _wheelCfgCacheUid = System.Array.Empty<byte>();
+
+        private void SyncWheelCfgCache()
+        {
+            var uid = _data.WheelMcuUid ?? System.Array.Empty<byte>();
+            bool same = uid.Length == _wheelCfgCacheUid.Length;
+            for (int i = 0; same && i < uid.Length; i++)
+                if (uid[i] != _wheelCfgCacheUid[i]) same = false;
+            if (!same)
+            {
+                _wheelCfgCache.Clear();
+                _wheelCfgCacheUid = (byte[])uid.Clone();
+            }
+        }
+
+        /// <summary>True (and records the new value) iff this flash-backed setting
+        /// differs from the last value written to the current wheel — i.e. an actual
+        /// change worth a flash write. Returns false to skip a redundant re-write.</summary>
+        private bool WheelCfgChanged(string key, long value)
+        {
+            if (_wheelCfgCache.TryGetValue(key, out var prev) && prev == value) return false;
+            _wheelCfgCache[key] = value;
+            return true;
+        }
+
+        private static long Fnv(long h, long v) { unchecked { return (h ^ v) * 1099511628211L; } }
+
+        private bool WheelCfgChangedArr(string key, int[]? arr)
+        {
+            long h = unchecked((long)1469598103934665603UL);
+            if (arr == null) h = Fnv(h, -7);
+            else { h = Fnv(h, arr.Length); foreach (var v in arr) h = Fnv(h, v); }
+            return WheelCfgChanged(key, h);
+        }
+
+        private bool WheelCfgChangedArr(string key, bool[]? arr)
+        {
+            long h = unchecked((long)1469598103934665603UL);
+            if (arr == null) h = Fnv(h, -8);
+            else { h = Fnv(h, arr.Length); foreach (var v in arr) h = Fnv(h, v ? 1 : 0); }
+            return WheelCfgChanged(key, h);
+        }
+
         // Resolve the pipe that owns pedals / handbrake. Pedals or a handbrake
         // can be attached to the base OR to a dedicated Universal Hub pipe, so
         // settings reads and calibration writes must target whichever connection
@@ -39,6 +94,13 @@ namespace MozaPlugin.Hardware
         // for base-attached peripherals).
         private MozaDeviceManager PedalsManager => _detectionState.PedalsOwner ?? _deviceManager;
         private MozaDeviceManager HandbrakeManager => _detectionState.HandbrakeOwner ?? _deviceManager;
+        // Base FFB/motor/ambient writes must target whichever pipe detected the
+        // base. Normally that's the primary; after a base→hub primary migration
+        // (broken base, wheel on hub) the base lives on a dedicated base-aux pipe,
+        // so its writes must NOT follow the now-hub-bound primary _deviceManager.
+        // Null owner → fall back to the primary (today's behavior). Mirrors the
+        // Pedals/Handbrake resolvers above.
+        private MozaDeviceManager BaseManager => _detectionState.BaseOwner ?? _deviceManager;
 
         private static int Eff(int overlayVal, int baselineVal) =>
             overlayVal >= 0 ? overlayVal : baselineVal;
@@ -177,13 +239,25 @@ namespace MozaPlugin.Hardware
             // already checks _connection.IsConnected and returns false on
             // a dead wire, so per-section gates plus the connection-level
             // check is enough.
-            if (_detectionState.NewWheelDetected)
+            // Persistent (flash-backed) wheel settings below: only write when the
+            // value changed since the last write to THIS wheel, so re-detection /
+            // re-apply doesn't re-flash unchanged settings and wear the wheel's
+            // parameter store. PitHouse writes each of these exactly once per connect.
+            SyncWheelCfgCache();
+
+            // Only push persistent config once the wheel's identity has resolved.
+            // Previously this fell back to WheelModelInfo.Default and wrote a generic
+            // subset to UNIDENTIFIED wheels — but an older/unknown wheel may not
+            // support those params, and writing/reading params a wheel doesn't have
+            // can wedge its firmware (observed: "Table 8: Failed to Read/Write
+            // Parameter" → dead identity → re-detect loop → bricked). PitHouse
+            // identifies first, then writes only that model's params. A genuine wheel
+            // resolves identity within ~1-2 s and DeviceProber re-applies then; a wheel
+            // we can't identify is left alone rather than poked with guessed config.
+            var model = _plugin.WheelModelInfo;   // null until identity resolves
+            if (_detectionState.NewWheelDetected && model != null)
             {
-                // Capability snapshot for the active wheel. Falls back to
-                // Default (10 RPM / 14 buttons / no flags / no knobs) when the
-                // wheel hasn't been identified yet, so we still write a
-                // reasonable subset rather than nothing.
-                var model = _plugin.WheelModelInfo ?? WheelModelInfo.Default;
+                // Capability snapshot for the (now identified) active wheel.
                 int rpmCount = model.RpmLedCount;
                 int btnCount = model.ButtonLedCount;
                 bool hasRpm        = rpmCount > 0;
@@ -191,54 +265,68 @@ namespace MozaPlugin.Hardware
                 bool hasKnob       = model.KnobCount > 0;
                 bool hasSleepLight = model.HasSleepLight;
 
-                if (telemMode      >= 0)            _deviceManager.WriteSetting("wheel-telemetry-mode", telemMode);
-                if (idleEffect     >= 0 && hasRpm)  _deviceManager.WriteSetting("wheel-telemetry-idle-effect", idleEffect);
-                if (btnIdleEffect  >= 0 && hasBtn)  _deviceManager.WriteSetting("wheel-buttons-idle-effect", btnIdleEffect);
-                if (knobIdleEffect >= 0 && hasKnob) _deviceManager.WriteSetting("wheel-knob-idle-effect", knobIdleEffect);
-                if (knobLedMode    >= 0 && hasKnob) _deviceManager.WriteSetting("wheel-knob-led-mode", knobLedMode);
-                if (btnLedMode     >= 0 && hasBtn)  _deviceManager.WriteSetting("wheel-buttons-led-mode", btnLedMode);
-                if (idleEffect >= 0 && idleSpeed >= 0 && hasRpm)
+                if (telemMode      >= 0            && WheelCfgChanged("wheel-telemetry-mode", telemMode))          _deviceManager.WriteSetting("wheel-telemetry-mode", telemMode);
+                if (idleEffect     >= 0 && hasRpm  && WheelCfgChanged("wheel-telemetry-idle-effect", idleEffect)) _deviceManager.WriteSetting("wheel-telemetry-idle-effect", idleEffect);
+                if (btnIdleEffect  >= 0 && hasBtn  && WheelCfgChanged("wheel-buttons-idle-effect", btnIdleEffect))_deviceManager.WriteSetting("wheel-buttons-idle-effect", btnIdleEffect);
+                if (knobIdleEffect >= 0 && hasKnob && WheelCfgChanged("wheel-knob-idle-effect", knobIdleEffect))  _deviceManager.WriteSetting("wheel-knob-idle-effect", knobIdleEffect);
+                if (knobLedMode    >= 0 && hasKnob && WheelCfgChanged("wheel-knob-led-mode", knobLedMode))        _deviceManager.WriteSetting("wheel-knob-led-mode", knobLedMode);
+                if (btnLedMode     >= 0 && hasBtn  && WheelCfgChanged("wheel-buttons-led-mode", btnLedMode))      _deviceManager.WriteSetting("wheel-buttons-led-mode", btnLedMode);
+                if (idleEffect >= 0 && idleSpeed >= 0 && hasRpm
+                        && WheelCfgChanged("wheel-telemetry-idle-interval", ((long)idleEffect << 32) | (uint)idleSpeed))
                     _deviceManager.WriteArray("wheel-telemetry-idle-interval",
                         BuildIdleIntervalPayload(idleEffect, idleSpeed));
-                if (btnIdleEffect >= 0 && btnIdleSpeed >= 0 && hasBtn)
+                if (btnIdleEffect >= 0 && btnIdleSpeed >= 0 && hasBtn
+                        && WheelCfgChanged("wheel-buttons-idle-interval", ((long)btnIdleEffect << 32) | (uint)btnIdleSpeed))
                     _deviceManager.WriteArray("wheel-buttons-idle-interval",
                         BuildIdleIntervalPayload(btnIdleEffect, btnIdleSpeed));
-                if (knobIdleEffect >= 0 && knobIdleSpeed >= 0 && hasKnob)
+                if (knobIdleEffect >= 0 && knobIdleSpeed >= 0 && hasKnob
+                        && WheelCfgChanged("wheel-knob-idle-interval", ((long)knobIdleEffect << 32) | (uint)knobIdleSpeed))
                     _deviceManager.WriteArray("wheel-knob-idle-interval",
                         BuildIdleIntervalPayload(knobIdleEffect, knobIdleSpeed));
-                if (sleepMode    >= 0 && hasSleepLight) _deviceManager.WriteSetting("wheel-idle-mode", sleepMode);
-                if (sleepTimeout >= 0 && hasSleepLight) _deviceManager.WriteSetting("wheel-idle-timeout", sleepTimeout);
-                if (sleepMode >= 0 && sleepSpeed >= 0 && hasSleepLight)
+                if (sleepMode    >= 0 && hasSleepLight && WheelCfgChanged("wheel-idle-mode", sleepMode))       _deviceManager.WriteSetting("wheel-idle-mode", sleepMode);
+                if (sleepTimeout >= 0 && hasSleepLight && WheelCfgChanged("wheel-idle-timeout", sleepTimeout)) _deviceManager.WriteSetting("wheel-idle-timeout", sleepTimeout);
+                if (sleepMode >= 0 && sleepSpeed >= 0 && hasSleepLight
+                        && WheelCfgChanged("wheel-idle-speed", ((long)sleepMode << 32) | (uint)sleepSpeed))
                     _deviceManager.WriteArray("wheel-idle-speed",
                         BuildIdleIntervalPayload(sleepMode, sleepSpeed));
                 if (sleepColor != null && sleepColor.Length > 0 && hasSleepLight)
                 {
                     var rgb = MozaProfile.UnpackColor(sleepColor[0]);
-                    _deviceManager.WriteColor("wheel-idle-color", rgb[0], rgb[1], rgb[2]);
+                    if (WheelCfgChanged("wheel-idle-color", ((long)rgb[0] << 16) | ((long)rgb[1] << 8) | rgb[2]))
+                        _deviceManager.WriteColor("wheel-idle-color", rgb[0], rgb[1], rgb[2]);
                 }
-                if (rpmBri   >= 0 && hasRpm) _deviceManager.WriteSetting("wheel-rpm-brightness", rpmBri);
-                if (btnBri   >= 0 && hasBtn) _deviceManager.WriteSetting("wheel-buttons-brightness", btnBri);
-                if (flagsBri >= 0 && _detectionState.DashDetected)
+                if (rpmBri   >= 0 && hasRpm && WheelCfgChanged("wheel-rpm-brightness", rpmBri))     _deviceManager.WriteSetting("wheel-rpm-brightness", rpmBri);
+                if (btnBri   >= 0 && hasBtn && WheelCfgChanged("wheel-buttons-brightness", btnBri)) _deviceManager.WriteSetting("wheel-buttons-brightness", btnBri);
+                if (flagsBri >= 0 && _detectionState.DashDetected && WheelCfgChanged("dash-flags-brightness", flagsBri))
                     _deviceManager.WriteSetting("dash-flags-brightness", flagsBri);
 
-                WriteColorArray(rpmColors, "wheel-rpm-color", rpmCount);
-                if (hasRpm)
+                if (WheelCfgChangedArr("wheel-rpm-color", rpmColors))
+                    WriteColorArray(rpmColors, "wheel-rpm-color", rpmCount);
+                if (hasRpm && WheelCfgChangedArr("wheel-rpm-blink-color", rpmBlinkColors))
                     WriteColorArray(rpmBlinkColors, "wheel-rpm-blink-color", Math.Min(10, rpmCount));
-                WriteButtonStaticColors(buttonColors, model);
-                if (_detectionState.DashDetected)
+                bool btnColChg = WheelCfgChangedArr("wheel-button-color", buttonColors);
+                bool btnDefChg = WheelCfgChangedArr("wheel-button-defaults", buttonDefaults);
+                if (btnColChg || btnDefChg) WriteButtonStaticColors(buttonColors, model);
+                if (_detectionState.DashDetected && WheelCfgChangedArr("dash-flag-color", flagColors))
                     WriteColorArray(flagColors, "dash-flag-color", 6);
                 if (idleColor != null && idleColor.Length > 0 && hasSleepLight)
                 {
                     var rgb = MozaProfile.UnpackColor(idleColor[0]);
-                    _deviceManager.WriteColor("wheel-idle-color", rgb[0], rgb[1], rgb[2]);
+                    if (WheelCfgChanged("wheel-idle-color", ((long)rgb[0] << 16) | ((long)rgb[1] << 8) | rgb[2]))
+                        _deviceManager.WriteColor("wheel-idle-color", rgb[0], rgb[1], rgb[2]);
                 }
+                bool knobBgChg  = WheelCfgChangedArr("wheel-knob-bg-color", knobBgColors);
+                bool knobPriChg = WheelCfgChangedArr("wheel-knob-primary-color", knobPrimaryColors);
+                bool knobRingChg = WheelCfgChangedArr("wheel-knob-ring-color", knobRingColors)
+                                   | WheelCfgChanged("wheel-knob-ring-brightness", knobRingBri);
                 // Invalidate the live cache after each Apply pass so the next live tick
                 // re-sends instead of dedup'ing against a frame whose underlying wheel
-                // state we just rewrote with the persisted static colours.
+                // state we may have just rewritten. Live cache is volatile (no flash
+                // cost), so keep this unconditional as before.
                 MozaLedDeviceManager.InvalidateLiveCacheAny(
                     LedKind.Rpm | LedKind.Button | LedKind.Flag);
-                WriteKnobColors(knobBgColors, knobPrimaryColors);
-                WriteKnobRingColors(knobRingColors, knobRingBri);
+                if (knobBgChg || knobPriChg) WriteKnobColors(knobBgColors, knobPrimaryColors);
+                if (knobRingChg) WriteKnobRingColors(knobRingColors, knobRingBri);
 
                 // If we have no saved active-colour overlay (fresh install, or
                 // user never touched the centre swatch), read the wheel's own
@@ -255,10 +343,11 @@ namespace MozaPlugin.Hardware
 
             if (_detectionState.OldWheelDetected)
             {
-                if (rpmInd   >= 0) _deviceManager.WriteSetting("wheel-rpm-indicator-mode", rpmInd + 1);
-                if (rpmDisp  >= 0) _deviceManager.WriteSetting("wheel-set-rpm-display-mode", rpmDisp);
-                if (esRpmBri >= 0) _deviceManager.WriteSetting("wheel-old-rpm-brightness", esRpmBri);
-                WriteColorArray(esRpmColors, "wheel-old-rpm-color", 10);
+                if (rpmInd   >= 0 && WheelCfgChanged("wheel-rpm-indicator-mode", rpmInd))     _deviceManager.WriteSetting("wheel-rpm-indicator-mode", rpmInd + 1);
+                if (rpmDisp  >= 0 && WheelCfgChanged("wheel-set-rpm-display-mode", rpmDisp))   _deviceManager.WriteSetting("wheel-set-rpm-display-mode", rpmDisp);
+                if (esRpmBri >= 0 && WheelCfgChanged("wheel-old-rpm-brightness", esRpmBri))    _deviceManager.WriteSetting("wheel-old-rpm-brightness", esRpmBri);
+                if (WheelCfgChangedArr("wheel-old-rpm-color", esRpmColors))
+                    WriteColorArray(esRpmColors, "wheel-old-rpm-color", 10);
             }
         }
 
@@ -432,11 +521,11 @@ namespace MozaPlugin.Hardware
             // Per-section gate only — see ApplyWheelToHardware comment for why
             // _data.IsConnected was dropped here.
             if (!_detectionState.BaseAmbientLedSupported) return;
-            if (profile.BaseAmbientBrightness     >= 0) _deviceManager.WriteSetting("base-ambient-brightness", profile.BaseAmbientBrightness);
-            if (profile.BaseAmbientStandbyMode    >= 0) _deviceManager.WriteSetting("base-ambient-standby-mode", profile.BaseAmbientStandbyMode);
-            if (profile.BaseAmbientIndicatorState >= 0) _deviceManager.WriteSetting("base-ambient-indicator-state", profile.BaseAmbientIndicatorState);
-            if (profile.BaseAmbientSleepMode      >= 0) _deviceManager.WriteSetting("base-ambient-sleep-mode", profile.BaseAmbientSleepMode);
-            if (profile.BaseAmbientSleepTimeout   >= 0) _deviceManager.WriteSetting("base-ambient-sleep-timeout", profile.BaseAmbientSleepTimeout);
+            if (profile.BaseAmbientBrightness     >= 0) BaseManager.WriteSetting("base-ambient-brightness", profile.BaseAmbientBrightness);
+            if (profile.BaseAmbientStandbyMode    >= 0) BaseManager.WriteSetting("base-ambient-standby-mode", profile.BaseAmbientStandbyMode);
+            if (profile.BaseAmbientIndicatorState >= 0) BaseManager.WriteSetting("base-ambient-indicator-state", profile.BaseAmbientIndicatorState);
+            if (profile.BaseAmbientSleepMode      >= 0) BaseManager.WriteSetting("base-ambient-sleep-mode", profile.BaseAmbientSleepMode);
+            if (profile.BaseAmbientSleepTimeout   >= 0) BaseManager.WriteSetting("base-ambient-sleep-timeout", profile.BaseAmbientSleepTimeout);
             if (profile.BaseAmbientStartupColor   >= 0) WritePackedColor("base-ambient-startup-color", profile.BaseAmbientStartupColor);
             if (profile.BaseAmbientShutdownColor  >= 0) WritePackedColor("base-ambient-shutdown-color", profile.BaseAmbientShutdownColor);
         }
@@ -642,7 +731,7 @@ namespace MozaPlugin.Hardware
                 dataSet(val);
                 if (_detectionState.BaseDetected)
                     foreach (var cmd in commands)
-                        _deviceManager.WriteSetting(cmd, val);
+                        BaseManager.WriteSetting(cmd, val);
             }
 
             // FFB Equalizer (sentinel = -1000): mirror always, write when live.
@@ -652,7 +741,7 @@ namespace MozaPlugin.Hardware
             {
                 if (val <= -1000) return;
                 setData(val);
-                if (_detectionState.BaseDetected) _deviceManager.WriteSetting(cmd, val);
+                if (_detectionState.BaseDetected) BaseManager.WriteSetting(cmd, val);
             }
             ApplyEq(profile.Equalizer1, v => _data.Equalizer1 = v, "base-equalizer1");
             ApplyEq(profile.Equalizer2, v => _data.Equalizer2 = v, "base-equalizer2");
@@ -670,15 +759,15 @@ namespace MozaPlugin.Hardware
             // Persisted BaseDetected gate (see ApplyBaseSettingIfSet comment).
             if (!_detectionState.BaseDetected) return;
             // X breakpoints always written when live (device doesn't persist them).
-            _deviceManager.WriteSetting("base-ffb-curve-x1", 20);
-            _deviceManager.WriteSetting("base-ffb-curve-x2", 40);
-            _deviceManager.WriteSetting("base-ffb-curve-x3", 60);
-            _deviceManager.WriteSetting("base-ffb-curve-x4", 80);
-            _deviceManager.WriteSetting("base-ffb-curve-y1", _data.FfbCurveY1);
-            _deviceManager.WriteSetting("base-ffb-curve-y2", _data.FfbCurveY2);
-            _deviceManager.WriteSetting("base-ffb-curve-y3", _data.FfbCurveY3);
-            _deviceManager.WriteSetting("base-ffb-curve-y4", _data.FfbCurveY4);
-            _deviceManager.WriteSetting("base-ffb-curve-y5", _data.FfbCurveY5);
+            BaseManager.WriteSetting("base-ffb-curve-x1", 20);
+            BaseManager.WriteSetting("base-ffb-curve-x2", 40);
+            BaseManager.WriteSetting("base-ffb-curve-x3", 60);
+            BaseManager.WriteSetting("base-ffb-curve-x4", 80);
+            BaseManager.WriteSetting("base-ffb-curve-y1", _data.FfbCurveY1);
+            BaseManager.WriteSetting("base-ffb-curve-y2", _data.FfbCurveY2);
+            BaseManager.WriteSetting("base-ffb-curve-y3", _data.FfbCurveY3);
+            BaseManager.WriteSetting("base-ffb-curve-y4", _data.FfbCurveY4);
+            BaseManager.WriteSetting("base-ffb-curve-y5", _data.FfbCurveY5);
         }
 
         /// <summary>
@@ -824,12 +913,12 @@ namespace MozaPlugin.Hardware
         public void WriteIfBaseConnected(string command, int value)
         {
             if (value < 0) return;
-            if (_detectionState.BaseDetected) _deviceManager.WriteSetting(command, value);
+            if (_detectionState.BaseDetected) BaseManager.WriteSetting(command, value);
         }
         public void WriteFloatIfBaseConnected(string command, int value)
         {
             if (value < 0) return;
-            if (_detectionState.BaseDetected) _deviceManager.WriteFloat(command, value);
+            if (_detectionState.BaseDetected) BaseManager.WriteFloat(command, value);
         }
         public void WriteIfHandbrakeDetected(string command, int value)
         {
@@ -854,7 +943,7 @@ namespace MozaPlugin.Hardware
         public void WriteIfBaseAmbientSupported(string command, int value)
         {
             if (value < 0) return;
-            if (_detectionState.BaseAmbientLedSupported) _deviceManager.WriteSetting(command, value);
+            if (_detectionState.BaseAmbientLedSupported) BaseManager.WriteSetting(command, value);
         }
         public void WriteColorIfWheelDetected(string command, byte r, byte g, byte b)
         {
@@ -999,7 +1088,7 @@ namespace MozaPlugin.Hardware
         }
         public void WriteColorIfBaseAmbientSupported(string command, byte r, byte g, byte b)
         {
-            if (_detectionState.BaseAmbientLedSupported) _deviceManager.WriteColor(command, r, g, b);
+            if (_detectionState.BaseAmbientLedSupported) BaseManager.WriteColor(command, r, g, b);
         }
         public void WriteArrayIfWheelDetected(string command, byte[] payload)
         {
@@ -1180,7 +1269,9 @@ namespace MozaPlugin.Hardware
             byte r = (byte)((packed >> 16) & 0xFF);
             byte g = (byte)((packed >> 8) & 0xFF);
             byte b = (byte)(packed & 0xFF);
-            _deviceManager.WriteColor(command, r, g, b);
+            // Only the base-ambient startup/shutdown colours route here — target
+            // the base-owning pipe (see BaseManager).
+            BaseManager.WriteColor(command, r, g, b);
         }
 
         /// <summary>Send all-off to wheel and dash LEDs via the device manager.</summary>
