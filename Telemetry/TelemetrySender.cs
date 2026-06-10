@@ -115,7 +115,6 @@ namespace MozaPlugin.Telemetry
         // and StartTickTimer both depend on this being non-zero (1000 / _baseTickMs;
         // new Timer(_baseTickMs)).
         private int _baseTickMs = 33;
-        private byte _sequenceCounter;
         private int _displayConfigPage;
 
         // _tierDefPreambleSent moved to TierDefinitionEmitter.
@@ -394,8 +393,7 @@ namespace MozaPlugin.Telemetry
                 byte next = value == 0 ? MozaProtocol.DeviceWheel : value;
                 if (_targetDeviceId == next) return;
                 _targetDeviceId = next;
-                _cachedDisplayConfigFrames = null;
-                _cachedDisplayConfigPageCount = 0;
+                _frames.InvalidateDisplayConfig();
                 // Rebuild per-tier frame builders with the new dev_id so value
                 // frames address the right device on the next tick.
                 RebuildFrameBuildersForTargetDevice();
@@ -655,64 +653,9 @@ namespace MozaPlugin.Telemetry
             }
         }
 
-        // Pre-cached frames (built once, reused every tick)
-        private byte[] _cachedEnableFrame = null!;
-        private byte[] _cachedModeFrame = null!;
-        private byte[] _cachedSequenceFrame = null!;
-        private byte[][] _cachedHeartbeatFrames = null!;
-
-        // Group 0x43 N=1 device-ping frames sent ~1 Hz. Static — device IDs and
-        // checksums never vary, so the byte[]s outlive any sender instance.
-        private static readonly byte[] _dashKeepaliveFrameDash = BuildKeepaliveFrame(MozaProtocol.DeviceDash);
-        private static readonly byte[] _dashKeepaliveFrame15 = BuildKeepaliveFrame(0x15);
-        private static readonly byte[] _dashKeepaliveFrameWheel = BuildKeepaliveFrame(MozaProtocol.DeviceWheel);
-        // CM2 standalone dashboard pings its bridge/main at 0x12; the dash/15/wheel
-        // trio above never reaches CM2's expected target.
-        private static readonly byte[] _dashKeepaliveFrameMain = BuildKeepaliveFrame(MozaProtocol.DeviceMain);
-
-        // Peripheral output-poll frames — wire-parity polls (handbrake/pedals).
-        // Cadence: presence ~22 Hz, handbrake-output ~10 Hz, pedals ~7 Hz.
-        private static readonly byte[] _handbrakePresenceFrame = BuildShortFrame(0x5A, 0x1B, new byte[] { 0x00 });
-        private static readonly byte[] _handbrakeOutputFrame   = BuildShortFrame(0x5D, 0x1B, new byte[] { 0x01, 0x00, 0x00 });
-        private static readonly byte[] _pedalThrottleOutFrame  = BuildShortFrame(0x25, 0x19, new byte[] { 0x01, 0x00, 0x00 });
-        private static readonly byte[] _pedalBrakeOutFrame     = BuildShortFrame(0x25, 0x19, new byte[] { 0x02, 0x00, 0x00 });
-        private static readonly byte[] _pedalClutchOutFrame    = BuildShortFrame(0x25, 0x19, new byte[] { 0x03, 0x00, 0x00 });
-
-        // LED state read polls (`0x40/0x17 1F 03 [group] 00 00 00 00`).
-        // Group 1 (RPM bar) ~1 Hz; group 2 (Single) ~0.2 Hz.
-        //
-        // The 1F 03 [group] sub-cmd shape is not in the documented MozaCommandDatabase
-        // read set and Universal HUB firmware logs an `Unexpected cmd: 31` per poll
-        // (W17 CS-Pro observed ~8/min). The polls were deleted on 2026-05-27 for
-        // exactly that reason — but the deletion regressed RPM-LED telemetry-mode
-        // engagement on the GS V2 Pro (firmware variant reporting bare "GS"):
-        // wheel-telemetry-rpm-colors / wheel-send-rpm-telemetry frames no longer
-        // visibly light the RPM strip without these read polls in the keepalive
-        // mix. See `project_parity_polls_load_bearing` memory — the wheel uses
-        // the *requests* (not their responses) as the host-is-live heartbeat for
-        // per-group telemetry engagement; ~1 Hz is enough. Restored 2026-05-28.
-        // If the firmware-warning noise becomes a problem, replace with a
-        // documented read-set shape rather than removing entirely.
-        private static readonly byte[] _ledStatePollGroup1 = BuildShortFrame(0x40, 0x17, new byte[] { 0x1F, 0x03, 0x01, 0x00, 0x00, 0x00, 0x00 });
-        private static readonly byte[] _ledStatePollGroup2 = BuildShortFrame(0x40, 0x17, new byte[] { 0x1F, 0x03, 0x02, 0x00, 0x00, 0x00, 0x00 });
-
-        private static byte[] BuildShortFrame(byte group, byte dev, byte[] payload)
-        {
-            var frame = new byte[payload.Length + 5];
-            frame[0] = MozaProtocol.MessageStart;
-            frame[1] = (byte)payload.Length;
-            frame[2] = group;
-            frame[3] = dev;
-            Array.Copy(payload, 0, frame, 4, payload.Length);
-            frame[frame.Length - 1] = MozaProtocol.CalculateWireChecksum(frame, frame.Length - 1);
-            return frame;
-        }
-
-        // Lazy per-page cache for the 7C:27/7C:23 display-config frames sent
-        // ~1 Hz. Invalidated when the profile's page count changes; rebuilt on
-        // first SendDisplayConfig() after that.
-        private byte[][]? _cachedDisplayConfigFrames;
-        private int _cachedDisplayConfigPageCount;
+        // Cached + static frame construction — see Frames/TelemetryFrameCache.cs.
+        // Allocated in the constructor; BuildCachedFrames() runs per Start.
+        private readonly Frames.TelemetryFrameCache _frames;
 
         // Session ports determined during port probing.
         // MgmtPort = first acked port (session 0x01, used for dashboard upload).
@@ -1293,6 +1236,7 @@ namespace MozaPlugin.Telemetry
         public TelemetrySender(MozaSerialConnection connection)
         {
             _connection = connection;
+            _frames = new Frames.TelemetryFrameCache(this);
             _silenceGate = new Lifecycle.SilenceGate(() => EnableHotRenegotiation);
             _recovery = new Lifecycle.RecoveryDispatcher(this);
             _watchdog = new DisplayWatchdog(this);
@@ -1564,7 +1508,7 @@ namespace MozaPlugin.Telemetry
             // method above, which clears it. Warm/game-switch reloads leave it
             // false → no added preamble latency.
             _coldStartWheelGatePending = isFirstStartInProcess;
-            BuildCachedFrames();
+            _frames.BuildCachedFrames();
 
             // Subscribe early so we catch fc:00 acks during port probing AND preamble
             _connection.MessageReceived += _inboundDispatcher.OnMessageDuringPreamble;
@@ -1719,7 +1663,7 @@ namespace MozaPlugin.Telemetry
             TransitionTo(TelemetryState.Starting, "StartInner: begin");
             _tickCounter = 0;
             _framesSent = 0;
-            _sequenceCounter = 0;
+            _frames.ResetSequenceCounter();
             _slowCounter = 0;
             _displayConfigPage = 0;
             // ClearBuffer keeps the resolved _catalog so cross-switch backrefs
@@ -3452,43 +3396,21 @@ namespace MozaPlugin.Telemetry
             if (!_connection.IsConnected) return;
 
             // Heartbeat/ping first
-            _connection.Send(BuildDisplayFrame(0x00));
+            _connection.Send(_frames.BuildDisplayFrame(0x00));
 
             // Identity probe: 0x09 → 0x04 → 0x06 → 0x02 → 0x05
-            _connection.Send(BuildDisplayFrame(0x09));
-            _connection.Send(BuildDisplayFrameWithData(0x04, new byte[] { 0x00, 0x00, 0x00, 0x00 }));
-            _connection.Send(BuildDisplayFrame(0x06));
-            _connection.Send(BuildDisplayFrameWithData(0x02, new byte[] { 0x00 }));
-            _connection.Send(BuildDisplayFrameWithData(0x05, new byte[] { 0x00, 0x00, 0x00, 0x00 }));
+            _connection.Send(_frames.BuildDisplayFrame(0x09));
+            _connection.Send(_frames.BuildDisplayFrameWithData(0x04, new byte[] { 0x00, 0x00, 0x00, 0x00 }));
+            _connection.Send(_frames.BuildDisplayFrame(0x06));
+            _connection.Send(_frames.BuildDisplayFrameWithData(0x02, new byte[] { 0x00 }));
+            _connection.Send(_frames.BuildDisplayFrameWithData(0x05, new byte[] { 0x00, 0x00, 0x00, 0x00 }));
 
             // Version queries: 0x07, 0x0F, 0x11, 0x08, 0x10 (sub-device 1)
-            _connection.Send(BuildDisplayFrameWithData(0x07, new byte[] { 0x01 }));
-            _connection.Send(BuildDisplayFrameWithData(0x0F, new byte[] { 0x01 }));
-            _connection.Send(BuildDisplayFrameWithData(0x11, new byte[] { 0x04 }));
-            _connection.Send(BuildDisplayFrameWithData(0x08, new byte[] { 0x01 }));
-            _connection.Send(BuildDisplayFrameWithData(0x10, new byte[] { 0x00 }));
-        }
-
-        private byte[] BuildDisplayFrame(byte cmd)
-        {
-            var frame = new byte[] { MozaProtocol.MessageStart, 0x01,
-                MozaProtocol.TelemetrySendGroup, _targetDeviceId,
-                cmd, 0x00 };
-            frame[5] = MozaProtocol.CalculateWireChecksum(frame);
-            return frame;
-        }
-
-        private byte[] BuildDisplayFrameWithData(byte cmd, byte[] data)
-        {
-            var frame = new byte[4 + 1 + data.Length + 1]; // start+N+grp+dev + cmd + data + checksum
-            frame[0] = MozaProtocol.MessageStart;
-            frame[1] = (byte)(1 + data.Length); // N = cmd + data
-            frame[2] = MozaProtocol.TelemetrySendGroup;
-            frame[3] = _targetDeviceId;
-            frame[4] = cmd;
-            Array.Copy(data, 0, frame, 5, data.Length);
-            frame[frame.Length - 1] = MozaProtocol.CalculateWireChecksum(frame);
-            return frame;
+            _connection.Send(_frames.BuildDisplayFrameWithData(0x07, new byte[] { 0x01 }));
+            _connection.Send(_frames.BuildDisplayFrameWithData(0x0F, new byte[] { 0x01 }));
+            _connection.Send(_frames.BuildDisplayFrameWithData(0x11, new byte[] { 0x04 }));
+            _connection.Send(_frames.BuildDisplayFrameWithData(0x08, new byte[] { 0x01 }));
+            _connection.Send(_frames.BuildDisplayFrameWithData(0x10, new byte[] { 0x00 }));
         }
 
         // ── Preamble message handling ───────────────────────────────────────
@@ -4070,9 +3992,9 @@ namespace MozaPlugin.Telemetry
         private void TickEmitEnableAndSequence()
         {
             if (!TestMode && (!_gameRunning || !_profileTelemetryEnabled)) return;
-            SendStreamSlot((int)StreamKind.Enable, _cachedEnableFrame);
+            SendStreamSlot((int)StreamKind.Enable, _frames.EnableFrame);
             if (SendSequenceCounter)
-                SendStreamSlot((int)StreamKind.Sequence, BuildSequenceCounterFrame());
+                SendStreamSlot((int)StreamKind.Sequence, _frames.BuildSequenceCounterFrame());
         }
 
         /// <summary>Peripheral output polls (handbrake + pedals) at ~1 Hz,
@@ -4082,26 +4004,26 @@ namespace MozaPlugin.Telemetry
         {
             int slow = Math.Max(8, 1000 / _baseTickMs); // ~1Hz cycle (33 ticks @ 30ms base)
             int phase = _tickCounter % slow;
-            if (phase == 0)             _connection.Send(_handbrakePresenceFrame);
-            else if (phase == slow / 5) _connection.Send(_handbrakeOutputFrame);
+            if (phase == 0)             _connection.Send(Frames.TelemetryFrameCache.HandbrakePresenceFrame);
+            else if (phase == slow / 5) _connection.Send(Frames.TelemetryFrameCache.HandbrakeOutputFrame);
             else if (phase == 2 * slow / 5)
             {
-                _connection.Send(_pedalThrottleOutFrame);
-                _connection.Send(_pedalBrakeOutFrame);
-                _connection.Send(_pedalClutchOutFrame);
+                _connection.Send(Frames.TelemetryFrameCache.PedalThrottleOutFrame);
+                _connection.Send(Frames.TelemetryFrameCache.PedalBrakeOutFrame);
+                _connection.Send(Frames.TelemetryFrameCache.PedalClutchOutFrame);
             }
         }
 
         /// <summary>LED state polls. Group 1 ~1 Hz, group 2 ~0.2 Hz. Load-bearing
         /// for per-group telemetry engagement on the GS V2 Pro — see the field-
-        /// block comment near <c>_ledStatePollGroup1</c>.</summary>
+        /// block comment near <c>TelemetryFrameCache.LedStatePollGroup1</c>.</summary>
         private void TickEmitLedStatePolls()
         {
             int slow = Math.Max(8, 1000 / _baseTickMs);
             if (_tickCounter % slow == 3 * slow / 5)
-                _connection.Send(_ledStatePollGroup1);
+                _connection.Send(Frames.TelemetryFrameCache.LedStatePollGroup1);
             if (_tickCounter % (slow * 5) == 4 * slow / 5)
-                _connection.Send(_ledStatePollGroup2);
+                _connection.Send(Frames.TelemetryFrameCache.LedStatePollGroup2);
         }
 
         /// <summary>Retransmit unacked session-data chunks. Per-chunk
@@ -4498,7 +4420,7 @@ namespace MozaPlugin.Telemetry
             // Hot-swap detection still works via PollStatus's wheel-model probe.
             SendDashKeepalive();
             if (SendTelemetryMode)
-                SendStreamSlot((int)StreamKind.Mode, _cachedModeFrame);
+                SendStreamSlot((int)StreamKind.Mode, _frames.ModeFrame);
             if ((_slowCounter & 1) == 1)
                 SendDisplayConfig();
             else if (_slowCounter % 8 == 0)
@@ -4876,7 +4798,7 @@ namespace MozaPlugin.Telemetry
             _connection.Send(BuildGroup40Frame3(0x28, 0x00, 0x00));
             _connection.Send(BuildGroup40Frame3(0x28, 0x01, 0x00));
             _connection.Send(BuildGroup40Frame(0x09, 0x00));
-            _connection.Send(_cachedModeFrame);
+            _connection.Send(_frames.ModeFrame);
         }
 
         private byte[] BuildChannelEnableFrame(byte page, byte channelIndex)
@@ -4991,55 +4913,7 @@ namespace MozaPlugin.Telemetry
             return frame;
         }
 
-        // ── Cached frame construction ───────────────────────────────────────
-
-        private void BuildCachedFrames()
-        {
-            _cachedModeFrame = BuildStaticFrame(new byte[] {
-                MozaProtocol.MessageStart, 4,
-                MozaProtocol.TelemetryModeGroup, MozaProtocol.DeviceWheel,
-                0x28, 0x02, 0x01, 0x00 });
-
-            _cachedEnableFrame = BuildStaticFrame(new byte[] {
-                MozaProtocol.MessageStart, 6,
-                MozaProtocol.BaseSendTelemetry, MozaProtocol.DeviceWheel,
-                0xFD, 0xDE, 0x00, 0x00, 0x00, 0x00 });
-
-            _cachedSequenceFrame = BuildStaticFrame(new byte[] {
-                MozaProtocol.MessageStart, 6,
-                0x2D, MozaProtocol.DeviceBase,
-                0xF5, 0x31, 0x00, 0x00, 0x00, 0x00 });
-
-            _cachedHeartbeatFrames = new byte[13][];
-            for (int i = 0; i < 13; i++)
-            {
-                byte dev = (byte)(18 + i);
-                var frame = new byte[] { MozaProtocol.MessageStart, 0x00, 0x00, dev, 0x00 };
-                frame[4] = MozaProtocol.CalculateWireChecksum(frame);
-                _cachedHeartbeatFrames[i] = frame;
-            }
-        }
-
-        private static byte[] BuildStaticFrame(byte[] body)
-        {
-            var frame = new byte[body.Length + 1];
-            Array.Copy(body, 0, frame, 0, body.Length);
-            frame[frame.Length - 1] = MozaProtocol.CalculateWireChecksum(body);
-            return frame;
-        }
-
-        private byte[] BuildSequenceCounterFrame()
-        {
-            byte seq = _sequenceCounter++;
-            _cachedSequenceFrame[9] = seq;
-            _cachedSequenceFrame[10] = MozaProtocol.CalculateWireChecksum(
-                _cachedSequenceFrame, _cachedSequenceFrame.Length - 1);
-            // Return a copy: the write queue holds a reference until the write thread
-            // drains it, and we mutate _cachedSequenceFrame on the next tick.
-            var copy = new byte[_cachedSequenceFrame.Length];
-            Array.Copy(_cachedSequenceFrame, copy, copy.Length);
-            return copy;
-        }
+        // Cached frame construction lives in Frames/TelemetryFrameCache.cs.
 
         // ── Periodic streams ────────────────────────────────────────────────
 
@@ -5048,10 +4922,11 @@ namespace MozaPlugin.Telemetry
         private void SendHeartbeat()
         {
             int mask = DetectedDeviceMask;
-            for (int i = 0; i < _cachedHeartbeatFrames.Length; i++)
+            var heartbeats = _frames.HeartbeatFrames;
+            for (int i = 0; i < heartbeats.Length; i++)
             {
                 if (mask == 0 || (mask & (1 << i)) != 0)
-                    _connection.Send(_cachedHeartbeatFrames[i]);
+                    _connection.Send(heartbeats[i]);
             }
         }
 
@@ -5062,20 +4937,13 @@ namespace MozaPlugin.Telemetry
             // Distinct from group 0x00 heartbeats and SerialStream fc:00 acks.
             // Unclear whether the wheel requires this for telemetry to flow, but
             // Pithouse sends it consistently (~15× per session).
-            _connection.Send(_dashKeepaliveFrameDash);
-            _connection.Send(_dashKeepaliveFrame15);
-            _connection.Send(_dashKeepaliveFrameWheel);
+            _connection.Send(Frames.TelemetryFrameCache.DashKeepaliveFrameDash);
+            _connection.Send(Frames.TelemetryFrameCache.DashKeepaliveFrame15);
+            _connection.Send(Frames.TelemetryFrameCache.DashKeepaliveFrameWheel);
             // CM2 standalone path: add a ping at 0x12 (CM2 bridge/main) so the
             // device keeps its connection state warm against the active target.
             if (IsStandaloneDashboardTarget && _targetDeviceId == MozaProtocol.DeviceMain)
-                _connection.Send(_dashKeepaliveFrameMain);
-        }
-
-        private static byte[] BuildKeepaliveFrame(byte dev)
-        {
-            var frame = new byte[] { MozaProtocol.MessageStart, 0x01, MozaProtocol.TelemetrySendGroup, dev, 0x00, 0x00 };
-            frame[5] = MozaProtocol.CalculateWireChecksum(frame);
-            return frame;
+                _connection.Send(Frames.TelemetryFrameCache.DashKeepaliveFrameMain);
         }
 
         /// <summary>
@@ -5280,53 +5148,17 @@ namespace MozaPlugin.Telemetry
         {
             int pageCount = _profile?.PageCount ?? 1;
             if (pageCount < 1) pageCount = 1;
-            EnsureDisplayConfigCache(pageCount);
+            var frames = _frames.GetDisplayConfigFrames(pageCount);
 
             int page = _displayConfigPage % pageCount;
             _displayConfigPage++;
 
-            var frames = _cachedDisplayConfigFrames!;
             int baseIdx = page * 3;
             _connection.Send(frames[baseIdx + 0]);
             // 7C:23 dashboard-activate: tells the wheel which dashboard pages are
             // active. PitHouse sends one per page interleaved with 7C:27 at ~1 Hz.
             _connection.Send(frames[baseIdx + 1]);
             _connection.Send(frames[baseIdx + 2]);
-        }
-
-        private void EnsureDisplayConfigCache(int pageCount)
-        {
-            if (_cachedDisplayConfigFrames != null && _cachedDisplayConfigPageCount == pageCount)
-                return;
-
-            var frames = new byte[pageCount * 3][];
-            for (int page = 0; page < pageCount; page++)
-            {
-                byte b2 = (byte)(0x05 + 2 * page);
-                byte b4 = (byte)(0x03 + 2 * page);
-                byte z  = (byte)(0x06 + 2 * page);
-                byte ab2 = (byte)(0x07 + 2 * page);
-                byte ab4 = (byte)(0x05 + 2 * page);
-
-                var configFrame = new byte[] { MozaProtocol.MessageStart, 0x0A, MozaProtocol.TelemetrySendGroup,
-                    MozaProtocol.DeviceWheel, 0x7C, 0x27, 0x0F, 0x80, b2, 0x00, b4, 0x00, 0xFE, 0x01, 0x00 };
-                configFrame[14] = MozaProtocol.CalculateWireChecksum(configFrame);
-
-                var activateFrame = new byte[] { MozaProtocol.MessageStart, 0x0A, MozaProtocol.TelemetrySendGroup,
-                    MozaProtocol.DeviceWheel, 0x7C, 0x23, 0x46, 0x80, ab2, 0x00, ab4, 0x00, 0xFE, 0x01, 0x00 };
-                activateFrame[14] = MozaProtocol.CalculateWireChecksum(activateFrame);
-
-                var configFrame2 = new byte[] { MozaProtocol.MessageStart, 0x06, MozaProtocol.TelemetrySendGroup,
-                    MozaProtocol.DeviceWheel, 0x7C, 0x27, 0x0F, 0x00, z, 0x00, 0x00 };
-                configFrame2[10] = MozaProtocol.CalculateWireChecksum(configFrame2);
-
-                frames[page * 3 + 0] = configFrame;
-                frames[page * 3 + 1] = activateFrame;
-                frames[page * 3 + 2] = configFrame2;
-            }
-
-            _cachedDisplayConfigFrames = frames;
-            _cachedDisplayConfigPageCount = pageCount;
         }
 
         public void Dispose()
