@@ -3177,6 +3177,11 @@ namespace MozaPlugin
             || (_fsr1Driver?.IsRunning ?? false)
             || (_cm1Driver?.IsRunning ?? false);
 
+        /// <summary>True when the FSR V1 standalone 0x42 display driver is running
+        /// (connected FSR1 wheel). The tier-def sender never goes Active for an FSR1,
+        /// so the dashboard UI gates the selector/status on this instead.</summary>
+        internal bool IsFsr1DriverRunning => _fsr1Driver?.IsRunning ?? false;
+
         /// <summary>True when the wheel's OWN screen is driven by the tier-def
         /// <see cref="_telemetrySender"/> (a display wheel like W17/W18) rather than
         /// the standalone FSR1 0x42 driver — so the test button may safely start it.</summary>
@@ -5105,11 +5110,11 @@ namespace MozaPlugin
                 if (g.HasValue
                     && _settings.WheelTelemetryEraByPageGuid.TryGetValue(g.Value, out var v)
                     && v >= 0)
-                    return (MozaWheelEra)v;
+                    return MigrateStoredEra(v);
                 if (Guid.TryParse(MozaDeviceConstants.WheelGenericGuid, out var generic)
                     && _settings.WheelTelemetryEraByPageGuid.TryGetValue(generic, out var gv)
                     && gv >= 0)
-                    return (MozaWheelEra)gv;
+                    return MigrateStoredEra(gv);
                 return MozaWheelEra.Auto;
             }
             set
@@ -5128,6 +5133,20 @@ namespace MozaPlugin
                 if (!g.HasValue) return;
                 _settings.WheelTelemetryEraByPageGuid[g.Value] = (int)value;
             }
+        }
+
+        /// <summary>
+        /// Map a persisted era int onto the current <see cref="MozaWheelEra"/>
+        /// values. The defunct Era2025 (stored as 2) and the pre-renumber
+        /// Era2026 (stored as 3) both resolve to the live Era2026 (now 2): the
+        /// stored 2 already lands on Era2026 by the renumber, and a legacy 3 is
+        /// clamped down. 0=Auto / 1=Era2024 are unchanged.
+        /// </summary>
+        private static MozaWheelEra MigrateStoredEra(int stored)
+        {
+            if (stored > (int)MozaWheelEra.Era2026)
+                return MozaWheelEra.Era2026;
+            return (MozaWheelEra)stored;
         }
 
         /// <summary>
