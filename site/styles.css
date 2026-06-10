@@ -306,6 +306,22 @@ footer{ border-top:1px solid var(--line); padding:70px 0 46px; background:var(--
 .prose th{ background:var(--panel-2); color:var(--ink); font-weight:600; }
 .prose td{ color:var(--ink-2); }
 
+/* ---------- guide back link + prev/next ---------- */
+.guide-back{ font-family:var(--mono); font-size:12px; letter-spacing:.08em; color:var(--sub); display:inline-flex; align-items:center; gap:8px; margin-bottom:20px; transition:.15s; }
+.guide-back:hover{ color:var(--accent); }
+.guide-foot{ display:flex; justify-content:space-between; gap:16px; margin-top:50px; padding-top:26px; border-top:1px solid var(--line); }
+.guide-foot a{ display:flex; flex-direction:column; gap:5px; flex:1; max-width:49%; color:var(--ink-2); border:1px solid var(--line); border-radius:11px; padding:15px 18px; background:var(--panel); transition:.16s; }
+.guide-foot a:hover{ border-color:var(--accent); color:#fff; transform:translateY(-2px); }
+.guide-foot a.next{ text-align:right; margin-left:auto; align-items:flex-end; }
+.guide-foot .dir{ font-family:var(--mono); font-size:11px; letter-spacing:.16em; text-transform:uppercase; color:var(--faint); }
+.guide-foot a:hover .dir{ color:var(--accent); }
+.guide-foot .ttl{ font-size:15.5px; font-weight:600; }
+@media (max-width:560px){
+  .guide-foot{ flex-direction:column; }
+  .guide-foot a{ max-width:100%; }
+  .guide-foot a.next{ text-align:left; align-items:flex-start; }
+}
+
 /* ---------- guides index card grid ---------- */
 .guide-list{ display:grid; grid-template-columns:repeat(2,1fr); gap:18px; padding:8px 0 96px; }
 .guide-card{ display:flex; flex-direction:column; border:1px solid var(--line); border-radius:13px; background:var(--panel); padding:26px 24px; transition:border-color .2s, transform .2s, background .2s; }

@@ -99,7 +99,7 @@ namespace MozaPlugin.Devices.WheelUi
 
             if (_plugin == null)
             {
-                MozaLog.Debug("[Moza] UI: DashboardSelectionChanged handler — _plugin null, skipping");
+                MozaLog.Debug("[AZOM] UI: DashboardSelectionChanged handler — _plugin null, skipping");
                 return;
             }
 
@@ -109,7 +109,7 @@ namespace MozaPlugin.Devices.WheelUi
             // so refreshing the channel-mapping grid here covers both UI- and
             // wheel-initiated switches.
             MozaLog.Debug(
-                $"[Moza] UI: DashboardSelectionChanged handler — selected='{_plugin.ActiveTelemetryProfileName}'");
+                $"[AZOM] UI: DashboardSelectionChanged handler — selected='{_plugin.ActiveTelemetryProfileName}'");
             PopulateDashboardCombo();
             PopulateChannelMappingList();
         }
@@ -168,7 +168,7 @@ namespace MozaPlugin.Devices.WheelUi
                 _plugin.Cm1ActiveIndexChanged += OnCm1ActiveIndexChanged;
                 _dashEventSubscribedPlugin = _plugin;
                 MozaLog.Debug(
-                    $"[Moza] UI: subscribed to DashboardSelectionChanged (plugin hash={System.Runtime.CompilerServices.RuntimeHelpers.GetHashCode(_plugin)})");
+                    $"[AZOM] UI: subscribed to DashboardSelectionChanged (plugin hash={System.Runtime.CompilerServices.RuntimeHelpers.GetHashCode(_plugin)})");
             }
 
             return true;
@@ -499,6 +499,11 @@ namespace MozaPlugin.Devices.WheelUi
             bool inCooldown = active?.IsInSilenceCooldown ?? false;
             bool pendingApply = _plugin?.IsPendingDashboardApply ?? false;
             bool senderReady = active != null && active.IsActive && !inCooldown && !pendingApply;
+            // FSR V1 renders via its standalone 0x42 driver, not the tier-def sender — that
+            // sender never goes Active, so gate the selector + status on the driver instead.
+            bool fsr1 = _plugin?.IsFsr1DisplayWheel ?? false;
+            bool fsr1Running = fsr1 && (_plugin?.IsFsr1DriverRunning ?? false);
+            bool selectorReady = senderReady || fsr1Running;
             // Surface the pipeline health model first so recovery/park states are
             // truthful instead of mislabeling a parked pipeline as "Connecting…" forever.
             var phase = active?.Phase ?? PipelinePhase.Idle;
@@ -506,6 +511,8 @@ namespace MozaPlugin.Devices.WheelUi
                 DashboardTelemetryCard.Subtitle = "Disabled";
             else if (testMode)
                 DashboardTelemetryCard.Subtitle = "Test pattern";
+            else if (fsr1)
+                DashboardTelemetryCard.Subtitle = fsr1Running ? "Connected" : "Connecting to wheel…";
             else if (phase == PipelinePhase.Parked)
                 DashboardTelemetryCard.Subtitle = (active?.Recovery?.ParkIsDegraded ?? false)
                     ? global::MozaPlugin.Resources.Strings.Status_DegradedScreenless
@@ -534,7 +541,7 @@ namespace MozaPlugin.Devices.WheelUi
             TelemetryTestBtn.Content = testMode
                 ? global::MozaPlugin.Resources.Strings.Button_StopTest
                 : global::MozaPlugin.Resources.Strings.Button_SendTestPattern;
-            TelemetryProfileCombo.IsEnabled = senderReady;
+            TelemetryProfileCombo.IsEnabled = selectorReady;
 
             // Refresh profile info — auto-renegotiate may have swapped
             // the profile on a background thread after a dashboard switch.
@@ -576,7 +583,7 @@ namespace MozaPlugin.Devices.WheelUi
             if (val < 0)
             {
                 global::MozaPlugin.MozaLog.Debug(
-                    "[Moza] DisplayBrightnessDebounce_Tick: skipping wire push — _data is sentinel");
+                    "[AZOM] DisplayBrightnessDebounce_Tick: skipping wire push — _data is sentinel");
                 return;
             }
             if (val > 100) val = 100;
