@@ -28,9 +28,9 @@ MOZA makes excellent sim racing hardware, but their companion software — Pitho
 This plugin opens up MOZA hardware to the wider world of SimHub.  Drive your leds using [ATSR-EVO](https://github.com/ATSR-Alex/ATSR-Hub-EVO/) plugin.  Map any data point from the thousands in SimHub to display on your wheel dashboards.
 The goal is to expand the functionality of MOZA devices to a wider audience by providing tools that work across multiple platforms.  
 
-![MOZA Plugin Settings](docs/Screenshot.png)
+![AZOM plugin panel](docs/BasePage.png)
 
-![Dash Channels](docs/DashChannels.png)
+![Dashboard channel mapping](docs/WheelChannelMapping.png)
 
 > [!IMPORTANT]
 > **Close Pithouse before using this plugin.** Both applications communicate with MOZA hardware over the same serial port and cannot be open simultaneously. Pithouse must be fully closed (not just minimized) before SimHub can connect.
@@ -81,7 +81,7 @@ Youtube guide about this plugin's features from a beta tester (en español)
 
 MOZA wheels and dashboards register as native SimHub devices, appearing in SimHub's **Devices** section. This enables full control of your LEDs through SimHub's effects pipeline — no separate telemetry mode needed.
 
-![Device Panel](docs/Device.png)
+![MOZA wheel device — Inputs tab](docs/WheelInputs.png)
 
 - **Per-Model Device Definitions** — Each new wheel attached will get a generated device definition with the LED layout baked in. Definitions are deployed automatically on first detection — just connect your hardware, restart SimHub, and add the device. Requires SimHub 9.11.8+
 - **LED Effects System** — Use SimHub's full Button and Telemetry effects configuration UI (RPM indicators, flags, speed limiter animations, scripted effects, etc.) to control your wheel and dashboard LEDs
@@ -93,7 +93,7 @@ MOZA wheels and dashboards register as native SimHub devices, appearing in SimHu
 - **Per-Wheel Idle & Sleep Effects** — Each wheel's device page has RPM / Buttons / Knobs / Sleep tabs for the hardware's own onboard idle animations (Constant, Breathing, Color Cycle, Rainbow, Sand Flow, RGB Pulse), static RPM/flag/knob colors, and the sleep-light mode + color + standby timeout. These play locally on the wheel when SimHub isn't driving effects (game closed, telemetry paused). Sleep settings persist at the wheel level, not per game
 - **360hz and LFE Support** — Supports native control SDK for games that require it (iRacing)
 
-![Device Panel](docs/Knobs.png)
+![Knob LED rings and idle effects](docs/WheelKnobs.png)
 
 The plugin injects virtual LED drivers so SimHub's effects UI shows each device as connected, even though MOZA uses a proprietary serial protocol. The computed LED colors are forwarded to the hardware each frame.
 

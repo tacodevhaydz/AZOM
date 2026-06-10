@@ -1,14 +1,15 @@
 ---
 layout: guide.njk
 title: Getting Started
-description: Install AZOM and connect your MOZA hardware to SimHub in a few minutes.
+description: Install AZOM and connect your MOZA hardware to SimHub in a few minutes — then dive into the detailed guides.
 tags: guide
 order: 1
 ---
 
-AZOM turns SimHub into complete replacement software for your MOZA hardware — LED
-effects, LCD dashboard telemetry, and full device configuration on Windows and Linux.
-This guide gets you from download to a connected wheel.
+AZOM turns SimHub into complete replacement software for your MOZA hardware — LED effects,
+LCD dashboard telemetry, and full device configuration on Windows and Linux. This page is
+the quick path from download to a connected wheel; each step links to a detailed
+walkthrough if you want it.
 
 > **Before you start:** Pithouse and SimHub both talk to MOZA hardware over the same
 > serial port and **cannot run at the same time**. Fully close Pithouse — not just
@@ -20,32 +21,31 @@ This guide gets you from download to a connected wheel.
 - A MOZA wheelbase connected over USB
 - Windows, or Linux running SimHub via Proton/Wine
 
-## Install the plugin
+## The short path
 
-1. Download the latest `MozaPlugin_<version>.zip` from the
-   [Releases page](https://github.com/giantorth/moza-simhub-plugin/releases/latest).
-2. Extract `MozaPlugin.dll` into your SimHub directory — on Windows this defaults to
-   `C:\Program Files (x86)\SimHub\`.
-3. Restart SimHub. The plugin appears under **Settings › Plugins** as “AZOM”.
-4. Plug in your hardware and restart once more. Devices are auto-detected and their
-   definitions deployed — then add them under **Devices**.
+> **Ensure PitHouse is closed entirely and not just minimized**
 
-## Verify the connection
+1. **Install the plugin.** Drop `MozaPlugin.dll` into your SimHub directory — on Windows
+   that's `C:\Program Files (x86)\SimHub\` — and enable **AZOM** when SimHub prompts you.
+   Full walkthrough: [Install the Plugin](/guides/install-the-plugin/).
+2. **Add your device.** Restart with your hardware connected, then add your wheel under
+   **Devices** so LEDs and dashboards light up. See [Add Your Device](/guides/add-your-device/).
+3. **Verify the connection.** Open the **AZOM** panel — with a base connected you'll see
+   live steering angle, temperatures and FFB settings populate.
 
-Open **Settings › Plugins › AZOM**. With a base connected you should see live
-steering angle, temperatures, and FFB settings populate:
+## Where to next
 
-![The AZOM plugin panel inside SimHub](/docs/Screenshot.png)
+- **Dial in feel** — [Configure the Wheelbase](/guides/configure-the-wheelbase/) and
+  [Pedals &amp; Handbrake](/guides/pedals-and-handbrake/).
+- **Start from a preset** — [Import a Profile](/guides/import-a-profile/).
+- **Light it up** — [Wheel LEDs &amp; Knobs](/guides/wheel-leds-and-knobs/) and the
+  [LCD Dashboard](/guides/dashboard-and-channels/).
+- **Cockpit control** — [Controls &amp; Actions](/guides/controls-and-actions/), or
+  [Control Mapper](/guides/control-mapper/) if you swap wheels.
+- **iRacing &amp; 360 Hz** — [SDK &amp; iRacing](/guides/sdk-and-iracing/).
 
-If the panel stays empty, confirm Pithouse is fully closed and that no other app holds
-the serial port, then restart SimHub.
-
-## Next steps
-
-- Map SimHub data points to your wheel's LCD dashboard channels.
-- Drive your wheel LEDs through SimHub's effects pipeline — see the
-  [ATSR-EVO](https://github.com/ATSR-Alex/ATSR-Hub-EVO/) integration for advanced effects.
-- Bind wheel buttons to AZOM actions like FFB strength, rotation, and dashboard switching.
+For advanced LED work, the [ATSR-EVO](https://github.com/ATSR-Alex/ATSR-Hub-EVO/)
+integration unlocks sophisticated telemetry-driven effects.
 
 > **Use at your own risk.** This software drives force-feedback hardware capable of high
-> torque. It is provided “as is”, without warranty.
+> torque. It is provided "as is", without warranty.

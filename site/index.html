@@ -73,6 +73,7 @@
 
     <div class="ctas reveal">
       <a class="btn primary" href="https://github.com/giantorth/moza-simhub-plugin/releases/latest" target="_blank" rel="noopener">Download latest release <span class="arw">↗</span></a>
+      <a class="btn" href="/guides/">Read the guides</a>
       <a class="btn" href="https://github.com/giantorth/moza-simhub-plugin" target="_blank" rel="noopener">View source</a>
       <a class="btn" href="https://discord.gg/J4enw43e62" target="_blank" rel="noopener">Join Discord</a>
     </div>
@@ -86,7 +87,9 @@
     </div>
 
     <div class="rpm reveal">
-      <div class="rpmbar" id="rpmbar" aria-hidden="true"></div>
+      <div class="rpmbar rpmbar-static" aria-hidden="true">
+        <i class="g on"></i><i class="g on"></i><i class="g on"></i><i class="g on"></i><i class="a on"></i><i class="a on"></i><i class="a on"></i><i class="a on"></i><i class="r on"></i><i class="r on"></i><i class="r on"></i><i class="r"></i>
+      </div>
       <div class="cap">Runs on Windows &amp; Linux · Requires SimHub 9.11.8+</div>
     </div>
 
@@ -117,9 +120,9 @@
     <div class="reveal">
       <div class="shot">
         <div class="bar"><i></i><i></i><i></i><span class="ttl">SimHub › Plugins › AZOM</span></div>
-        <img src="docs/Screenshot.png" alt="The AZOM plugin panel inside SimHub, showing steering angle, temperatures, FFB settings and equalizer" loading="lazy" />
+        <img src="docs/BasePage.png" alt="The AZOM plugin panel inside SimHub, showing steering angle, temperatures, FFB settings, equalizer and output curve" loading="lazy" />
       </div>
-      <p class="cap"><b>The plugin panel</b> — wheelbase, FFB, EQ and output curves.</p>
+      <p class="cap"><b>The plugin panel</b> — wheelbase, FFB, EQ and output curves, mirroring Pithouse.</p>
     </div>
   </div>
 </section>
@@ -208,31 +211,31 @@
     <div class="gallery">
       <div class="reveal">
         <div class="shot">
-          <div class="bar"><i></i><i></i><i></i><span class="ttl">Devices › MOZA wheel</span></div>
-          <img src="docs/Device.png" alt="MOZA wheel registered as a native SimHub device" loading="lazy" />
+          <div class="bar"><i></i><i></i><i></i><span class="ttl">Devices › LEDs</span></div>
+          <img src="docs/WheelLEDs.png" alt="The wheel's LED groups listed as SimHub effects profiles" loading="lazy" />
         </div>
-        <p class="cap"><b>Native device</b> — your wheel shows up in SimHub's Devices section, ready for effects.</p>
+        <p class="cap"><b>Native LED pipeline</b> — buttons, telemetry, knob and individual LED groups, each a SimHub effects profile.</p>
       </div>
       <div class="reveal">
         <div class="shot">
-          <div class="bar"><i></i><i></i><i></i><span class="ttl">Effects › Choose effect</span></div>
-          <img src="docs/Effects.png" alt="SimHub effect picker listing RPM, flags, speed limiter and status LED effects" loading="lazy" />
+          <div class="bar"><i></i><i></i><i></i><span class="ttl">Wheel › Knobs</span></div>
+          <img src="docs/WheelKnobs.png" alt="Per-knob colour rings and signal-mode configuration on the wheel" loading="lazy" />
         </div>
-        <p class="cap"><b>Full effects library</b> — RPMs, flags, limiter animations and status LEDs target the hardware.</p>
-      </div>
-      <div class="reveal">
-        <div class="shot">
-          <div class="bar"><i></i><i></i><i></i><span class="ttl">Wheel › Knobs &amp; idle</span></div>
-          <img src="docs/Knobs.png" alt="Per-wheel knob, idle and sleep effect configuration tabs" loading="lazy" />
-        </div>
-        <p class="cap"><b>Onboard idle effects</b> — RPM / Buttons / Knobs / Sleep animations that play on the wheel itself.</p>
+        <p class="cap"><b>Onboard knob colours</b> — per-knob rings, signal mode and idle animations that play on the wheel itself.</p>
       </div>
       <div class="reveal">
         <div class="shot">
           <div class="bar"><i></i><i></i><i></i><span class="ttl">Dashboard › Channels</span></div>
-          <img src="docs/DashChannels.png" alt="Dashboard channel mapping between SimHub properties and wheel display channels" loading="lazy" />
+          <img src="docs/WheelChannelMapping.png" alt="Dashboard channel mapping between SimHub properties and wheel display channels" loading="lazy" />
         </div>
         <p class="cap"><b>Channel mapping</b> — bind any SimHub property to each LCD dashboard channel.</p>
+      </div>
+      <div class="reveal">
+        <div class="shot">
+          <div class="bar"><i></i><i></i><i></i><span class="ttl">Controls &amp; events</span></div>
+          <img src="docs/ControlsandEvents.png" alt="Wheel buttons mapped to AZOM actions in SimHub's Controls and events" loading="lazy" />
+        </div>
+        <p class="cap"><b>Cockpit control</b> — map wheel buttons to 40+ AZOM actions like FFB strength and brightness.</p>
       </div>
     </div>
   </div>
@@ -250,6 +253,7 @@
         <li><span class="num"></span><div><h4>Start SimHub</h4><p>The plugin appears under <b>Settings › Plugins</b> as “AZOM”.</p></div></li>
         <li><span class="num"></span><div><h4>Connect &amp; detect</h4><p>Plug in your hardware and restart SimHub. Your wheel can be found under Devices by searching for MOZA.</p></div></li>
       </ol>
+      <p class="credit" style="margin-top:22px">Need the screen-by-screen version? Read <a href="/guides/install-the-plugin/">Install the Plugin</a> and <a href="/guides/add-your-device/">Add Your Device</a>, or browse <a href="/guides/">all guides</a>.</p>
     </div>
     <div class="reveal">
       <div class="admon warn">
@@ -297,9 +301,9 @@
         <div class="lab">SimHub properties</div>
         <p>Base connection, MCU / MOSFET / motor temps, FFB strength, live steering angle &amp; position, pedal and paddle inputs — for use on your custom dashboards.</p>
         <div class="codechips">
-          <span>Moza.SteeringAngle</span>
-          <span>Moza.MotorTemp</span>
-          <span>Moza.FFBStrength</span>
+          <span>AZOM.SteeringAngle</span>
+          <span>AZOM.MotorTemp</span>
+          <span>AZOM.FFBStrength</span>
         </div>
       </div>
       <div class="stat reveal">
@@ -307,9 +311,10 @@
         <div class="lab">Bindable actions</div>
         <p>FFB strength, torque limit, rotation, display brightness, dashboard switching, work mode, AB9 vibration — each with fine and coarse steps, bindable to any button.</p>
         <div class="codechips">
-          <span>Moza.FfbStrengthUp</span>
-          <span>Moza.DashboardNext</span>
-          <span>Moza.DisplayBrightness0</span>
+          <span>Adjust FFB Strength</span>
+          <span>Set Display Brightness</span>
+          <span>Switch Dashboard</span>
+          <span>Adjust Steering Angle</span>
         </div>
       </div>
       <div class="stat reveal">
@@ -443,29 +448,6 @@
   // safety net: never leave content hidden
   setTimeout(function(){ document.querySelectorAll('.reveal:not(.in)').forEach(function(el){
     if(el.getBoundingClientRect().top < (window.innerHeight||800)) el.classList.add('in'); }); }, 700);
-
-  // RPM shift-light strip
-  var bar = document.getElementById('rpmbar');
-  var N = 16, cells = [];
-  for(var i=0;i<N;i++){
-    var c = document.createElement('i');
-    c.className = i < 9 ? 'g' : (i < 13 ? 'a' : 'r');
-    bar.appendChild(c); cells.push(c);
-  }
-  var reduce = window.matchMedia('(prefers-reduced-motion: reduce)').matches;
-  if(reduce){
-    cells.forEach(function(c,i){ if(i<11) c.classList.add('on'); });
-  } else {
-    var t = 0;
-    setInterval(function(){
-      t += 0.045;
-      // smooth rev oscillation 0..1 with a quick blip back to idle
-      var phase = (t % 1);
-      var rev = phase < 0.82 ? Math.pow(phase/0.82, 0.7) : (1 - (phase-0.82)/0.18);
-      var lit = Math.round(rev * N);
-      for(var i=0;i<N;i++){ cells[i].classList.toggle('on', i < lit); }
-    }, 60);
-  }
 })();
 </script>
 </body>
