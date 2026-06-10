@@ -336,6 +336,9 @@ namespace MozaPlugin.Resources
         public static string Button_OpenReleaseNotes => Get("Button_OpenReleaseNotes");
         public static string Button_SkipThisVersion => Get("Button_SkipThisVersion");
         public static string Button_DismissUpdate => Get("Button_DismissUpdate");
+        public static string Banner_WheelFirmwareErrors_Title => Get("Banner_WheelFirmwareErrors_Title");
+        public static string Banner_WheelFirmwareErrors_Body => Get("Banner_WheelFirmwareErrors_Body");
+        public static string Button_EnableSerialCapture => Get("Button_EnableSerialCapture");
         public static string Banner_SdkSuggestionText => Get("Banner_SdkSuggestionText");
         public static string Button_ConfigureSdk => Get("Button_ConfigureSdk");
         public static string Button_Dismiss => Get("Button_Dismiss");

@@ -290,3 +290,57 @@ Additional newer wheel commands:
 | knob-active-color | `27 [knob] [role]` | 3 | array | Per-knob "Active position" LED RGB. `knob=0..4` (knob 1..5; CS Pro 0..3, KS Pro 0..4). Role-byte semantics verified live 2026-05-10 against PitHouse: `role=0` is the only writable form — sets the persisted Active LED colour and is what PitHouse's "Active" swatch fires; `role=1` is read-only and returns the live ring-LED colour at the knob's current rotation position. Plugin commands: `wheel-knob{1..5}-active-color` (write/read role 0) and `wheel-knob{1..5}-live-color` (read-only role 1). Earlier docs labelled role 0 as "background/idle" and role 1 as "primary/active" — that mapping was wrong; corrected here and in [`../telemetry/control-signals.md` § Per-knob Active LED colour](../telemetry/control-signals.md). |
 | multi-function-switch | `28 [0..2]` | 1 | int | Enable, count, left/right assignment |
 | rotary-signal-mode | `2A [N]` | 1 | int | Encoder N (0–4) signal mode |
+
+### Legacy "CS" wheel — Table 8 param-read storm (firmware fault we must not trigger)
+
+The original bare-`CS` wheel (firmware model name `CS`, reports on the bus as
+`wheel_wnfw`; RPM-only — 10 LEDs, **no** buttons / flags / knobs / sleep light /
+display) does **not** implement large parts of the parameter space newer rims do.
+When the plugin reads (or writes) a parameter this firmware lacks, its
+param-manager logs one failure per index it can't service and sweeps the whole
+table:
+
+```
+0e 71 05 [INFO]param_manage.c:424 Table 8: Failed to Read Parameter 0
+…
+0e 71 05 [INFO]param_manage.c:424 Table 8: Failed to Read Parameter 127
+```
+
+These arrive on the firmware-debug channel (wire group `0x0E`, subtype `0x05`,
+dev `0x71`). The sweep wedges the param subsystem: identity readback dies, the
+wheel stops answering presence polls, and the plugin drops into a ~20 s re-detect
+("dogging") loop. Users report this as the wheel "crashing".
+
+**Plugin-caused, not inherent firmware self-validation.** The same wheel
+(`wheel_wnfw`) on the same R5 base, driven by **MOZA Pit House**
+(`extreme_dogging.pcapng`), emits **zero** `Failed to Read/Write Parameter`
+lines — Pit House validates only param Tables 3/4/11/12 and never pokes Table 8.
+The plugin produced thousands on identical hardware
+(`moza-diagnostics-bundle-20260605-154600.zip`, 3 419 lines). The trigger is a
+plugin read/write the wheel can't service. (The benign `[ERRO]diag_svr_event.c
+error_code 40/41/42` lines seen once at startup appear under Pit House too and
+are **not** the fault signal.)
+
+**Gating rule (do not regress).**
+
+- Never push sleep-light params (`wheel-idle-mode`/`-timeout`/`-speed`/`-color`)
+  to a wheel not positively identified as supporting them. Gated on
+  `WheelModelInfo.HasSleepLight`; the `CS` entry **and** `WheelModelInfo.Default`
+  (unknown models) both set it `false`.
+- Never blind-probe extended LED groups (Single/Ambient/knob-brightness) on an
+  unidentified wheel — only read a group once a known `WheelModelInfo` says it
+  exists. A genuinely new wheel earns these reads by being added to
+  `KnownModels`, not by speculative probing.
+- The load-bearing idle keepalives in `PollStatus` — group `0x00` presence poll,
+  group `0x0E` param poll, 1-byte group `0x43` keepalive — are PitHouse-parity
+  and **must stay on**; they hold the wheel's param subsystem up. They are not
+  the storm trigger and must not be backed off.
+
+**Runtime self-protection.** `FirmwareDebugLog` counts `Failed to Read/Write
+Parameter` lines in a trailing 10 s window; ≥ 3 marks a storm (and logs a
+one-time SimHub warning so it's on record even if the user never opens the pane).
+While a storm is active the plugin skips the heavy LED-capability read batch on
+re-detect (so it stops feeding the dogging loop) and the AZOM pane raises a header
+banner whose "Enable Serial Capture" button jumps the user to the serial-capture
+section so they can grab the traffic for us. The keepalives above are
+intentionally exempt.

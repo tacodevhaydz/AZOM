@@ -715,6 +715,21 @@ namespace MozaPlugin
         internal MozaPluginSettings Settings => _settings;
         internal bool IsNewWheelDetected => DetectionState.NewWheelDetected;
         internal bool IsOldWheelDetected => DetectionState.OldWheelDetected;
+
+        /// <summary>
+        /// True while the wheel firmware is mid param-read/write storm
+        /// (param_manage.c "Failed to Read/Write Parameter" lines arriving above
+        /// the detector threshold). Used as a self-protection backoff: callers
+        /// stop piling capability/settings reads onto a wheel that's already
+        /// failing them, which breaks the re-detect "dogging" amplification loop.
+        /// NOTE: this must never gate the load-bearing presence / 0x0e param /
+        /// 0x43 keepalive polls in PollStatus — those are PitHouse-parity
+        /// keepalives that hold the wheel's param subsystem up; only the heavier
+        /// capability/identity read batches are backed off.
+        /// </summary>
+        internal bool WheelParamStormActive
+            => _firmwareDebugLog?.GetFirmwareErrorState().StormActive ?? false;
+
         internal Devices.WheelModelInfo? WheelModelInfo { get; set; }
         /// <summary>True once the wheel has reported its model name and a per-page
         /// guid can be resolved. UI handlers that persist into per-page bundles
