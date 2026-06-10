@@ -1,3 +1,10 @@
+<p align="center">
+  <img src="docs/azom-hero.svg" alt="AZOM — The MOZA Bridge for SimHub" width="760">
+</p>
+
+> [!IMPORTANT]
+> **The Unofficial MOZA SimHub Plugin is now named AZOM.**
+
 [![Release](https://img.shields.io/github/v/release/giantorth/moza-simhub-plugin)](https://github.com/giantorth/moza-simhub-plugin/releases/latest)
 [![Dev Release](https://img.shields.io/badge/dynamic/json?url=https://api.github.com/repos/giantorth/moza-simhub-plugin/releases/tags/dev-latest&query=%24.name&label=dev&color=orange)](https://github.com/giantorth/moza-simhub-plugin/releases/tag/dev-latest)
 [![License: GPL v3](https://img.shields.io/github/license/giantorth/moza-simhub-plugin)](LICENSE)
