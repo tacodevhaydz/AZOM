@@ -2411,6 +2411,24 @@ namespace MozaPlugin
             _dashboardTestPattern = on;
             if (_telemetrySender != null) _telemetrySender.TestMode = on;
             if (_cm2Sender != null) _cm2Sender.TestMode = on;
+            if (on) _fsr1ByteRuler = false; // mutually exclusive with the byte ruler
+        }
+
+        // FSR V1 byte-ruler diagnostic. When set, the 0x42 driver fills every data byte
+        // with its own payload offset so each box on the wheel shows which byte feeds it.
+        // Volatile: UI thread writes, driver timer thread reads.
+        private volatile bool _fsr1ByteRuler;
+
+        /// <summary>True while the FSR V1 byte-ruler diagnostic is active.</summary>
+        internal bool Fsr1ByteRulerActive => _fsr1ByteRuler;
+
+        /// <summary>Toggle the FSR V1 byte-ruler diagnostic (see
+        /// <see cref="Telemetry.Fsr1DisplayEmitter.BuildByteRulerRecord"/>). FSR1-only;
+        /// mutually exclusive with the sweep test pattern.</summary>
+        internal void SetFsr1ByteRuler(bool on)
+        {
+            _fsr1ByteRuler = on;
+            if (on) SetDashboardTestPattern(false);
         }
 
         /// <summary>True when some display pipeline is live and can render a test
