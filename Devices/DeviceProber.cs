@@ -179,19 +179,6 @@ namespace MozaPlugin.Devices
             "wheel-old-rpm-color10",
         };
 
-        internal static readonly string[] DashSettingsReadCommands = new[]
-        {
-            "dash-rpm-indicator-mode", "dash-flags-indicator-mode",
-            "dash-rpm-display-mode",
-            "dash-rpm-brightness", "dash-flags-brightness",
-            "dash-rpm-color1", "dash-rpm-color2", "dash-rpm-color3",
-            "dash-rpm-color4", "dash-rpm-color5", "dash-rpm-color6",
-            "dash-rpm-color7", "dash-rpm-color8", "dash-rpm-color9",
-            "dash-rpm-color10",
-            "dash-flag-color1", "dash-flag-color2", "dash-flag-color3",
-            "dash-flag-color4", "dash-flag-color5", "dash-flag-color6",
-        };
-
         internal static readonly string[] BaseAmbientReadCommands = new[]
         {
             "base-ambient-brightness",
@@ -273,15 +260,9 @@ namespace MozaPlugin.Devices
             if (cm2BehindBase)
                 _deviceManager.SendDisplayProbe(MozaProtocol.DeviceDash);
 
-            if (DeviceDefinitionDeployer.DeployDashboard(
-                    _connection.DiscoveredPid, forceCm2: cm2BehindBase ? true : (bool?)null))
+            if (DeviceDefinitionDeployer.DeployDashboard(_connection.DiscoveredPid))
                 _plugin.DeviceDefinitionDeployed = true;
             _plugin.ApplyDashToHardware(_plugin.Settings?.ProfileStore?.CurrentProfile);
-            // DashSettingsReadCommands are legacy SHDP dash registers (group 0x33).
-            // A CM2 is driven by the 0x43 telemetry path, not these — sending them
-            // to the CM2 is pointless bleedthrough, so only read them for a legacy dash.
-            if (!cm2BehindBase)
-                _deviceManager.ReadSettings(DashSettingsReadCommands);
             MozaLog.Info(cm2BehindBase
                 ? "[AZOM] Dashboard detected (CM2 on wheelbase bus — deployed CM2 profile, probing display identity at 0x12)"
                 : "[AZOM] Dashboard detected");
@@ -656,7 +637,7 @@ namespace MozaPlugin.Devices
                         if (_plugin.IsCm2BehindBaseCandidate)
                         {
                             MozaLog.Info($"[AZOM] CM2-on-base display confirmed: {_data.DisplayModelName} — routing screen telemetry to 0x12");
-                            if (DeviceDefinitionDeployer.DeployDashboard(_connection.DiscoveredPid, forceCm2: true))
+                            if (DeviceDefinitionDeployer.DeployDashboard(_connection.DiscoveredPid))
                                 _plugin.DeviceDefinitionDeployed = true;
                             try { _plugin.ApplyTelemetrySettings(); }
                             catch (Exception ex) { MozaLog.Debug($"[AZOM] CM2-on-base ApplyTelemetrySettings skipped: {ex.Message}"); }

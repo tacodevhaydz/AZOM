@@ -411,25 +411,7 @@ namespace MozaPlugin.Hardware
             if (profile.DashDisplayStandbyMin >= 0) sender?.SendDashDisplayStandbyMinutes(profile.DashDisplayStandbyMin);
 
             if (isCm2)
-            {
                 ApplyCm2DashboardConfig(profile);
-            }
-            else
-            {
-                if (profile.DashRpmIndicatorMode >= 0)
-                    _deviceManager.WriteSetting("dash-rpm-indicator-mode", profile.DashRpmIndicatorMode);
-                if (profile.DashRpmDisplayMode >= 0)
-                    _deviceManager.WriteSetting("dash-rpm-display-mode", profile.DashRpmDisplayMode);
-                // Legacy SHDP dashboard: dash-flags-indicator-mode defaults to 1
-                // when the profile has no stored value (firmware default 0 silently
-                // drops flag colour writes); a saved profile value wins.
-                _deviceManager.WriteSetting("dash-flags-indicator-mode",
-                    profile.DashFlagsIndicatorMode >= 0 ? profile.DashFlagsIndicatorMode : 1);
-
-                WriteColorArray(profile.DashRpmColors, "dash-rpm-color", 10);
-                WriteColorArray(profile.DashRpmBlinkColors, "dash-rpm-blink-color", 10);
-                WriteColorArray(profile.DashFlagColors, "dash-flag-color", 6);
-            }
         }
 
         /// <summary>

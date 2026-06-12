@@ -19,12 +19,10 @@ namespace MozaPlugin.Devices
     /// </summary>
     internal static class DeviceDefinitionDeployer
     {
-        private const string DashResource = "MozaPlugin.Devices.Dash.device.json";
         private const string DashCm2Resource = "MozaPlugin.Devices.DashCm2.device.json";
         private const string DashCm1Resource = "MozaPlugin.Devices.DashCm1.device.json";
         private const string OldProtoResource = "MozaPlugin.Devices.WheelOldProto.device.json";
         private const string BaseAmbientResource = "MozaPlugin.Devices.WheelBase.device.json";
-        private const string DashDeviceName = "MOZA Dashboard";
         private const string DashCm2DeviceName = "MOZA CM2 Racing Dash";
         private const string DashCm2ProductName = "CM2 Racing Dash";
         private const string DashCm1DeviceName = "MOZA CM1 Racing Dash";
@@ -60,19 +58,13 @@ namespace MozaPlugin.Devices
         }
 
         /// <summary>
-        /// Deploy the embedded dashboard device definition. Routes by PID
-        /// (CM2 = 0x0025 → CM2 template, else legacy SHDP). <paramref name="forceCm2"/>
-        /// overrides: true forces the CM2 template (CM2 wired through the base),
-        /// false forces legacy, null keeps the PID default.
+        /// Deploy the embedded CM2 dashboard device definition. The only
+        /// standalone dashboard PID is the CM2's 0x0025, and a bus-bridged dash
+        /// is either a CM2 or a CM1 (the latter via <see cref="DeployCm1Dashboard"/>),
+        /// so every <c>DeployDashboard</c> target is the CM2 template.
         /// </summary>
-        public static bool DeployDashboard(string? discoveredPid, bool? forceCm2 = null)
-        {
-            bool cm2 = forceCm2
-                ?? string.Equals(discoveredPid, MozaUsbIds.PidDashboardCm2, StringComparison.OrdinalIgnoreCase);
-            return cm2
-                ? DeployFromResource(DashCm2DeviceName, DashCm2Resource, discoveredPid, MozaDeviceConstants.DashCm2Guid)
-                : DeployFromResource(DashDeviceName, DashResource, discoveredPid, MozaDeviceConstants.DashGuid);
-        }
+        public static bool DeployDashboard(string? discoveredPid)
+            => DeployFromResource(DashCm2DeviceName, DashCm2Resource, discoveredPid, MozaDeviceConstants.DashCm2Guid);
 
         /// <summary>
         /// Deploy the CM1 base-bridged dash definition (its own GUID, distinct
@@ -346,9 +338,7 @@ namespace MozaPlugin.Devices
                     // Compare existing PID + DescriptorUniqueId against expected.
                     // PID mismatch covers user moving between hardware variants;
                     // DescriptorUniqueId mismatch covers the plugin shipping a new
-                    // template for the same PID (e.g. previously-deployed SHDP
-                    // template with PID 0x0025 must be replaced with the CM2
-                    // template that uses a different GUID).
+                    // template for the same PID under a different GUID.
                     try
                     {
                         var existing = JObject.Parse(File.ReadAllText(deviceJsonPath));

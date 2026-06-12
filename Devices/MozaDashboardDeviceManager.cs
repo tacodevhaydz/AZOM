@@ -51,7 +51,7 @@ namespace MozaPlugin.Devices
             return ok;
         }
 
-        /// <summary>Send setting reads on the dashboard connection (e.g. DashSettingsReadCommands).</summary>
+        /// <summary>Send setting reads on the dashboard connection.</summary>
         public void ReadSettings(params string[] commandNames) => _deviceManager.ReadSettings(commandNames);
 
         /// <summary>

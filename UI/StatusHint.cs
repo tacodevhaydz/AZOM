@@ -16,7 +16,7 @@ namespace MozaPlugin.UI
         // A fresh device.json was deployed this session; SimHub must restart
         // before it picks the file up.
         DeviceDefinitionDeployed,
-        // Dashboard hardware detected over the wire, but "MOZA Dashboard"
+        // Dashboard hardware detected over the wire, but "MOZA CM2 Racing Dash"
         // hasn't been added under SimHub > Devices.
         ProfileNotAddedDash,
         // Wheelbase has an ambient LED strip but "MOZA Wheel Base" hasn't

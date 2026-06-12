@@ -410,7 +410,7 @@ namespace MozaPlugin
         // CM1 base-bridged dash (group-0x35) field mappings. Flat — the CM1 streams one
         // keyed field set regardless of selected dashboard, so there is no per-dashboard
         // record-key level:
-        //   Outer key = dash device GUID (MozaDeviceConstants.DashGuid)
+        //   Outer key = dash device GUID (MozaDeviceConstants.DashCm1Guid)
         //   Inner key = field id (Cm1FieldDef.FieldId, e.g. "f54d")
         // Reuses Fsr1FieldMapping (only Property is used; InMin/InMax unused for CM1).
         public Dictionary<Guid, Dictionary<string, Fsr1FieldMapping>> Cm1FieldMappings { get; set; }

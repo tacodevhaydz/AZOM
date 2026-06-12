@@ -124,9 +124,9 @@ namespace MozaPlugin.UI
                 {
                     list.Add(new StatusHint(
                         StatusHintKind.ProfileNotAddedDash,
-                        "MOZA Dashboard not added in SimHub",
+                        "MOZA CM2 Racing Dash not added in SimHub",
                         "A MOZA dashboard is connected, but the device hasn't been added in SimHub. " +
-                        "Open Devices > Add device > MOZA Dashboard."));
+                        "Open Devices > Add device > MOZA CM2 Racing Dash."));
                 }
 
                 // Rule 4: ProfileNotAddedBaseAmbient

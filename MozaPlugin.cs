@@ -586,12 +586,12 @@ namespace MozaPlugin
             IsCm2BehindBaseCandidate ? MozaProtocol.DeviceDash : MozaProtocol.DeviceMain;
 
         /// <summary>
-        /// Push the dashboard's live RPM/flag LED bitmask (dash-send-telemetry,
+        /// Push the dashboard's live RPM LED bitmask (dash-send-telemetry,
         /// group 0x41 / FD DE) to the active dashboard sink, routed by connection
         /// path so the frame reaches the right device on the right pipe:
         ///   • standalone-USB CM2 → dedicated dashboard pipe, dev 0x12
         ///   • CM2 behind the wheelbase → main pipe, dev 0x14
-        ///   • legacy SHDP dashboard → main pipe, dev 0x14
+        ///   • base-bridged dash (e.g. CM1) → main pipe, dev 0x14
         /// Called from <see cref="Devices.MozaDashLedDeviceManager"/> per frame.
         /// </summary>
         internal bool WriteDashLedBitmask(int bitmask)
@@ -602,7 +602,7 @@ namespace MozaPlugin
 
             byte dev = ShouldUseStandaloneDashboardTarget()
                 ? PreferredStandaloneDashboardTargetDeviceId   // DeviceDash (0x14) behind base
-                : MozaProtocol.DeviceDash;                     // legacy SHDP
+                : MozaProtocol.DeviceDash;                     // base-bridged dash (CM1) at 0x14
             return _deviceManager.WriteSettingForDevice("dash-send-telemetry", dev, bitmask);
         }
 
@@ -3541,17 +3541,21 @@ namespace MozaPlugin
         /// when no profile/wheel is resolvable. Caller must not mutate returned
         /// dict directly — use the channel-mapping write helpers in MozaPlugin.cs.
         /// </summary>
-        // CM2 dash settings are keyed under the dash device GUID (a fixed page) with
-        // a single dashboard key, so the CM2's dashboard/channel config is fully
-        // independent of the wheel's. pageGuid==null means "the current wheel page".
-        internal static readonly Guid Cm2PageGuid = Guid.Parse(Devices.MozaDeviceConstants.DashGuid);
+        // CM2 dash settings are keyed under a fixed page GUID with a single
+        // dashboard key, so the CM2's dashboard/channel config is fully independent
+        // of the wheel's. pageGuid==null means "the current wheel page".
+        // This literal is the GUID of the retired SHDP "MOZA Dashboard" device; it
+        // is retained verbatim as the CM2 persistence key so existing users' saved
+        // CM2 dashboard/channel mappings (keyed under it) survive the SHDP removal.
+        // It is a persistence key only — not a live SimHub device id.
+        internal static readonly Guid Cm2PageGuid = Guid.Parse("c97a4d00-a66d-4e2f-a9b4-e7fc348dcc33");
         internal const string Cm2DashKey = "cm2";
 
         // CM1 base-bridged dash gets its OWN page GUID so its field mappings,
         // active-dashboard selection and the CM1/CM2 discriminator never share a
-        // key with the CM2 / legacy dash (which use Cm2PageGuid). A user can run
-        // a CM1 and a CM2 simultaneously; keeping the identities disjoint is what
-        // lets both persist independently.
+        // key with the CM2 dash (which uses Cm2PageGuid). A user can run a CM1 and
+        // a CM2 simultaneously; keeping the identities disjoint is what lets both
+        // persist independently.
         internal static readonly Guid Cm1PageGuid = Guid.Parse(Devices.MozaDeviceConstants.DashCm1Guid);
 
         internal Dictionary<string, Dictionary<string, string>>? GetActiveChannelMappings(Guid? pageGuid = null)
