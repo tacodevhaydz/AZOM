@@ -2,6 +2,7 @@ using System;
 using System.IO;
 using System.Reflection;
 using MozaPlugin.Protocol;
+using MozaPlugin.Resources;
 using Newtonsoft.Json.Linq;
 
 namespace MozaPlugin.Devices
@@ -34,6 +35,14 @@ namespace MozaPlugin.Devices
         // 0x0004 placeholder doesn't match any known device. Used only when
         // registry discovery returns no PID (probe path under Wine).
         private const string FallbackPid = "0x0006";
+
+        // Content version of the dynamically generated wheel device.json. Bump
+        // when the generated body changes in a way that should re-deploy over an
+        // already-written file whose LED/button/knob counts are unchanged — e.g.
+        // localizing the knob-section TitleOverride. The staleness check in
+        // DeployGeneratedWheelDefinition rewrites any file with an older
+        // SchemaVersion. v2: localized "Knob Indicators" TitleOverride.
+        private const int GeneratedWheelSchemaVersion = 2;
 
         /// <summary>
         /// Deploy a dynamically generated device definition for a new-protocol wheel.
@@ -152,7 +161,20 @@ namespace MozaPlugin.Devices
                         int existingLed = existing.SelectToken("LedsFeature.LogicalTelemetryLeds.LedCount")?.Value<int>() ?? -1;
                         int existingButtons = (existing.SelectToken("LedsFeature.LogicalButtonsSection.Items") as JArray)?.Count ?? -1;
                         int existingExtra = existing.SelectToken("LedsFeature.LogicalExtraSection.LedCount")?.Value<int>() ?? 0;
-                        stale = existingLed != expectedTelemetryCount || existingButtons != buttonCount || existingExtra != knobCount;
+                        int existingSchema = existing.SelectToken("SchemaVersion")?.Value<int>() ?? 0;
+                        string? existingKnobTitle = existing
+                            .SelectToken("LedsFeature.LogicalExtraSection.TitleOverride")?.Value<string>();
+                        stale = existingLed != expectedTelemetryCount
+                            || existingButtons != buttonCount
+                            || existingExtra != knobCount
+                            // Content-version bump (e.g. localized TitleOverride) forces a
+                            // one-time rewrite for users whose file predates the change.
+                            || existingSchema < GeneratedWheelSchemaVersion
+                            // Knob-section label drifted from the current UI culture's
+                            // translation — re-deploy so it matches (handles a SimHub
+                            // language change after the file was first written).
+                            || (knobCount > 0 && !string.Equals(
+                                    existingKnobTitle, Strings.DeviceDef_KnobIndicators, StringComparison.Ordinal));
                     }
                     catch (Exception parseEx)
                     {
@@ -245,7 +267,7 @@ namespace MozaPlugin.Devices
             var device = new JObject
             {
                 ["DescriptorUniqueId"] = guid,
-                ["SchemaVersion"] = 1,
+                ["SchemaVersion"] = GeneratedWheelSchemaVersion,
                 ["MinimumSimHubVersion"] = "9.11.8",
                 ["DeviceDescription"] = new JObject
                 {
@@ -272,7 +294,7 @@ namespace MozaPlugin.Devices
                         ? new JObject
                         {
                             ["LedCount"] = knobCount,
-                            ["TitleOverride"] = "Knob Indicators",
+                            ["TitleOverride"] = Strings.DeviceDef_KnobIndicators,
                             ["IsEnabled"] = true
                         }
                         : new JObject { ["IsEnabled"] = false },

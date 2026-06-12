@@ -10,6 +10,7 @@ using System.Windows.Media;
 using System.Windows.Threading;
 using MozaControls;
 using MozaPlugin.Devices.WheelUi;
+using MozaPlugin.Resources;
 using MozaPlugin.Telemetry;
 using MozaPlugin.Telemetry.Dashboard;
 using MozaPlugin.UI;
@@ -765,7 +766,7 @@ skipReadByMode:
             if (!ResolvePlugin())
             {
                 StatusDot.Fill = Brushes.Gray;
-                StatusText.Text = "Plugin not loaded";
+                StatusText.Text = Strings.Status_PluginNotLoaded;
                 WheelNotDetectedPanel.Visibility = Visibility.Visible;
                 DashboardTab.Visibility = Visibility.Collapsed;
                 RpmTab.Visibility = Visibility.Collapsed;
