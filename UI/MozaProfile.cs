@@ -136,8 +136,28 @@ namespace MozaPlugin
         /// <summary>Source value mapped to the field's full-scale output.</summary>
         public double InMax { get; set; } = 1;
 
+        // ── Boundary / encoding / gain overrides (null = use the catalog default) ──
+        // Per-profile layer over the static Fsr1DashboardCatalog so users can correct
+        // wrong-grid fields (e.g. GT-style 0x11/0x12) without a code change. A null
+        // override means "no opinion → catalog default"; only deviations are persisted.
+        /// <summary>Payload-relative first byte, null = catalog default.</summary>
+        public int? StartOffset { get; set; }
+        /// <summary>Payload-relative last byte (inclusive), null = catalog default.</summary>
+        public int? EndOffset { get; set; }
+        /// <summary>Width-2 only: true = U16-LE, false = U16-BE; null = catalog default.</summary>
+        public bool? LittleEndian { get; set; }
+        /// <summary>Output gain: raw·Scale + Bias; null = 1.0. (CM1: per-field gain.)</summary>
+        public double? Scale { get; set; }
+        /// <summary>Output offset added after Scale; null = 0.0.</summary>
+        public double? Bias { get; set; }
+
         public Fsr1FieldMapping Clone() =>
-            new Fsr1FieldMapping { Property = Property, InMin = InMin, InMax = InMax };
+            new Fsr1FieldMapping
+            {
+                Property = Property, InMin = InMin, InMax = InMax,
+                StartOffset = StartOffset, EndOffset = EndOffset,
+                LittleEndian = LittleEndian, Scale = Scale, Bias = Bias,
+            };
     }
 
     public sealed class Ab9Settings

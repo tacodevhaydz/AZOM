@@ -404,6 +404,12 @@
   <data name="DataGridHeader_CurrentValue" xml:space="preserve"><value>当前值</value></data>
   <data name="Tooltip_EditMapping" xml:space="preserve"><value>编辑 SimHub 属性绑定</value></data>
   <data name="Button_ResetToDefaults" xml:space="preserve"><value>重置为默认</value></data>
+  <data name="Button_ResetField" xml:space="preserve"><value>重置字段</value></data>
+  <data name="Edit_StartByte" xml:space="preserve"><value>起始字节</value></data>
+  <data name="Edit_EndByte" xml:space="preserve"><value>结束字节</value></data>
+  <data name="Edit_Endian_LE" xml:space="preserve"><value>小端序</value></data>
+  <data name="Edit_Scale" xml:space="preserve"><value>缩放</value></data>
+  <data name="Edit_Bias" xml:space="preserve"><value>偏置</value></data>
   <data name="Section_Display" xml:space="preserve"><value>显示</value></data>
   <data name="SliderLabel_DisplayBrightness" xml:space="preserve"><value>显示亮度</value></data>
   <data name="SliderLabel_StandbyTime" xml:space="preserve"><value>待机时间</value></data>

@@ -2411,7 +2411,7 @@ namespace MozaPlugin
             _dashboardTestPattern = on;
             if (_telemetrySender != null) _telemetrySender.TestMode = on;
             if (_cm2Sender != null) _cm2Sender.TestMode = on;
-            if (on) _fsr1ProbeStep = -1; // mutually exclusive with the byte probe
+            if (on) { _fsr1ProbeStep = -1; _fsr1FieldProbe = null; } // exclusive with both probes
         }
 
         // FSR V1 single-byte probe diagnostic. The driver streams an all-zero record with
@@ -2422,8 +2422,10 @@ namespace MozaPlugin
         // active page's record(s); -1 = probe off. Volatile: UI writes, driver reads.
         private volatile int _fsr1ProbeStep = -1;
 
-        /// <summary>True while the FSR V1 single-byte probe diagnostic is active.</summary>
-        internal bool Fsr1ProbeActive => _fsr1ProbeStep >= 0;
+        /// <summary>True while EITHER FSR V1 probe diagnostic is active — the toolbar
+        /// single-byte stepper or the row-driven field-span probe. The two are mutually
+        /// exclusive; the driver gates its probe override on this.</summary>
+        internal bool Fsr1ProbeActive => _fsr1ProbeStep >= 0 || _fsr1FieldProbe != null;
 
         /// <summary>Current 0-based probe step across the active page's data bytes.</summary>
         internal int Fsr1ProbeStepIndex => _fsr1ProbeStep;
@@ -2486,7 +2488,7 @@ namespace MozaPlugin
         internal void SetFsr1Probe(bool on)
         {
             _fsr1ProbeStep = on ? 0 : -1;
-            if (on) SetDashboardTestPattern(false);
+            if (on) { _fsr1FieldProbe = null; SetDashboardTestPattern(false); } // exclusive with the field probe
         }
 
         /// <summary>Step the probe offset by <paramref name="delta"/>, wrapping within the
@@ -2499,6 +2501,42 @@ namespace MozaPlugin
             int s = (_fsr1ProbeStep + delta) % total;
             if (s < 0) s += total;
             _fsr1ProbeStep = s;
+        }
+
+        // Row-driven field-span probe. Armed while a field's inline editor is open so the
+        // user watches the on-screen box for that field as they step its boundary edges.
+        // Distinct from the byte-stepper (_fsr1ProbeStep) and mutually exclusive with it;
+        // holds the record + field id and resolves to the field's CURRENT span on demand.
+        private sealed class Fsr1FieldProbe { public string RecordKey = ""; public string FieldId = ""; }
+        private volatile Fsr1FieldProbe? _fsr1FieldProbe;
+
+        /// <summary>Arm the row-driven field-span probe on one FSR1 field (disarms the
+        /// byte-stepper and the test pattern). Re-call as the field's span changes.</summary>
+        internal void SetFsr1FieldProbe(string recordKey, string fieldId)
+        {
+            if (string.IsNullOrEmpty(recordKey) || string.IsNullOrEmpty(fieldId)) return;
+            _fsr1ProbeStep = -1;
+            SetDashboardTestPattern(false);
+            _fsr1FieldProbe = new Fsr1FieldProbe { RecordKey = recordKey, FieldId = fieldId };
+        }
+
+        /// <summary>Disarm the field-span probe (row editor closed).</summary>
+        internal void ClearFsr1FieldProbe() => _fsr1FieldProbe = null;
+
+        /// <summary>The field-span probe's CURRENT resolved target — record type + the
+        /// contiguous byte span (start..end inclusive) the field occupies after applying
+        /// its user override — or null when the field-span probe is not armed / unresolvable.</summary>
+        internal (byte type, int startOff, int endOff)? Fsr1FieldProbeTarget()
+        {
+            var p = _fsr1FieldProbe;
+            if (p == null) return null;
+            var dash = Telemetry.Fsr1DashboardCatalog.ByKey(p.RecordKey);
+            var def = dash?.Fields.FirstOrDefault(x => x.FieldId == p.FieldId);
+            if (dash == null || def == null) return null;
+            var m = GetFsr1FieldMapping(p.RecordKey, p.FieldId);
+            var (offsets, _) = Telemetry.Fsr1DashboardCatalog.ResolveLayout(def, m, dash.PayloadLen);
+            if (offsets.Length == 0) return null;
+            return (dash.RecordType, offsets[0], offsets[offsets.Length - 1]);
         }
 
         /// <summary>True when some display pipeline is live and can render a test
@@ -3522,12 +3560,12 @@ namespace MozaPlugin
         // FSR V1 (group-0x42) + CM1 (group-0x35) field mappings and the active
         // dashboard/page index store live in Telemetry/Fsr1Cm1MappingCoordinator.cs.
         internal Fsr1FieldMapping? GetFsr1FieldMapping(string recordKey, string fieldId) => _fsr1Cm1Mapping.GetFsr1FieldMapping(recordKey, fieldId);
-        internal void SetFsr1FieldMapping(string recordKey, string fieldId, string property, double inMin, double inMax) => _fsr1Cm1Mapping.SetFsr1FieldMapping(recordKey, fieldId, property, inMin, inMax);
+        internal void SetFsr1FieldMapping(string recordKey, string fieldId, Fsr1FieldMapping? mapping) => _fsr1Cm1Mapping.SetFsr1FieldMapping(recordKey, fieldId, mapping);
         internal int GetActiveFsr1Index() => _fsr1Cm1Mapping.GetActiveFsr1Index();
         internal void SetActiveFsr1Index(int index, bool sendToWheel) => _fsr1Cm1Mapping.SetActiveFsr1Index(index, sendToWheel);
         internal int TakePendingFsr1Select() => _fsr1Cm1Mapping.TakePendingFsr1Select();
         internal Fsr1FieldMapping? GetCm1FieldMapping(string fieldId) => _fsr1Cm1Mapping.GetCm1FieldMapping(fieldId);
-        internal void SetCm1FieldMapping(string fieldId, string property) => _fsr1Cm1Mapping.SetCm1FieldMapping(fieldId, property);
+        internal void SetCm1FieldMapping(string fieldId, string property, double? scale) => _fsr1Cm1Mapping.SetCm1FieldMapping(fieldId, property, scale);
         internal void ClearCm1Mappings() => _fsr1Cm1Mapping.ClearCm1Mappings();
         internal int GetActiveCm1Index() => _fsr1Cm1Mapping.GetActiveCm1Index();
         internal void SetActiveCm1Index(int index, bool sendToWheel) => _fsr1Cm1Mapping.SetActiveCm1Index(index, sendToWheel);

@@ -872,7 +872,7 @@ namespace MozaPlugin.Devices.WheelUi
             if (!IsCm2Target && _plugin.IsFsr1DisplayWheel)
             {
                 foreach (var row in _channelRows)
-                    _plugin.SetFsr1FieldMapping(row.RecordKey, row.FieldId, "", 0, 0);
+                    _plugin.SetFsr1FieldMapping(row.RecordKey, row.FieldId, null);
                 PopulateChannelMappingList();
                 TelemetryMappingStatus.Text = $"Reset to defaults at {DateTime.Now:HH:mm:ss}";
                 return;
@@ -906,6 +906,11 @@ namespace MozaPlugin.Devices.WheelUi
             foreach (var r in _channelRows)
                 if (!ReferenceEquals(r, row) && r.IsEditing) r.CancelEdit();
             row.BeginEdit();
+            // FSR1: arm the field-probe on this field's current span so the wheel
+            // lights exactly the box(es) it feeds — stepping the edges moves the lit
+            // box live. Cleared on Commit/Cancel below.
+            if (row.IsFsr1 && !string.IsNullOrEmpty(row.RecordKey) && !string.IsNullOrEmpty(row.FieldId))
+                _plugin?.SetFsr1FieldProbe(row.RecordKey, row.FieldId);
             // Focus the filter TextBox once the row's editor container is
             // visible. The Loaded event on the container would be reliable,
             // but the cheaper path is a Dispatcher.BeginInvoke at Render
@@ -917,12 +922,85 @@ namespace MozaPlugin.Devices.WheelUi
         {
             if ((sender as FrameworkElement)?.Tag is not ChannelMappingRow row) return;
             row.CommitEdit();
+            if (row.IsFsr1) _plugin?.ClearFsr1FieldProbe();
         }
 
         private void CancelMapping_Click(object sender, RoutedEventArgs e)
         {
             if ((sender as FrameworkElement)?.Tag is not ChannelMappingRow row) return;
             row.CancelEdit();
+            if (row.IsFsr1) _plugin?.ClearFsr1FieldProbe();
+        }
+
+        // ── FSR1 boundary stepper handlers (coupled-divider model) ─────────
+        // Each ◀/▶ button passes its bound row via Tag. A divider step moves the byte
+        // shared with an adjacent field: the row's *Minus/*Plus mutates BOTH this field and
+        // the neighbour and returns the neighbour. The Start/End mutation goes through
+        // SetSpan (UI-only), so the code-behind owns persistence here — persist both sides,
+        // refresh every sibling's stepper guards (widths rippled), and re-arm the probe on
+        // the edited row so the lit span follows its new edges.
+
+        private void FieldStartMinus_Click(object sender, RoutedEventArgs e) => StepDivider(sender, r => r.StartMinus());
+        private void FieldStartPlus_Click(object sender, RoutedEventArgs e) => StepDivider(sender, r => r.StartPlus());
+        private void FieldEndMinus_Click(object sender, RoutedEventArgs e) => StepDivider(sender, r => r.EndMinus());
+        private void FieldEndPlus_Click(object sender, RoutedEventArgs e) => StepDivider(sender, r => r.EndPlus());
+
+        private void StepDivider(object sender, Func<ChannelMappingRow, ChannelMappingRow?> step)
+        {
+            if (_plugin == null) return;
+            if ((sender as FrameworkElement)?.Tag is not ChannelMappingRow row) return;
+            if (!row.IsFsr1 || string.IsNullOrEmpty(row.RecordKey) || string.IsNullOrEmpty(row.FieldId)) return;
+
+            var neighbour = step(row);
+            if (neighbour == null) return;  // guard rejected the move
+
+            // Persist BOTH sides: each is a deviation-only mapping, so a side back at its
+            // catalog default prunes to nothing.
+            _plugin.SetFsr1FieldMapping(row.RecordKey, row.FieldId, BuildFsr1MappingFromRow(row));
+            _plugin.SetFsr1FieldMapping(neighbour.RecordKey, neighbour.FieldId, BuildFsr1MappingFromRow(neighbour));
+            RefreshRecordGuards(row.RecordKey);
+            // Re-arm AFTER persist: Fsr1FieldProbeTarget() resolves the span from the stored
+            // override, so the lit box(es) track the new edges.
+            _plugin.SetFsr1FieldProbe(row.RecordKey, row.FieldId);
+            TelemetryMappingStatus.Text = $"Saved at {DateTime.Now:HH:mm:ss}";
+        }
+
+        // A divider move changes both fields' widths, which can flip the stepper guards on
+        // rows beyond the immediate pair (a neighbour's Can* depends on the other side's
+        // width). Re-raise layout state on every FSR1 row of the same record — cheap (~10
+        // rows) and idempotent. Start/End are ignored by the persist listener, so this
+        // refresh never re-persists.
+        private void RefreshRecordGuards(string recordKey)
+        {
+            foreach (var r in _channelRows)
+                if (r.IsFsr1 && r.RecordKey == recordKey)
+                    r.RaiseLayoutChanged();
+        }
+
+        // Revert one field to its catalog default: clear the stored override and
+        // re-seed the row's editor state from the catalog so the steppers reset.
+        private void FieldReset_Click(object sender, RoutedEventArgs e)
+        {
+            if (_plugin == null) return;
+            if ((sender as FrameworkElement)?.Tag is not ChannelMappingRow row) return;
+
+            if (row.IsCm1)
+            {
+                if (string.IsNullOrEmpty(row.FieldId)) return;
+                _plugin.SetCm1FieldMapping(row.FieldId, "", null);
+            }
+            else if (row.IsFsr1)
+            {
+                if (string.IsNullOrEmpty(row.RecordKey) || string.IsNullOrEmpty(row.FieldId)) return;
+                _plugin.SetFsr1FieldMapping(row.RecordKey, row.FieldId, null);
+            }
+            else return;
+
+            // Rebuild the list so the reset row re-seeds from catalog defaults; the
+            // field-probe (if armed) is released by the repopulate's editor teardown.
+            _plugin.ClearFsr1FieldProbe();
+            PopulateChannelMappingList();
+            TelemetryMappingStatus.Text = $"Reset field at {DateTime.Now:HH:mm:ss}";
         }
 
         private void FocusInlineFilter(ChannelMappingRow row)
@@ -962,24 +1040,37 @@ namespace MozaPlugin.Devices.WheelUi
             if (sender is not ChannelMappingRow row) return;
 
             // FSR V1 dashboard fields persist to the dedicated per-field store
-            // (property + input scale). React to the property OR either scale bound.
+            // (property + input scale + endianness/gain overrides). React to those bound
+            // inputs; build a deviation-only mapping (defaults stay unpersisted). Start/End
+            // are NOT here — divider steps are owned by the stepper handlers (StepDivider),
+            // which persist both sides of the move; reacting to them here would double-persist
+            // and re-arm the probe on whichever neighbour's SetSpan rippled. LittleEndian
+            // affects only this row, so it persists + re-arms the probe through this path.
             if (row.IsFsr1)
             {
+                bool endianFlipped = e.PropertyName == nameof(ChannelMappingRow.LittleEndian);
                 if (e.PropertyName != nameof(ChannelMappingRow.SimHubProperty)
                     && e.PropertyName != nameof(ChannelMappingRow.InMin)
-                    && e.PropertyName != nameof(ChannelMappingRow.InMax)) return;
+                    && e.PropertyName != nameof(ChannelMappingRow.InMax)
+                    && e.PropertyName != nameof(ChannelMappingRow.Scale)
+                    && e.PropertyName != nameof(ChannelMappingRow.Bias)
+                    && !endianFlipped) return;
                 if (string.IsNullOrEmpty(row.RecordKey) || string.IsNullOrEmpty(row.FieldId)) return;
-                _plugin.SetFsr1FieldMapping(row.RecordKey, row.FieldId, row.SimHubProperty, row.InMin, row.InMax);
+                _plugin.SetFsr1FieldMapping(row.RecordKey, row.FieldId, BuildFsr1MappingFromRow(row));
+                // Persist BEFORE re-arming: Fsr1FieldProbeTarget() resolves the span from
+                // the just-stored override, so the lit box follows the new endianness.
+                if (endianFlipped) _plugin.SetFsr1FieldProbe(row.RecordKey, row.FieldId);
                 TelemetryMappingStatus.Text = $"Saved at {DateTime.Now:HH:mm:ss}";
                 return;
             }
 
-            // CM1 base-bridged dash: flat field store keyed by field id.
+            // CM1 base-bridged dash: flat field store keyed by field id (property + gain).
             if (row.IsCm1)
             {
-                if (e.PropertyName != nameof(ChannelMappingRow.SimHubProperty)) return;
+                if (e.PropertyName != nameof(ChannelMappingRow.SimHubProperty)
+                    && e.PropertyName != nameof(ChannelMappingRow.Scale)) return;
                 if (string.IsNullOrEmpty(row.FieldId)) return;
-                _plugin.SetCm1FieldMapping(row.FieldId, row.SimHubProperty);
+                _plugin.SetCm1FieldMapping(row.FieldId, row.SimHubProperty, Cm1ScaleOverride(row));
                 TelemetryMappingStatus.Text = $"Saved at {DateTime.Now:HH:mm:ss}";
                 return;
             }
@@ -992,6 +1083,50 @@ namespace MozaPlugin.Devices.WheelUi
             else
                 _plugin.SetChannelMapping(row.Url, row.SimHubProperty);
             TelemetryMappingStatus.Text = $"Saved at {DateTime.Now:HH:mm:ss}";
+        }
+
+        // Build a deviation-only FSR1 field mapping from a UI row: each nullable
+        // boundary/encoding/gain override is set ONLY when it differs from the catalog
+        // default, so an unedited field prunes to nothing (dict-missing ≠ explicit-off).
+        private static Fsr1FieldMapping BuildFsr1MappingFromRow(ChannelMappingRow row)
+        {
+            var def = FindFsr1FieldDef(row.RecordKey, row.FieldId);
+            int defStart = def != null && def.Offsets.Length > 0 ? def.Offsets[0] : 5;
+            int defEnd = def != null && def.Offsets.Length > 0 ? def.Offsets[def.Offsets.Length - 1] : defStart;
+            bool defLE = def != null && def.Encoding == Fsr1Encoding.U16_LE;
+
+            return new Fsr1FieldMapping
+            {
+                Property = (row.SimHubProperty ?? "").Trim(),
+                InMin = row.InMin,
+                InMax = row.InMax,
+                StartOffset = row.Start != defStart ? row.Start : (int?)null,
+                EndOffset = row.End != defEnd ? row.End : (int?)null,
+                // Endianness only resolves at width 2; persist only when it both applies
+                // and deviates, so a U8/U24 field never carries a stray LE flag.
+                LittleEndian = (row.Width == 2 && row.LittleEndian != defLE) ? row.LittleEndian : (bool?)null,
+                Scale = row.Scale != 1.0 ? row.Scale : (double?)null,
+                Bias = row.Bias != 0.0 ? row.Bias : (double?)null,
+            };
+        }
+
+        // CM1 carries only a per-field gain override; persist null (use catalog scale)
+        // when the row sits at the field's catalog default so it prunes cleanly.
+        private static double? Cm1ScaleOverride(ChannelMappingRow row)
+        {
+            var f = Telemetry.Cm1DashboardCatalog.ByFieldId(row.FieldId);
+            double defScale = f?.Scale ?? 1.0;
+            return row.Scale != defScale ? row.Scale : (double?)null;
+        }
+
+        private static Fsr1FieldDef? FindFsr1FieldDef(string recordKey, string fieldId)
+        {
+            if (string.IsNullOrEmpty(recordKey) || string.IsNullOrEmpty(fieldId)) return null;
+            var dash = Telemetry.Fsr1DashboardCatalog.ByKey(recordKey);
+            if (dash == null) return null;
+            foreach (var f in dash.Fields)
+                if (f.FieldId == fieldId) return f;
+            return null;
         }
 
         private void PopulateChannelMappingList()

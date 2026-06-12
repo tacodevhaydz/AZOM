@@ -68,12 +68,21 @@ namespace MozaPlugin.Devices.WheelUi
             var dashes = followingActive ? active : Telemetry.Fsr1DashboardCatalog.LiveDashboards;
             foreach (var dash in dashes)
             {
+                // Build this dash's rows in Start order, then link only the rows whose spans
+                // actually touch (current.Start == prev.End + 1). An FSR1 record is a gapless
+                // partition, but non-mappable anchor fields are skipped here — a mappable field
+                // adjacent to an anchor has a FIXED edge there (no shared divider to step), so it
+                // stays unlinked (Prev/Next null) rather than coupling across the anchor.
+                var dashRows = new List<ChannelMappingRow>();
                 foreach (var f in dash.Fields)
                 {
                     if (!f.IsUserMappable) continue;
                     var m = plugin.GetFsr1FieldMapping(dash.Key, f.FieldId);
                     bool direct = f.Kind == Telemetry.Fsr1FieldKind.Direct;
-                    rows.Add(new ChannelMappingRow
+                    // Resolve the effective span/encoding (catalog default merged with the
+                    // per-profile override) so the boundary editor opens on the live layout.
+                    var (offsets, enc) = Telemetry.Fsr1DashboardCatalog.ResolveLayout(f, m, dash.PayloadLen);
+                    dashRows.Add(new ChannelMappingRow
                     {
                         AllProperties = props,
                         IsFsr1 = true,
@@ -86,8 +95,27 @@ namespace MozaPlugin.Devices.WheelUi
                         InMin = m?.InMin ?? f.DefaultInMin,
                         InMax = m?.InMax ?? f.DefaultInMax,
                         SimHubProperty = m?.Property ?? f.DefaultProperty,
+                        PayloadLen = dash.PayloadLen,
+                        Start = offsets.Length > 0 ? offsets[0] : 5,
+                        End = offsets.Length > 0 ? offsets[offsets.Length - 1] : 5,
+                        LittleEndian = enc == Telemetry.Fsr1Encoding.U16_LE,
+                        Scale = m?.Scale ?? 1.0,
+                        Bias = m?.Bias ?? 0.0,
                     });
                 }
+                // Link contiguous neighbours so divider steps reapportion the shared byte.
+                dashRows.Sort((a, b) => a.Start.CompareTo(b.Start));
+                for (int i = 1; i < dashRows.Count; i++)
+                {
+                    var prev = dashRows[i - 1];
+                    var cur = dashRows[i];
+                    if (cur.Start == prev.End + 1)
+                    {
+                        prev.NextField = cur;
+                        cur.PrevField = prev;
+                    }
+                }
+                rows.AddRange(dashRows);
             }
             string status = followingActive
                 ? $"(FSR V1: dashboard {activeIdx + 1} — {rows.Count} mappable fields; switch dashboards to map another page)"
@@ -119,6 +147,7 @@ namespace MozaPlugin.Devices.WheelUi
                     Compression = "float32",
                     CapabilityText = "float",
                     SimHubProperty = m?.Property ?? f.DefaultProperty,
+                    Scale = m?.Scale ?? f.Scale,
                 });
             }
             return new BuildResult(rows, $"(CM1: {rows.Count} dash fields — assign SimHub channels)");

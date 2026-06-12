@@ -485,6 +485,12 @@ namespace MozaPlugin.Resources
         public static string DataGridHeader_CurrentValue => Get("DataGridHeader_CurrentValue");
         public static string Tooltip_EditMapping => Get("Tooltip_EditMapping");
         public static string Button_ResetToDefaults => Get("Button_ResetToDefaults");
+        public static string Button_ResetField => Get("Button_ResetField");
+        public static string Edit_StartByte => Get("Edit_StartByte");
+        public static string Edit_EndByte => Get("Edit_EndByte");
+        public static string Edit_Endian_LE => Get("Edit_Endian_LE");
+        public static string Edit_Scale => Get("Edit_Scale");
+        public static string Edit_Bias => Get("Edit_Bias");
         public static string Section_Display => Get("Section_Display");
         public static string SliderLabel_DisplayBrightness => Get("SliderLabel_DisplayBrightness");
         public static string SliderLabel_StandbyTime => Get("SliderLabel_StandbyTime");

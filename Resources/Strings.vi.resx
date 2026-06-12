@@ -404,6 +404,12 @@
   <data name="DataGridHeader_CurrentValue" xml:space="preserve"><value>Giá trị hiện tại</value></data>
   <data name="Tooltip_EditMapping" xml:space="preserve"><value>Sửa liên kết thuộc tính SimHub</value></data>
   <data name="Button_ResetToDefaults" xml:space="preserve"><value>ĐẶT LẠI MẶC ĐỊNH</value></data>
+  <data name="Button_ResetField" xml:space="preserve"><value>ĐẶT LẠI TRƯỜNG</value></data>
+  <data name="Edit_StartByte" xml:space="preserve"><value>Byte bắt đầu</value></data>
+  <data name="Edit_EndByte" xml:space="preserve"><value>Byte kết thúc</value></data>
+  <data name="Edit_Endian_LE" xml:space="preserve"><value>Little-endian</value></data>
+  <data name="Edit_Scale" xml:space="preserve"><value>Tỷ lệ</value></data>
+  <data name="Edit_Bias" xml:space="preserve"><value>Độ lệch</value></data>
   <data name="Section_Display" xml:space="preserve"><value>MÀN HÌNH</value></data>
   <data name="SliderLabel_DisplayBrightness" xml:space="preserve"><value>Độ sáng màn hình</value></data>
   <data name="SliderLabel_StandbyTime" xml:space="preserve"><value>Thời gian chờ</value></data>

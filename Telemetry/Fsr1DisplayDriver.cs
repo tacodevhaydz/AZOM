@@ -136,23 +136,24 @@ namespace MozaPlugin.Telemetry
             if (pending >= 0)
                 _connection.Send(Fsr1DisplayEmitter.BuildSelect(pending));
 
-            long ValueFor(Fsr1Dashboard dash, Fsr1FieldDef f)
+            // Resolve a field's value, applying the user override's Scale/Bias gain and
+            // the resolved encoding's output ceiling (so an overridden byte width re-clamps).
+            long ValueFor(Fsr1Dashboard dash, Fsr1FieldDef f, Fsr1FieldMapping? m, long outMax)
             {
                 if (f.Kind == Fsr1FieldKind.EngineFlag)
                     return engineRunning ? Fsr1DisplayEmitter.EngineFlagValue : 0;
 
-                // Test pattern: sweep each field across its own output range.
+                // Test pattern: sweep each field across its (resolved) output range.
                 if (testMode)
                     return Clamp((long)Math.Round(
-                        DashboardTestPattern.Sweep(f.FieldId, f.OutputMax, testNowMs)),
-                        0, f.OutputMax);
+                        DashboardTestPattern.Sweep(f.FieldId, outMax, testNowMs)),
+                        0, outMax);
 
-                var m = plugin?.GetFsr1FieldMapping(dash.Key, f.FieldId);
                 string prop = m?.Property ?? f.DefaultProperty;
                 if (string.IsNullOrEmpty(prop)) return 0;
 
                 double raw = resolve != null ? resolve(prop) : 0.0;
-                long outMax = f.OutputMax;
+                raw = raw * (m?.Scale ?? 1.0) + (m?.Bias ?? 0.0);
                 if (f.Kind == Fsr1FieldKind.Direct)
                     return Clamp((long)Math.Round(raw), 0, outMax);
 
@@ -164,22 +165,39 @@ namespace MozaPlugin.Telemetry
                 return Clamp((long)Math.Round(t * outMax), 0, outMax);
             }
 
-            // Single-byte probe overrides value computation: stream an all-zero record
-            // with ONE data byte (the active target offset) ramping 0..255 as a triangle,
-            // and zero every other record on the page, so exactly one box animates. The
-            // user watches which box moves to map offset→field. ~1.6s up-and-down sweep.
-            (byte probeType, int probeOff) = probe ? (plugin?.Fsr1ProbeTarget() ?? ((byte)0, -1)) : ((byte)0, -1);
-            int probeVal = 0;
-            if (probe)
+            // Per-field effective (offsets, encoding, value) honouring per-profile boundary /
+            // endianness overrides — the emitter packs each field at its resolved span.
+            (int[]? offsets, Fsr1Encoding enc, long value) LayoutValueFor(Fsr1Dashboard dash, Fsr1FieldDef f)
             {
-                const long Period = 1600, Half = Period / 2;
-                long ph = DashboardTestPattern.NowMs() % Period;
-                probeVal = (int)(ph < Half ? ph * 255 / Half : 255 - (ph - Half) * 255 / Half);
+                var m = plugin?.GetFsr1FieldMapping(dash.Key, f.FieldId);
+                var (offsets, enc) = Fsr1DashboardCatalog.ResolveLayout(f, m, dash.PayloadLen);
+                long outMax = Fsr1DashboardCatalog.OutputMaxFor(enc, f.FullScale);
+                return (offsets, enc, ValueFor(dash, f, m, outMax));
             }
 
-            byte[] RecordFor(Fsr1Dashboard dash) =>
-                probe ? Fsr1DisplayEmitter.BuildProbeRecord(dash, dash.RecordType == probeType ? probeOff : -1, probeVal)
-                      : Fsr1DisplayEmitter.BuildRecord(dash, f => ValueFor(dash, f));
+            // Probe modes (mutually exclusive, both override value computation):
+            //  • Field-span probe (row editor open): light exactly the edited field's CURRENT
+            //    byte span on its record type, zeroing every other record — the user watches
+            //    that box move/grow as the boundary steppers change the span.
+            //  • Byte-stepper probe (toolbar ◀/▶): a single data byte held at 0xFF; stepping
+            //    the offset reveals which box each byte feeds (boundary = where the lit box
+            //    changes, width = consecutive offsets lighting the same box).
+            const int ProbeValue = 0xFF;
+            var fieldProbe = probe ? plugin?.Fsr1FieldProbeTarget() : null;
+            (byte probeType, int probeOff) = (probe && fieldProbe == null)
+                ? (plugin?.Fsr1ProbeTarget() ?? ((byte)0, -1)) : ((byte)0, -1);
+
+            byte[] RecordFor(Fsr1Dashboard dash)
+            {
+                if (fieldProbe is { } fp)
+                    return dash.RecordType == fp.type
+                        ? Fsr1DisplayEmitter.BuildProbeSpanRecord(dash, fp.startOff, fp.endOff, ProbeValue)
+                        : Fsr1DisplayEmitter.BuildProbeRecord(dash, -1, 0); // other records: all-zero
+                if (probe)
+                    return Fsr1DisplayEmitter.BuildProbeRecord(
+                        dash, dash.RecordType == probeType ? probeOff : -1, ProbeValue);
+                return Fsr1DisplayEmitter.BuildRecord(dash, f => LayoutValueFor(dash, f));
+            }
 
             // PitHouse streams exactly ONE record type — the one for the wheel's
             // currently-displayed page — not all of them. Match that: when the active

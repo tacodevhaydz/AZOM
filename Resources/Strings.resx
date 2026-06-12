@@ -411,6 +411,12 @@
   <data name="DataGridHeader_CurrentValue" xml:space="preserve"><value>Current value</value></data>
   <data name="Tooltip_EditMapping" xml:space="preserve"><value>Edit SimHub property binding</value></data>
   <data name="Button_ResetToDefaults" xml:space="preserve"><value>RESET TO DEFAULTS</value></data>
+  <data name="Button_ResetField" xml:space="preserve"><value>RESET FIELD</value></data>
+  <data name="Edit_StartByte" xml:space="preserve"><value>Start byte</value></data>
+  <data name="Edit_EndByte" xml:space="preserve"><value>End byte</value></data>
+  <data name="Edit_Endian_LE" xml:space="preserve"><value>Little-endian</value></data>
+  <data name="Edit_Scale" xml:space="preserve"><value>Scale</value></data>
+  <data name="Edit_Bias" xml:space="preserve"><value>Bias</value></data>
   <data name="Section_Display" xml:space="preserve"><value>DISPLAY</value></data>
   <data name="SliderLabel_DisplayBrightness" xml:space="preserve"><value>Display Brightness</value></data>
   <data name="SliderLabel_StandbyTime" xml:space="preserve"><value>Standby Time</value></data>

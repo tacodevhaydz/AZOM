@@ -48,12 +48,23 @@ namespace MozaPlugin.Telemetry
                 && inner.TryGetValue(fieldId, out var fm) ? fm : null;
         }
 
+        /// <summary>True when a mapping carries no opinion at all — empty property and no
+        /// boundary/encoding/gain override — so it should be pruned rather than stored
+        /// (dict-missing ≠ explicit-off: a default-only entry must not bloat the profile).</summary>
+        private static bool IsDefaultFsr1Mapping(Fsr1FieldMapping? m) =>
+            m == null
+            || (string.IsNullOrEmpty((m.Property ?? "").Trim())
+                && m.StartOffset == null && m.EndOffset == null
+                && m.LittleEndian == null && m.Scale == null && m.Bias == null);
+
         /// <summary>
-        /// Persist (or clear) an FSR1 dashboard field assignment. Empty
-        /// <paramref name="property"/> removes the override (field reverts to the
-        /// catalog default). Tidies empty dicts and saves settings.
+        /// Persist (or clear) an FSR1 dashboard field assignment (property + input scale +
+        /// boundary/encoding/gain overrides). A default-only mapping (see
+        /// <see cref="IsDefaultFsr1Mapping"/>) removes the override so the field reverts to
+        /// the catalog default. Tidies empty dicts and saves settings. The mapping is cloned
+        /// so the stored copy is not aliased to a live UI row.
         /// </summary>
-        internal void SetFsr1FieldMapping(string recordKey, string fieldId, string property, double inMin, double inMax)
+        internal void SetFsr1FieldMapping(string recordKey, string fieldId, Fsr1FieldMapping? mapping)
         {
             if (string.IsNullOrEmpty(recordKey) || string.IsNullOrEmpty(fieldId)) return;
             var profile = _plugin.Settings?.ProfileStore?.CurrentProfile;
@@ -62,6 +73,22 @@ namespace MozaPlugin.Telemetry
                 profile.Fsr1DashboardMappings = new Dictionary<Guid, Dictionary<string, Dictionary<string, Fsr1FieldMapping>>>();
             var g = _plugin.GetCurrentWheelPageGuid();
             if (!g.HasValue) return;
+
+            bool isDefault = IsDefaultFsr1Mapping(mapping);
+
+            // Removal: only touch the dicts if the entry exists; don't allocate empty branches.
+            if (isDefault)
+            {
+                if (profile.Fsr1DashboardMappings.TryGetValue(g.Value, out var mid) && mid != null
+                    && mid.TryGetValue(recordKey, out var inr) && inr != null)
+                {
+                    inr.Remove(fieldId);
+                    if (inr.Count == 0) mid.Remove(recordKey);
+                    if (mid.Count == 0) profile.Fsr1DashboardMappings.Remove(g.Value);
+                    _plugin.SaveSettings();
+                }
+                return;
+            }
 
             if (!profile.Fsr1DashboardMappings.TryGetValue(g.Value, out var middle) || middle == null)
             {
@@ -74,18 +101,9 @@ namespace MozaPlugin.Telemetry
                 middle[recordKey] = inner;
             }
 
-            string trimmed = (property ?? "").Trim();
-            if (string.IsNullOrEmpty(trimmed))
-            {
-                inner.Remove(fieldId);
-                if (inner.Count == 0) middle.Remove(recordKey);
-                if (middle.Count == 0) profile.Fsr1DashboardMappings.Remove(g.Value);
-            }
-            else
-            {
-                inner[fieldId] = new Fsr1FieldMapping { Property = trimmed, InMin = inMin, InMax = inMax };
-            }
-
+            var stored = mapping!.Clone();
+            stored.Property = (stored.Property ?? "").Trim();
+            inner[fieldId] = stored;
             _plugin.SaveSettings();
         }
 
@@ -195,9 +213,10 @@ namespace MozaPlugin.Telemetry
             return m != null && m.TryGetValue(fieldId, out var fm) ? fm : null;
         }
 
-        /// <summary>Persist (or clear) a CM1 field assignment. Empty property removes the
-        /// override (field reverts to its catalog default/constant). Saves settings.</summary>
-        internal void SetCm1FieldMapping(string fieldId, string property)
+        /// <summary>Persist (or clear) a CM1 field assignment (property + optional gain
+        /// override). Empty property AND null scale removes the override (field reverts to its
+        /// catalog default/constant). Saves settings.</summary>
+        internal void SetCm1FieldMapping(string fieldId, string property, double? scale)
         {
             if (string.IsNullOrEmpty(fieldId)) return;
             var profile = _plugin.Settings?.ProfileStore?.CurrentProfile;
@@ -210,14 +229,14 @@ namespace MozaPlugin.Telemetry
                 profile.Cm1FieldMappings[MozaPlugin.Cm1PageGuid] = inner;
             }
             string trimmed = (property ?? "").Trim();
-            if (string.IsNullOrEmpty(trimmed))
+            if (string.IsNullOrEmpty(trimmed) && scale == null)
             {
                 inner.Remove(fieldId);
                 if (inner.Count == 0) profile.Cm1FieldMappings.Remove(MozaPlugin.Cm1PageGuid);
             }
             else
             {
-                inner[fieldId] = new Fsr1FieldMapping { Property = trimmed };
+                inner[fieldId] = new Fsr1FieldMapping { Property = trimmed, Scale = scale };
             }
             _plugin.SaveSettings();
         }

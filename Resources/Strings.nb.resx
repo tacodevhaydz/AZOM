@@ -409,6 +409,12 @@
   <data name="DataGridHeader_CurrentValue" xml:space="preserve"><value>Nåværende verdi</value></data>
   <data name="Tooltip_EditMapping" xml:space="preserve"><value>Rediger SimHub-egenskapskobling</value></data>
   <data name="Button_ResetToDefaults" xml:space="preserve"><value>TILBAKESTILL TIL STANDARD</value></data>
+  <data name="Button_ResetField" xml:space="preserve"><value>TILBAKESTILL FELT</value></data>
+  <data name="Edit_StartByte" xml:space="preserve"><value>Startbyte</value></data>
+  <data name="Edit_EndByte" xml:space="preserve"><value>Sluttbyte</value></data>
+  <data name="Edit_Endian_LE" xml:space="preserve"><value>Little-endian</value></data>
+  <data name="Edit_Scale" xml:space="preserve"><value>Skala</value></data>
+  <data name="Edit_Bias" xml:space="preserve"><value>Forskyvning</value></data>
   <data name="Section_Display" xml:space="preserve"><value>SKJERM</value></data>
   <data name="SliderLabel_DisplayBrightness" xml:space="preserve"><value>Skjermlysstyrke</value></data>
   <data name="SliderLabel_StandbyTime" xml:space="preserve"><value>Standby-tid</value></data>

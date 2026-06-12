@@ -404,6 +404,12 @@
   <data name="DataGridHeader_CurrentValue" xml:space="preserve"><value>Valeur actuelle</value></data>
   <data name="Tooltip_EditMapping" xml:space="preserve"><value>Modifier la liaison à la propriété SimHub</value></data>
   <data name="Button_ResetToDefaults" xml:space="preserve"><value>RÉINITIALISER PAR DÉFAUT</value></data>
+  <data name="Button_ResetField" xml:space="preserve"><value>RÉINITIALISER LE CHAMP</value></data>
+  <data name="Edit_StartByte" xml:space="preserve"><value>Octet de début</value></data>
+  <data name="Edit_EndByte" xml:space="preserve"><value>Octet de fin</value></data>
+  <data name="Edit_Endian_LE" xml:space="preserve"><value>Petit-boutiste</value></data>
+  <data name="Edit_Scale" xml:space="preserve"><value>Échelle</value></data>
+  <data name="Edit_Bias" xml:space="preserve"><value>Décalage</value></data>
   <data name="Section_Display" xml:space="preserve"><value>AFFICHAGE</value></data>
   <data name="SliderLabel_DisplayBrightness" xml:space="preserve"><value>Luminosité de l'affichage</value></data>
   <data name="SliderLabel_StandbyTime" xml:space="preserve"><value>Délai de veille</value></data>

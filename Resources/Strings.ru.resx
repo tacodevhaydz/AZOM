@@ -404,6 +404,12 @@
   <data name="DataGridHeader_CurrentValue" xml:space="preserve"><value>Текущее значение</value></data>
   <data name="Tooltip_EditMapping" xml:space="preserve"><value>Изменить привязку к свойству SimHub</value></data>
   <data name="Button_ResetToDefaults" xml:space="preserve"><value>СБРОСИТЬ ПО УМОЛЧАНИЮ</value></data>
+  <data name="Button_ResetField" xml:space="preserve"><value>СБРОС ПОЛЯ</value></data>
+  <data name="Edit_StartByte" xml:space="preserve"><value>Начальный байт</value></data>
+  <data name="Edit_EndByte" xml:space="preserve"><value>Конечный байт</value></data>
+  <data name="Edit_Endian_LE" xml:space="preserve"><value>Little-endian</value></data>
+  <data name="Edit_Scale" xml:space="preserve"><value>Масштаб</value></data>
+  <data name="Edit_Bias" xml:space="preserve"><value>Смещение</value></data>
   <data name="Section_Display" xml:space="preserve"><value>ДИСПЛЕЙ</value></data>
   <data name="SliderLabel_DisplayBrightness" xml:space="preserve"><value>Яркость дисплея</value></data>
   <data name="SliderLabel_StandbyTime" xml:space="preserve"><value>Время ожидания</value></data>

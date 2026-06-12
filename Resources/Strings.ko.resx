@@ -404,6 +404,12 @@
   <data name="DataGridHeader_CurrentValue" xml:space="preserve"><value>현재 값</value></data>
   <data name="Tooltip_EditMapping" xml:space="preserve"><value>SimHub 속성 바인딩 편집</value></data>
   <data name="Button_ResetToDefaults" xml:space="preserve"><value>기본값으로 재설정</value></data>
+  <data name="Button_ResetField" xml:space="preserve"><value>필드 초기화</value></data>
+  <data name="Edit_StartByte" xml:space="preserve"><value>시작 바이트</value></data>
+  <data name="Edit_EndByte" xml:space="preserve"><value>끝 바이트</value></data>
+  <data name="Edit_Endian_LE" xml:space="preserve"><value>리틀 엔디안</value></data>
+  <data name="Edit_Scale" xml:space="preserve"><value>배율</value></data>
+  <data name="Edit_Bias" xml:space="preserve"><value>바이어스</value></data>
   <data name="Section_Display" xml:space="preserve"><value>디스플레이</value></data>
   <data name="SliderLabel_DisplayBrightness" xml:space="preserve"><value>디스플레이 밝기</value></data>
   <data name="SliderLabel_StandbyTime" xml:space="preserve"><value>대기 시간</value></data>
