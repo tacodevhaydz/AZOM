@@ -47,6 +47,15 @@ namespace MozaPlugin.UI
         public string Body { get; }
         public string? RelatedModel { get; }
 
+        /// <summary>
+        /// True for banners whose remediation is a SimHub restart — drives the
+        /// "Restart SimHub" button in the hint template. Currently only the
+        /// device-definition-deployed banner (a fresh device.json needs a restart
+        /// before SimHub loads it). Derived from <see cref="Kind"/>, so it doesn't
+        /// participate in equality.
+        /// </summary>
+        public bool ShowRestartButton => Kind == StatusHintKind.DeviceDefinitionDeployed;
+
         public StatusHint(StatusHintKind kind, string title, string body, string? relatedModel = null)
         {
             Kind = kind;
