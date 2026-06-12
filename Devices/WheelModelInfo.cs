@@ -175,6 +175,15 @@ namespace MozaPlugin.Devices
             // this wheel triggers a Table 8 read-fail storm in its firmware that
             // makes it intermittently unresponsive.
             ("CS",      "CS",         new WheelModelInfo(10, 0,  false, null, 0, hasDisplay: false, hasSleepLight: false, maxLedFps: 30)),
+            // ES — MOZA's entry wheel, integrated into the wheelbase as a module at
+            // internal id 0x18 (firmware model-name "ES", hw "RS21-D05-HW SM-C").
+            // Old-protocol RPM only: 10 RGB RPM LEDs driven via the wheel-old-rpm-*
+            // path; no button / flag / knob LEDs, no display. hasDisplay:false keeps
+            // the dashboard pipeline + 0x43 display probe OFF (screenless);
+            // hasSleepLight:false avoids the Table-8 read-fail storm legacy rims hit
+            // on sleep-light writes. Button-LED count is conservative (0) — refine
+            // from a live capability read if ES exposes addressable button LEDs.
+            ("ES",      "ES",         new WheelModelInfo(10, 0,  false, null, 0, hasDisplay: false, hasSleepLight: false)),
         };
 
         public WheelModelInfo(int rpmLedCount, int buttonLedCount, bool hasFlagLeds, int[]? buttonLedMap, int knobCount = 0, int[]? knobRingLeds = null, bool? hasDisplay = null, int browSegmentSize = 0, bool hasSleepLight = true, int maxLedFps = 0)

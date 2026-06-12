@@ -710,6 +710,32 @@ namespace MozaPlugin
             {
                 WheelMcuUid = (byte[])data.Clone();
             }
+            // ES (old-protocol) wheel identity, read from the wheel's own module
+            // id 0x18 (0x17 is silent on ES). These populate the same Wheel*
+            // fields a modern wheel fills from 0x17 — so an ES wheel gets a real
+            // model ("ES") that drives model→GUID→profile resolution, plus correct
+            // diagnostics + SDK manifest values. dev 0x13 separately fills Base*
+            // with the motor identity ("R5 Black # MOT-1").
+            else if (commandName == "es-wheel-model-name")
+            {
+                WheelModelName = ParseNullTerminatedString(data);
+            }
+            else if (commandName == "es-wheel-hw-version")
+            {
+                WheelHwVersion = ParseNullTerminatedString(data);
+            }
+            else if (commandName == "es-wheel-sw-version")
+            {
+                WheelSwVersion = ParseNullTerminatedString(data);
+            }
+            else if (commandName == "es-wheel-mcu-uid")
+            {
+                WheelMcuUid = (byte[])data.Clone();
+            }
+            else if (commandName == "es-wheel-device-type")
+            {
+                WheelDeviceType = (byte[])data.Clone();
+            }
             // Base identity (parallel to wheel identity, dev 0x13). Drives the
             // Motor + Wheel Base manifest entries served at
             // /MOZARacing/ProductDevice/{id} so iRacing's CoAP client engages

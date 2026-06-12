@@ -41,8 +41,10 @@ namespace MozaPlugin.Devices
         // already-written file whose LED/button/knob counts are unchanged — e.g.
         // localizing the knob-section TitleOverride. The staleness check in
         // DeployGeneratedWheelDefinition rewrites any file with an older
-        // SchemaVersion. v2: localized "Knob Indicators" TitleOverride.
-        private const int GeneratedWheelSchemaVersion = 2;
+        // SchemaVersion. v2: localized "Knob Indicators" TitleOverride. v3:
+        // RPM-only wheels (ES, bare CS) no longer emit a phantom button physical
+        // LED (10 RPM was counted as 11) and disable the buttons-backlight section.
+        private const int GeneratedWheelSchemaVersion = 3;
 
         /// <summary>
         /// Deploy a dynamically generated device definition for a new-protocol wheel.
@@ -164,12 +166,19 @@ namespace MozaPlugin.Devices
                         int existingSchema = existing.SelectToken("SchemaVersion")?.Value<int>() ?? 0;
                         string? existingKnobTitle = existing
                             .SelectToken("LedsFeature.LogicalExtraSection.TitleOverride")?.Value<string>();
+                        bool? existingIndividual = existing
+                            .SelectToken("LedsFeature.IsIndividualLedsSectionEnabled")?.Value<bool>();
+                        bool expectedIndividual = buttonCount > 0 || knobCount > 0;
                         stale = existingLed != expectedTelemetryCount
                             || existingButtons != buttonCount
                             || existingExtra != knobCount
                             // Content-version bump (e.g. localized TitleOverride) forces a
                             // one-time rewrite for users whose file predates the change.
                             || existingSchema < GeneratedWheelSchemaVersion
+                            // Individual-LEDs flag drifted (RPM-only wheels must have it
+                            // off). Targeted: only files with the wrong value rewrite, so
+                            // button/knob wheels aren't needlessly re-deployed.
+                            || (existingIndividual.HasValue && existingIndividual.Value != expectedIndividual)
                             // Knob-section label drifted from the current UI culture's
                             // translation — re-deploy so it matches (handles a SimHub
                             // language change after the file was first written).
@@ -228,16 +237,21 @@ namespace MozaPlugin.Devices
             for (int i = 1; i < telemetryCount; i++)
                 physItems.Add(new JObject());
 
-            // Button LEDs: buttonCount slots
-            physItems.Add(new JObject
+            // Button LEDs: buttonCount slots. Gated on buttonCount > 0 — an
+            // RPM-only wheel (ES, bare CS) must NOT emit a button header item, or
+            // SimHub counts a phantom physical LED (e.g. 10 RPM → 11 total).
+            if (buttonCount > 0)
             {
-                ["SourceRole"] = 2,
-                ["SourceIndex"] = 0,
-                ["RepeatCount"] = buttonCount,
-                ["RepeatMode"] = 1
-            });
-            for (int i = 1; i < buttonCount; i++)
-                physItems.Add(new JObject());
+                physItems.Add(new JObject
+                {
+                    ["SourceRole"] = 2,
+                    ["SourceIndex"] = 0,
+                    ["RepeatCount"] = buttonCount,
+                    ["RepeatMode"] = 1
+                });
+                for (int i = 1; i < buttonCount; i++)
+                    physItems.Add(new JObject());
+            }
 
             // Knob indicator LEDs (Extra/encoders channel): one per rotary knob
             if (knobCount > 0)
@@ -276,7 +290,12 @@ namespace MozaPlugin.Devices
                 },
                 ["LedsFeature"] = new JObject
                 {
-                    ["IsIndividualLedsSectionEnabled"] = true,
+                    // Individual-LEDs section is only meaningful when the wheel has
+                    // addressable button and/or knob LEDs beyond the RPM strip. For
+                    // RPM-only wheels (e.g. ES, bare CS) it adds a useless editor
+                    // section, so disable it — matching the hand-authored old-proto
+                    // template.
+                    ["IsIndividualLedsSectionEnabled"] = buttonCount > 0 || knobCount > 0,
                     ["PhysicalLedsMappings"] = new JObject { ["Items"] = physItems },
                     ["LogicalTelemetryLeds"] = new JObject
                     {
@@ -288,7 +307,9 @@ namespace MozaPlugin.Devices
                     {
                         ["IsButtonEditorEnabled"] = false,
                         ["Items"] = buttonItems,
-                        ["IsEnabled"] = true
+                        // Disabled for RPM-only wheels so the "enable buttons
+                        // backlight" section doesn't show with zero buttons.
+                        ["IsEnabled"] = buttonCount > 0
                     },
                     ["LogicalExtraSection"] = knobCount > 0
                         ? new JObject

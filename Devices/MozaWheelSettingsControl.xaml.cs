@@ -784,7 +784,10 @@ skipReadByMode:
             StatusText.Text = wheelConnected ? "Connected" : "Disconnected";
 
             bool isOldProtoDevice = LinkedLedDriver?.ExpectedModelPrefix == MozaDeviceConstants.OldProtocolMarker;
-            bool oldWheel = wheelConnected && isOldProtoDevice && _plugin!.IsOldWheelDetected;
+            // IsConnected() already matched this device to the connected wheel, so
+            // the global flag tells us its protocol. Covers both the generic
+            // old-proto marker device and a model-specific old wheel (ES @ 0x18).
+            bool oldWheel = wheelConnected && _plugin!.IsOldWheelDetected;
             // Wait for wheel-model-name to arrive before declaring the panel
             // "ready": the per-page guid is keyed off the model prefix, and any
             // UI write into a per-page bundle/overlay before that resolves

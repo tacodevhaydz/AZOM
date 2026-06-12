@@ -145,21 +145,17 @@ namespace MozaPlugin.UI
                 // toggles when its Init fires.
                 bool wheelDetected = detection.NewWheelDetected || detection.OldWheelDetected;
                 var model = detection.LastKnownWheelModel;
+                // Reaching here with a resolved model means a model-specific
+                // "MOZA <model>" device was deployed — for new-protocol wheels AND
+                // for an identified old wheel like ES (id 0x18). Use the
+                // model-specific extension + friendly name in both cases. A generic
+                // model-less old wheel never gets here (its model is empty) and is
+                // covered by the shared old-proto device's own status path.
                 if (wheelDetected && !string.IsNullOrEmpty(model))
                 {
-                    bool active;
-                    string friendly;
-                    if (detection.OldWheelDetected)
-                    {
-                        active = plugin.DeviceExtensionActive;
-                        friendly = "Old Protocol Wheel";
-                    }
-                    else
-                    {
-                        active = plugin.IsModelSpecificExtensionActive(model);
-                        var prefix = WheelModelInfo.ExtractPrefix(model);
-                        friendly = WheelModelInfo.GetFriendlyName(prefix);
-                    }
+                    bool active = plugin.IsModelSpecificExtensionActive(model);
+                    var prefix = WheelModelInfo.ExtractPrefix(model);
+                    string friendly = WheelModelInfo.GetFriendlyName(prefix);
 
                     if (!active)
                     {

@@ -3008,12 +3008,37 @@ namespace MozaPlugin
                 {
                     _wheelModelRecheckTick = 0;
                     _deviceManager.ReadSetting("wheel-model-name");
+                    // ES wheels carry their real model at module id 0x18 (the
+                    // locked-id read above returns the base/motor name on ES), so
+                    // re-read it on the same cadence — a rim swap to a different
+                    // model is then caught by model-name hot-swap. No-op on a non-ES
+                    // old wheel (0x18 silent); modern wheels skip this branch.
+                    if (DetectionState.OldWheelDetected)
+                        _deviceManager.ReadSetting("es-wheel-model-name");
                 }
 
                 // Probe other wheel IDs for hot-swap detection.
                 // Handles ES → new-protocol case where the base keeps responding
                 // on the locked ID (19) so miss counter never fires.
                 _deviceManager.ProbeOtherWheelIds();
+
+                // Generic old-proto definition is the FALLBACK: deploy it only if no
+                // model-specific definition was already deployed for this old wheel.
+                // An ES wheel deploys "MOZA ES" from the es-wheel-model-name case
+                // (which sets OldProtoFallbackDeployed), so it never gets the generic
+                // device. The grace window lets a slightly-late 0x18 reply set that
+                // flag before this fires, avoiding a duplicate deploy.
+                const long OldProtoFallbackGraceMs = 3000;
+                if (DetectionState.OldWheelDetected
+                    && !DetectionState.OldProtoFallbackDeployed
+                    && _wheelDetectedUtcTicks != 0
+                    && (DateTime.UtcNow.Ticks - _wheelDetectedUtcTicks) / TimeSpan.TicksPerMillisecond >= OldProtoFallbackGraceMs)
+                {
+                    DetectionState.OldProtoFallbackDeployed = true;
+                    if (DeviceDefinitionDeployer.DeployOldProtoWheel(_connection.DiscoveredPid))
+                        DeviceDefinitionDeployed = true;
+                    MozaLog.Info("[AZOM] Old-protocol wheel: no model-specific definition — deployed generic old-proto (fallback)");
+                }
             }
 
             // Base temps/state are dev-0x13 reads the base main controller answers.

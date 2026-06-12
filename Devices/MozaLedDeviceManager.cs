@@ -214,20 +214,30 @@ namespace MozaPlugin.Devices
             if (p == null)
                 return false;
 
-            // Old-protocol device — only match old-protocol wheels
+            // Generic old-protocol fallback device — matches an old wheel only
+            // when it did NOT resolve a model-specific identity (a model-less
+            // rim). An ES wheel resolves model "ES" from id 0x18 and is served by
+            // its own model-specific device below, so the marker device steps
+            // aside for it.
             if (ExpectedModelPrefix == MozaDeviceConstants.OldProtocolMarker)
-                return p.IsOldWheelDetected;
+                return p.IsOldWheelDetected && string.IsNullOrEmpty(p.Data.WheelModelName);
 
-            // All other prefixes require a new-protocol wheel
-            if (!p.IsNewWheelDetected)
+            // Any other device requires a detected wheel — new OR old protocol.
+            // (ES is an identified OLD-protocol wheel with a specific prefix, so
+            // a specific prefix no longer implies new-protocol.)
+            if (!p.IsNewWheelDetected && !p.IsOldWheelDetected)
                 return false;
 
-            // Empty prefix = generic fallback, matches any new-protocol wheel
-            // UNLESS a model-specific device extension is active for this wheel
+            // Empty prefix = generic new-protocol fallback, matches any
+            // new-protocol wheel UNLESS a model-specific device extension is
+            // active for this wheel.
             if (ExpectedModelPrefix.Length == 0)
-                return !p.IsModelSpecificExtensionActive(p.Data.WheelModelName);
+                return p.IsNewWheelDetected
+                    && !p.IsModelSpecificExtensionActive(p.Data.WheelModelName);
 
-            // Specific model — match against detected wheel's firmware model name
+            // Specific model — match against the detected wheel's firmware model
+            // name. Works for new-protocol (0x17) wheels and old-protocol ES
+            // (@ 0x18) alike.
             var modelName = p.Data.WheelModelName;
             if (string.IsNullOrEmpty(modelName))
                 return false;
@@ -341,8 +351,11 @@ namespace MozaPlugin.Devices
                 if (!IsConnected())
                     return;
 
-                bool isOldWheel = ExpectedModelPrefix == MozaDeviceConstants.OldProtocolMarker
-                    && plugin.IsOldWheelDetected;
+                // IsConnected() above already matched this device to the connected
+                // wheel, so the global detection flag tells us its protocol. ES is
+                // an identified old-protocol wheel with a specific prefix, so derive
+                // old/new from the flag rather than the OldProtocolMarker prefix.
+                bool isOldWheel = plugin.IsOldWheelDetected;
                 bool isNewWheel = !isOldWheel && plugin.IsNewWheelDetected;
                 if (!isNewWheel && !isOldWheel)
                     return;
