@@ -111,7 +111,7 @@ Notes:
 | `Themes/` | WPF theme dictionaries (`MozaTheme`, `MozaIcons`, `Generic.xaml`) |
 | `docs/` | This guide, protocol reference (`docs/protocol/`), SimHub internals notes (`simhub.md`), capture workflow (`usb-capture.md`) |
 | `tools/` | Reusable wire-trace / capture analysis scripts (`moza_trace.py`, `tierdef-decode`, `cm1-0x35-decode`, `fsr1-*`, `wire-*`, …) |
-| `sim/` | Python wheel emulator + USB-gadget bridge rig (out of plugin scope; has its own README) |
+| _(moved out)_ | The Python wheel/device emulator + USB-gadget bridge rig now lives in its own project: [giantorth/moza-simulator](https://github.com/giantorth/moza-simulator) |
 | `libs/SimHub/` | Reference-only SimHub DLLs, auto-updated by CI |
 
 ### Partial-class splits
