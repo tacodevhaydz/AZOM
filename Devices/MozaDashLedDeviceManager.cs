@@ -12,15 +12,19 @@ namespace MozaPlugin.Devices
     /// <summary>
     /// A virtual ILedDeviceManager for the MOZA CM2/CM1 dashboard.
     /// Always reports as connected to enable SimHub's LED effects UI.
-    /// Receives computed RPM LED colors from Display() and sends a 16-bit on/off
-    /// bitmask to the dash via dash-send-telemetry. Colors are stored on the
-    /// device firmware — only the bitmask is sent per frame.
     ///
-    /// PitHouse drives the bus CM2's RPM LEDs the same way: a per-frame
-    /// dash-send-telemetry bitmask (group 0x41 cmd FD DE) that the firmware
-    /// lights in its configured colours — verified cm2.pcapng 2026-06-08. An
-    /// earlier build streamed per-LED colour on group 0x32 sub 0x0B to dev 0x12
-    /// instead; the firmware ignores that, so CM2 LEDs never lit.
+    /// The rim is a wheel-style 16-LED strip in physical order
+    /// [flag 1-3][RPM 1-10][flag 4-6]. SimHub feeds a single telemetry array in
+    /// that order; we drive it with two firmware paths:
+    ///   RPM  → 10-bit on/off bitmask (dash-send-telemetry, 41 FD DE) + live
+    ///          per-LED indicator colours (cm2-indicator-color / dash-rpm-color,
+    ///          0B 00). PitHouse drives the bitmask per frame (cm2.pcapng).
+    ///   Flag → live 6×RGB colour array (dash-flag-colors, 32 08 00), black = off
+    ///          (cm2t.pcapng: flags lit while the bitmask stayed 0).
+    ///
+    /// Both SimHub LED modes are supported like the wheel manager: combined
+    /// (telemetry effects on the `leds` channel) and individual-exclusive (effects
+    /// on `rawState`, merged over the array via ApplyOverrides).
     /// </summary>
     internal class MozaDashLedDeviceManager : ILedDeviceManager
     {
@@ -46,8 +50,11 @@ namespace MozaPlugin.Devices
         // flag if the colour isn't refreshed, so re-send at 1 Hz while any flag
         // is lit. Flags surface on SimHub's `buttons` channel (the profile's
         // 6-LED LogicalButtonsSection).
+        // CM2 rim, wheel-style: 16 LEDs in physical order [flag 1-3][RPM 1-10][flag 4-6].
         private const int RpmLedCount = 10;
         private const int FlagLedCount = 6;
+        private const int FlagLeftCount = 3;
+        private const int TotalLedCount = RpmLedCount + FlagLedCount; // 16
         private readonly byte[] _lastFlagRgb = new byte[FlagLedCount * 3];
         private bool _lastFlagPrimed;
         private DateTime _lastFlagSendTime = DateTime.MinValue;
@@ -145,80 +152,83 @@ namespace MozaPlugin.Devices
                     ledColors, buttonColors, encoderColors, matrixColors, rawColors,
                     rpmBrightness, buttonsBrightness, encodersBrightness, matrixBrightness);
 
-                // CM2/CM1 dashboards have 10 RPM LEDs (SimHub `leds` telemetry
-                // stream) + 6 flag LEDs (SimHub `buttons` section), driven by two
-                // distinct firmware paths:
-                //   RPM  → 10-bit on/off bitmask (dash-send-telemetry, 41 FD DE);
-                //          the firmware lights each set bit in its stored colour.
-                //   Flag → live 6×RGB colour array (dash-flag-colors, 32 08 00);
-                //          the firmware lights each non-black flag. The flag LEDs
-                //          do NOT use the bitmask (cm2t.pcapng: flags lit while the
-                //          bitmask stayed 0).
+                // CM2 rim is a wheel-style 16-LED strip in physical order
+                // [flag 1-3][RPM 1-10][flag 4-6]. SimHub feeds one telemetry array
+                // in that order, driven by two firmware paths:
+                //   RPM  → 10-bit on/off bitmask (41 FD DE) + live indicator colours
+                //          (0B 00); the bitmask lights each set bit in its colour.
+                //   Flag → live 6×RGB colour array (32 08 00), black = off; flags do
+                //          NOT use the bitmask (cm2t.pcapng: flags lit, bitmask 0).
+                //
+                // Combined AND individual modes are handled like the wheel LED
+                // manager: in SimHub's "Individual LEDs (exclusive)" mode the `leds`
+                // channel is empty and only `rawState` carries colour, so we merge
+                // rawState over the telemetry array first (ApplyOverrides — a no-op
+                // in combined mode) and then process the single merged array by
+                // position.
 
                 var plugin = MozaPlugin.Instance;
                 if (plugin == null || !plugin.Data.IsConnected || !plugin.IsDashDetected)
                     return;
 
+                if (rawColors.Length > 0)
+                    ledColors = MozaLedDeviceManager.ApplyOverrides(ledColors, rawColors, 0, TotalLedCount);
+
+                if (ledColors.Length == 0)
+                    return;
+
                 bool alwaysResend = plugin.Settings.AlwaysResendBitmask;
                 var now = DateTime.UtcNow;
 
-                // ── RPM bar: 10-bit on/off bitmask ──────────────────────────────
-                int rpmCount = Math.Min(ledColors.Length, RpmLedCount);
-                // Merge SimHub Individual-LED overrides into the RPM range (no-op on
-                // CM2 — the individual section is disabled, so rawColors is empty).
-                if (rawColors.Length > 0)
-                    ledColors = MozaLedDeviceManager.ApplyOverrides(ledColors, rawColors, 0, rpmCount);
+                // Split flag/RPM/flag by position. Full 16-LED array → flags at
+                // [0,1,2] + [13,14,15], RPM at [3..12]. A short array (pre-detection
+                // / transition) → no flags, RPM from index 0.
+                bool hasFlags = ledColors.Length >= TotalLedCount;
+                int flagLeft = hasFlags ? FlagLeftCount : 0;
 
-                // ── RPM colours → live indicator register (0B 00) ───────────────
-                // Push SimHub's per-LED colour so the bar shows the user's gradient
-                // (the bitmask below only lights LEDs in whatever colour the device
-                // last stored). Written BEFORE the bitmask so an LED is never lit a
-                // frame before its colour lands. All 10 indices from the pipeline
-                // (latest non-black — an off LED keeps its last colour).
-                // Change-gated; live register, no throttle. If the firmware ignores
-                // 0B 00 this is a silent no-op
-                // (hardware-test gate — see plan; fallback is the 1B 00 FF stored
-                // register with a flash-write throttle).
-                SyncRpmColors(plugin, ledColors);
+                var rpmColors = new Color[RpmLedCount];
+                int rpmAvail = Math.Max(0, Math.Min(RpmLedCount, ledColors.Length - flagLeft));
+                for (int i = 0; i < rpmAvail; i++)
+                    rpmColors[i] = ledColors[flagLeft + i];
 
-                if (rpmCount > 0)
+                // ── RPM colours → live indicator register (0B 00), before the bitmask
+                // so an LED is never lit a frame before its colour lands. Change-gated;
+                // live register, no throttle. ──
+                SyncRpmColors(plugin, rpmColors);
+
+                // ── RPM bar: 10-bit on/off bitmask. PitHouse re-sends per frame
+                // (cm2.pcapng); we send on change + 1 Hz keepalive so a held value
+                // doesn't blank. ──
+                int bitmask = 0;
+                for (int i = 0; i < RpmLedCount; i++)
                 {
-                    int bitmask = 0;
-                    for (int i = 0; i < rpmCount; i++)
-                    {
-                        if (ledColors[i].R > 0 || ledColors[i].G > 0 || ledColors[i].B > 0)
-                            bitmask |= (1 << i);
-                    }
-
-                    // PitHouse re-sends the bitmask per frame (cm2.pcapng); we send
-                    // on change + a 1 Hz keepalive so a held value doesn't blank.
-                    // WriteDashLedBitmask routes to the active sink (standalone-USB
-                    // CM2 → 0x12 on the dedicated pipe, behind-base CM2 → 0x14).
-                    bool keepaliveDue = (now - _lastSendTime).TotalSeconds >= KeepaliveIntervalSeconds;
-                    if (alwaysResend || bitmask != _lastBitmask || keepaliveDue)
-                    {
-                        _lastBitmask = bitmask;
-                        _lastSendTime = now;
-                        plugin.WriteDashLedBitmask(bitmask);
-                    }
+                    if (rpmColors[i].R > 0 || rpmColors[i].G > 0 || rpmColors[i].B > 0)
+                        bitmask |= (1 << i);
+                }
+                bool keepaliveDue = (now - _lastSendTime).TotalSeconds >= KeepaliveIntervalSeconds;
+                if (alwaysResend || bitmask != _lastBitmask || keepaliveDue)
+                {
+                    _lastBitmask = bitmask;
+                    _lastSendTime = now;
+                    plugin.WriteDashLedBitmask(bitmask);
                 }
 
-                // ── Flag LEDs: live 6×RGB colour array ──────────────────────────
-                // Each flag is its own RGB triplet; black = that flag off. PitHouse
-                // streams the array per frame (cm2t.pcapng: 32 14 08 00 <6×RGB>);
-                // we send on change + a 1 Hz keepalive while any flag is lit so a
-                // held flag doesn't blank. (Off flags stay off without a refresh,
-                // so we don't stream black indefinitely when no flag is active.)
+                // ── Flag LEDs: live 6×RGB colour array (32 08 00), black = off.
+                // Flags 0-2 are the left block (LEDs 1-3), 3-5 the right (LEDs 14-16).
+                // Send on change + 1 Hz keepalive while any flag is lit. ──
                 var rgb = new byte[FlagLedCount * 3];
                 bool anyFlagOn = false;
-                int flagCount = Math.Min(buttonColors.Length, FlagLedCount);
-                for (int i = 0; i < flagCount; i++)
+                if (hasFlags)
                 {
-                    var c = buttonColors[i];
-                    rgb[i * 3] = c.R;
-                    rgb[i * 3 + 1] = c.G;
-                    rgb[i * 3 + 2] = c.B;
-                    if (c.R > 0 || c.G > 0 || c.B > 0) anyFlagOn = true;
+                    for (int i = 0; i < FlagLedCount; i++)
+                    {
+                        int srcIdx = i < FlagLeftCount ? i : RpmLedCount + i; // 0,1,2, 13,14,15
+                        var c = ledColors[srcIdx];
+                        rgb[i * 3] = c.R;
+                        rgb[i * 3 + 1] = c.G;
+                        rgb[i * 3 + 2] = c.B;
+                        if (c.R > 0 || c.G > 0 || c.B > 0) anyFlagOn = true;
+                    }
                 }
 
                 bool flagsChanged = !_lastFlagPrimed;
@@ -229,7 +239,7 @@ namespace MozaPlugin.Devices
                 }
                 bool flagKeepaliveDue = anyFlagOn
                     && (now - _lastFlagSendTime).TotalSeconds >= KeepaliveIntervalSeconds;
-                if (alwaysResend || flagsChanged || flagKeepaliveDue)
+                if (hasFlags && (alwaysResend || flagsChanged || flagKeepaliveDue))
                 {
                     Array.Copy(rgb, _lastFlagRgb, rgb.Length);
                     _lastFlagPrimed = true;
@@ -250,18 +260,17 @@ namespace MozaPlugin.Devices
         }
 
         /// <summary>
-        /// Push SimHub's RPM gradient to the dash's live indicator-colour register
-        /// (cm2-indicator-color / dash-rpm-color, wire 0B 00), change-gated. All 10
-        /// indices (incl. redline) take the latest non-black pipeline colour — an
-        /// off LED keeps its last colour, since the bitmask handles on/off. No
-        /// throttle: this is the live, non-persistent register.
+        /// Push the 10 RPM colours (already extracted from the flag/RPM/flag array)
+        /// to the dash's live indicator-colour register (cm2-indicator-color /
+        /// dash-rpm-color, wire 0B 00), change-gated. Each index takes the latest
+        /// non-black colour — an off LED keeps its last colour, since the bitmask
+        /// handles on/off. No throttle: this is the live, non-persistent register.
         /// </summary>
-        private void SyncRpmColors(MozaPlugin plugin, Color[] ledColors)
+        private void SyncRpmColors(MozaPlugin plugin, Color[] rpmColors)
         {
-            int count = Math.Min(ledColors.Length, RpmLedCount);
-            for (int i = 0; i < count; i++)
+            for (int i = 0; i < RpmLedCount && i < rpmColors.Length; i++)
             {
-                var c = ledColors[i];
+                var c = rpmColors[i];
                 // Off this frame — keep the last known indicator colour.
                 if (c.R == 0 && c.G == 0 && c.B == 0) continue;
 
