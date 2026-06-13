@@ -46,15 +46,17 @@ namespace MozaPlugin.Devices
         // Flag-LED keepalive: the 6 CM2 flag LEDs are driven by the live
         // dash-flag-colors array (group 0x32 cmd 08 00, 6×RGB, black = off), NOT
         // the RPM bitmask — verified cm2t.pcapng, where the flags lit green while
-        // the 41 14 FD DE bitmask stayed 0. Like RPM, the firmware blanks a held
-        // flag if the colour isn't refreshed, so re-send at 1 Hz while any flag
-        // is lit. Flags surface on SimHub's `buttons` channel (the profile's
-        // 6-LED LogicalButtonsSection).
+        // the 41 14 FD DE bitmask stayed 0. Unlike the RPM bitmask (a latched
+        // on/off state), a flag colour is a momentary push that the firmware blanks
+        // sub-second if not refreshed — so a 1 Hz keepalive made solid flags blink.
+        // PitHouse streams the array at ~12.5 Hz (cm2t.pcapng); we match that while
+        // any flag is lit.
         // CM2 rim, wheel-style: 16 LEDs in physical order [flag 1-3][RPM 1-10][flag 4-6].
         private const int RpmLedCount = 10;
         private const int FlagLedCount = 6;
         private const int FlagLeftCount = 3;
         private const int TotalLedCount = RpmLedCount + FlagLedCount; // 16
+        private const double FlagKeepaliveIntervalSeconds = 0.08; // ~12.5 Hz, matches PitHouse
         private readonly byte[] _lastFlagRgb = new byte[FlagLedCount * 3];
         private bool _lastFlagPrimed;
         private DateTime _lastFlagSendTime = DateTime.MinValue;
@@ -215,7 +217,8 @@ namespace MozaPlugin.Devices
 
                 // ── Flag LEDs: live 6×RGB colour array (32 08 00), black = off.
                 // Flags 0-2 are the left block (LEDs 1-3), 3-5 the right (LEDs 14-16).
-                // Send on change + 1 Hz keepalive while any flag is lit. ──
+                // Send on change + ~12.5 Hz keepalive while any flag is lit (matches
+                // PitHouse; a slower 1 Hz refresh made solid flags blink). ──
                 var rgb = new byte[FlagLedCount * 3];
                 bool anyFlagOn = false;
                 if (hasFlags)
@@ -238,7 +241,7 @@ namespace MozaPlugin.Devices
                         if (rgb[i] != _lastFlagRgb[i]) { flagsChanged = true; break; }
                 }
                 bool flagKeepaliveDue = anyFlagOn
-                    && (now - _lastFlagSendTime).TotalSeconds >= KeepaliveIntervalSeconds;
+                    && (now - _lastFlagSendTime).TotalSeconds >= FlagKeepaliveIntervalSeconds;
                 if (hasFlags && (alwaysResend || flagsChanged || flagKeepaliveDue))
                 {
                     Array.Copy(rgb, _lastFlagRgb, rgb.Length);
