@@ -200,6 +200,13 @@ namespace MozaPlugin
         // Display tick).
         public readonly object LedColorLock = new object();
 
+        // Armed the first time the user commits an LED color via WriteLedColor. Until then,
+        // detection-time color read responses must always seed _data even while telemetry is
+        // live (otherwise the A5 gate eats the initial seed and swatches come up empty on a
+        // profile with no saved colors). Reset on ClearWheelIdentity so a hot-swapped wheel
+        // re-seeds. volatile — read on the serial thread, written on the UI thread.
+        private volatile bool _ledColorEditArmed;
+
         /// <summary>
         /// Atomic 3-byte RGB write into <paramref name="dst"/> under <see cref="LedColorLock"/>.
         /// Use from UI handlers in place of three separate <c>dst[0]=…; dst[1]=…; dst[2]=…</c>
@@ -207,6 +214,8 @@ namespace MozaPlugin
         /// </summary>
         public void WriteLedColor(byte[] dst, byte r, byte g, byte b)
         {
+            // Arm the A5 read-suppression gate: now there is a user pick worth protecting.
+            _ledColorEditArmed = true;
             lock (LedColorLock)
             {
                 dst[0] = r;
@@ -565,7 +574,16 @@ namespace MozaPlugin
             // (interval between read send and read response, vs UI write landing).
             // Disk + overlay still hold the user's pick correctly; the gate is
             // only protecting the live `_data` mirror used by UI swatches.
-            if (Devices.MozaLedDeviceManager.IsLiveAnywhere() && IsWheelLedColorCommand(commandName))
+            //
+            // Carve-out: the gate stays disarmed until the user's first LED-color
+            // edit (`_ledColorEditArmed`, set by WriteLedColor). Before any edit
+            // there is no pick to clobber, so the detection-time seed reads must
+            // always land — otherwise telemetry that starts before the seed
+            // responses arrive leaves `_data` at hardcoded defaults and the
+            // swatches come up empty on a profile with no saved colors.
+            if (_ledColorEditArmed
+                && Devices.MozaLedDeviceManager.IsLiveAnywhere()
+                && IsWheelLedColorCommand(commandName))
                 return;
 
             // Color commands need at least 3 bytes (R, G, B)
@@ -813,6 +831,9 @@ namespace MozaPlugin
 
         public void ClearWheelIdentity()
         {
+            // Re-arm the LED-color seed: a hot-swapped wheel must re-read its own
+            // colors into _data before the A5 gate suppresses reads again.
+            _ledColorEditArmed = false;
             WheelModelName = "";
             WheelSerialNumber = "";
             WheelSwVersion = "";
