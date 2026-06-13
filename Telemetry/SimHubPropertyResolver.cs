@@ -18,6 +18,7 @@ namespace MozaPlugin.Telemetry
         private readonly PluginManager _pluginManager;
         private readonly MozaData _data;
         private readonly MozaHidReader _hidReader;
+        private readonly NCalcExpressionEvaluator _formula = new NCalcExpressionEvaluator();
         private bool _allPropertiesNamesWarned;
 
         public SimHubPropertyResolver(PluginManager pluginManager, MozaData data, MozaHidReader hidReader)
@@ -27,10 +28,23 @@ namespace MozaPlugin.Telemetry
             _hidReader = hidReader;
         }
 
+        /// <summary>
+        /// SimHub's shared formula engine, for the channel-mapper's
+        /// <c>FormulaPickerButton</c> (so the editor preview uses the same engine
+        /// as the live telemetry path). Null only if engine construction failed.
+        /// </summary>
+        public SimHub.Plugins.OutputPlugins.Dash.TemplatingCommon.NCalcEngineBase? FormulaEngine
+            => _formula.Engine;
+
         public double ResolveAsDouble(string path)
         {
             if (!string.IsNullOrEmpty(path) && path.StartsWith("@internal/", StringComparison.Ordinal))
                 return ResolveInternalChannel(path);
+
+            // A mapping may be a SimHub formula ([property] NCalc / js:) rather than
+            // a plain property path; evaluate it via the reused SimHub engine.
+            if (NCalcExpressionEvaluator.LooksLikeExpression(path))
+                return _formula.EvalDouble(path);
 
             // A throwing property must not abort the whole frame tick (mirrors
             // the guard in ResolveAsString); an unresolvable channel reads 0.
@@ -51,6 +65,8 @@ namespace MozaPlugin.Telemetry
                 return ResolveInternalChannel(path)
                     .ToString("R", System.Globalization.CultureInfo.InvariantCulture);
             }
+            if (NCalcExpressionEvaluator.LooksLikeExpression(path))
+                return _formula.EvalString(path);
             try
             {
                 var v = _pluginManager?.GetPropertyValue(path);
@@ -115,6 +131,8 @@ namespace MozaPlugin.Telemetry
             if (string.IsNullOrEmpty(path)) return null;
             if (path!.StartsWith("@internal/", StringComparison.Ordinal))
                 return ResolveInternalStringChannel(path) ?? (object)ResolveInternalChannel(path);
+            if (NCalcExpressionEvaluator.LooksLikeExpression(path))
+                return _formula.EvalForDisplay(path);
             try { return _pluginManager?.GetPropertyValue(path); }
             catch { return null; }
         }

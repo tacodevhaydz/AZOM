@@ -397,7 +397,7 @@
   <data name="Button_SendTestPattern" xml:space="preserve"><value>▶ ОТПРАВИТЬ ТЕСТОВЫЙ ПАТТЕРН</value></data>
   <data name="Button_StopTest" xml:space="preserve"><value>■ СТОП</value></data>
   <data name="Section_ChannelMappings" xml:space="preserve"><value>НАЗНАЧЕНИЕ КАНАЛОВ</value></data>
-  <data name="Hint_ClickPencilForProperty" xml:space="preserve"><value>Нажмите карандаш у строки, чтобы выбрать свойство SimHub</value></data>
+  <data name="Hint_ClickPencilForProperty" xml:space="preserve"><value>Нажмите кнопку формулы у строки, чтобы выбрать свойство SimHub или создать выражение ([property] NCalc / js:)</value></data>
   <data name="Status_LoadingChannelMappings" xml:space="preserve"><value>Загрузка назначений каналов…</value></data>
   <data name="DataGridHeader_Channel" xml:space="preserve"><value>Канал</value></data>
   <data name="DataGridHeader_SimHubProperty" xml:space="preserve"><value>Свойство SimHub</value></data>

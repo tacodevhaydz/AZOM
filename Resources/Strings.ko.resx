@@ -397,7 +397,7 @@
   <data name="Button_SendTestPattern" xml:space="preserve"><value>▶ 테스트 패턴 전송</value></data>
   <data name="Button_StopTest" xml:space="preserve"><value>■ 정지</value></data>
   <data name="Section_ChannelMappings" xml:space="preserve"><value>채널 매핑</value></data>
-  <data name="Hint_ClickPencilForProperty" xml:space="preserve"><value>행의 연필 아이콘을 클릭해 SimHub 속성을 선택하세요</value></data>
+  <data name="Hint_ClickPencilForProperty" xml:space="preserve"><value>행의 수식 버튼을 클릭해 SimHub 속성을 선택하거나 식을 작성하세요 ([property] NCalc / js:)</value></data>
   <data name="Status_LoadingChannelMappings" xml:space="preserve"><value>채널 매핑 로드 중…</value></data>
   <data name="DataGridHeader_Channel" xml:space="preserve"><value>채널</value></data>
   <data name="DataGridHeader_SimHubProperty" xml:space="preserve"><value>SimHub 속성</value></data>

@@ -402,7 +402,7 @@
   <data name="Button_SendTestPattern" xml:space="preserve"><value>▶ ENVIAR PATRÓN DE PRUEBA</value></data>
   <data name="Button_StopTest" xml:space="preserve"><value>■ DETENER</value></data>
   <data name="Section_ChannelMappings" xml:space="preserve"><value>ASIGNACIÓN DE CANALES</value></data>
-  <data name="Hint_ClickPencilForProperty" xml:space="preserve"><value>Pulsa el lápiz de una fila para elegir una propiedad de SimHub</value></data>
+  <data name="Hint_ClickPencilForProperty" xml:space="preserve"><value>Pulsa el botón de fórmula de una fila para elegir una propiedad de SimHub o crear una expresión ([property] NCalc / js:)</value></data>
   <data name="Status_LoadingChannelMappings" xml:space="preserve"><value>Cargando asignaciones de canales…</value></data>
   <data name="DataGridHeader_Channel" xml:space="preserve"><value>Canal</value></data>
   <data name="DataGridHeader_SimHubProperty" xml:space="preserve"><value>Propiedad SimHub</value></data>

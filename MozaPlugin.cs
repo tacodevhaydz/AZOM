@@ -2728,6 +2728,11 @@ namespace MozaPlugin
         public object? GetPropertyValueForDisplay(string? path) => _propertyResolver.GetValueForDisplay(path);
         internal string CurrentWheelKey() => _propertyResolver.CurrentWheelKey();
 
+        /// <summary>SimHub's shared formula engine for the channel-mapper's formula
+        /// picker; null if engine construction failed (formulas then read as default).</summary>
+        internal SimHub.Plugins.OutputPlugins.Dash.TemplatingCommon.NCalcEngineBase? ChannelFormulaEngine
+            => _propertyResolver?.FormulaEngine;
+
         /// <summary>
         /// Candidate dashboard keys (highest priority first):
         /// <c>wheel:&lt;id&gt;</c>, <c>file:&lt;filename&gt;:&lt;sha1-8&gt;</c>, <c>builtin:&lt;name&gt;</c>.

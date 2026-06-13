@@ -1,25 +1,20 @@
 using System;
-using System.Collections.Generic;
 using System.ComponentModel;
 using MozaPlugin.Telemetry;
+using SimHub.Plugins.OutputPlugins.Dash.GLCDTemplating;
+using SimHub.Plugins.OutputPlugins.Dash.TemplatingCommon;
 
 namespace MozaPlugin.Devices.WheelUi
 {
     /// <summary>
     /// Row backing the per-wheel telemetry channel-mapping list. Holds the
     /// channel metadata (name/url/package level/compression) read from the
-    /// wheel's catalog, the user-edited SimHub property mapping, and the
-    /// inline-editor state (filter text + pending selection + visibility flag).
+    /// wheel's catalog, the user-edited SimHub property/formula mapping (a
+    /// SimHub <see cref="ExpressionValue"/> edited via the embedded
+    /// FormulaPickerButton), and the FSR1/CM1 field-editor visibility flag.
     /// </summary>
     internal sealed class ChannelMappingRow : INotifyPropertyChanged
     {
-        // Cap filtered results — protects against substrings like "data"
-        // matching half the universe. The ListBox virtualizes, but a 1500-item
-        // unfiltered render with no virtualization at all (just-typed first
-        // char) would still cost layout time; this keeps the inline editor
-        // snappy.
-        private const int MaxFilteredResults = 500;
-
         public string Name { get; set; } = "";
         public string Url { get; set; } = "";
         public int PackageLevel { get; set; }
@@ -235,6 +230,12 @@ namespace MozaPlugin.Devices.WheelUi
         }
 
         private string _simHubProperty = "";
+        /// <summary>
+        /// The persisted mapping string — a plain SimHub property path
+        /// (<c>DataCorePlugin.GameData.Rpms</c>) or a SimHub formula
+        /// (<c>[SpeedKmh] * 0.621</c>, or a <c>js:</c> JavaScript expression).
+        /// Source of truth; <see cref="Expression"/> is kept in sync both ways.
+        /// </summary>
         public string SimHubProperty
         {
             get => _simHubProperty;
@@ -243,37 +244,111 @@ namespace MozaPlugin.Devices.WheelUi
                 var v = (value ?? "").Trim();
                 if (_simHubProperty == v) return;
                 _simHubProperty = v;
+                // Keep the bound ExpressionValue in sync without re-firing back
+                // into us (the FormulaPicker mutates Expression; this is the
+                // reverse direction — Reset, repopulate, programmatic set).
+                if (_expression != null && !_syncingExpression)
+                {
+                    _syncingExpression = true;
+                    try { ApplyStoredToExpression(_expression, v); }
+                    finally { _syncingExpression = false; }
+                }
                 PropertyChanged?.Invoke(this, new PropertyChangedEventArgs(nameof(SimHubProperty)));
                 // Clear the live value so the next refresh repopulates from the
-                // new path and the user doesn't see a stale value matched
-                // against an unrelated property name.
+                // new path/formula and the user doesn't see a stale value matched
+                // against an unrelated source.
                 CurrentValueText = "";
             }
         }
 
-        /// <summary>
-        /// Master snapshot of every SimHub property name (set once by the populator
-        /// from <see cref="MozaPlugin.GetAllSimHubPropertyNames"/>). The inline
-        /// editor's ListBox does NOT bind to this directly — filter into
-        /// <see cref="FilteredProperties"/> on each EditFilter keystroke.
-        /// </summary>
-        public IReadOnlyList<string> AllProperties { get; set; } = KnownSimHubProperties.Paths;
+        // ── Formula editing (embedded SimHub FormulaPickerButton) ───────────
+        // The picker binds to Expression (an ExpressionValue) and Engine. On
+        // commit the dialog mutates the SAME ExpressionValue in place; we listen
+        // for that and serialize it back into SimHubProperty (the persisted form),
+        // which fires the per-row persist listener. SimHubProperty stays the
+        // source of truth so persistence/back-compat are unchanged.
 
-        private IReadOnlyList<string> _filteredProperties = Array.Empty<string>();
-        /// <summary>
-        /// Live filtered subset of <see cref="AllProperties"/>. Bound to the
-        /// inline editor's ListBox.ItemsSource. Immutable-list swap on each
-        /// keystroke — Clear+Add would race a mid-click on a list item.
-        /// </summary>
-        public IReadOnlyList<string> FilteredProperties
+        /// <summary>Shared SimHub formula engine (set by the row factory). May be
+        /// null if engine construction failed; the picker degrades to read-only.</summary>
+        public NCalcEngineBase? Engine { get; set; }
+
+        private bool _syncingExpression;
+        private ExpressionValue? _expression;
+        public ExpressionValue Expression
         {
-            get => _filteredProperties;
-            private set
+            get
             {
-                _filteredProperties = value ?? Array.Empty<string>();
-                PropertyChanged?.Invoke(this, new PropertyChangedEventArgs(nameof(FilteredProperties)));
+                if (_expression == null)
+                {
+                    _expression = MakeExpression(_simHubProperty);
+                    _expression.PropertyChanged += OnExpressionChanged;
+                }
+                return _expression;
             }
         }
+
+        private void OnExpressionChanged(object? sender, PropertyChangedEventArgs e)
+        {
+            if (_syncingExpression || _expression == null) return;
+            // The picker sets Expression (always) and Interpreter (on NCalc<->JS).
+            if (e.PropertyName != nameof(ExpressionValue.Expression)
+                && e.PropertyName != nameof(ExpressionValue.UseJavascript)) return;
+            SimHubProperty = SerializeExpression(_expression);
+        }
+
+        // Build a fresh ExpressionValue from a stored mapping string.
+        private static ExpressionValue MakeExpression(string? stored)
+        {
+            var ev = new ExpressionValue();
+            ApplyStoredToExpression(ev, stored);
+            return ev;
+        }
+
+        // Mutate an existing ExpressionValue in place to match a stored string
+        // (the FormulaPicker holds a reference to this object, so we must not swap
+        // it). A bare property path is WRAPPED as [path] so the NCalc editor sees
+        // a valid single-property formula — existing mappings persisted before
+        // this feature are bare paths and would otherwise be invalid NCalc. A
+        // string that already looks like a formula (brackets/operators/js:) is
+        // used verbatim. UseJavascript's setter flips the interpreter for us.
+        private static void ApplyStoredToExpression(ExpressionValue ev, string? stored)
+        {
+            var s = (stored ?? "").Trim();
+            if (s.Length == 0) { ev.UseJavascript = false; ev.Expression = ""; return; }
+            if (s.StartsWith("js:", StringComparison.OrdinalIgnoreCase))
+            {
+                ev.UseJavascript = true;
+                ev.Expression = s.Substring(3);
+                return;
+            }
+            ev.UseJavascript = false;
+            ev.Expression = NCalcExpressionEvaluator.LooksLikeExpression(s) ? s : "[" + s + "]";
+        }
+
+        // Serialize an ExpressionValue back to the persisted string form. A sole
+        // [property] reference is UNWRAPPED to its bare path so existing mappings
+        // keep their plain stored form (and the resolver's fast GetPropertyValue
+        // path); a real formula ([a]+[b], functions, js:, …) is stored verbatim
+        // (js:-prefixed for JavaScript so MakeExpression restores the interpreter).
+        private static string SerializeExpression(ExpressionValue ev)
+        {
+            var expr = (ev.Expression ?? "").Trim();
+            if (expr.Length == 0) return "";
+            if (ev.UseJavascript) return "js:" + expr;
+            if (expr.Length >= 2 && expr[0] == '[' && expr[expr.Length - 1] == ']')
+            {
+                var inner = expr.Substring(1, expr.Length - 2);
+                if (inner.IndexOf('[') < 0 && inner.IndexOf(']') < 0
+                    && !NCalcExpressionEvaluator.LooksLikeExpression(inner))
+                    return inner;
+            }
+            return expr;
+        }
+
+        /// <summary>FSR1/CM1 rows carry extra per-field options (boundary/scale/bias)
+        /// reached via the row's pencil; plain channels are edited entirely through
+        /// the formula picker, so their pencil is hidden.</summary>
+        public bool ShowFieldOptions => IsFsr1 || IsCm1;
 
         private string _currentValueText = "";
         public string CurrentValueText
@@ -291,9 +366,11 @@ namespace MozaPlugin.Devices.WheelUi
 
         private bool _isEditing;
         /// <summary>
-        /// Drives the inline editor panel's visibility. Set to true via
-        /// <see cref="BeginEdit"/> (user clicked the pencil icon), back to
-        /// false via <see cref="CommitEdit"/> / <see cref="CancelEdit"/>.
+        /// Drives the FSR1/CM1 per-field editor panel's visibility (boundary /
+        /// scale / bias steppers). Toggled by the row's pencil via
+        /// <see cref="BeginEdit"/> / <see cref="EndEdit"/>. Plain channels have no
+        /// extra options, so their pencil is hidden and this stays false — the
+        /// formula picker edits them directly.
         /// </summary>
         public bool IsEditing
         {
@@ -306,108 +383,12 @@ namespace MozaPlugin.Devices.WheelUi
             }
         }
 
-        private string _editFilter = "";
-        /// <summary>
-        /// TextBox-backed filter inside the inline editor. Empty string = show
-        /// the full property list (the user has explicitly opened the editor,
-        /// so there's no "min 3 chars" gate). Substring + ordinal-ignore-case
-        /// match against <see cref="AllProperties"/>, capped at
-        /// <c>MaxFilteredResults</c>.
-        /// </summary>
-        public string EditFilter
-        {
-            get => _editFilter;
-            set
-            {
-                var v = value ?? "";
-                if (_editFilter == v) return;
-                _editFilter = v;
-                PropertyChanged?.Invoke(this, new PropertyChangedEventArgs(nameof(EditFilter)));
-                UpdateFilteredProperties();
-            }
-        }
+        /// <summary>Open the FSR1/CM1 field-options panel.</summary>
+        public void BeginEdit() => IsEditing = true;
 
-        private string _pendingProperty = "";
-        /// <summary>
-        /// ListBox-backed selection inside the inline editor. Two-way bound
-        /// to ListBox.SelectedItem. Applied to <see cref="SimHubProperty"/>
-        /// on <see cref="CommitEdit"/>; discarded on <see cref="CancelEdit"/>.
-        /// </summary>
-        public string PendingProperty
-        {
-            get => _pendingProperty;
-            set
-            {
-                var v = value ?? "";
-                if (_pendingProperty == v) return;
-                _pendingProperty = v;
-                PropertyChanged?.Invoke(this, new PropertyChangedEventArgs(nameof(PendingProperty)));
-            }
-        }
-
-        /// <summary>
-        /// Open the inline editor: seed the filter empty (full list visible)
-        /// and the pending selection to the row's current SimHub property so
-        /// the user sees their current choice highlighted in the list.
-        /// </summary>
-        public void BeginEdit()
-        {
-            _editFilter = "";
-            PropertyChanged?.Invoke(this, new PropertyChangedEventArgs(nameof(EditFilter)));
-            PendingProperty = SimHubProperty;
-            UpdateFilteredProperties();
-            IsEditing = true;
-        }
-
-        /// <summary>
-        /// Apply the pending selection to <see cref="SimHubProperty"/> and
-        /// collapse the editor. The SimHubProperty setter raises
-        /// PropertyChanged, which the populator's listener wires through to
-        /// <see cref="MozaPlugin.SetChannelMapping"/> for persistence.
-        /// </summary>
-        public void CommitEdit()
-        {
-            SimHubProperty = PendingProperty;
-            IsEditing = false;
-        }
-
-        /// <summary>
-        /// Discard the pending selection and collapse the editor.
-        /// </summary>
-        public void CancelEdit()
-        {
-            PendingProperty = SimHubProperty;
-            IsEditing = false;
-        }
-
-        private void UpdateFilteredProperties()
-        {
-            string query = _editFilter;
-            var src = AllProperties;
-            if (src == null || src.Count == 0)
-            {
-                FilteredProperties = Array.Empty<string>();
-                return;
-            }
-
-            // Empty filter = full list (capped). The user explicitly opened
-            // the editor so a flood of options is the expected starting point.
-            bool noFilter = string.IsNullOrEmpty(query);
-
-            var seen = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
-            var list = new List<string>(Math.Min(src.Count, MaxFilteredResults));
-            for (int i = 0; i < src.Count; i++)
-            {
-                var p = src[i];
-                if (string.IsNullOrEmpty(p)) continue;
-                if (!noFilter && p.IndexOf(query, StringComparison.OrdinalIgnoreCase) < 0) continue;
-                if (!seen.Add(p)) continue;
-                list.Add(p);
-                if (list.Count >= MaxFilteredResults) break;
-            }
-
-            FilteredProperties = list;
-        }
+        /// <summary>Close the field-options panel (OK / Cancel both just collapse —
+        /// FSR1/CM1 edits persist live as they are made).</summary>
+        public void EndEdit() => IsEditing = false;
 
         public event PropertyChangedEventHandler? PropertyChanged;
     }

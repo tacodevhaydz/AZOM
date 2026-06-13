@@ -397,7 +397,7 @@
   <data name="Button_SendTestPattern" xml:space="preserve"><value>▶ 发送测试图案</value></data>
   <data name="Button_StopTest" xml:space="preserve"><value>■ 停止</value></data>
   <data name="Section_ChannelMappings" xml:space="preserve"><value>通道映射</value></data>
-  <data name="Hint_ClickPencilForProperty" xml:space="preserve"><value>点击一行的铅笔图标以选择 SimHub 属性</value></data>
+  <data name="Hint_ClickPencilForProperty" xml:space="preserve"><value>点击某行的公式按钮以选择 SimHub 属性或编写表达式（[property] NCalc / js:）</value></data>
   <data name="Status_LoadingChannelMappings" xml:space="preserve"><value>正在加载通道映射…</value></data>
   <data name="DataGridHeader_Channel" xml:space="preserve"><value>通道</value></data>
   <data name="DataGridHeader_SimHubProperty" xml:space="preserve"><value>SimHub 属性</value></data>

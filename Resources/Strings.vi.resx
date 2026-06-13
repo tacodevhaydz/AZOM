@@ -397,7 +397,7 @@
   <data name="Button_SendTestPattern" xml:space="preserve"><value>▶ GỬI MẪU THỬ</value></data>
   <data name="Button_StopTest" xml:space="preserve"><value>■ DỪNG</value></data>
   <data name="Section_ChannelMappings" xml:space="preserve"><value>ÁNH XẠ KÊNH</value></data>
-  <data name="Hint_ClickPencilForProperty" xml:space="preserve"><value>Nhấn biểu tượng bút chì trên hàng để chọn một thuộc tính SimHub</value></data>
+  <data name="Hint_ClickPencilForProperty" xml:space="preserve"><value>Nhấn nút công thức trên hàng để chọn một thuộc tính SimHub hoặc tạo biểu thức ([property] NCalc / js:)</value></data>
   <data name="Status_LoadingChannelMappings" xml:space="preserve"><value>Đang tải ánh xạ kênh…</value></data>
   <data name="DataGridHeader_Channel" xml:space="preserve"><value>Kênh</value></data>
   <data name="DataGridHeader_SimHubProperty" xml:space="preserve"><value>Thuộc tính SimHub</value></data>
