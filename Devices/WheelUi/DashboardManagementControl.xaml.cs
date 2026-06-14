@@ -11,6 +11,9 @@ using MozaControls;
 using MozaPlugin.Telemetry;
 using MozaPlugin.Telemetry.Dashboard;
 using MozaPlugin.UI;
+using SimHub.Plugins.OutputPlugins.Dash.GLCDTemplating;
+using SimHub.Plugins.OutputPlugins.EditorControls;
+using SimHub.Plugins.OutputPlugins.GraphicalDash.Models;
 using static MozaPlugin.UI.UiHelpers;
 using static MozaPlugin.Devices.WheelUi.WheelUiHelpers;
 
@@ -959,30 +962,89 @@ namespace MozaPlugin.Devices.WheelUi
             TelemetryMappingStatus.Text = $"Reset to defaults at {DateTime.Now:HH:mm:ss}";
         }
 
-        // ── FSR1/CM1 field-options panel ───────────────────────────────
-        // The pencil toggles the per-field options panel (boundary / scale / bias
-        // steppers). Plain channels have no pencil — they're edited entirely via
-        // the embedded FormulaPickerButton. The row model owns IsEditing; edits
-        // inside the panel persist live as they're made, so there is no OK/Cancel.
+        // ── Inline editor handlers ─────────────────────────────────────
+        // Dual-mode: the pencil opens the simple inline editor (searchable property
+        // list + FSR1/CM1 steppers); the ƒₓ button opens SimHub's formula dialog for
+        // advanced [property] NCalc / js: editing. Each row's button passes the bound
+        // ChannelMappingRow via Tag; the row model owns the simple-editor state.
 
         private void EditMapping_Click(object sender, RoutedEventArgs e)
         {
             if ((sender as FrameworkElement)?.Tag is not ChannelMappingRow row) return;
-            if (row.IsEditing)
-            {
-                row.EndEdit();
-                if (row.IsFsr1) _plugin?.ClearFsr1FieldProbe();
-                return;
-            }
-            // Only one options panel expanded at a time to keep the list scannable.
+            // Only one inline editor expanded at a time to keep the list scannable.
             foreach (var r in _channelRows)
-                if (!ReferenceEquals(r, row) && r.IsEditing) r.EndEdit();
+                if (!ReferenceEquals(r, row) && r.IsEditing) r.CancelEdit();
             row.BeginEdit();
             // FSR1: arm the field-probe on this field's current span so the wheel
             // lights exactly the box(es) it feeds — stepping the edges moves the lit
-            // box live. Cleared when the panel is toggled shut.
+            // box live. Cleared on Commit/Cancel below.
             if (row.IsFsr1 && !string.IsNullOrEmpty(row.RecordKey) && !string.IsNullOrEmpty(row.FieldId))
                 _plugin?.SetFsr1FieldProbe(row.RecordKey, row.FieldId);
+            // Focus the filter once the row's editor container is realized.
+            Dispatcher.BeginInvoke(new Action(() => FocusInlineFilter(row)), DispatcherPriority.Render);
+        }
+
+        private void CommitMapping_Click(object sender, RoutedEventArgs e)
+        {
+            if ((sender as FrameworkElement)?.Tag is not ChannelMappingRow row) return;
+            row.CommitEdit();
+            if (row.IsFsr1) _plugin?.ClearFsr1FieldProbe();
+        }
+
+        private void CancelMapping_Click(object sender, RoutedEventArgs e)
+        {
+            if ((sender as FrameworkElement)?.Tag is not ChannelMappingRow row) return;
+            row.CancelEdit();
+            if (row.IsFsr1) _plugin?.ClearFsr1FieldProbe();
+        }
+
+        // Advanced edit: open SimHub's own formula editor (BindingEditor) against the
+        // shared engine and a working copy of the row's formula. On OK, write the
+        // result back through the row (which serializes it into SimHubProperty and
+        // persists). Mirrors SimHub's FormulaPickerButton click logic, but with our
+        // own compact ƒₓ button instead of the heavyweight templated control.
+        private async void AdvancedEditMapping_Click(object sender, RoutedEventArgs e)
+        {
+            if ((sender as FrameworkElement)?.Tag is not ChannelMappingRow row) return;
+            var engine = row.Engine;
+            if (engine == null)
+            {
+                TelemetryMappingStatus.Text = "Formula editor unavailable (SimHub engine not loaded)";
+                return;
+            }
+
+            // Work on a throwaway ExpressionValue so the dialog never mutates the row's
+            // live Expression mid-edit; copy back only on OK.
+            var src = row.Expression;
+            var working = new ExpressionValue();
+            working.UseJavascript = src.UseJavascript;
+            working.Expression = src.Expression;
+            working.PreExpression = src.PreExpression;
+
+            var data = new DashboardBindingData
+            {
+                Formula = working,
+                Mode = string.IsNullOrWhiteSpace(working.Expression) ? BindingMode.None : BindingMode.Formula,
+                TargetPropertyName = row.Name,
+                TargetType = typeof(double),
+            };
+
+            try
+            {
+                var editor = new BindingEditor(engine) { DataContext = data };
+                var result = await editor.ShowDialogWindowAsync(this);
+                if ((int)result != 1) return; // not OK
+                if (data.Mode == BindingMode.Formula)
+                    row.ApplyEditedFormula(data.Formula?.Expression, data.Formula?.UseJavascript ?? false);
+                else
+                    row.ApplyEditedFormula("", false); // cleared
+                TelemetryMappingStatus.Text = $"Saved at {DateTime.Now:HH:mm:ss}";
+            }
+            catch (Exception ex)
+            {
+                MozaLog.Warn("[AZOM] formula editor failed: " + ex.Message);
+                TelemetryMappingStatus.Text = "Formula editor failed (see log)";
+            }
         }
 
         // ── FSR1 boundary stepper handlers (coupled-divider model) ─────────
@@ -1088,6 +1150,31 @@ namespace MozaPlugin.Devices.WheelUi
             TelemetryMappingStatus.Text = ok
                 ? $"Merged split back at {DateTime.Now:HH:mm:ss}"
                 : "Cannot merge — shrink an adjacent field first";
+        }
+
+        private void FocusInlineFilter(ChannelMappingRow row)
+        {
+            // Walk the ItemsControl's container for this row to find the
+            // EditFilterBox TextBox and steal focus.
+            if (TelemetryChannelList == null) return;
+            var container = TelemetryChannelList.ItemContainerGenerator.ContainerFromItem(row) as FrameworkElement;
+            if (container == null) return;
+            var tb = FindDescendant<TextBox>(container, "EditFilterBox");
+            tb?.Focus();
+            tb?.SelectAll();
+        }
+
+        private static T? FindDescendant<T>(DependencyObject root, string name) where T : FrameworkElement
+        {
+            int count = VisualTreeHelper.GetChildrenCount(root);
+            for (int i = 0; i < count; i++)
+            {
+                var child = VisualTreeHelper.GetChild(root, i);
+                if (child is T fe && fe.Name == name) return fe;
+                var nested = FindDescendant<T>(child, name);
+                if (nested != null) return nested;
+            }
+            return null;
         }
 
         // Subscribed once per row by PopulateChannelMappingList. Auto-saves the

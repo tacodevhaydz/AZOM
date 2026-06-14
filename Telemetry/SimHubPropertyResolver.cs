@@ -29,9 +29,9 @@ namespace MozaPlugin.Telemetry
         }
 
         /// <summary>
-        /// SimHub's shared formula engine, for the channel-mapper's
-        /// <c>FormulaPickerButton</c> (so the editor preview uses the same engine
-        /// as the live telemetry path). Null only if engine construction failed.
+        /// SimHub's shared formula engine, for the channel-mapper's advanced
+        /// formula dialog (so its preview uses the same engine as the live
+        /// telemetry path). Null only if engine construction failed.
         /// </summary>
         public SimHub.Plugins.OutputPlugins.Dash.TemplatingCommon.NCalcEngineBase? FormulaEngine
             => _formula.Engine;

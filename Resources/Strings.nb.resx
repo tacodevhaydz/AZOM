@@ -402,12 +402,13 @@
   <data name="Button_SendTestPattern" xml:space="preserve"><value>▶ SEND TESTMØNSTER</value></data>
   <data name="Button_StopTest" xml:space="preserve"><value>■ STOPP</value></data>
   <data name="Section_ChannelMappings" xml:space="preserve"><value>KANALTILPASNINGER</value></data>
-  <data name="Hint_ClickPencilForProperty" xml:space="preserve"><value>Klikk på formelknappen i en rad for å velge en SimHub-egenskap eller bygge et uttrykk ([property] NCalc / js:)</value></data>
+  <data name="Hint_ClickPencilForProperty" xml:space="preserve"><value>Blyant for å velge en egenskap, eller formelknappen for et NCalc- / js:-uttrykk</value></data>
   <data name="Status_LoadingChannelMappings" xml:space="preserve"><value>Laster kanaltilpasninger…</value></data>
   <data name="DataGridHeader_Channel" xml:space="preserve"><value>Kanal</value></data>
   <data name="DataGridHeader_SimHubProperty" xml:space="preserve"><value>SimHub-egenskap</value></data>
   <data name="DataGridHeader_CurrentValue" xml:space="preserve"><value>Nåværende verdi</value></data>
   <data name="Tooltip_EditMapping" xml:space="preserve"><value>Rediger SimHub-egenskapskobling</value></data>
+  <data name="Tooltip_EditFormula" xml:space="preserve"><value>Rediger som formel (NCalc [property] / js:)</value></data>
   <data name="Button_ResetToDefaults" xml:space="preserve"><value>TILBAKESTILL TIL STANDARD</value></data>
   <data name="Button_ResetField" xml:space="preserve"><value>TILBAKESTILL FELT</value></data>
   <data name="Button_SplitField" xml:space="preserve"><value>DEL FELT</value></data>

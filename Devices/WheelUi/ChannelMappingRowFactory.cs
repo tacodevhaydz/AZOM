@@ -34,18 +34,21 @@ namespace MozaPlugin.Devices.WheelUi
             if (plugin == null) return new BuildResult(null, "");
 
             var engine = plugin.ChannelFormulaEngine;
+            // Snapshot the SimHub property list once so all rows share one backing
+            // list for the simple editor (avoids N copies of a 500-entry list).
+            var props = plugin.GetAllSimHubPropertyNames();
 
             // FSR V1 renders fixed-schema group-0x42 dashboards, not tier-def
             // channels — map its built-in dashboard FIELDS from the catalog.
             if (plugin.IsFsr1DisplayWheel)
-                return BuildFromFsr1Catalog(plugin, engine);
+                return BuildFromFsr1Catalog(plugin, engine, props);
 
             var profile = plugin.TelemetrySender?.Profile;
 
             if (profile == null || profile.Tiers.Count == 0)
-                return BuildFromCatalog(plugin, engine);
+                return BuildFromCatalog(plugin, engine, props);
 
-            return BuildFromProfile(profile, engine);
+            return BuildFromProfile(profile, engine, props);
         }
 
         /// <summary>
@@ -54,7 +57,7 @@ namespace MozaPlugin.Devices.WheelUi
         /// fields are protocol-filled and omitted. Each row carries the field's
         /// current mapping (user override or catalog default) + input scale range.
         /// </summary>
-        private static BuildResult BuildFromFsr1Catalog(MozaPlugin plugin, NCalcEngineBase? engine)
+        private static BuildResult BuildFromFsr1Catalog(MozaPlugin plugin, NCalcEngineBase? engine, IReadOnlyList<string> props)
         {
             var rows = new List<ChannelMappingRow>();
             // Follow the ACTIVE dashboard (like a CM2/modern display): show only the
@@ -86,6 +89,7 @@ namespace MozaPlugin.Devices.WheelUi
                     var (offsets, enc) = Telemetry.Fsr1DashboardCatalog.ResolveLayout(f, m, dash.PayloadLen);
                     dashRows.Add(new ChannelMappingRow
                     {
+                        AllProperties = props,
                         Engine = engine,
                         IsFsr1 = true,
                         IsSynthetic = synthetic,
@@ -136,12 +140,14 @@ namespace MozaPlugin.Devices.WheelUi
         {
             if (plugin == null) return new BuildResult(null, "");
             var engine = plugin.ChannelFormulaEngine;
+            var props = plugin.GetAllSimHubPropertyNames();
             var rows = new List<ChannelMappingRow>();
             foreach (var f in Telemetry.Cm1DashboardCatalog.Fields)
             {
                 var m = plugin.GetCm1FieldMapping(f.FieldId);
                 rows.Add(new ChannelMappingRow
                 {
+                    AllProperties = props,
                     Engine = engine,
                     IsCm1 = true,
                     FieldId = f.FieldId,
@@ -167,10 +173,10 @@ namespace MozaPlugin.Devices.WheelUi
             var profile = cm2Sender?.Profile;
             if (profile == null || profile.Tiers.Count == 0)
                 return new BuildResult(null, "(CM2: waiting for the dash to advertise its channels…)");
-            return BuildFromProfile(profile, plugin.ChannelFormulaEngine);
+            return BuildFromProfile(profile, plugin.ChannelFormulaEngine, plugin.GetAllSimHubPropertyNames());
         }
 
-        private static BuildResult BuildFromCatalog(MozaPlugin plugin, NCalcEngineBase? engine)
+        private static BuildResult BuildFromCatalog(MozaPlugin plugin, NCalcEngineBase? engine, IReadOnlyList<string> props)
         {
             var catalog = plugin.WheelChannelCatalogForDiagnostics;
             if (catalog == null || catalog.Count == 0)
@@ -185,6 +191,7 @@ namespace MozaPlugin.Devices.WheelUi
                 if (string.IsNullOrEmpty(url)) continue;
                 rows.Add(new ChannelMappingRow
                 {
+                    AllProperties = props,
                     Engine = engine,
                     Name = url,
                     Url = url,
@@ -197,7 +204,7 @@ namespace MozaPlugin.Devices.WheelUi
                 $"(no dashboard loaded — showing {rows.Count} wheel-advertised channels)");
         }
 
-        private static BuildResult BuildFromProfile(MultiStreamProfile profile, NCalcEngineBase? engine)
+        private static BuildResult BuildFromProfile(MultiStreamProfile profile, NCalcEngineBase? engine, IReadOnlyList<string> props)
         {
             // Per-widget tier-def emits one tier per dashboard widget, so a
             // dashboard with 12 widgets binding 6 unique URLs surfaces 12
@@ -213,6 +220,7 @@ namespace MozaPlugin.Devices.WheelUi
                     if (!seen.Add(ch.Url)) continue;
                     rows.Add(new ChannelMappingRow
                     {
+                        AllProperties = props,
                         Engine = engine,
                         Name = ch.Name,
                         Url = ch.Url,
@@ -232,6 +240,7 @@ namespace MozaPlugin.Devices.WheelUi
                 if (!seen.Add(ch.Url)) continue;
                 rows.Add(new ChannelMappingRow
                 {
+                    AllProperties = props,
                     Engine = engine,
                     Name = ch.Name,
                     Url = ch.Url,

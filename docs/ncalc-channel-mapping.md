@@ -30,7 +30,7 @@ Key SimHub types (namespace
 |---|---|
 | `NCalcEngineBase` | `new NCalcEngineBase()` works standalone; binds to `PluginManager.Instance` internally. `public double ParseValueOrDefault(ExpressionValue, double)` and the `string` overload evaluate and **never throw** (catch → default). Caches per-frame keyed on the PluginManager hash. |
 | `ExpressionValue` | A compiled formula. Has an **implicit `string → ExpressionValue`** conversion that defaults to the NCalc interpreter and auto-selects JavaScript on a `js:` prefix. `[name]` references resolve from the live property tree at compile time via a `PropertyEntryWrapper.GetValue()`. |
-| `FormulaPickerButton` (`…WPFUI`) | SimHub's own formula-editor control — a templated `Control` showing the current formula and opening the full `BindingEditor` dialog (property browser, NCalc/JS, function help, live preview) on click. Bindable DPs: `Expression` (`ExpressionValue`, two-way — the dialog writes the chosen formula back into it) and `NCalcEngine` (`NCalcEngineBase`). The dialog needs only the supplied engine — no dashboard/screen context — so it hosts standalone. Its default template resolves automatically via SimHub.Plugins' `ThemeInfo`. |
+| `BindingEditor` (`…EditorControls`) | SimHub's formula-editor **dialog** (`SHDialogContentBase`): property browser, NCalc/JS, function help, live preview. Constructed with the `NCalcEngineBase`; shown via `ShowDialogWindowAsync(owner)` → `Task<DialogResult>` (`1` = OK). Its `DataContext` is a `DashboardBindingData` carrying the `Formula` (`ExpressionValue`), `Mode` (`BindingMode.None/Formula`), `TargetPropertyName`, and `TargetType`. Needs only the engine — no dashboard/screen context — so it opens standalone. We drive it from our own compact **ƒₓ** button rather than SimHub's heavyweight templated `FormulaPickerButton` (which renders as a large control). |
 
 ## Why this is a small change
 
@@ -67,7 +67,7 @@ return their default `0`/`null`) instead of breaking the resolver.
   `ExpressionValue` objects across frames (don't realloc per tick).
 - A single lock around evaluation: the ~30 ms telemetry tick thread and the
   500 ms UI display tick both evaluate against the one engine instance.
-- Exposes the `NCalcEngineBase Engine` for the UI's `FormulaPickerButton`.
+- Exposes the `NCalcEngineBase Engine` for the UI's advanced formula dialog.
 
 ### `SimHubPropertyResolver`
 
@@ -76,14 +76,23 @@ evaluator when `LooksLikeExpression(path)` (after the existing `@internal/`
 check); otherwise unchanged. Exposes `FormulaEngine` (the shared
 `NCalcEngineBase`). `MozaPlugin.ChannelFormulaEngine` forwards it to the UI.
 
-### UI — `FormulaPickerButton`
+### UI — dual mode (pencil + ƒₓ)
 
-Each row's "SimHub property" cell hosts a `FormulaPickerButton` bound to a
-per-row `ExpressionValue` and the shared engine. Clicking opens SimHub's formula
-editor; on commit the dialog mutates the bound `ExpressionValue` in place.
+Each row's "SimHub property" cell shows the current mapping text plus two
+buttons:
+
+- **Pencil → simple edit.** The original inline searchable property list (filter
+  + virtualized `ListBox`), and for FSR1/CM1 the per-field boundary/scale/bias
+  steppers. Picks a single property; commits a bare path.
+- **ƒₓ → advanced edit.** A compact custom button that opens SimHub's
+  `BindingEditor` dialog (above) against the shared engine and a *working copy*
+  of the row's `ExpressionValue`. On OK, the result is written back via
+  `ChannelMappingRow.ApplyEditedFormula`, which serializes it into
+  `SimHubProperty` and fires the existing persistence listener. The dialog never
+  mutates the row's live `Expression` mid-edit (it works on the copy).
 
 `ChannelMappingRow` keeps the stored string (`SimHubProperty`) as the source of
-truth and a bound `ExpressionValue` in sync both ways:
+truth and a bound `ExpressionValue` in sync:
 
 - string → expression: a **bare property path is wrapped as `[path]`** so the
   NCalc editor sees a valid single-property formula (a mapping persisted before
@@ -91,17 +100,18 @@ truth and a bound `ExpressionValue` in sync both ways:
   editor opens broken). A string that already looks like a formula
   (brackets/operators/`js:`) is used verbatim. No data migration is needed —
   wrapping happens only at display time.
-- expression → string: on the `ExpressionValue`'s `PropertyChanged`, serialize
-  back, assigning `SimHubProperty`, which fires the existing
+- expression → string: `ApplyEditedFormula` (called on dialog OK) serializes the
+  result and assigns `SimHubProperty`, which fires the existing
   `OnMappingRowPropertyChanged` persistence listener. A **sole `[property]` is
   unwrapped to its bare path** so existing mappings keep their plain stored form
   and the resolver's fast `GetPropertyValue` path; a real formula (`[a]+[b]`,
-  functions, `js:` …) is stored verbatim. A `_syncing` guard prevents a feedback
-  loop.
+  functions, `js:` …) is stored verbatim. A `_syncing` guard prevents the
+  string→expression sync from re-firing during the write-back.
 
-The FSR1/CM1 boundary/scale/bias steppers are unchanged and still reachable via
-the per-row pencil (now gated to FSR1/CM1 rows — `ShowFieldOptions`); the
-formula button replaces the old property filter+list for the property itself.
+The simple editor also keeps `SimHubProperty` in sync the other way: committing a
+property from the list updates the string, whose setter re-wraps the bound
+`Expression` so the next ƒₓ open shows the right formula. The FSR1/CM1
+boundary/scale/bias steppers are unchanged and live in the pencil's inline panel.
 
 ### Known limitations (v1)
 

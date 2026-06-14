@@ -36,9 +36,9 @@ namespace MozaPlugin.Telemetry
         /// <summary>
         /// The shared formula engine, lazily constructed. Bound to
         /// <c>PluginManager.Instance</c> internally by SimHub. Returns null only
-        /// if construction threw (logged once). The channel-mapper UI binds this
-        /// to its <c>FormulaPickerButton.NCalcEngine</c> so the editor's preview
-        /// uses the same engine as the live telemetry path.
+        /// if construction threw (logged once). The channel-mapper's advanced
+        /// editor passes this to SimHub's <c>BindingEditor</c> dialog so its
+        /// preview uses the same engine as the live telemetry path.
         /// </summary>
         public NCalcEngineBase? Engine
         {

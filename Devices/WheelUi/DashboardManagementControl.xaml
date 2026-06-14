@@ -4,7 +4,6 @@
              xmlns:ctrl="clr-namespace:MozaControls"
              xmlns:res="clr-namespace:MozaPlugin.Resources"
              xmlns:ui="clr-namespace:MozaPlugin.UI"
-             xmlns:shui="clr-namespace:SimHub.Plugins.OutputPlugins.Dash.WPFUI;assembly=SimHub.Plugins"
              Padding="0"
              TextElement.Foreground="{DynamicResource TextBrush}"
              TextElement.FontFamily="{DynamicResource FontUi}"
@@ -227,25 +226,26 @@
                                                Padding="10,4"
                                                Foreground="{DynamicResource TextBrush}"
                                                TextTrimming="CharacterEllipsis"/>
-                                    <!-- SimHub property/formula cell: SimHub's own formula
-                                         picker (opens the [property] NCalc / js: editor on
-                                         click) + a pencil for FSR1/CM1 per-field options. -->
+                                    <!-- SimHub property/formula cell: the current mapping
+                                         text + a pencil (simple: pick a property) + a ƒₓ
+                                         button (advanced: SimHub's [property] NCalc / js:
+                                         formula editor). -->
                                     <Grid Grid.Column="1" Margin="10,4">
                                         <Grid.ColumnDefinitions>
                                             <ColumnDefinition Width="*"/>
                                             <ColumnDefinition Width="Auto"/>
+                                            <ColumnDefinition Width="Auto"/>
                                         </Grid.ColumnDefinitions>
-                                        <shui:FormulaPickerButton Grid.Column="0"
-                                                Expression="{Binding Expression}"
-                                                NCalcEngine="{Binding Engine}"
-                                                EditPropertyName="{Binding Name}"
-                                                VerticalAlignment="Center"/>
+                                        <TextBlock Grid.Column="0"
+                                                   Text="{Binding SimHubProperty}"
+                                                   VerticalAlignment="Center"
+                                                   FontFamily="{DynamicResource FontMono}"
+                                                   Foreground="{DynamicResource TextBrush}"
+                                                   TextTrimming="CharacterEllipsis"/>
                                         <Button Grid.Column="1"
                                                 Click="EditMapping_Click"
                                                 Tag="{Binding}"
                                                 ToolTip="{x:Static res:Strings.Tooltip_EditMapping}"
-                                                Visibility="{Binding ShowFieldOptions,
-                                                            Converter={StaticResource BoolToVisibility}}"
                                                 Width="26" Height="22"
                                                 Padding="2"
                                                 Margin="6,0,0,0"
@@ -262,6 +262,26 @@
                                                   StrokeStartLineCap="Round"
                                                   StrokeEndLineCap="Round"/>
                                         </Button>
+                                        <Button Grid.Column="2"
+                                                Click="AdvancedEditMapping_Click"
+                                                Tag="{Binding}"
+                                                ToolTip="{x:Static res:Strings.Tooltip_EditFormula}"
+                                                Width="26" Height="22"
+                                                Padding="2"
+                                                Margin="4,0,0,0"
+                                                Background="Transparent"
+                                                BorderThickness="0"
+                                                Cursor="Hand">
+                                            <Path Data="{StaticResource IconFormula}"
+                                                  Stretch="Uniform"
+                                                  Width="15" Height="15"
+                                                  Stroke="{DynamicResource CyanBrush}"
+                                                  StrokeThickness="1.5"
+                                                  Fill="{x:Null}"
+                                                  StrokeLineJoin="Round"
+                                                  StrokeStartLineCap="Round"
+                                                  StrokeEndLineCap="Round"/>
+                                        </Button>
                                     </Grid>
                                     <TextBlock Grid.Column="2"
                                                Text="{Binding CurrentValueText}"
@@ -272,8 +292,9 @@
                                                FontFamily="{DynamicResource FontMono}"/>
                                 </Grid>
 
-                                <!-- Inline editor — visible only when row.IsEditing == true.
-                                     Filter TextBox + virtualized ListBox + Cancel/OK. -->
+                                <!-- Inline simple editor — visible when row.IsEditing.
+                                     Filter TextBox + virtualized property ListBox + Cancel/OK,
+                                     plus the FSR1/CM1 per-field steppers below. -->
                                 <Border Margin="20,4,20,8"
                                         Background="{DynamicResource BgCard2Brush}"
                                         BorderBrush="{DynamicResource BorderBrightBrush}"
@@ -283,6 +304,57 @@
                                         Visibility="{Binding IsEditing,
                                                     Converter={StaticResource BoolToVisibility}}">
                                     <StackPanel>
+                                        <Grid Margin="0,0,0,8">
+                                            <Grid.ColumnDefinitions>
+                                                <ColumnDefinition Width="*"/>
+                                                <ColumnDefinition Width="Auto"/>
+                                                <ColumnDefinition Width="Auto"/>
+                                            </Grid.ColumnDefinitions>
+                                            <TextBox Grid.Column="0"
+                                                     x:Name="EditFilterBox"
+                                                     Text="{Binding EditFilter,
+                                                           UpdateSourceTrigger=PropertyChanged,
+                                                           Mode=TwoWay}"
+                                                     FontFamily="{DynamicResource FontMono}"
+                                                     Padding="8,4"
+                                                     Foreground="{DynamicResource TextBrush}"
+                                                     Background="{DynamicResource BgDeepBrush}"
+                                                     BorderBrush="{DynamicResource BorderBrush}"
+                                                     BorderThickness="1"/>
+                                            <Button Grid.Column="1"
+                                                    Content="{x:Static res:Strings.Button_Cancel}"
+                                                    Margin="6,0,0,0"
+                                                    Click="CancelMapping_Click"
+                                                    Tag="{Binding}"/>
+                                            <Button Grid.Column="2"
+                                                    Content="{x:Static res:Strings.Button_Ok}"
+                                                    MinWidth="60"
+                                                    Margin="6,0,0,0"
+                                                    Click="CommitMapping_Click"
+                                                    Tag="{Binding}"/>
+                                        </Grid>
+                                        <ListBox ItemsSource="{Binding FilteredProperties}"
+                                                 SelectedItem="{Binding PendingProperty, Mode=TwoWay}"
+                                                 MaxHeight="240"
+                                                 Background="{DynamicResource BgDeepBrush}"
+                                                 Foreground="{DynamicResource TextBrush}"
+                                                 BorderBrush="{DynamicResource BorderBrush}"
+                                                 BorderThickness="1"
+                                                 VirtualizingStackPanel.IsVirtualizing="True"
+                                                 VirtualizingStackPanel.VirtualizationMode="Recycling"
+                                                 ScrollViewer.HorizontalScrollBarVisibility="Disabled"
+                                                 ScrollViewer.VerticalScrollBarVisibility="Auto">
+                                            <ListBox.ItemTemplate>
+                                                <DataTemplate>
+                                                    <TextBlock Text="{Binding}"
+                                                               FontFamily="{DynamicResource FontMono}"
+                                                               FontSize="12"
+                                                               Foreground="{DynamicResource TextBrush}"
+                                                               Padding="6,3"/>
+                                                </DataTemplate>
+                                            </ListBox.ItemTemplate>
+                                        </ListBox>
+
                                         <!-- FSR V1 only: per-field input scaling. The
                                              source value between Min and Max maps onto the
                                              field's full-scale output (CapabilityText). -->

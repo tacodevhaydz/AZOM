@@ -65,6 +65,9 @@
     <!-- Pencil/edit icon for inline-edit affordances (e.g. channel-mapping row). -->
     <Geometry x:Key="IconEdit">M4,20 L4,16 L14,6 L18,10 L8,20 Z M14,6 L17,3 A1.4,1.4 0 0 1 19,3 L21,5 A1.4,1.4 0 0 1 21,7 L18,10</Geometry>
 
+    <!-- Formula / expression: a bracketed variable [x] (ties to [property] NCalc syntax). -->
+    <Geometry x:Key="IconFormula">M8,5 H5 V19 H8 M16,5 H19 V19 H16 M10,9.5 L14,14.5 M14,9.5 L10,14.5</Geometry>
+
     <!-- Brand tile: cyan rounded square with the wheel-with-screen knocked out.
          Geometry from tools/icon-smooth/smooth.py; EvenOdd makes screen + grips holes. -->
     <DrawingImage x:Key="MozaWheelBrandIcon">

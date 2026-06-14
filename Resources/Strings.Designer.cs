@@ -484,6 +484,7 @@ namespace MozaPlugin.Resources
         public static string DataGridHeader_SimHubProperty => Get("DataGridHeader_SimHubProperty");
         public static string DataGridHeader_CurrentValue => Get("DataGridHeader_CurrentValue");
         public static string Tooltip_EditMapping => Get("Tooltip_EditMapping");
+        public static string Tooltip_EditFormula => Get("Tooltip_EditFormula");
         public static string Button_ResetToDefaults => Get("Button_ResetToDefaults");
         public static string Button_ResetField => Get("Button_ResetField");
         public static string Button_SplitField => Get("Button_SplitField");

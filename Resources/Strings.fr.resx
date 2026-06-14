@@ -397,12 +397,13 @@
   <data name="Button_SendTestPattern" xml:space="preserve"><value>▶ ENVOYER UN MOTIF DE TEST</value></data>
   <data name="Button_StopTest" xml:space="preserve"><value>■ ARRÊT</value></data>
   <data name="Section_ChannelMappings" xml:space="preserve"><value>AFFECTATIONS DES CANAUX</value></data>
-  <data name="Hint_ClickPencilForProperty" xml:space="preserve"><value>Cliquez sur le bouton de formule d'une ligne pour choisir une propriété SimHub ou créer une expression ([property] NCalc / js:)</value></data>
+  <data name="Hint_ClickPencilForProperty" xml:space="preserve"><value>Crayon pour choisir une propriété, ou le bouton de formule pour une expression NCalc / js:</value></data>
   <data name="Status_LoadingChannelMappings" xml:space="preserve"><value>Chargement des affectations de canaux…</value></data>
   <data name="DataGridHeader_Channel" xml:space="preserve"><value>Canal</value></data>
   <data name="DataGridHeader_SimHubProperty" xml:space="preserve"><value>Propriété SimHub</value></data>
   <data name="DataGridHeader_CurrentValue" xml:space="preserve"><value>Valeur actuelle</value></data>
   <data name="Tooltip_EditMapping" xml:space="preserve"><value>Modifier la liaison à la propriété SimHub</value></data>
+  <data name="Tooltip_EditFormula" xml:space="preserve"><value>Modifier en tant que formule (NCalc [property] / js:)</value></data>
   <data name="Button_ResetToDefaults" xml:space="preserve"><value>RÉINITIALISER PAR DÉFAUT</value></data>
   <data name="Button_ResetField" xml:space="preserve"><value>RÉINITIALISER LE CHAMP</value></data>
   <data name="Button_SplitField" xml:space="preserve"><value>DIVISER LE CHAMP</value></data>
