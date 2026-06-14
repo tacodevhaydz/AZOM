@@ -2895,6 +2895,98 @@ namespace MozaPlugin.Telemetry
         }
 
         /// <summary>
+        /// Rebind the live catalog-synth profile's per-channel SimHubProperty to the
+        /// CURRENTLY-active dashboard (catalog default + this dashboard's user
+        /// overrides), in place, then raise <see cref="MozaPlugin.DashboardSelectionChanged"/>
+        /// so the channel-mapping UI repaints.
+        ///
+        /// Catalog-only switches between same-catalog dashboards differ ONLY in the
+        /// host-side SimHubProperty bindings — the tier-def wire content (URLs,
+        /// compression, structure) is identical. Both swap guards key on wire content
+        /// and ignore SimHubProperty: the <see cref="Profile"/> setter's
+        /// <see cref="AreProfileContentsEquivalent"/> check no-ops the reassignment,
+        /// and <see cref="MaybeSwapProfileForCatalog"/> dedups on catalog count +
+        /// URL signature. So a host (UI) switch leaves the live profile carrying the
+        /// PRIOR dashboard's bindings and never notifies the UI. (The wheel-initiated
+        /// path sidesteps both guards by nulling Profile first — which we must not do
+        /// on host switches, as rapid nulling is the 2026-05-26 sess=0x01 wedge that
+        /// <c>keepExistingSynth</c> prevents.)
+        ///
+        /// This rebinds each live channel by URL to catalog-default + active overrides,
+        /// RESETTING stale prior-dashboard overrides on channels the new dashboard does
+        /// not map (the correctness gain over <see cref="ReapplyUserChannelMappingsAfterConfigJson"/>,
+        /// which only adds overrides). No Profile setter, no frame-builder rebuild
+        /// (the builder reads SimHubProperty live per frame), no wire writes — so the
+        /// value stream picks up the new bindings on the next frame and the wedge can't
+        /// fire. No-op until the wheel has committed a catalog generation.
+        /// </summary>
+        internal void ReResolveActiveDashboardMappings()
+        {
+            var profile = _profile;
+            if (profile == null || profile.Tiers.Count == 0) return;
+            var catalog = _catalogParser.LiveCatalog ?? _catalogParser.Catalog;
+            if (catalog == null || catalog.Count == 0) return;
+            var store = MozaPlugin.Instance?.DashProfileStore;
+            if (store == null) return;
+
+            // Fresh catalog-default bindings for every URL, then this dashboard's
+            // user overrides on top — identical resolution to a MaybeSwap rebuild.
+            MultiStreamProfile resolved;
+            try
+            {
+                bool includeRadar = MozaPlugin.Instance?.Settings?.EnableRadarTrackMapChannels ?? false;
+                resolved = store.BuildProfileFromCatalog(catalog, CatalogProfileName, includeRadar);
+            }
+            catch (Exception ex)
+            {
+                MozaLog.Warn($"[AZOM] ReResolveActiveDashboardMappings: synth failed: {ex.GetType().Name}: {ex.Message}");
+                return;
+            }
+            if (resolved?.Tiers == null || resolved.Tiers.Count == 0) return;
+            ApplyUserChannelMappings(resolved);
+
+            var byUrl = new System.Collections.Generic.Dictionary<string, string>(
+                System.StringComparer.OrdinalIgnoreCase);
+            foreach (var t in resolved.Tiers)
+                foreach (var ch in t.Channels)
+                    if (!string.IsNullOrEmpty(ch.Url)) byUrl[ch.Url] = ch.SimHubProperty ?? "";
+            foreach (var sc in resolved.StringChannels)
+                if (!string.IsNullOrEmpty(sc.Url)) byUrl[sc.Url] = sc.SimHubProperty ?? "";
+
+            // Copy resolved bindings onto the LIVE profile's existing channel objects
+            // in place (reference-atomic string writes; same pattern as
+            // ReapplyUserChannelMappingsAfterConfigJson). Plugin-locked channels keep
+            // their internal sentinel.
+            int changed = 0;
+            foreach (var t in profile.Tiers)
+                foreach (var ch in t.Channels)
+                {
+                    if (DashboardProfileStore.IsInternalChannel(ch.SimHubProperty)) continue;
+                    if (ch.Url != null && byUrl.TryGetValue(ch.Url, out var p)
+                        && !string.Equals(ch.SimHubProperty ?? "", p, StringComparison.Ordinal))
+                    {
+                        ch.SimHubProperty = p;
+                        changed++;
+                    }
+                }
+            foreach (var sc in profile.StringChannels)
+            {
+                if (DashboardProfileStore.IsInternalChannel(sc.SimHubProperty)) continue;
+                if (sc.Url != null && byUrl.TryGetValue(sc.Url, out var p)
+                    && !string.Equals(sc.SimHubProperty ?? "", p, StringComparison.Ordinal))
+                {
+                    sc.SimHubProperty = p;
+                    changed++;
+                }
+            }
+
+            MozaLog.Debug(
+                $"[AZOM] ReResolveActiveDashboardMappings: rebound {changed} live channel " +
+                $"binding(s) to active dashboard for \"{profile.Name}\" (catalog={catalog.Count})");
+            MozaPlugin.Instance?.RaiseDashboardSelectionChangedInternal();
+        }
+
+        /// <summary>
         /// Probe the Display sub-device inside the wheel.
         /// Pithouse sends the same identity commands used for the main wheel
         /// (0x09, 0x04, 0x06, 0x02, 0x05) but via group 0x43 to route them
