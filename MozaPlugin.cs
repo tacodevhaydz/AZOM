@@ -433,9 +433,8 @@ namespace MozaPlugin
         /// the detector threshold). Used as a self-protection backoff: callers
         /// stop piling capability/settings reads onto a wheel that's already
         /// failing them, which breaks the re-detect "dogging" amplification loop.
-        /// NOTE: this must never gate the load-bearing presence / 0x0e param /
-        /// 0x43 keepalive polls in PollStatus — those are PitHouse-parity
-        /// keepalives that hold the wheel's param subsystem up; only the heavier
+        /// NOTE: this must never gate the presence / 0x43 keepalive polls in
+        /// PollStatus — those are PitHouse-parity keepalives; only the heavier
         /// capability/identity read batches are backed off.
         /// </summary>
         internal bool WheelParamStormActive
@@ -3043,19 +3042,17 @@ namespace MozaPlugin
                 }
                 _deviceManager.ResetWheelResponseFlag();
 
-                // Active wheel maintenance, replicating PitHouse's idle footprint
-                // to 0x17. On the screenless-R5 capture PitHouse holds the wheel up
-                // with three streams the plugin previously omitted entirely:
-                // group-0x00 presence poll (302×), group-0x0e param poll (210×),
-                // and the 1-byte group-0x43 keepalive (136×). Without them the
-                // wheel's param subsystem wedges (Table-8 read/write storm), its
-                // tables never validate, identity never resolves, and the plugin
-                // falls into the re-detect "dogging" loop. Liveness is driven by
-                // the 0x00 presence ACK (OnPresenceProbeAck → MarkWheelAlive;
-                // verified: the screenless wheel ACKs it 300/302) plus the wheel's
-                // continuous 0x0e logs, not by re-reading wheel-model-name.
+                // Active wheel maintenance. The 0x00 presence poll and the 1-byte
+                // 0x43 keepalive (below) replicate PitHouse's idle footprint to
+                // 0x17. The group-0x0E param poll is deliberately NOT sent: group
+                // 0x0E is the param-manager channel (param_manage.c) itself, and
+                // poking it on the wheel provokes the Table-8 "Failed to Read
+                // Parameter" storm. On the matching R9 + bare-"CS" rig PitHouse
+                // never sends 0e→0x17 (verified cs v2(1).pcapng — it polls 0x0E
+                // only on the base, 0e12/0e13). Liveness is driven by the 0x00
+                // presence ACK (OnPresenceProbeAck → MarkWheelAlive) plus the
+                // wheel's continuous unsolicited 0x0e logs.
                 _deviceManager.SendPresenceProbe(MozaProtocol.DeviceWheel);
-                _deviceManager.SendWheelParamPoll();
 
                 // 1-byte 0x43 keepalive — sent to new-protocol wheels regardless of
                 // display capability. PitHouse sends this exact frame to the
