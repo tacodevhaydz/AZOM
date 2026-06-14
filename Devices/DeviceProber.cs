@@ -335,6 +335,30 @@ namespace MozaPlugin.Devices
         }
 
         /// <summary>
+        /// Re-trigger telemetry start once the display sub-device's identity
+        /// has answered. The probe replies field-by-field, and on some wheels
+        /// (W17 / CS Pro) the model-name field comes back EMPTY while
+        /// HW/SW/MCU-UID populate. <see cref="MozaPlugin.IsDisplayDetected"/>
+        /// — and therefore both the <c>StartTelemetryIfReady</c> display gate
+        /// and the PollStatus display-wedge watchdog — rises on ANY of those
+        /// fields, so the pipeline-start re-trigger must fire from every
+        /// identity handler, not just model-name. Otherwise an empty-model-name
+        /// wheel flips IsDisplayDetected true ~1 ms after the start gate last
+        /// deferred, and nothing re-invokes the start: telemetry sits dead
+        /// until an unrelated user action pokes it (CS-Pro bundle 2026-06-13).
+        /// Idempotent: ClearDisplayWedgeRecovery is a flag clear and
+        /// StartTelemetryIfReady no-ops once the sender is running.
+        /// </summary>
+        private void NoteDisplayIdentityReady()
+        {
+            if (!_plugin.IsDisplayDetected) return;
+            // Display is responsive — a future wheel hot-swap that wedges
+            // should get its own recovery attempt.
+            _plugin.ClearDisplayWedgeRecovery();
+            _plugin.StartTelemetryIfReady();
+        }
+
+        /// <summary>
         /// Auto-detect connected devices based on response commands.
         /// First sight of a known response flips the matching detection flag
         /// and queues per-device settings reads + Apply*ToHardware.
@@ -356,6 +380,9 @@ namespace MozaPlugin.Devices
                 MozaLog.Debug(
                     $"[AZOM] Display MCU UID ({_data.DisplayMcuUid.Length}B): " +
                     MozaLog.RedactBytesHex(_data.DisplayMcuUid));
+                // MCU UID alone satisfies IsDisplayDetected — re-trigger the
+                // deferred telemetry start (empty-model-name wheels rely on it).
+                NoteDisplayIdentityReady();
                 return;
             }
 
@@ -715,11 +742,21 @@ namespace MozaPlugin.Devices
                     break;
                 case "display-hw-version":
                     if (!string.IsNullOrEmpty(_data.DisplayHwVersion))
+                    {
                         MozaLog.Debug($"[AZOM] Display HW: {_data.DisplayHwVersion}");
+                        // HW version alone satisfies IsDisplayDetected — re-trigger
+                        // the deferred start for empty-model-name wheels (W17).
+                        NoteDisplayIdentityReady();
+                    }
                     break;
                 case "display-sw-version":
                     if (!string.IsNullOrEmpty(_data.DisplaySwVersion))
+                    {
                         MozaLog.Debug($"[AZOM] Display FW: {_data.DisplaySwVersion}");
+                        // SW version alone satisfies IsDisplayDetected — re-trigger
+                        // the deferred start for empty-model-name wheels (W17).
+                        NoteDisplayIdentityReady();
+                    }
                     break;
                 case "display-serial":
                     if (!string.IsNullOrEmpty(_data.DisplaySerialNumber))
