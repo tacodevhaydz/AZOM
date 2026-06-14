@@ -2,6 +2,13 @@
 
 SimHub plugin for MOZA Racing hardware providing two-way telemetry: streams game data (speed, RPM, gear, lap times, fuel, tyre wear, etc.) to the wheel dashboard display, drives wheel/dashboard RPM and flag LEDs, and allows configuring wheelbase settings. Also supports standalone USB dashboards (CM2 Racing Dash, PID `0x0025`) that connect without a wheelbase. Uses a custom binary serial protocol reverse-engineered from the [boxflat](https://github.com/Lawstorant/boxflat) project; wire-level protocol reference lives under [`docs/protocol/`](protocol/).
 
+### Key sources
+
+Two directories are the canonical references for any protocol or wire-level work — read them before changing telemetry, session, or device-detection code:
+
+- **[`docs/protocol/`](protocol/)** — the authoritative wire-level protocol reference. Start at [`docs/protocol/README.md`](protocol/README.md) (function-first layout, per-device command tables in [`devices/`](protocol/devices/), dated deep-dive journal in [`findings/`](protocol/findings/)). Read [`wire/`](protocol/wire/) first — the frame format, checksum, and 0x7E stuffing apply to **all** device traffic. The component reference and protocol sections below link into specific pages; this is their canonical home. Per the project convention, new protocol facts are written here, not duplicated into design docs or commit messages.
+- **[`tools/`](../tools/)** — reusable Python wire-trace / capture-analysis scripts built during reverse-engineering (`moza_trace.py`, `trace-tools`, `tierdef-decode`, `cm1-0x35-decode`, `fsr1-*`, `wire-*`, `bridge-*`, …). They consume the bridge-format JSONL emitted by `SerialTrafficCapture.StartFileSink` (see [Logging & Diagnostics](#logging--diagnostics-diagnostics)). Reach for these when decoding a capture or verifying an emitter byte-exact against PitHouse traffic; the deep-dive sections below cite the specific tool for each subsystem.
+
 Contents:
 
 1. [Building from Source](#building-from-source)
