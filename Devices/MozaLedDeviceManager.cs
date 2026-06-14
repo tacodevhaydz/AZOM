@@ -127,6 +127,12 @@ namespace MozaPlugin.Devices
         // — not every RPM step. Lit-state is carried by the bitmask instead.
         private Color[]? _rpmPalette;
         private bool _rpmPalettePrimed;
+        private DateTime _lastPaletteSendTime;
+        // Colour-frame (0x19) rate cap for the legacy-RPM path. The lit-state
+        // bitmask still streams every frame; only the per-LED colour write is
+        // capped, since that's the write that storms the bare-"CS" param manager.
+        // PitHouse sends colours ~0.5/s; 1/s keeps the gradient roughly current.
+        private const double LegacyRpmColorIntervalMs = 1000.0;
         private readonly Color[] _lastFlagColors = new Color[MozaDeviceConstants.FlagLedCount];
         private bool _lastFlagColorsPrimed;
         private LedDeviceState _lastState = new LedDeviceState(
@@ -498,6 +504,10 @@ namespace MozaPlugin.Devices
                         }
                         // Learn the palette from currently-lit LEDs (SimHub renders
                         // unlit LEDs black; the bitmask, not the colour, carries off).
+                        // SimHub's RPM gradient shifts every frame, so the colours
+                        // genuinely change continuously — we can't send "on change"
+                        // or it sends every frame. Instead follow the latest colours
+                        // but commit the 0x19 frame at most once per interval.
                         bool paletteChanged = !_rpmPalettePrimed;
                         for (int i = 0; i < count; i++)
                         {
@@ -507,9 +517,13 @@ namespace MozaPlugin.Devices
                                 paletteChanged = true;
                             }
                         }
-                        if (paletteChanged)
+                        var nowUtc = DateTime.UtcNow;
+                        if (!_rpmPalettePrimed
+                            || (paletteChanged
+                                && (nowUtc - _lastPaletteSendTime).TotalMilliseconds >= LegacyRpmColorIntervalMs))
                         {
                             _rpmPalettePrimed = true;
+                            _lastPaletteSendTime = nowUtc;
                             SendColorChunks(plugin, _rpmPalette, count, "wheel-telemetry-rpm-colors");
                         }
                         if (alwaysResendBitmask || bitmask != _lastRpmBitmask)
