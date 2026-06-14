@@ -121,6 +121,12 @@ namespace MozaPlugin.Devices
 
         private Color[]? _lastLeds;
         private Color[]? _lastButtons;
+        // Legacy-RPM-telemetry path (bare "CS"): a sticky per-LED colour palette,
+        // learned from the last non-black colour SimHub renders for each LED, so
+        // the palette frame (0x19) is re-sent only when a colour actually changes
+        // — not every RPM step. Lit-state is carried by the bitmask instead.
+        private Color[]? _rpmPalette;
+        private bool _rpmPalettePrimed;
         private readonly Color[] _lastFlagColors = new Color[MozaDeviceConstants.FlagLedCount];
         private bool _lastFlagColorsPrimed;
         private LedDeviceState _lastState = new LedDeviceState(
@@ -479,7 +485,46 @@ namespace MozaPlugin.Devices
                             bitmask |= (1 << i);
                     }
 
-                    if (isNewWheel)
+                    if (isNewWheel && modelInfo?.UsesLegacyRpmTelemetry == true)
+                    {
+                        // PitHouse "old colour-capable rim" path (bare "CS"): fixed
+                        // colour palette + streamed lit-state bitmask, instead of a
+                        // full per-LED colour frame every RPM step (which storms this
+                        // firmware's param manager). Verified against cs v2(1).pcapng.
+                        if (_rpmPalette == null || _rpmPalette.Length != count)
+                        {
+                            _rpmPalette = new Color[count];
+                            _rpmPalettePrimed = false;
+                        }
+                        // Learn the palette from currently-lit LEDs (SimHub renders
+                        // unlit LEDs black; the bitmask, not the colour, carries off).
+                        bool paletteChanged = !_rpmPalettePrimed;
+                        for (int i = 0; i < count; i++)
+                        {
+                            if ((bitmask & (1 << i)) != 0 && _rpmPalette[i] != rpmColors[i])
+                            {
+                                _rpmPalette[i] = rpmColors[i];
+                                paletteChanged = true;
+                            }
+                        }
+                        if (paletteChanged)
+                        {
+                            _rpmPalettePrimed = true;
+                            SendColorChunks(plugin, _rpmPalette, count, "wheel-telemetry-rpm-colors");
+                        }
+                        if (alwaysResendBitmask || bitmask != _lastRpmBitmask)
+                        {
+                            _lastRpmBitmask = bitmask;
+                            // Lit-state via both the new windowed bitmask (0x1a) and the
+                            // old-protocol bitmask (0x41 fd de) — PitHouse streams both
+                            // to this rim; the 0x41 path is its dominant RPM driver.
+                            plugin.DeviceManager.WriteArray("wheel-send-rpm-telemetry",
+                                BuildWindowedBitmaskBytes(bitmask, (1 << rpmN) - 1));
+                            plugin.DeviceManager.WriteSetting("wheel-old-send-telemetry", bitmask);
+                        }
+                        anySent = true;
+                    }
+                    else if (isNewWheel)
                     {
                         SendColorChunks(plugin, rpmColors, count, "wheel-telemetry-rpm-colors");
 

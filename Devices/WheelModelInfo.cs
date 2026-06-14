@@ -104,6 +104,19 @@ namespace MozaPlugin.Devices
         public int MaxLedFps { get; }
 
         /// <summary>
+        /// Drive RPM LEDs the PitHouse "old rim" way: a fixed colour palette
+        /// (<c>0x19</c>, sent only on palette change) + a streamed lit-state
+        /// bitmask (<c>wheel-send-rpm-telemetry</c> 0x1a and the old-protocol
+        /// <c>wheel-old-send-telemetry</c> 0x41 <c>fd de</c>). The legacy bare-"CS"
+        /// rim wedges its param manager (Table 8 read-fail storm) when the
+        /// per-frame full-colour stream (the default new-wheel path) hammers its
+        /// LED colour buffer — verified against <c>cs v2(1).pcapng</c> (wheel_wnfw),
+        /// where PitHouse sends colour frames ~0.5/s and the old bitmask ~68/s.
+        /// Default <c>false</c> (modern wheels keep the per-frame colour path).
+        /// </summary>
+        public bool UsesLegacyRpmTelemetry { get; }
+
+        /// <summary>
         /// Returns the Group 3 start index for the given knob (0-based).
         /// E.g. CS Pro knob 2 → 12 (skip knob 0's 12 LEDs).
         /// </summary>
@@ -174,7 +187,7 @@ namespace MozaPlugin.Devices
             // hasSleepLight=false: pushing wheel-idle-mode/timeout/speed/color at
             // this wheel triggers a Table 8 read-fail storm in its firmware that
             // makes it intermittently unresponsive.
-            ("CS",      "CS",         new WheelModelInfo(10, 0,  false, null, 0, hasDisplay: false, hasSleepLight: false, maxLedFps: 30)),
+            ("CS",      "CS",         new WheelModelInfo(10, 0,  false, null, 0, hasDisplay: false, hasSleepLight: false, usesLegacyRpmTelemetry: true)),
             // ES — MOZA's entry wheel, integrated into the wheelbase as a module at
             // internal id 0x18 (firmware model-name "ES", hw "RS21-D05-HW SM-C").
             // Old-protocol RPM only: 10 RGB RPM LEDs driven via the wheel-old-rpm-*
@@ -186,7 +199,7 @@ namespace MozaPlugin.Devices
             ("ES",      "ES",         new WheelModelInfo(10, 0,  false, null, 0, hasDisplay: false, hasSleepLight: false)),
         };
 
-        public WheelModelInfo(int rpmLedCount, int buttonLedCount, bool hasFlagLeds, int[]? buttonLedMap, int knobCount = 0, int[]? knobRingLeds = null, bool? hasDisplay = null, int browSegmentSize = 0, bool hasSleepLight = true, int maxLedFps = 0)
+        public WheelModelInfo(int rpmLedCount, int buttonLedCount, bool hasFlagLeds, int[]? buttonLedMap, int knobCount = 0, int[]? knobRingLeds = null, bool? hasDisplay = null, int browSegmentSize = 0, bool hasSleepLight = true, int maxLedFps = 0, bool usesLegacyRpmTelemetry = false)
         {
             RpmLedCount = rpmLedCount;
             ButtonLedCount = buttonLedCount;
@@ -202,6 +215,7 @@ namespace MozaPlugin.Devices
             BrowSegmentSize = browSegmentSize;
             HasSleepLight = hasSleepLight;
             MaxLedFps = maxLedFps;
+            UsesLegacyRpmTelemetry = usesLegacyRpmTelemetry;
         }
 
         /// <summary>
