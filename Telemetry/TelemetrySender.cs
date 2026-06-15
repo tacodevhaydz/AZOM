@@ -3564,7 +3564,17 @@ namespace MozaPlugin.Telemetry
             for (int i = 0; i < tiers.Length; i++)
             {
                 var tier = tiers[i];
-                if (_tickCounter % tier.TickInterval != 0)
+                // Phase each tier by its index within its emit window so tiers
+                // sharing a package_level don't all fire on the same tick. A
+                // track-map dashboard splits its 63 location_t channels into ~11
+                // sub-tiers all at pkg=500 (TickInterval=16); without this offset
+                // they burst together — ~11 value frames back-to-back in one
+                // 33 ms tick (~200 fps on the wire), overrunning the 115200-baud
+                // ceiling and starving the LED + dashboard write pipeline.
+                // Phasing spreads them one-per-tick (≤33 fps, the telemetry wire
+                // norm); each tier's rate is unchanged (still once per
+                // TickInterval), only its phase shifts.
+                if (_tickCounter % tier.TickInterval != i % tier.TickInterval)
                     continue;
 
                 // Match flag byte to the tier-def we last sent: each tier-def

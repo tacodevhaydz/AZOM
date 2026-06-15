@@ -1066,11 +1066,13 @@ namespace MozaPlugin.Telemetry.Frames
                     else if (buffer[urlStart] == 0x5C && buffer[urlStart + 1] == 0x6C)
                     {
                         // \l (0x5C 0x6C) → v1/gameData/patch/Location_<suffix>,
-                        // the track-map node ring (\l0..\l62). Suffix is the ASCII
-                        // decimal index. Wire-verified CS-Pro track-map dash
-                        // 2026-06-07. Filtered out of the subscription by
-                        // IsRadarTrackMapChannel unless radar channels are enabled;
-                        // decoding it keeps the buffer walk aligned regardless.
+                        // the per-opponent track-map ring (\l0..\l62). Suffix is
+                        // the ASCII decimal index. Wire-verified CS-Pro track-map
+                        // dash 2026-06-07 + plugin trace 2026-06-05. Auto-included
+                        // in the subscription when present — the wheel only
+                        // advertises it for Map-widget dashboards, and the host
+                        // includes whatever the catalog declares (see
+                        // DashboardProfileStore.BuildProfileFromCatalog).
                         url = "v1/gameData/patch/Location_" + Encoding.ASCII.GetString(
                             buffer, urlStart + 2, urlLen - 2);
                         sAbbr++;
