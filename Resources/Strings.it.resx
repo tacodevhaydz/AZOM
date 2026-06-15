@@ -512,9 +512,6 @@
   <data name="Status_Parked" xml:space="preserve"><value>In pausa</value></data>
   <data name="Status_TelemetryParked" xml:space="preserve"><value>Telemetria interrotta dopo errori ripetuti — riattiva per riprovare</value></data>
   <data name="Status_DegradedScreenless" xml:space="preserve"><value>Il volante non ha display — telemetria non necessaria</value></data>
-  <data name="Banner_WheelFirmwareErrors_Title" xml:space="preserve"><value>Il volante ha segnalato errori del firmware</value></data>
-  <data name="Banner_WheelFirmwareErrors_Body" xml:space="preserve"><value>Il firmware del tuo volante ha segnalato ripetuti errori dei parametri. Abilita la cattura seriale per diagnosticare immediatamente.</value></data>
-  <data name="Button_EnableSerialCapture" xml:space="preserve"><value>Abilita cattura seriale</value></data>
   <data name="Banner_PortLocked_Title" xml:space="preserve"><value>Hardware MOZA rilevato, ma la porta è in uso</value></data>
   <data name="Banner_PortLocked_Body" xml:space="preserve"><value>Trovato un dispositivo MOZA su {0}, ma la porta è occupata da un'altra applicazione. Chiudi MOZA PitHouse (o qualsiasi altra cosa comunichi con la base) e fai clic su Aggiorna.</value></data>
   <data name="Banner_PortVanished_Title" xml:space="preserve"><value>La porta MOZA è scomparsa</value></data>

@@ -1,0 +1,127 @@
+#!/usr/bin/env python3
+"""Analyze the legacy-"CS" group-0x0E param-read storm timeline from a MOZA
+wire-trace JSONL (produced by tools/pcap_to_jsonl.py or a bundle conversion).
+
+The bare-"CS" / wnfw rim emits a `param_manage.c:424 Table 8: Failed to Read
+Parameter N` sweep for a while after connect, then it stops. This tool answers:
+  * when does the storm start / stop, at what rate, sweeping which indices
+  * what firmware-log milestones (ParamTableValidate, "Main Use Param Table
+    Data", heartbeats, …) coincide with the storm ending
+  * what host->wheel traffic differs during the storm vs after it clears
+
+Usage:
+    tools/grp0e-storm-timeline <trace.jsonl> [--window SECONDS]
+
+Frame layout (de-stuffed): 7e LEN GROUP DEV [payload...] CHK
+Group 0x0E text log: 7e LEN 0e DEV 05 <ascii> chk  (DEV 0x71 wheel, 0x21 main)
+"""
+import sys, json, re
+from collections import Counter, defaultdict
+
+FAIL_RE = re.compile(r"Failed to (Read|Write) Parameter\s+(\d+)")
+PARAM_LINE_RE = re.compile(r"param_manage\.c:\d+\s+(.*)")
+
+
+def load(path):
+    rows = []
+    with open(path) as f:
+        for line in f:
+            line = line.strip()
+            if not line:
+                continue
+            try:
+                r = json.loads(line)
+                rows.append((r["t"], r["dir"], bytes.fromhex(r["hex"])))
+            except Exception:
+                continue
+    rows.sort(key=lambda x: x[0])
+    return rows
+
+
+def is_log(b):
+    return len(b) >= 6 and b[2] == 0x0E and b[4] == 0x05
+
+
+def log_text(b):
+    return b[5:-1].decode("latin1", "replace").rstrip("\n\r\x00")
+
+
+def templ(s):
+    return re.sub(r"\d+", "N", s)
+
+
+def main():
+    if len(sys.argv) < 2:
+        print(__doc__)
+        return 1
+    path = sys.argv[1]
+    window = 15.0
+    if "--window" in sys.argv:
+        window = float(sys.argv[sys.argv.index("--window") + 1])
+
+    rows = load(path)
+    if not rows:
+        print("no frames")
+        return 1
+    t0 = rows[0][0]
+
+    fails = []          # (rel_t, src, idx)
+    milestones = []     # (rel_t, src, text)  non-failure param/validate/heartbeat logs
+    for t, d, b in rows:
+        if not is_log(b):
+            continue
+        rt = t - t0
+        src = {0x71: "wheel", 0x21: "main", 0xB1: "disp"}.get(b[3], f"0x{b[3]:02x}")
+        txt = log_text(b)
+        m = FAIL_RE.search(txt)
+        if m:
+            fails.append((rt, src, int(m.group(2))))
+        elif any(k in txt for k in ("ParamTableValidate", "Use Param Table", "Heartbeat",
+                                    "Param Table", "param_manage.c:340", "connected",
+                                    "ErrDiag", "error_code", "init", "Init")):
+            milestones.append((rt, src, txt))
+
+    print(f"== file: {path}")
+    print(f"== {len(rows)} frames, span {rows[-1][0]-t0:.0f}s")
+    if not fails:
+        print("\nNo param-read failures found.")
+    else:
+        print(f"\n=== STORM ===")
+        print(f"  failures: {len(fails)}")
+        print(f"  onset:  {fails[0][0]:.1f}s   end: {fails[-1][0]:.1f}s   "
+              f"duration: {fails[-1][0]-fails[0][0]:.0f}s")
+        idxs = [f[2] for f in fails]
+        print(f"  param indices swept: {min(idxs)}..{max(idxs)}  "
+              f"({len(set(idxs))} distinct)")
+        per_min = Counter(int(f[0] // 60) for f in fails)
+        print("  failures/min:", " ".join(f"{m}:{per_min[m]}" for m in sorted(per_min)))
+
+        end = fails[-1][0]
+        print(f"\n=== firmware-log milestones near storm END ({end:.0f}s ± {window:.0f}s) ===")
+        near = [m for m in milestones if end - window <= m[0] <= end + window]
+        for rt, src, txt in near[:40]:
+            print(f"  {rt:8.2f}s [{src:5}] {txt}")
+        if not near:
+            print("  (none — storm likely ends on its own timer, not a logged event)")
+
+        print(f"\n=== host->wheel (dev 0x17) command groups: DURING vs AFTER storm ===")
+        during, after = Counter(), Counter()
+        for t, d, b in rows:
+            if d != "h2b" or len(b) < 4 or b[3] != 0x17:
+                continue
+            key = f"g{b[2]:02x}.c{b[4]:02x}" if len(b) > 4 else f"g{b[2]:02x}"
+            (during if (t - t0) <= end else after)[key] += 1
+        keys = sorted(set(during) | set(after), key=lambda k: -(during[k] + after[k]))
+        print(f"  {'cmd':14} {'during':>8} {'after':>8}")
+        for k in keys[:20]:
+            print(f"  {k:14} {during[k]:>8} {after[k]:>8}")
+
+    print(f"\n=== all distinct firmware-log milestone templates ({len(milestones)} lines) ===")
+    tmpl = Counter(templ(m[2]) for m in milestones)
+    for t_, c in tmpl.most_common(25):
+        print(f"  {c:5}x  {t_}")
+    return 0
+
+
+if __name__ == "__main__":
+    sys.exit(main())

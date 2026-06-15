@@ -516,9 +516,6 @@
   <data name="Status_Parked" xml:space="preserve"><value>Parked</value></data>
   <data name="Status_TelemetryParked" xml:space="preserve"><value>Telemetry stopped after repeated failures — re-enable to retry</value></data>
   <data name="Status_DegradedScreenless" xml:space="preserve"><value>Wheel has no display — telemetry not needed</value></data>
-  <data name="Banner_WheelFirmwareErrors_Title" xml:space="preserve"><value>Wheel reported firmware errors</value></data>
-  <data name="Banner_WheelFirmwareErrors_Body" xml:space="preserve"><value>Your wheel firmware reported repeated parameter errors. Enable serial capture to diagnose immediately.</value></data>
-  <data name="Button_EnableSerialCapture" xml:space="preserve"><value>Enable Serial Capture</value></data>
   <data name="Banner_PortLocked_Title" xml:space="preserve"><value>MOZA hardware detected but the port is in use</value></data>
   <data name="Banner_PortLocked_Body" xml:space="preserve"><value>Found a MOZA device on {0}, but the port is held by another application. Close MOZA PitHouse (or anything else talking to the wheelbase) and click Refresh.</value></data>
   <data name="Banner_PortVanished_Title" xml:space="preserve"><value>MOZA port disappeared</value></data>

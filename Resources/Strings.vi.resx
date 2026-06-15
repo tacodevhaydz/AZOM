@@ -509,9 +509,6 @@
   <data name="Status_Parked" xml:space="preserve"><value>Đã dừng</value></data>
   <data name="Status_TelemetryParked" xml:space="preserve"><value>Đã dừng telemetry sau nhiều lỗi — bật lại để thử lại</value></data>
   <data name="Status_DegradedScreenless" xml:space="preserve"><value>Vô lăng không có màn hình — không cần telemetry</value></data>
-  <data name="Banner_WheelFirmwareErrors_Title" xml:space="preserve"><value>Vô lăng báo lỗi firmware</value></data>
-  <data name="Banner_WheelFirmwareErrors_Body" xml:space="preserve"><value>Firmware vô lăng của bạn liên tục báo lỗi tham số. Hãy bật ghi dữ liệu serial để chẩn đoán ngay.</value></data>
-  <data name="Button_EnableSerialCapture" xml:space="preserve"><value>Bật ghi dữ liệu serial</value></data>
   <data name="Banner_PortLocked_Title" xml:space="preserve"><value>Đã phát hiện phần cứng MOZA nhưng cổng đang được sử dụng</value></data>
   <data name="Banner_PortLocked_Body" xml:space="preserve"><value>Đã tìm thấy thiết bị MOZA trên {0}, nhưng cổng đang bị một ứng dụng khác chiếm giữ. Hãy đóng MOZA PitHouse (hoặc bất kỳ ứng dụng nào đang giao tiếp với wheelbase) rồi nhấp Làm mới.</value></data>
   <data name="Banner_PortVanished_Title" xml:space="preserve"><value>Cổng MOZA đã biến mất</value></data>

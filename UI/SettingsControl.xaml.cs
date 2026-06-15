@@ -191,7 +191,6 @@ namespace MozaPlugin
             // background check finds a newer release, regardless of which tab
             // the user is on. Cheap (a few string compares); no network.
             try { RefreshHeaderBanner(); } catch { /* never let the banner break the refresh loop */ }
-            try { RefreshFirmwareWarningBanner(); } catch { /* never let the banner break the refresh loop */ }
 
             using (_suppressor.Begin())
             {

@@ -555,17 +555,7 @@ namespace MozaPlugin.Devices
                             // LED-group-filtered reads. Skipping reads for LEDs
                             // the wheel doesn't have keeps PendingResponseTracker
                             // from churning on inevitable timeouts.
-                            //
-                            // Self-protection backoff: if the wheel is already mid
-                            // param-read storm, don't pile the LED capability batch
-                            // on top — that's the fuel that keeps the re-detect
-                            // "dogging" loop alive on a wheel whose firmware can't
-                            // service the reads. The load-bearing keepalives in
-                            // PollStatus still run; we just skip the heavy batch.
-                            if (_plugin.WheelParamStormActive)
-                                MozaLog.Info("[AZOM] Wheel param storm active — skipping LED capability reads to avoid amplifying the fault");
-                            else
-                                _deviceManager.ReadSettingsPaced(BuildNewWheelLedReadCommands(info));
+                            _deviceManager.ReadSettingsPaced(BuildNewWheelLedReadCommands(info));
                             if (DeviceDefinitionDeployer.DeployForModel(currentModel, _connection.DiscoveredPid))
                                 _plugin.DeviceDefinitionDeployed = true;
 
