@@ -439,6 +439,8 @@ namespace MozaPlugin.Protocol
             //   READ  7E 01 1E 12 <cmd>           →  resp on 0x9E + BE u16
             // See docs/protocol/devices/ab9-shifter.md.
             AddCommand("ab9-mode",                 "ab9", 0xFF, 0x1F, new byte[] { 0xD3, 0x00 }, 1, "int");
+            // Shifter (0x00) ↔ flight-sim (0x01) toggle: 2-byte payload (cmd 0x5D + value).
+            AddCommand("ab9-input-mode",           "ab9", 0xFF, 0x1F, new byte[] { 0x5D }, 1, "int");
             AddCommand("ab9-mech-resistance",      "ab9", 0xFF, 0x1F, new byte[] { 0xD6, 0x00 }, 1, "int");
             AddCommand("ab9-spring",               "ab9", 0xFF, 0x1F, new byte[] { 0xAF, 0x00 }, 1, "int");
             AddCommand("ab9-natural-damping",      "ab9", 0xFF, 0x1F, new byte[] { 0xB0, 0x00 }, 1, "int");

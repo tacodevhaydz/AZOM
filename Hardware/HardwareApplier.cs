@@ -783,6 +783,7 @@ namespace MozaPlugin.Hardware
             if (!_detectionState.Ab9Detected || _ab9Manager == null || !_ab9Manager.IsConnected) return;
 
             var ab9 = profile?.Ab9 ?? new Ab9Settings();
+            _ab9Manager.SendInputMode(ab9.InputMode);
             _ab9Manager.SendMode(ab9.Mode);
             _ab9Manager.SendSlider(Ab9Slider.MechanicalResistance, ab9.MechanicalResistance);
             _ab9Manager.SendSlider(Ab9Slider.Spring,               ab9.Spring);

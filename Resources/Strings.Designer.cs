@@ -663,5 +663,8 @@ namespace MozaPlugin.Resources
         public static string Hint_PaddleCalibrateDone => Get("Hint_PaddleCalibrateDone");
         public static string Hint_CalibratePedal => Get("Hint_CalibratePedal");
         public static string Hint_CalibrateHandbrake => Get("Hint_CalibrateHandbrake");
+        public static string Section_Ab9InputMode => Get("Section_Ab9InputMode");
+        public static string Option_Ab9Shifter => Get("Option_Ab9Shifter");
+        public static string Option_Ab9FlightSim => Get("Option_Ab9FlightSim");
     }
 }

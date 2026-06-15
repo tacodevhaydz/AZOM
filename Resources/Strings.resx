@@ -612,4 +612,7 @@ Id: {2}</value></data>
   <data name="Hint_PaddleCalibrateDone" xml:space="preserve"><value>Paddle calibration saved.</value></data>
   <data name="Hint_CalibratePedal" xml:space="preserve"><value>Press the pedal through its full range, then release. Saving in {0}s…</value></data>
   <data name="Hint_CalibrateHandbrake" xml:space="preserve"><value>Pull the handbrake fully, then release. Saving in {0}s…</value></data>
+  <data name="Section_Ab9InputMode" xml:space="preserve"><value>Input Mode</value></data>
+  <data name="Option_Ab9Shifter" xml:space="preserve"><value>Shifter</value></data>
+  <data name="Option_Ab9FlightSim" xml:space="preserve"><value>Flight Simulation</value></data>
 </root>

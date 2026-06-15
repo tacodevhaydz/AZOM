@@ -195,6 +195,7 @@ namespace MozaPlugin
     public sealed class Ab9Settings
     {
         public Ab9Mode Mode { get; set; } = Ab9Mode.SevenPlusR_L1;
+        public Ab9InputMode InputMode { get; set; } = Ab9InputMode.Shifter;
         public byte MechanicalResistance { get; set; } = 50;
         public byte Spring { get; set; }              = 50;
         public byte NaturalDamping { get; set; }      = 50;
@@ -233,6 +234,7 @@ namespace MozaPlugin
             return new Ab9Settings
             {
                 Mode = Mode,
+                InputMode = InputMode,
                 MechanicalResistance = MechanicalResistance,
                 Spring = Spring,
                 NaturalDamping = NaturalDamping,

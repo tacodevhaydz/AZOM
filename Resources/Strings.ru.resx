@@ -605,4 +605,7 @@ Id: {2}</value></data>
   <data name="Hint_PaddleCalibrateDone" xml:space="preserve"><value>Калибровка лепестков сохранена.</value></data>
   <data name="Hint_CalibratePedal" xml:space="preserve"><value>Нажмите педаль на весь ход и отпустите. Сохранение через {0}с…</value></data>
   <data name="Hint_CalibrateHandbrake" xml:space="preserve"><value>Полностью потяните ручной тормоз и отпустите. Сохранение через {0}с…</value></data>
+  <data name="Section_Ab9InputMode" xml:space="preserve"><value>Режим ввода</value></data>
+  <data name="Option_Ab9Shifter" xml:space="preserve"><value>Коробка передач</value></data>
+  <data name="Option_Ab9FlightSim" xml:space="preserve"><value>Авиасимулятор</value></data>
 </root>

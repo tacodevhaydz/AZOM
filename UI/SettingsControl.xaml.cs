@@ -2157,6 +2157,7 @@ namespace MozaPlugin
             var ab9 = _plugin.Settings?.ProfileStore?.CurrentProfile?.Ab9 ?? new Ab9Settings();
             using (_suppressor.Begin())
             {
+                SetAb9InputModeCombo(ab9.InputMode);
                 SetAb9ModeCombo(ab9.Mode);
                 SetAb9Slider(Ab9MechResistanceSlider,    Ab9MechResistanceValue,    ab9.MechanicalResistance);
                 SetAb9Slider(Ab9SpringSlider,            Ab9SpringValue,            ab9.Spring);
@@ -2197,6 +2198,32 @@ namespace MozaPlugin
                 }
             }
             Ab9ModeCombo.SelectedIndex = -1;
+        }
+
+        private void SetAb9InputModeCombo(Ab9InputMode mode)
+        {
+            for (int i = 0; i < Ab9InputModeCombo.Items.Count; i++)
+            {
+                var item = Ab9InputModeCombo.Items[i] as ComboBoxItem;
+                if (item?.Tag is string tag && byte.TryParse(tag, out byte val) && val == (byte)mode)
+                {
+                    Ab9InputModeCombo.SelectedIndex = i;
+                    return;
+                }
+            }
+            Ab9InputModeCombo.SelectedIndex = -1;
+        }
+
+        private void Ab9InputModeCombo_Changed(object sender, SelectionChangedEventArgs e)
+        {
+            if (_suppressEvents) return;
+            if (Ab9InputModeCombo.SelectedItem is not ComboBoxItem item) return;
+            if (item.Tag is not string tag || !byte.TryParse(tag, out byte val)) return;
+
+            var mode = (Ab9InputMode)val;
+            GetOrCreateAb9Profile().InputMode = mode;
+            _plugin.Ab9Manager?.SendInputMode(mode);
+            _plugin.SaveSettings();
         }
 
         private Ab9Settings GetOrCreateAb9Profile()

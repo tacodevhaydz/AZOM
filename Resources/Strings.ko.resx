@@ -604,4 +604,7 @@ Id: {2}</value></data>
   <data name="Hint_PaddleCalibrateDone" xml:space="preserve"><value>패들 보정이 저장되었습니다.</value></data>
   <data name="Hint_CalibratePedal" xml:space="preserve"><value>페달을 전체 범위로 끝까지 밟았다가 놓으세요. {0}초 후 저장…</value></data>
   <data name="Hint_CalibrateHandbrake" xml:space="preserve"><value>핸드브레이크를 끝까지 당겼다가 놓으세요. {0}초 후 저장…</value></data>
+  <data name="Section_Ab9InputMode" xml:space="preserve"><value>입력 모드</value></data>
+  <data name="Option_Ab9Shifter" xml:space="preserve"><value>시프터</value></data>
+  <data name="Option_Ab9FlightSim" xml:space="preserve"><value>비행 시뮬레이션</value></data>
 </root>

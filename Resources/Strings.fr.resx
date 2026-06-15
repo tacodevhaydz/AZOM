@@ -605,4 +605,7 @@ Id : {2}</value></data>
   <data name="Hint_PaddleCalibrateDone" xml:space="preserve"><value>Étalonnage des palettes enregistré.</value></data>
   <data name="Hint_CalibratePedal" xml:space="preserve"><value>Appuyez sur la pédale sur toute sa course puis relâchez-la. Enregistrement dans {0}s…</value></data>
   <data name="Hint_CalibrateHandbrake" xml:space="preserve"><value>Tirez à fond le frein à main puis relâchez-le. Enregistrement dans {0}s…</value></data>
+  <data name="Section_Ab9InputMode" xml:space="preserve"><value>Mode d'entrée</value></data>
+  <data name="Option_Ab9Shifter" xml:space="preserve"><value>Levier de vitesses</value></data>
+  <data name="Option_Ab9FlightSim" xml:space="preserve"><value>Simulation de vol</value></data>
 </root>

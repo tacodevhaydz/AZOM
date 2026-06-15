@@ -610,4 +610,7 @@ Id: {2}</value></data>
   <data name="Hint_PaddleCalibrateDone" xml:space="preserve"><value>Padelkalibrering lagret.</value></data>
   <data name="Hint_CalibratePedal" xml:space="preserve"><value>Trykk pedalen gjennom hele bevegelsen og slipp den. Lagrer om {0}s…</value></data>
   <data name="Hint_CalibrateHandbrake" xml:space="preserve"><value>Trekk håndbrekket helt inn og slipp det. Lagrer om {0}s…</value></data>
+  <data name="Section_Ab9InputMode" xml:space="preserve"><value>Inndatamodus</value></data>
+  <data name="Option_Ab9Shifter" xml:space="preserve"><value>Girspak</value></data>
+  <data name="Option_Ab9FlightSim" xml:space="preserve"><value>Flysimulering</value></data>
 </root>

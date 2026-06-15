@@ -21,6 +21,18 @@ namespace MozaPlugin.Devices
     }
 
     /// <summary>
+    /// Top-level input mode the AB9 reports to the host: H-pattern/sequential
+    /// shifter vs. flight-sim throttle quadrant. Numeric value matches the
+    /// single-byte payload of the <c>0x1F / 0x5D</c> mode-toggle command
+    /// captured from PitHouse (see docs/protocol/devices/ab9-shifter.md).
+    /// </summary>
+    public enum Ab9InputMode : byte
+    {
+        Shifter   = 0x00,
+        FlightSim = 0x01,
+    }
+
+    /// <summary>
     /// Configurable feel sliders exposed on the AB9. Each value maps to a 0..100
     /// integer payload sent verbatim to the device.
     /// </summary>
@@ -195,6 +207,13 @@ namespace MozaPlugin.Devices
         public bool SendMode(Ab9Mode mode)
         {
             return WriteSliderRaw("ab9-mode", (byte)mode);
+        }
+
+        // Shifter ↔ flight-sim toggle: 2-byte-payload write on group 0x1F
+        // (7E 02 1F 12 5D <val> chk). See ab9-shifter.md § Mode/online toggle.
+        public bool SendInputMode(Ab9InputMode mode)
+        {
+            return WriteSliderRaw("ab9-input-mode", (byte)mode);
         }
 
         /// <summary>

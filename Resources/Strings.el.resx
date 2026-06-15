@@ -604,4 +604,7 @@ Id: {2}</value></data>
   <data name="Hint_PaddleCalibrateDone" xml:space="preserve"><value>Η βαθμονόμηση πτερυγίων αποθηκεύτηκε.</value></data>
   <data name="Hint_CalibratePedal" xml:space="preserve"><value>Πατήστε το πεντάλ σε όλο το εύρος του και αφήστε το. Αποθήκευση σε {0}s…</value></data>
   <data name="Hint_CalibrateHandbrake" xml:space="preserve"><value>Τραβήξτε πλήρως το χειρόφρενο και αφήστε το. Αποθήκευση σε {0}s…</value></data>
+  <data name="Section_Ab9InputMode" xml:space="preserve"><value>Λειτουργία εισόδου</value></data>
+  <data name="Option_Ab9Shifter" xml:space="preserve"><value>Λεβιές ταχυτήτων</value></data>
+  <data name="Option_Ab9FlightSim" xml:space="preserve"><value>Προσομοίωση πτήσης</value></data>
 </root>

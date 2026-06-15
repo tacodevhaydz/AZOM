@@ -48,6 +48,26 @@ PitHouse-settings capture wrote 6 of the 10 sliders as 8-byte `Group 0x1F` frame
 
 Plus one larger write for **Gear Shift Vibration** (slider event at t=25s/30s in capture): 24-byte CDC frame, `Group 0x20 cmd 0x0A01`, 17-byte payload (the dissector mislabels group 0x20 as "Base Ambient LED Write"). Payload encodes the trigger pattern; high-value byte differs between intensity 100 (`33 2c …`) and intensity 0 (`00 00 …`) at the same payload offset.
 
+### Mode / online toggle write — `Group 0x1F → dev 0x12, cmd 0x5D` (2-byte payload) (2026-06-14)
+
+PitHouse's shifter ↔ flight-sim mode toggle is a **2-byte-payload** write on `Group 0x1F`, distinct from both the 3-byte slider write (`<cmdId> 0x00 <value>`) and the 3-byte mode-layout write (`D3 00 <val>`):
+
+```
+Write: 7E 02 1F 12 5D <val> <chk>     (2-byte payload — <cmdId=0x5D> <value>)
+Ack:   7E 00 9F 21 4B                 (bare group-0x1F write ack, no value echo)
+```
+
+| PitHouse toggle | `value` | Frame |
+|---|---|---|
+| Shifter mode (default) | `0x00` | `7E 02 1F 12 5D 00 1B` |
+| Flight-sim mode | `0x01` | `7E 02 1F 12 5D 01 1C` |
+
+`0x5D` is the same cmd-id PitHouse reads on `Group 0x1E` as the device's online/ready flag (`7E 02 9E 21 5D 01 AA`, 1-byte value); here it is *written* on `0x1F` with a 2-byte payload to flip the mode.
+
+The device replies with the bare ack `7E 00 9F 21 4B` (the standard group-0x1F write ack — zero-length payload, not a value echo) and updates state. PitHouse re-emits the toggle at ~3 Hz until it receives this ack, then latches and stops; a handler that drops the frame (e.g. expecting only the 3-byte slider form) makes PitHouse spam the write indefinitely.
+
+**Sim/plugin note:** group-0x1F write handlers must accept a 2-byte `<cmd> <value>` payload, not only the 3-byte `<cmd_hi> <cmd_lo> <value>` slider form. `sim/ab9_sim.py` `_h_write` guarded on `len(payload) < 3` and dropped this frame as `drop:write_short`; corrected 2026-06-14 to handle the 2-byte form (update state, return the bare ack).
+
 ### Sliders that produced **no** USB write
 
 Four PitHouse-settings events generated **zero** host→device packets on either USB device:

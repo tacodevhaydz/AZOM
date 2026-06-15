@@ -610,4 +610,7 @@ Id: {2}</value></data>
   <data name="Hint_PaddleCalibrateDone" xml:space="preserve"><value>Calibración de levas guardada.</value></data>
   <data name="Hint_CalibratePedal" xml:space="preserve"><value>Pisa el pedal en todo su recorrido y suéltalo. Guardando en {0}s…</value></data>
   <data name="Hint_CalibrateHandbrake" xml:space="preserve"><value>Tira del freno de mano por completo y suéltalo. Guardando en {0}s…</value></data>
+  <data name="Section_Ab9InputMode" xml:space="preserve"><value>Modo de entrada</value></data>
+  <data name="Option_Ab9Shifter" xml:space="preserve"><value>Cambio de marchas</value></data>
+  <data name="Option_Ab9FlightSim" xml:space="preserve"><value>Simulación de vuelo</value></data>
 </root>
