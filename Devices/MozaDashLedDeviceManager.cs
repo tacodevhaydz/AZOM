@@ -207,8 +207,14 @@ namespace MozaPlugin.Devices
                     if (rpmColors[i].R > 0 || rpmColors[i].G > 0 || rpmColors[i].B > 0)
                         bitmask |= (1 << i);
                 }
+                bool bitmaskChanged = bitmask != _lastBitmask;
                 bool keepaliveDue = (now - _lastSendTime).TotalSeconds >= KeepaliveIntervalSeconds;
-                if (alwaysResend || bitmask != _lastBitmask || keepaliveDue)
+                // Resend a lit bar on change / keepalive / always-resend, but never
+                // re-assert a zero bitmask beyond the single off transition: a 1 Hz
+                // (or per-frame, under AlwaysResendBitmask) all-off resend pins the
+                // dash in live-render mode and blocks its idle/sleep — the same fix
+                // applied to the wheel keepalive.
+                if (bitmaskChanged || (bitmask != 0 && (alwaysResend || keepaliveDue)))
                 {
                     _lastBitmask = bitmask;
                     _lastSendTime = now;
@@ -242,7 +248,10 @@ namespace MozaPlugin.Devices
                 }
                 bool flagKeepaliveDue = anyFlagOn
                     && (now - _lastFlagSendTime).TotalSeconds >= FlagKeepaliveIntervalSeconds;
-                if (hasFlags && (alwaysResend || flagsChanged || flagKeepaliveDue))
+                // anyFlagOn gates the keepalive AND always-resend: a fully-off flag
+                // array is sent once via flagsChanged, then left quiet so the dash
+                // can idle instead of being held awake by all-black flag refreshes.
+                if (hasFlags && (flagsChanged || ((alwaysResend || flagKeepaliveDue) && anyFlagOn)))
                 {
                     Array.Copy(rgb, _lastFlagRgb, rgb.Length);
                     _lastFlagPrimed = true;
