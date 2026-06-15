@@ -20,25 +20,15 @@ namespace MozaPlugin
     /// </summary>
     public sealed class WheelOverride
     {
-        // Captures legacy JSON keys that no longer exist on the class (e.g.
-        // pre-schema-v5 TelemetryEnabled, pre-schema-v4 TelemetryMzdashFolder).
-        // Migration reads these values into the new schema and clears the dict.
-        [Newtonsoft.Json.JsonExtensionData(WriteData = false)]
-        internal Dictionary<string, Newtonsoft.Json.Linq.JToken>? LegacyJsonFields;
-
         // LED / mode
         public int WheelTelemetryMode { get; set; } = -1;
         public int WheelKnobLedMode { get; set; } = -1;
         public int WheelButtonsLedMode { get; set; } = -1;
-        // NOTE: WheelSleep* (mode / timeout / speed / color) moved to
-        // MozaPluginSettings.WheelSleepByPageGuid in schema v8 — sleep is a
-        // firmware preference, not a per-game-per-wheel decision. Legacy
-        // values get drained via LegacyJsonFields during migration.
-        // NOTE: WheelIdleEffect / WheelButtonsIdleEffect / WheelKnobIdleEffect
-        // / WheelTelemetryIdleSpeedMs / WheelButtonsIdleSpeedMs / WheelKnobIdleSpeedMs
-        // moved to MozaPluginSettings.WheelIdleByPageGuid in schema v9 — same
-        // wheel-level reasoning as sleep. Legacy values are drained via
-        // LegacyJsonFields during migration.
+        // NOTE: WheelSleep* (mode / timeout / speed / color) live on
+        // MozaPluginSettings.WheelSleepByPageGuid — sleep is a firmware
+        // preference, not a per-game-per-wheel decision. WheelIdleEffect /
+        // WheelButtonsIdleEffect / WheelKnobIdleEffect and the matching *SpeedMs
+        // fields live on MozaPluginSettings.WheelIdleByPageGuid for the same reason.
 
         // Brightness (-1 = use profile baseline)
         public int WheelRpmBrightness { get; set; } = -1;
@@ -260,14 +250,6 @@ namespace MozaPlugin
         [JsonIgnore]
         public override Control ProfileContentControl => null!;
 
-        // Captures pre-schema-v8 JSON keys that no longer exist on this class
-        // (e.g. WheelSleepMode / WheelSleepTimeoutMin / WheelSleepSpeedMs /
-        // WheelSleepColor — moved to MozaPluginSettings.WheelSleepByPageGuid).
-        // Migration reads these into the per-wheel-page dict and clears the
-        // capture, so subsequent saves don't re-emit them.
-        [JsonExtensionData(WriteData = false)]
-        internal Dictionary<string, Newtonsoft.Json.Linq.JToken>? LegacyJsonFields;
-
         // ===== Base/Motor settings (raw device values from MozaData) =====
         public int Limit { get; set; } = -1;               // raw = degrees / 2
         public int FfbStrength { get; set; } = -1;          // raw = percent * 10
@@ -309,14 +291,11 @@ namespace MozaPlugin
         public int WheelTelemetryMode { get; set; } = -1;
         public int WheelKnobLedMode { get; set; } = -1;
         public int WheelButtonsLedMode { get; set; } = -1;
-        // NOTE: WheelSleep* (mode / timeout / speed / color) moved to
-        // MozaPluginSettings.WheelSleepByPageGuid in schema v8 — see the
-        // baseline-shared LegacyJsonFields capture above.
-        // NOTE: WheelIdleEffect / WheelButtonsIdleEffect / WheelKnobIdleEffect
-        // / WheelTelemetryIdleSpeedMs / WheelButtonsIdleSpeedMs / WheelKnobIdleSpeedMs
-        // moved to MozaPluginSettings.WheelIdleByPageGuid in schema v9. Legacy
-        // baseline values get drained via the per-profile LegacyJsonFields
-        // capture above.
+        // NOTE: WheelSleep* (mode / timeout / speed / color) live on
+        // MozaPluginSettings.WheelSleepByPageGuid (sleep is a wheel-level, not
+        // per-game, preference). WheelIdleEffect / WheelButtonsIdleEffect /
+        // WheelKnobIdleEffect and the matching *SpeedMs fields live on
+        // MozaPluginSettings.WheelIdleByPageGuid for the same reason.
         public int WheelRpmBrightness { get; set; } = -1;
         public int WheelButtonsBrightness { get; set; } = -1;
         public int WheelFlagsBrightness { get; set; } = -1;
@@ -740,6 +719,44 @@ namespace MozaPlugin
             // them from stale flat fields would corrupt the persisted state.
             // Wheel colors / blink colors / knob colors live in WheelOverride;
             // dash colors / dash blink live on the profile via the dash UI handler.
+        }
+
+        /// <summary>
+        /// Seed this profile's dash / base-ambient / gearshift baselines from the
+        /// global <see cref="MozaPluginSettings"/> flat defaults. Sentinel-only
+        /// (writes only where the baseline is still at its -1 / null "not set"
+        /// marker), so it's idempotent and never overwrites a user value.
+        ///
+        /// Runs at profile creation (ProfileCoordinator.InitProfileSystem) and on
+        /// every dash apply (HardwareApplier.ApplyDashToHardware)
+        /// — SimHub auto-creates per-game profiles with all-sentinel fields, and
+        /// without seeding the >=0 guards downstream skip every write, leaving the
+        /// display dark.
+        /// </summary>
+        public void SeedBaselineFromFlatFields(MozaPluginSettings settings)
+        {
+            if (settings == null) return;
+
+            // Dash brightness baselines.
+            if (DashRpmBrightness     < 0) DashRpmBrightness     = settings.DashRpmBrightness;
+            if (DashFlagsBrightness   < 0) DashFlagsBrightness   = settings.DashFlagsBrightness;
+            if (DashDisplayBrightness < 0) DashDisplayBrightness = settings.DashDisplayBrightness;
+            if (DashDisplayStandbyMin < 0) DashDisplayStandbyMin = settings.DashDisplayStandbyMin;
+            if (DashRpmBlinkColors == null && settings.DashRpmBlinkColors != null)
+                DashRpmBlinkColors = (int[])settings.DashRpmBlinkColors.Clone();
+
+            // Base ambient.
+            if (BaseAmbientBrightness     < 0) BaseAmbientBrightness     = settings.BaseAmbientBrightness;
+            if (BaseAmbientStandbyMode    < 0) BaseAmbientStandbyMode    = settings.BaseAmbientStandbyMode;
+            if (BaseAmbientIndicatorState < 0) BaseAmbientIndicatorState = settings.BaseAmbientIndicatorState;
+            if (BaseAmbientSleepMode      < 0) BaseAmbientSleepMode      = settings.BaseAmbientSleepMode;
+            if (BaseAmbientSleepTimeout   < 0) BaseAmbientSleepTimeout   = settings.BaseAmbientSleepTimeout;
+            if (BaseAmbientStartupColor   < 0) BaseAmbientStartupColor   = settings.BaseAmbientStartupColor;
+            if (BaseAmbientShutdownColor  < 0) BaseAmbientShutdownColor  = settings.BaseAmbientShutdownColor;
+
+            // Gearshift.
+            if (GearshiftVibrateOnNeutral < 0) GearshiftVibrateOnNeutral = settings.GearshiftVibrateOnNeutral ? 1 : 0;
+            if (GearshiftDebounceMs       < 0) GearshiftDebounceMs       = settings.GearshiftDebounceMs;
         }
 
         // ===== Color packing helpers =====

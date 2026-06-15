@@ -834,22 +834,10 @@ namespace MozaPlugin
                 if (_settings.ProfileStore == null)
                     _settings.ProfileStore = new MozaProfileStore();
 
-                // Legacy upgrade: hoist flat TelemetryChannelMappings into the
-                // per-wheel schema (empty key) so existing users keep their data.
-                if (_settings.MigrateLegacyChannelMappingsIfNeeded())
-                {
-                    MozaLog.Info("[AZOM] Migrated legacy TelemetryChannelMappings to per-wheel schema (under empty-wheel slot \"\")");
-                    this.SaveCommonSettings("MozaPluginSettings", _settings);
-                }
-
-                // Schema migration to v8 (legacy UID/model → profile-scoped
-                // WheelOverride). Registry must initialise first for page-GUID
-                // resolution. See SettingsMigrator.
+                // Initialise the GUID↔model registry up front — page-GUID
+                // resolution (current-wheel page lookup, per-page settings dicts)
+                // depends on it throughout runtime.
                 MozaDeviceConstants.InitializeRegistry();
-                if (new SettingsMigrator(_settings).MigrateToSchemaV2())
-                {
-                    this.SaveCommonSettings("MozaPluginSettings", _settings);
-                }
 
                 // Restore blink colors from settings (write-only, can't be polled from device)
                 MozaProfile.UnpackColorsInto(_settings.WheelRpmBlinkColors, _data.WheelRpmBlinkColors);

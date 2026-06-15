@@ -143,7 +143,7 @@ namespace MozaPlugin.Settings
             if (store.Profiles.Count == 0)
             {
                 var defaultProfile = new MozaProfile { Name = "Default" };
-                new SettingsMigrator(_plugin.Settings).SeedProfileBaselineFromFlatFields(defaultProfile);
+                defaultProfile.SeedBaselineFromFlatFields(_plugin.Settings);
                 store.Profiles.Add(defaultProfile);
             }
 
