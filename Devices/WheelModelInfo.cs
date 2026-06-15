@@ -158,7 +158,7 @@ namespace MozaPlugin.Devices
             ("W17",     "CS Pro",     new WheelModelInfo(16, 8,  false, null, 4, new[] { 12, 12, 12, 12 }, hasDisplay: true,  browSegmentSize: 3)),
             // KS Pro 3/12/3 LED strip appears to live entirely in group 0 (Shift/RPM),
             // not split across RPM + Meter flag sub-device. Driving all 18 as one RPM strip.
-            ("W18",     "KS Pro",     new WheelModelInfo(18, 14, false, null, 5, new[] { 12, 12, 8, 12, 12 }, hasDisplay: true,  browSegmentSize: 3)),
+            ("W18",     "KS Pro",     new WheelModelInfo(18, 10, false, null, 5, new[] { 12, 12, 8, 12, 12 }, hasDisplay: true,  browSegmentSize: 3)),
             ("KS",      "KS",         new WheelModelInfo(10, 10, false, null, 0, hasDisplay: false)),
             ("W13",     "FSR V2",     new WheelModelInfo(16, 10, false, null, 0, hasDisplay: true,  browSegmentSize: 3)),  // firmware reports "W13" for FSR V2
             // FSR V1 display wheel (box name "FSR1"): firmware reports model-name
