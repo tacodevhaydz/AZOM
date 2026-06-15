@@ -277,6 +277,32 @@ namespace MozaPlugin.Devices
             return true;
         }
 
+        // True if any entry is non-black. Used to keep the live LED stream quiet
+        // when there's nothing lit to show — re-sending all-black frames would
+        // hold the wheel in live-render mode and block its firmware sleep light.
+        private static bool AnyLit(Color[]? colors)
+        {
+            if (colors == null) return false;
+            for (int i = 0; i < colors.Length; i++)
+                if (colors[i].R != 0 || colors[i].G != 0 || colors[i].B != 0) return true;
+            return false;
+        }
+
+        // True iff any cached channel currently shows a lit LED. When false there
+        // is no LED data worth keeping the wheel awake for, so the keepalive pauses
+        // and the wheel's firmware idle behavior takes over.
+        private bool HasLitState()
+        {
+            if (AnyLit(_lastLeds) || AnyLit(_lastButtons) || AnyLit(_lastKnobs)) return true;
+            if (_lastFlagColorsPrimed)
+                for (int i = 0; i < _lastFlagColors.Length; i++)
+                {
+                    var c = _lastFlagColors[i];
+                    if (c.R != 0 || c.G != 0 || c.B != 0) return true;
+                }
+            return false;
+        }
+
         /// <summary>
         /// Drop the cached "last-sent" state for one or more LED groups so the next
         /// <see cref="Display"/> frame re-sends instead of being deduplicated against
@@ -463,7 +489,10 @@ namespace MozaPlugin.Devices
 
                 // --- RPM LEDs ---
                 bool rpmChanged = !ColorsEqual(rpmColors, _lastLeds);
-                bool shouldSendRpm = !ledThrottled && (rpmChanged || (!limitUpdates && forceRefresh));
+                // forceRefresh resends only when something is lit: an all-off frame
+                // is sent once via rpmChanged (lit->off) and then left quiet, so
+                // forceRefresh can't re-flood the wheel with all-black frames at idle.
+                bool shouldSendRpm = !ledThrottled && (rpmChanged || (!limitUpdates && forceRefresh && AnyLit(rpmColors)));
 
                 if (shouldSendRpm)
                 {
@@ -537,7 +566,7 @@ namespace MozaPlugin.Devices
                         int srcIdx = i < 3 ? i : rpmN + i;  // 0,1,2, rpmN+3, rpmN+4, rpmN+5
                         var c = ledColors[srcIdx];
                         bool changed = !_lastFlagColorsPrimed || _lastFlagColors[i] != c;
-                        if (changed || (!limitUpdates && forceRefresh))
+                        if (changed || (!limitUpdates && forceRefresh && (c.R | c.G | c.B) != 0))
                         {
                             _lastFlagColors[i] = c;
                             plugin.DeviceManager.WriteArray(
@@ -601,7 +630,7 @@ namespace MozaPlugin.Devices
                     buttonColors = ScaleColorsForBrightness(buttonColors, buttonsBrightness);
 
                     bool buttonsChanged = !ColorsEqual(buttonColors, _lastButtons);
-                    bool shouldSendButtons = !ledThrottled && (buttonsChanged || (!limitUpdates && forceRefresh));
+                    bool shouldSendButtons = !ledThrottled && (buttonsChanged || (!limitUpdates && forceRefresh && AnyLit(buttonColors)));
 
                     if (shouldSendButtons)
                     {
@@ -732,7 +761,7 @@ namespace MozaPlugin.Devices
                     else if (knobsActive && !_knobStaticHoldReleased)
                     {
                         bool knobsChanged = !ColorsEqual(knobColors, _lastKnobs);
-                        bool shouldSendKnobs = !ledThrottled && (knobsChanged || (!limitUpdates && forceRefresh));
+                        bool shouldSendKnobs = !ledThrottled && (knobsChanged || (!limitUpdates && forceRefresh && AnyLit(knobColors)));
 
                         if (shouldSendKnobs)
                         {
@@ -792,8 +821,14 @@ namespace MozaPlugin.Devices
                     // suppresses static writes (HardwareApplier, UI handlers).
                     NoteLiveSend();
                 }
-                else if (_lastLeds != null)
+                else if (_lastLeds != null && HasLitState())
                 {
+                    // Skip the keepalive entirely when nothing is lit: the lit->off
+                    // transition already sent one off frame (change-detected), and
+                    // re-sending all-black at 1 Hz forever holds the wheel in
+                    // live-render mode so its sleep light never engages. Going quiet
+                    // lets the firmware idle timer elapse; a returning lit frame
+                    // re-engages instantly via the normal change-driven path.
                     var now = DateTime.UtcNow;
                     if ((now - _lastSendTime).TotalSeconds >= KeepaliveIntervalSeconds)
                     {
@@ -820,7 +855,7 @@ namespace MozaPlugin.Devices
                 // SimHub sent a few all-black knob frames during a pause/transition,
                 // even though RPM/buttons were still flowing — the wheel would then
                 // revert to stored static knob colours, which the user sees as flicker.
-                if (isNewWheel && _lastKnobs != null && modelInfo?.KnobCount > 0)
+                if (isNewWheel && _lastKnobs != null && AnyLit(_lastKnobs) && modelInfo?.KnobCount > 0)
                 {
                     var now = DateTime.UtcNow;
                     bool dataFlowing = (now - _lastSendTime).TotalSeconds <= KnobIdleTimeoutSeconds;
