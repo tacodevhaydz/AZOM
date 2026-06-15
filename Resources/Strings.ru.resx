@@ -594,4 +594,15 @@ Id: {2}</value></data>
   <data name="Import_Footer_WillChange" xml:space="preserve"><value>{0} из {1} настроек будут изменены</value></data>
   <data name="Status_CaptureStopped" xml:space="preserve"><value>остановлено — захвачено кадров: {0}</value></data>
   <data name="Diag_ZipFilter" xml:space="preserve"><value>ZIP-архив (*.zip)|*.zip</value></data>
+  <data name="SliderLabel_Interpolation" xml:space="preserve"><value>Интерполяция</value></data>
+  <data name="SliderLabel_PaddleCalibration" xml:space="preserve"><value>Калибровка лепестков</value></data>
+  <data name="Button_RestartWheelbase" xml:space="preserve"><value>Перезапустить базу</value></data>
+  <data name="Button_CalibrateStart" xml:space="preserve"><value>Старт</value></data>
+  <data name="Button_CalibrateSave" xml:space="preserve"><value>Сохранить</value></data>
+  <data name="Dialog_RestartWheelbase_Caption" xml:space="preserve"><value>Перезапуск базы</value></data>
+  <data name="Dialog_RestartWheelbase_Body" xml:space="preserve"><value>Перезапустить базу сейчас? Обратная связь по усилию ненадолго пропадёт во время перезагрузки.</value></data>
+  <data name="Hint_PaddleCalibrate" xml:space="preserve"><value>Полностью нажмите все лепестки и отпустите. Сохранение через {0}с…</value></data>
+  <data name="Hint_PaddleCalibrateDone" xml:space="preserve"><value>Калибровка лепестков сохранена.</value></data>
+  <data name="Hint_CalibratePedal" xml:space="preserve"><value>Нажмите педаль на весь ход и отпустите. Сохранение через {0}с…</value></data>
+  <data name="Hint_CalibrateHandbrake" xml:space="preserve"><value>Полностью потяните ручной тормоз и отпустите. Сохранение через {0}с…</value></data>
 </root>

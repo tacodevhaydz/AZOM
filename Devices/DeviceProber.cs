@@ -15,7 +15,7 @@ namespace MozaPlugin.Devices
 
         internal static readonly string[] BaseSettingsReadCommands = new[]
         {
-            "base-limit", "base-ffb-strength", "base-torque", "base-speed",
+            "base-limit", "base-ffb-strength", "main-get-interpolation", "base-torque", "base-speed",
             "base-damper", "base-friction", "base-inertia", "base-spring",
             "base-protection", "base-natural-inertia",
             "base-speed-damping", "base-speed-damping-point",

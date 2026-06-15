@@ -224,6 +224,15 @@
                                             ValueChanged="WiClutchPointSlider_ValueChanged"/>
                                     <TextBox Grid.Column="2" x:Name="WiClutchPointValue" Style="{StaticResource SliderValueEditBox}" ui:SliderValueBox.Slider="{Binding ElementName=WiClutchPointSlider}" Text="50%"/>
                                 </Grid>
+                                <StackPanel Margin="0,8,0,0">
+                                    <StackPanel Orientation="Horizontal">
+                                        <TextBlock Text="{x:Static res:Strings.SliderLabel_PaddleCalibration}" Style="{StaticResource SliderLabel}" VerticalAlignment="Center"/>
+                                        <Button x:Name="WiPaddleCalStartButton" Content="{x:Static res:Strings.Button_CalibrateStart}"
+                                                Click="WiPaddleCalStartButton_Click" Margin="8,0,0,0"/>
+                                    </StackPanel>
+                                    <TextBlock x:Name="WiPaddleCalStatus" Style="{StaticResource MutedHintText}"
+                                               TextWrapping="Wrap" Margin="0,6,0,0" Visibility="Collapsed"/>
+                                </StackPanel>
                             </StackPanel>
                         </ctrl:SectionCard>
 

@@ -599,4 +599,15 @@ Id: {2}</value></data>
   <data name="Import_Footer_WillChange" xml:space="preserve"><value>{0} av {1} innstillinger vil endres</value></data>
   <data name="Status_CaptureStopped" xml:space="preserve"><value>stoppet – {0} rammer tatt opp</value></data>
   <data name="Diag_ZipFilter" xml:space="preserve"><value>ZIP-arkiv (*.zip)|*.zip</value></data>
+  <data name="SliderLabel_Interpolation" xml:space="preserve"><value>Interpolasjon</value></data>
+  <data name="SliderLabel_PaddleCalibration" xml:space="preserve"><value>Kalibrering av padler</value></data>
+  <data name="Button_RestartWheelbase" xml:space="preserve"><value>Start wheelbase på nytt</value></data>
+  <data name="Button_CalibrateStart" xml:space="preserve"><value>Start</value></data>
+  <data name="Button_CalibrateSave" xml:space="preserve"><value>Lagre</value></data>
+  <data name="Dialog_RestartWheelbase_Caption" xml:space="preserve"><value>Start wheelbase på nytt</value></data>
+  <data name="Dialog_RestartWheelbase_Body" xml:space="preserve"><value>Starte wheelbase på nytt nå? Krafttilbakemeldingen faller kort bort mens basen starter på nytt.</value></data>
+  <data name="Hint_PaddleCalibrate" xml:space="preserve"><value>Trykk alle padlene helt inn og slipp. Lagrer om {0}s…</value></data>
+  <data name="Hint_PaddleCalibrateDone" xml:space="preserve"><value>Padelkalibrering lagret.</value></data>
+  <data name="Hint_CalibratePedal" xml:space="preserve"><value>Trykk pedalen gjennom hele bevegelsen og slipp den. Lagrer om {0}s…</value></data>
+  <data name="Hint_CalibrateHandbrake" xml:space="preserve"><value>Trekk håndbrekket helt inn og slipp det. Lagrer om {0}s…</value></data>
 </root>

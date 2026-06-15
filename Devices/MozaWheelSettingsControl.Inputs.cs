@@ -134,6 +134,44 @@ namespace MozaPlugin.Devices
             _plugin.SaveSettings();
         }
 
+        private DispatcherTimer? _paddleCalTimer;
+        private int _paddleCalRemaining;
+        private const int PaddleCalSeconds = 5;
+
+        // Clutch-paddle calibration (no profile state): clicking Start sends
+        // 08 01, instructs the user to sweep + release all paddles with a live
+        // countdown, then auto-sends 08 02 (save) after 5 s. See wheel-0x17.md.
+        private void WiPaddleCalStartButton_Click(object sender, RoutedEventArgs e)
+        {
+            if (_plugin == null) return;
+            _plugin.WriteIfWheelDetected("wheel-paddles-calibration", 1);  // start
+
+            WiPaddleCalStartButton.IsEnabled = false;
+            _paddleCalRemaining = PaddleCalSeconds;
+            WiPaddleCalStatus.Text = string.Format(
+                global::MozaPlugin.Resources.Strings.Hint_PaddleCalibrate, _paddleCalRemaining);
+            WiPaddleCalStatus.Visibility = Visibility.Visible;
+
+            _paddleCalTimer?.Stop();
+            _paddleCalTimer = new DispatcherTimer { Interval = TimeSpan.FromSeconds(1) };
+            _paddleCalTimer.Tick += (s, ev) =>
+            {
+                _paddleCalRemaining--;
+                if (_paddleCalRemaining > 0)
+                {
+                    WiPaddleCalStatus.Text = string.Format(
+                        global::MozaPlugin.Resources.Strings.Hint_PaddleCalibrate, _paddleCalRemaining);
+                    return;
+                }
+                _paddleCalTimer?.Stop();
+                _paddleCalTimer = null;
+                _plugin?.WriteIfWheelDetected("wheel-paddles-calibration", 2);  // save
+                WiPaddleCalStatus.Text = global::MozaPlugin.Resources.Strings.Hint_PaddleCalibrateDone;
+                WiPaddleCalStartButton.IsEnabled = true;
+            };
+            _paddleCalTimer.Start();
+        }
+
         private void WiClutchPointSlider_ValueChanged(object sender, RoutedPropertyChangedEventArgs<double> e)
         {
             if (_suppressEvents || _plugin == null || _data == null) return;

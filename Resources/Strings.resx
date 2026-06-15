@@ -601,4 +601,15 @@ Id: {2}</value></data>
   <data name="Import_Footer_WillChange" xml:space="preserve"><value>{0} of {1} settings will change</value></data>
   <data name="Status_CaptureStopped" xml:space="preserve"><value>stopped — {0} frames captured</value></data>
   <data name="Diag_ZipFilter" xml:space="preserve"><value>ZIP archive (*.zip)|*.zip</value></data>
+  <data name="SliderLabel_Interpolation" xml:space="preserve"><value>Interpolation</value></data>
+  <data name="SliderLabel_PaddleCalibration" xml:space="preserve"><value>Paddle Calibration</value></data>
+  <data name="Button_RestartWheelbase" xml:space="preserve"><value>Restart Wheelbase</value></data>
+  <data name="Button_CalibrateStart" xml:space="preserve"><value>Start</value></data>
+  <data name="Button_CalibrateSave" xml:space="preserve"><value>Save</value></data>
+  <data name="Dialog_RestartWheelbase_Caption" xml:space="preserve"><value>Restart Wheelbase</value></data>
+  <data name="Dialog_RestartWheelbase_Body" xml:space="preserve"><value>Restart the wheelbase now? Force feedback will drop briefly while the base reboots.</value></data>
+  <data name="Hint_PaddleCalibrate" xml:space="preserve"><value>Hold all paddles fully, then release. Saving in {0}s…</value></data>
+  <data name="Hint_PaddleCalibrateDone" xml:space="preserve"><value>Paddle calibration saved.</value></data>
+  <data name="Hint_CalibratePedal" xml:space="preserve"><value>Press the pedal through its full range, then release. Saving in {0}s…</value></data>
+  <data name="Hint_CalibrateHandbrake" xml:space="preserve"><value>Pull the handbrake fully, then release. Saving in {0}s…</value></data>
 </root>

@@ -599,4 +599,15 @@ Id: {2}</value></data>
   <data name="Import_Footer_WillChange" xml:space="preserve"><value>{0} de {1} ajustes cambiarán</value></data>
   <data name="Status_CaptureStopped" xml:space="preserve"><value>detenido: {0} tramas capturadas</value></data>
   <data name="Diag_ZipFilter" xml:space="preserve"><value>Archivo ZIP (*.zip)|*.zip</value></data>
+  <data name="SliderLabel_Interpolation" xml:space="preserve"><value>Interpolación</value></data>
+  <data name="SliderLabel_PaddleCalibration" xml:space="preserve"><value>Calibración de levas</value></data>
+  <data name="Button_RestartWheelbase" xml:space="preserve"><value>Reiniciar la base</value></data>
+  <data name="Button_CalibrateStart" xml:space="preserve"><value>Iniciar</value></data>
+  <data name="Button_CalibrateSave" xml:space="preserve"><value>Guardar</value></data>
+  <data name="Dialog_RestartWheelbase_Caption" xml:space="preserve"><value>Reiniciar la base</value></data>
+  <data name="Dialog_RestartWheelbase_Body" xml:space="preserve"><value>¿Reiniciar la base ahora? El force feedback se interrumpirá brevemente mientras la base se reinicia.</value></data>
+  <data name="Hint_PaddleCalibrate" xml:space="preserve"><value>Presiona todas las levas a fondo y suéltalas. Guardando en {0}s…</value></data>
+  <data name="Hint_PaddleCalibrateDone" xml:space="preserve"><value>Calibración de levas guardada.</value></data>
+  <data name="Hint_CalibratePedal" xml:space="preserve"><value>Pisa el pedal en todo su recorrido y suéltalo. Guardando en {0}s…</value></data>
+  <data name="Hint_CalibrateHandbrake" xml:space="preserve"><value>Tira del freno de mano por completo y suéltalo. Guardando en {0}s…</value></data>
 </root>

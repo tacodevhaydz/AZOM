@@ -41,6 +41,26 @@ and [`dash-0x14.md`](dash-0x14.md).
 
 Plugin implementation: `MozaPlugin.ShouldUseStandaloneDashboardTarget()` returns true when the open USB port has a Dashboard-category PID and no wheel is detected; the dashboard binding coordinator then pins `TelemetrySender.TargetDeviceId` to the meter — `0x14` for a base-bridged CM2, `0x12` for a standalone-USB CM2 (`MozaPlugin.PreferredStandaloneDashboardTargetDeviceId`).
 
+### Group `0x01` (1) — Lifecycle (soft reboot)
+
+| Command | ID | Dir | Bytes | Type | Notes |
+|---------|----|-----|-------|------|-------|
+| soft-reboot | `02` | W | 0 | — | Reboots the wheelbase main firmware. No payload. |
+
+Wire: `7E 01 01 12 02 <chk>` (request_group `0x01`, dev `0x12`, cmd `0x02`, zero
+payload — the length byte `0x01` counts the command byte only). Observed once in
+`usb-capture/soft-restart.calibrate-paddles.interpolation-0-5-10-0.deadzone-0-5-10-0-10-0.pcapng`
+(PitHouse h2b): after the single frame the base stops answering for ~5 s, then
+re-enumerates and PitHouse re-opens sessions `0x01`/`0x02`/`0x03` from scratch —
+i.e. a full firmware restart, not a settings reset.
+
+Note the SDK CoAP `…/SoftReboot` POST carries a 4-byte LE int (`1` observed), but
+the serial frame to the base has **no payload**; the value is not forwarded.
+`Sdk/Resources/Lifecycle/SoftRebootResource.cs` already routes this through
+`HardwareApplier.WriteIfBaseConnected("wheel-soft-reboot", 1)`, which is a silent
+no-op until a matching `MozaCommandDatabase` entry exists (writeGroup `1`, cmd
+`{2}`, 0-byte payload).
+
 ### Group `0x1E` (30) — Output (read-only)
 
 | Command | ID | Bytes | Type | Notes |

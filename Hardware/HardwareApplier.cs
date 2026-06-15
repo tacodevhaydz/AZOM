@@ -645,6 +645,9 @@ namespace MozaPlugin.Hardware
             Apply(() => profile.FfbStrength,        v => profile.FfbStrength        = v,
                   () => _data.FfbStrength,          v => _data.FfbStrength          = v,
                   "base-ffb-strength");
+            Apply(() => profile.Interpolation,      v => profile.Interpolation      = v,
+                  () => _data.Interpolation,        v => _data.Interpolation        = v,
+                  "main-set-interpolation");
             Apply(() => profile.Torque,             v => profile.Torque             = v,
                   () => _data.Torque,               v => _data.Torque               = v,
                   "base-torque");

@@ -269,6 +269,7 @@ namespace MozaPlugin
         // ===== Base/Motor settings (raw device values from MozaData) =====
         public int Limit { get; set; } = -1;               // raw = degrees / 2
         public int FfbStrength { get; set; } = -1;          // raw = percent * 10
+        public int Interpolation { get; set; } = -1;        // raw = display(0-10) * 10
         public int Torque { get; set; } = -1;               // percent
         public int Speed { get; set; } = -1;                // raw = percent * 10
         public int Damper { get; set; } = -1;               // raw = percent * 10
@@ -486,6 +487,7 @@ namespace MozaPlugin
         {
             // Base/Motor
             Limit = p.Limit; FfbStrength = p.FfbStrength; Torque = p.Torque;
+            Interpolation = p.Interpolation;
             Speed = p.Speed; Damper = p.Damper; Friction = p.Friction;
             Inertia = p.Inertia; Spring = p.Spring;
             SpeedDamping = p.SpeedDamping; SpeedDampingPoint = p.SpeedDampingPoint;
@@ -691,6 +693,7 @@ namespace MozaPlugin
 
             // Base/Motor
             Limit = data.Limit; FfbStrength = data.FfbStrength; Torque = data.Torque;
+            Interpolation = data.Interpolation;
             Speed = data.Speed; Damper = data.Damper; Friction = data.Friction;
             Inertia = data.Inertia; Spring = data.Spring;
             SpeedDamping = data.SpeedDamping; SpeedDampingPoint = data.SpeedDampingPoint;

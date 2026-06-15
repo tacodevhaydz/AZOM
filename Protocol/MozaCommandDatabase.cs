@@ -105,6 +105,9 @@ namespace MozaPlugin.Protocol
             AddCommand("main-get-work-mode",     "main", 31, 0xFF, new byte[] { 52 }, 1, "int");
             AddCommand("main-set-interpolation", "main", 0xFF, 31, new byte[] { 76 }, 1, "int");
             AddCommand("main-get-interpolation", "main", 31, 0xFF, new byte[] { 77 }, 1, "int");
+            // Soft reboot of the wheelbase main firmware. Write group 0x01,
+            // cmd 0x02, zero payload (7E 01 01 12 02 chk). See main-hub-0x12.md.
+            AddCommand("main-soft-reboot",       "main", 0xFF, 1,  new byte[] { 2 },  0, "int");
             AddCommand("main-set-spring-gain",   "main", 0xFF, 31, new byte[] { 78, 8 },  1, "int");
             AddCommand("main-set-damper-gain",   "main", 0xFF, 31, new byte[] { 78, 9 },  1, "int");
             AddCommand("main-set-inertia-gain",  "main", 0xFF, 31, new byte[] { 78, 10 }, 1, "int");
@@ -239,6 +242,8 @@ namespace MozaPlugin.Protocol
                 AddCommand($"wheel-knob-signal-mode{i}", "wheel", 64, 63, new byte[] { 42, i }, 1, "int");
             AddCommand("wheel-paddle-adaptive-mode","wheel",64, 63, new byte[] { 11 },         1, "int");
             AddCommand("wheel-paddle-button-mode", "wheel", 64, 63, new byte[] { 13 },         1, "int");
+            // Clutch-paddle calibration (write-only): 08 01 = start, 08 02 = save.
+            AddCommand("wheel-paddles-calibration","wheel",0xFF,63, new byte[] { 8 },          1, "int");
             AddCommand("wheel-rpm-interval",       "wheel", 64, 63, new byte[] { 22 },         4, "int");
             AddCommand("wheel-rpm-mode",           "wheel", 64, 63, new byte[] { 23 },         1, "int");
 

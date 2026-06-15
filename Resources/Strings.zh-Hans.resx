@@ -594,4 +594,15 @@ Id: {2}</value></data>
   <data name="Import_Footer_WillChange" xml:space="preserve"><value>{1} 项设置中将更改 {0} 项</value></data>
   <data name="Status_CaptureStopped" xml:space="preserve"><value>已停止——已捕获 {0} 帧</value></data>
   <data name="Diag_ZipFilter" xml:space="preserve"><value>ZIP 压缩包 (*.zip)|*.zip</value></data>
+  <data name="SliderLabel_Interpolation" xml:space="preserve"><value>插值</value></data>
+  <data name="SliderLabel_PaddleCalibration" xml:space="preserve"><value>拨片校准</value></data>
+  <data name="Button_RestartWheelbase" xml:space="preserve"><value>重启基座</value></data>
+  <data name="Button_CalibrateStart" xml:space="preserve"><value>开始</value></data>
+  <data name="Button_CalibrateSave" xml:space="preserve"><value>保存</value></data>
+  <data name="Dialog_RestartWheelbase_Caption" xml:space="preserve"><value>重启基座</value></data>
+  <data name="Dialog_RestartWheelbase_Body" xml:space="preserve"><value>现在重启基座吗？基座重启时力反馈会短暂中断。</value></data>
+  <data name="Hint_PaddleCalibrate" xml:space="preserve"><value>将所有拨片完全拨到底再松开。{0} 秒后保存…</value></data>
+  <data name="Hint_PaddleCalibrateDone" xml:space="preserve"><value>拨片校准已保存。</value></data>
+  <data name="Hint_CalibratePedal" xml:space="preserve"><value>将踏板踩到底再松开，覆盖整个行程。{0} 秒后保存…</value></data>
+  <data name="Hint_CalibrateHandbrake" xml:space="preserve"><value>将手刹完全拉到底再松开。{0} 秒后保存…</value></data>
 </root>

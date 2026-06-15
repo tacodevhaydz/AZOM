@@ -594,4 +594,15 @@ Id: {2}</value></data>
   <data name="Import_Footer_WillChange" xml:space="preserve"><value>{0} von {1} Einstellungen werden geändert</value></data>
   <data name="Status_CaptureStopped" xml:space="preserve"><value>gestoppt – {0} Frames aufgezeichnet</value></data>
   <data name="Diag_ZipFilter" xml:space="preserve"><value>ZIP-Archiv (*.zip)|*.zip</value></data>
+  <data name="SliderLabel_Interpolation" xml:space="preserve"><value>Interpolation</value></data>
+  <data name="SliderLabel_PaddleCalibration" xml:space="preserve"><value>Schaltwippen-Kalibrierung</value></data>
+  <data name="Button_RestartWheelbase" xml:space="preserve"><value>Wheelbase neu starten</value></data>
+  <data name="Button_CalibrateStart" xml:space="preserve"><value>Starten</value></data>
+  <data name="Button_CalibrateSave" xml:space="preserve"><value>Speichern</value></data>
+  <data name="Dialog_RestartWheelbase_Caption" xml:space="preserve"><value>Wheelbase neu starten</value></data>
+  <data name="Dialog_RestartWheelbase_Body" xml:space="preserve"><value>Wheelbase jetzt neu starten? Das Force Feedback fällt kurz aus, während die Basis neu startet.</value></data>
+  <data name="Hint_PaddleCalibrate" xml:space="preserve"><value>Alle Schaltwippen vollständig betätigen und loslassen. Speichern in {0}s…</value></data>
+  <data name="Hint_PaddleCalibrateDone" xml:space="preserve"><value>Schaltwippen-Kalibrierung gespeichert.</value></data>
+  <data name="Hint_CalibratePedal" xml:space="preserve"><value>Pedal über den gesamten Weg durchtreten und wieder loslassen. Speichern in {0}s…</value></data>
+  <data name="Hint_CalibrateHandbrake" xml:space="preserve"><value>Handbremse vollständig ziehen und wieder loslassen. Speichern in {0}s…</value></data>
 </root>

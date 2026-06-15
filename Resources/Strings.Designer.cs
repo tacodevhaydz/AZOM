@@ -652,5 +652,16 @@ namespace MozaPlugin.Resources
         public static string Import_Footer_WillChange => Get("Import_Footer_WillChange");
         public static string Status_CaptureStopped => Get("Status_CaptureStopped");
         public static string Diag_ZipFilter => Get("Diag_ZipFilter");
+        public static string SliderLabel_Interpolation => Get("SliderLabel_Interpolation");
+        public static string SliderLabel_PaddleCalibration => Get("SliderLabel_PaddleCalibration");
+        public static string Button_RestartWheelbase => Get("Button_RestartWheelbase");
+        public static string Button_CalibrateStart => Get("Button_CalibrateStart");
+        public static string Button_CalibrateSave => Get("Button_CalibrateSave");
+        public static string Dialog_RestartWheelbase_Caption => Get("Dialog_RestartWheelbase_Caption");
+        public static string Dialog_RestartWheelbase_Body => Get("Dialog_RestartWheelbase_Body");
+        public static string Hint_PaddleCalibrate => Get("Hint_PaddleCalibrate");
+        public static string Hint_PaddleCalibrateDone => Get("Hint_PaddleCalibrateDone");
+        public static string Hint_CalibratePedal => Get("Hint_CalibratePedal");
+        public static string Hint_CalibrateHandbrake => Get("Hint_CalibrateHandbrake");
     }
 }

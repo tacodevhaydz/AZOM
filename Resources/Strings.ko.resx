@@ -593,4 +593,15 @@ Id: {2}</value></data>
   <data name="Import_Footer_WillChange" xml:space="preserve"><value>{1}개 중 {0}개 설정이 변경됩니다</value></data>
   <data name="Status_CaptureStopped" xml:space="preserve"><value>중지됨 — {0}개 프레임 캡처됨</value></data>
   <data name="Diag_ZipFilter" xml:space="preserve"><value>ZIP 보관 파일 (*.zip)|*.zip</value></data>
+  <data name="SliderLabel_Interpolation" xml:space="preserve"><value>보간</value></data>
+  <data name="SliderLabel_PaddleCalibration" xml:space="preserve"><value>패들 보정</value></data>
+  <data name="Button_RestartWheelbase" xml:space="preserve"><value>휠베이스 재시작</value></data>
+  <data name="Button_CalibrateStart" xml:space="preserve"><value>시작</value></data>
+  <data name="Button_CalibrateSave" xml:space="preserve"><value>저장</value></data>
+  <data name="Dialog_RestartWheelbase_Caption" xml:space="preserve"><value>휠베이스 재시작</value></data>
+  <data name="Dialog_RestartWheelbase_Body" xml:space="preserve"><value>지금 휠베이스를 재시작할까요? 베이스가 재부팅되는 동안 포스 피드백이 잠시 중단됩니다.</value></data>
+  <data name="Hint_PaddleCalibrate" xml:space="preserve"><value>모든 패들을 끝까지 당겼다가 놓으세요. {0}초 후 저장…</value></data>
+  <data name="Hint_PaddleCalibrateDone" xml:space="preserve"><value>패들 보정이 저장되었습니다.</value></data>
+  <data name="Hint_CalibratePedal" xml:space="preserve"><value>페달을 전체 범위로 끝까지 밟았다가 놓으세요. {0}초 후 저장…</value></data>
+  <data name="Hint_CalibrateHandbrake" xml:space="preserve"><value>핸드브레이크를 끝까지 당겼다가 놓으세요. {0}초 후 저장…</value></data>
 </root>

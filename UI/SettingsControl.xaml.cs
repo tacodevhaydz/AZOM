@@ -367,6 +367,10 @@ namespace MozaPlugin
             FfbStrengthSlider.Value = Clamp(ffb, 0, 100);
             SetValueText(FfbStrengthValue, $"{ffb:F0}%");
 
+            double interp = _data.Interpolation / 10.0;   // wire 0-100 -> display 0-10
+            InterpolationSlider.Value = Clamp(interp, 0, 10);
+            SetValueText(InterpolationValue, $"{interp:F0}");
+
             TorqueSlider.Value = Clamp(_data.Torque, 50, 100);
             SetValueText(TorqueValue, $"{_data.Torque}%");
 
@@ -492,6 +496,17 @@ namespace MozaPlugin
             FfbStrengthValue.Text = $"{pct}%";
             _data.FfbStrength = raw;
             _plugin.WriteIfBaseConnected("base-ffb-strength", raw);
+            _plugin.SaveSettings();
+        }
+
+        private void InterpolationSlider_ValueChanged(object sender, RoutedPropertyChangedEventArgs<double> e)
+        {
+            if (_suppressEvents) return;
+            int display = (int)Math.Round(e.NewValue);   // 0-10
+            int raw = display * 10;                       // wire value 0-100
+            InterpolationValue.Text = $"{display}";
+            _data.Interpolation = raw;
+            _plugin.WriteIfBaseConnected("main-set-interpolation", raw);
             _plugin.SaveSettings();
         }
 
@@ -941,6 +956,18 @@ namespace MozaPlugin
             RequestAllSettings();
         }
 
+        private void SoftRebootButton_Click(object sender, RoutedEventArgs e)
+        {
+            var result = MessageBox.Show(
+                Strings.Dialog_RestartWheelbase_Body,
+                Strings.Dialog_RestartWheelbase_Caption,
+                MessageBoxButton.YesNo,
+                MessageBoxImage.Warning);
+            if (result != MessageBoxResult.Yes)
+                return;
+            _plugin.WriteIfBaseConnected("main-soft-reboot", 1);
+        }
+
         // ===== Helpers =====
 
         // SetSliderPercent, SetSliderRaw, SetComboSafe, Clamp moved to UI/UiHelpers.
@@ -1220,20 +1247,40 @@ namespace MozaPlugin
         private void HbY4Slider_ValueChanged(object s, RoutedPropertyChangedEventArgs<double> e) => OnIntSliderChanged(e.NewValue, HbY4Value, "", v => { _data.HandbrakeCurve[3] = v; _plugin.WriteFloatIfHandbrakeDetected("handbrake-y4", v); });
         private void HbY5Slider_ValueChanged(object s, RoutedPropertyChangedEventArgs<double> e) => OnIntSliderChanged(e.NewValue, HbY5Value, "", v => { _data.HandbrakeCurve[4] = v; _plugin.WriteFloatIfHandbrakeDetected("handbrake-y5", v); });
 
-        private void HbCalStartButton_Click(object sender, RoutedEventArgs e)
-        {
-            _plugin.WriteIfHandbrakeDetected("handbrake-cal-start", 1);
-            HbCalStatus.Text = Strings.Status_HbCalibrating;
-        }
+        private const int CalibrationSeconds = 5;
 
-        private void HbCalStopButton_Click(object sender, RoutedEventArgs e)
+        // Shared single-button calibration flow: send start, show a live
+        // countdown instruction, then auto-send stop after CalibrationSeconds.
+        private void RunCalibrationCountdown(Button startButton, TextBlock status,
+            string instructionFormat, Action sendStart, Action sendStop)
         {
-            _plugin.WriteIfHandbrakeDetected("handbrake-cal-stop", 1);
-            HbCalStatus.Text = Strings.Status_Done;
-            var timer = new DispatcherTimer { Interval = TimeSpan.FromSeconds(2) };
-            timer.Tick += (s, _) => { HbCalStatus.Text = ""; ((DispatcherTimer)s!).Stop(); };
+            sendStart();
+            startButton.IsEnabled = false;
+            int remaining = CalibrationSeconds;
+            status.Text = string.Format(instructionFormat, remaining);
+            status.Visibility = Visibility.Visible;
+
+            var timer = new DispatcherTimer { Interval = TimeSpan.FromSeconds(1) };
+            timer.Tick += (s, _) =>
+            {
+                remaining--;
+                if (remaining > 0)
+                {
+                    status.Text = string.Format(instructionFormat, remaining);
+                    return;
+                }
+                ((DispatcherTimer)s!).Stop();
+                sendStop();
+                status.Text = Strings.Status_Done;
+                startButton.IsEnabled = true;
+            };
             timer.Start();
         }
+
+        private void HbCalStartButton_Click(object sender, RoutedEventArgs e) =>
+            RunCalibrationCountdown(HbCalStartButton, HbCalStatus, Strings.Hint_CalibrateHandbrake,
+                () => _plugin.WriteIfHandbrakeDetected("handbrake-cal-start", 1),
+                () => _plugin.WriteIfHandbrakeDetected("handbrake-cal-stop", 1));
 
         // ===== Pedals Tab =====
 
@@ -1365,8 +1412,10 @@ namespace MozaPlugin
         private void ThrottleY5Slider_ValueChanged(object s, RoutedPropertyChangedEventArgs<double> e) => OnIntSliderChanged(e.NewValue, ThrottleY5Value, "", v => { _data.PedalsThrottleCurve[4] = v; _plugin.WriteFloatIfPedalsDetected("pedals-throttle-y5", v); });
 
         // Throttle calibration
-        private void ThrottleCalStartButton_Click(object sender, RoutedEventArgs e) { _plugin.WriteIfPedalsDetected("pedals-throttle-cal-start", 1); }
-        private void ThrottleCalStopButton_Click(object sender, RoutedEventArgs e) { _plugin.WriteIfPedalsDetected("pedals-throttle-cal-stop", 1); }
+        private void ThrottleCalStartButton_Click(object sender, RoutedEventArgs e) =>
+            RunCalibrationCountdown(ThrottleCalStartButton, ThrottleCalStatus, Strings.Hint_CalibratePedal,
+                () => _plugin.WriteIfPedalsDetected("pedals-throttle-cal-start", 1),
+                () => _plugin.WriteIfPedalsDetected("pedals-throttle-cal-stop", 1));
 
         // Brake direction + range + curve sliders
         private void BrakeDirCheck_Click(object sender, RoutedEventArgs e) { if (_suppressEvents) return; int v = BrakeDirCheck.IsChecked == true ? 1 : 0; _data.PedalsBrakeDir = v; _plugin.WriteIfPedalsDetected("pedals-brake-dir", v); _plugin.SaveSettings(); }
@@ -1380,8 +1429,10 @@ namespace MozaPlugin
         private void BrakeY5Slider_ValueChanged(object s, RoutedPropertyChangedEventArgs<double> e) => OnIntSliderChanged(e.NewValue, BrakeY5Value, "", v => { _data.PedalsBrakeCurve[4] = v; _plugin.WriteFloatIfPedalsDetected("pedals-brake-y5", v); });
 
         // Brake calibration
-        private void BrakeCalStartButton_Click(object sender, RoutedEventArgs e) { _plugin.WriteIfPedalsDetected("pedals-brake-cal-start", 1); }
-        private void BrakeCalStopButton_Click(object sender, RoutedEventArgs e) { _plugin.WriteIfPedalsDetected("pedals-brake-cal-stop", 1); }
+        private void BrakeCalStartButton_Click(object sender, RoutedEventArgs e) =>
+            RunCalibrationCountdown(BrakeCalStartButton, BrakeCalStatus, Strings.Hint_CalibratePedal,
+                () => _plugin.WriteIfPedalsDetected("pedals-brake-cal-start", 1),
+                () => _plugin.WriteIfPedalsDetected("pedals-brake-cal-stop", 1));
 
         // Clutch direction + range + curve sliders
         private void ClutchDirCheck_Click(object sender, RoutedEventArgs e) { if (_suppressEvents) return; int v = ClutchDirCheck.IsChecked == true ? 1 : 0; _data.PedalsClutchDir = v; _plugin.WriteIfPedalsDetected("pedals-clutch-dir", v); _plugin.SaveSettings(); }
@@ -1394,8 +1445,10 @@ namespace MozaPlugin
         private void ClutchY5Slider_ValueChanged(object s, RoutedPropertyChangedEventArgs<double> e) => OnIntSliderChanged(e.NewValue, ClutchY5Value, "", v => { _data.PedalsClutchCurve[4] = v; _plugin.WriteFloatIfPedalsDetected("pedals-clutch-y5", v); });
 
         // Clutch calibration
-        private void ClutchCalStartButton_Click(object sender, RoutedEventArgs e) { _plugin.WriteIfPedalsDetected("pedals-clutch-cal-start", 1); }
-        private void ClutchCalStopButton_Click(object sender, RoutedEventArgs e) { _plugin.WriteIfPedalsDetected("pedals-clutch-cal-stop", 1); }
+        private void ClutchCalStartButton_Click(object sender, RoutedEventArgs e) =>
+            RunCalibrationCountdown(ClutchCalStartButton, ClutchCalStatus, Strings.Hint_CalibratePedal,
+                () => _plugin.WriteIfPedalsDetected("pedals-clutch-cal-start", 1),
+                () => _plugin.WriteIfPedalsDetected("pedals-clutch-cal-stop", 1));
 
         // ===== Options tab =====
 

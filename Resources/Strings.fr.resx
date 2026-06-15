@@ -594,4 +594,15 @@ Id : {2}</value></data>
   <data name="Import_Footer_WillChange" xml:space="preserve"><value>{0} sur {1} paramètres seront modifiés</value></data>
   <data name="Status_CaptureStopped" xml:space="preserve"><value>arrêté — {0} trames capturées</value></data>
   <data name="Diag_ZipFilter" xml:space="preserve"><value>Archive ZIP (*.zip)|*.zip</value></data>
+  <data name="SliderLabel_Interpolation" xml:space="preserve"><value>Interpolation</value></data>
+  <data name="SliderLabel_PaddleCalibration" xml:space="preserve"><value>Étalonnage des palettes</value></data>
+  <data name="Button_RestartWheelbase" xml:space="preserve"><value>Redémarrer la base</value></data>
+  <data name="Button_CalibrateStart" xml:space="preserve"><value>Démarrer</value></data>
+  <data name="Button_CalibrateSave" xml:space="preserve"><value>Enregistrer</value></data>
+  <data name="Dialog_RestartWheelbase_Caption" xml:space="preserve"><value>Redémarrer la base</value></data>
+  <data name="Dialog_RestartWheelbase_Body" xml:space="preserve"><value>Redémarrer la base maintenant ? Le retour de force sera brièvement interrompu pendant le redémarrage.</value></data>
+  <data name="Hint_PaddleCalibrate" xml:space="preserve"><value>Appuyez à fond sur toutes les palettes puis relâchez-les. Enregistrement dans {0}s…</value></data>
+  <data name="Hint_PaddleCalibrateDone" xml:space="preserve"><value>Étalonnage des palettes enregistré.</value></data>
+  <data name="Hint_CalibratePedal" xml:space="preserve"><value>Appuyez sur la pédale sur toute sa course puis relâchez-la. Enregistrement dans {0}s…</value></data>
+  <data name="Hint_CalibrateHandbrake" xml:space="preserve"><value>Tirez à fond le frein à main puis relâchez-le. Enregistrement dans {0}s…</value></data>
 </root>

@@ -100,7 +100,7 @@ Full serial number = serial-a + serial-b (32 ASCII chars total).
 | rpm-brightness | `1B 00 FF` | 1 | int | |
 | buttons-brightness | `1B 01 FF` | 1 | int | |
 | flags-brightness | `1B 02 FF` | 1 | int | |
-| paddles-calibration | `08` | 1 | int | Write-only |
+| paddles-calibration | `08` | 1 | int | Write-only, two commands: `08 01` = start, `08 02` = save. (PitHouse, dev `0x17`, write group `0x3F`.) |
 
 ### Group `0x3F` (63) — Live Telemetry (write-only)
 

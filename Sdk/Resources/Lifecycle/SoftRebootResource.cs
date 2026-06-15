@@ -25,9 +25,9 @@ namespace MozaPlugin.Sdk.Resources.Lifecycle
     /// </remarks>
     internal sealed class SoftRebootResource : CoapResourceHandler
     {
-        // Provisional command name. Update once MozaCommandDatabase grows a
-        // real entry — search the DB for "reboot" before changing.
-        private const string CommandName = "wheel-soft-reboot";
+        // Wheelbase main-firmware soft reboot (write group 0x01, cmd 0x02,
+        // zero payload). See MozaCommandDatabase "main-soft-reboot".
+        private const string CommandName = "main-soft-reboot";
 
         private readonly HardwareApplier _hardware;
 
