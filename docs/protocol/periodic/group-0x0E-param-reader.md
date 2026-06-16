@@ -16,6 +16,13 @@ Pithouse sends 158 per session. Host reads EEPROM parameters sequentially and re
 
 Debug log entries confirm `0x40/1E` channel config commands write to EEPROM. Diagnostic only — **not required for telemetry**.
 
-Starts ~1s after session opens. Sent to base (0x12, 51 frames), wheel (0x17, 68 frames), pedals (0x13, 39 frames). Plugin does not implement.
+Starts ~1s after session opens. Per-device targeting is **setup-dependent**: on the R5 `extreme_dogging` capture Pithouse polls base (0x12), wheel (0x17, 68 frames) and pedals (0x13); on the R9 + bare-"CS" capture (`cs v2(1).pcapng`) it polls `0x0E` **only on the base** (`0e12`/`0e13`) and sends **zero** `0e17` to the wheel.
+
+**Wheel poll removed from the plugin (do not re-add to 0x17).** The plugin briefly sent a fixed wheel param poll `7E 03 0E 17 00 00 01` every ~5 s, added as a presumed keepalive. It was removed because:
+- The response is always the unset sentinel — `8E 71 00 00 01 FF FF FF FF` (index 01 → value `0xFFFFFFFF`); the bare-"CS" rim has these param tables unprovisioned, so no useful data ever comes back. (Pithouse on R5 sweeps indices 01..06+, all `FF FF FF FF`.)
+- Pithouse does **not** poll the wheel's param manager on the matching R9 rig, so it isn't load-bearing there.
+- Group `0x0E` is the param-manager channel (`param_manage.c`) — the same code that emits the legacy-"CS" `Table 8: Failed to Read Parameter` storm (see [`../devices/wheel-0x17.md`](../devices/wheel-0x17.md)); poking it on the wheel is at best pointless and at worst implicated in that storm.
+
+The base/pedal `0x0E` polls are unaffected; the plugin keeps the base alive via its group-`0x40` `StatusPollCommands`.
 
 Short-form host poll also sent ~1 Hz to device 0x13: 3-byte payload `00 01 XX` with 16-bit BE countdown counter starting at 0x013A (314). Base echoes back + 4 unknown bytes.

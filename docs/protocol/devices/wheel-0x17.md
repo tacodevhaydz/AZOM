@@ -376,10 +376,13 @@ are **not** the fault signal.)
   unidentified wheel — only read a group once a known `WheelModelInfo` says it
   exists. A genuinely new wheel earns these reads by being added to
   `KnownModels`, not by speculative probing.
-- The load-bearing idle keepalives in `PollStatus` — group `0x00` presence poll,
-  group `0x0E` param poll, 1-byte group `0x43` keepalive — are PitHouse-parity
-  and **must stay on**; they hold the wheel's param subsystem up. They are not
-  the storm trigger and must not be backed off.
+- The idle keepalives in `PollStatus` — group `0x00` presence poll and the 1-byte
+  group `0x43` keepalive — are PitHouse-parity and stay on. The group `0x0E`
+  **param poll to the wheel was removed**: PitHouse does not poll the wheel's
+  param manager on the matching R9 rig (it polls `0x0E` only on the base), the
+  response was always the unset sentinel `FF FF FF FF`, and `0x0E` is the
+  `param_manage.c` channel that emits this storm — see
+  [`../periodic/group-0x0E-param-reader.md`](../periodic/group-0x0E-param-reader.md).
 
 **Runtime self-protection.** `FirmwareDebugLog` counts `Failed to Read/Write
 Parameter` lines in a trailing 10 s window; ≥ 3 marks a storm (and logs a
