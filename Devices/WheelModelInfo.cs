@@ -71,9 +71,10 @@ namespace MozaPlugin.Devices
         /// logical knob index used everywhere else (LED rings, colours, UI
         /// position): <c>KnobSignalModeOrder[firmwareIndex] = logicalKnob</c>.
         /// Null = identity (firmware index == logical knob).
-        /// The KS Pro is the only wheel whose firmware addresses knob signal
-        /// modes in a different order than its LED groups — firmware 0..4 map
-        /// to physical knobs 1,4,5,3,2 (LED/colour groups are in physical order).
+        /// Some wheels address knob signal modes in a different order than their
+        /// LED groups (which are in physical order): CS Pro firmware 0..3 map to
+        /// physical knobs 1,4,3,2; KS Pro firmware 0..4 map to physical knobs
+        /// 1,4,5,3,2.
         /// </summary>
         public int[]? KnobSignalModeOrder { get; }
 
@@ -167,7 +168,7 @@ namespace MozaPlugin.Devices
             // primary colors (protocol groups 0..KnobCount-1 via cmd 0x27).
             // Group 3 (Rotary) provides per-LED ring control: 12 LEDs/knob on CS Pro,
             // 12/12/8/12/12 on KS Pro (knob 3 has 8 LEDs).
-            ("W17",     "CS Pro",     new WheelModelInfo(16, 8,  false, null, 4, new[] { 12, 12, 12, 12 }, hasDisplay: true,  browSegmentSize: 3)),
+            ("W17",     "CS Pro",     new WheelModelInfo(16, 8,  false, null, 4, new[] { 12, 12, 12, 12 }, hasDisplay: true,  browSegmentSize: 3, knobSignalModeOrder: new[] { 0, 3, 2, 1 })),
             // KS Pro 3/12/3 LED strip appears to live entirely in group 0 (Shift/RPM),
             // not split across RPM + Meter flag sub-device. Driving all 18 as one RPM strip.
             ("W18",     "KS Pro",     new WheelModelInfo(18, 10, false, null, 5, new[] { 12, 12, 8, 12, 12 }, hasDisplay: true,  browSegmentSize: 3, knobSignalModeOrder: new[] { 0, 3, 4, 2, 1 })),
