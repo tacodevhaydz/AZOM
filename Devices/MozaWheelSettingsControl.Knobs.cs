@@ -189,10 +189,15 @@ namespace MozaPlugin.Devices
                     var card = _wiKnobSignalCardWrappers[k];
                     int v = _data.WheelKnobSignalModes[k];
                     bool present = k < knobCount;
-                    bool show = perKnob && present && v >= 0;
+                    // Show every present knob's selector once firmware reports
+                    // per-knob support. A not-yet-read value (-1) leaves the chip
+                    // unselected rather than hidden, so a partial/late read can't
+                    // leave the trailing knob boxes blank (only the first drawn).
+                    bool show = perKnob && present;
                     card.Visibility = present ? Visibility.Visible : Visibility.Collapsed;
                     chip.Visibility = show ? Visibility.Visible : Visibility.Collapsed;
-                    if (show && chip.SelectedIndex != v) chip.SelectedIndex = v;
+                    int want = v >= 0 ? v : -1;
+                    if (show && chip.SelectedIndex != want) chip.SelectedIndex = want;
                 }
             }
         }

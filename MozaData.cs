@@ -181,6 +181,21 @@ namespace MozaPlugin
         public readonly int[] WheelKnobSignalModes = { -1, -1, -1, -1, -1 };
         // True once at least one per-knob response has arrived, indicating firmware supports [42, N].
         public volatile bool WheelKnobSignalModeSupported;
+
+        // Store a wheel-knob-signal-mode{firmwareIndex} response into the slot for
+        // the LOGICAL knob it controls. Most wheels are identity; the KS Pro
+        // firmware addresses signal modes in a different order than its LED groups
+        // (firmware 0..4 → physical knobs 1,4,5,3,2), so map through the model's
+        // KnobSignalModeOrder. WheelModelName is always resolved before signal-mode
+        // reads are issued (DeviceProber gates them on the known model).
+        private void StoreKnobSignalMode(int firmwareIndex, int value)
+        {
+            int logical = Devices.WheelModelInfo.FromModelName(WheelModelName)
+                .SignalModeLogicalKnob(firmwareIndex);
+            if (logical >= 0 && logical < WheelKnobSignalModes.Length)
+                WheelKnobSignalModes[logical] = value;
+            WheelKnobSignalModeSupported = true;
+        }
         public volatile int WheelStickMode;
         // True when firmware uses the new 1-byte stick mode (0=none,1=left,2=right,3=both).
         // False when firmware uses old 2-byte format (left stick toggle only).
@@ -472,11 +487,11 @@ namespace MozaPlugin
                 case "wheel-paddles-mode":           WheelPaddlesMode = value - 1; break; // raw 1/2/3 → display 0/1/2
                 case "wheel-clutch-point":           WheelClutchPoint = value; break;
                 case "wheel-knob-mode":              WheelKnobMode = value; break;
-                case "wheel-knob-signal-mode0":      WheelKnobSignalModes[0] = value; WheelKnobSignalModeSupported = true; break;
-                case "wheel-knob-signal-mode1":      WheelKnobSignalModes[1] = value; WheelKnobSignalModeSupported = true; break;
-                case "wheel-knob-signal-mode2":      WheelKnobSignalModes[2] = value; WheelKnobSignalModeSupported = true; break;
-                case "wheel-knob-signal-mode3":      WheelKnobSignalModes[3] = value; WheelKnobSignalModeSupported = true; break;
-                case "wheel-knob-signal-mode4":      WheelKnobSignalModes[4] = value; WheelKnobSignalModeSupported = true; break;
+                case "wheel-knob-signal-mode0":      StoreKnobSignalMode(0, value); break;
+                case "wheel-knob-signal-mode1":      StoreKnobSignalMode(1, value); break;
+                case "wheel-knob-signal-mode2":      StoreKnobSignalMode(2, value); break;
+                case "wheel-knob-signal-mode3":      StoreKnobSignalMode(3, value); break;
+                case "wheel-knob-signal-mode4":      StoreKnobSignalMode(4, value); break;
                 case "wheel-stick-mode":             WheelStickMode = value; break;
                 case "wheel-rpm-indicator-mode":     WheelRpmIndicatorMode = value - 1; break; // raw 1/2/3 → display 0/1/2
                 case "wheel-get-rpm-display-mode":  WheelRpmDisplayMode = value; break;

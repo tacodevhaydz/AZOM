@@ -844,7 +844,10 @@ namespace MozaPlugin
             _data.WheelKnobSignalModes[index] = value;
             _plugin.UpdateActiveWheelOverlay(o =>
                 o.WheelKnobSignalModes = (int[])_data.WheelKnobSignalModes.Clone());
-            _plugin.WriteIfWheelDetected($"wheel-knob-signal-mode{index}", value);
+            // index is the logical knob (LED/UI order); the wire command addresses
+            // the firmware signal-mode index, which differs on the KS Pro.
+            int fwIndex = _plugin.WheelModelInfo?.SignalModeFirmwareIndex(index) ?? index;
+            _plugin.WriteIfWheelDetected($"wheel-knob-signal-mode{fwIndex}", value);
             _plugin.SaveSettings();
         }
 

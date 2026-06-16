@@ -66,6 +66,18 @@ namespace MozaPlugin.Devices
         public int KnobRingLedTotal { get; }
 
         /// <summary>
+        /// Maps the firmware per-knob signal-mode index (the <c>i</c> in
+        /// <c>wheel-knob-signal-mode{i}</c> / sub-id <c>[42, i]</c>) to the
+        /// logical knob index used everywhere else (LED rings, colours, UI
+        /// position): <c>KnobSignalModeOrder[firmwareIndex] = logicalKnob</c>.
+        /// Null = identity (firmware index == logical knob).
+        /// The KS Pro is the only wheel whose firmware addresses knob signal
+        /// modes in a different order than its LED groups — firmware 0..4 map
+        /// to physical knobs 1,4,5,3,2 (LED/colour groups are in physical order).
+        /// </summary>
+        public int[]? KnobSignalModeOrder { get; }
+
+        /// <summary>
         /// Whether this wheel model has a built-in display sub-device that can render
         /// dashboards. <c>true</c> = drive dashboard telemetry without waiting for the
         /// runtime probe; <c>false</c> = never drive dashboard telemetry (skip the
@@ -158,7 +170,7 @@ namespace MozaPlugin.Devices
             ("W17",     "CS Pro",     new WheelModelInfo(16, 8,  false, null, 4, new[] { 12, 12, 12, 12 }, hasDisplay: true,  browSegmentSize: 3)),
             // KS Pro 3/12/3 LED strip appears to live entirely in group 0 (Shift/RPM),
             // not split across RPM + Meter flag sub-device. Driving all 18 as one RPM strip.
-            ("W18",     "KS Pro",     new WheelModelInfo(18, 10, false, null, 5, new[] { 12, 12, 8, 12, 12 }, hasDisplay: true,  browSegmentSize: 3)),
+            ("W18",     "KS Pro",     new WheelModelInfo(18, 10, false, null, 5, new[] { 12, 12, 8, 12, 12 }, hasDisplay: true,  browSegmentSize: 3, knobSignalModeOrder: new[] { 0, 3, 4, 2, 1 })),
             ("KS",      "KS",         new WheelModelInfo(10, 10, false, null, 0, hasDisplay: false)),
             ("W13",     "FSR V2",     new WheelModelInfo(16, 10, false, null, 0, hasDisplay: true,  browSegmentSize: 3)),  // firmware reports "W13" for FSR V2
             // FSR V1 display wheel (box name "FSR1"): firmware reports model-name
@@ -199,7 +211,7 @@ namespace MozaPlugin.Devices
             ("ES",      "ES",         new WheelModelInfo(10, 0,  false, null, 0, hasDisplay: false, hasSleepLight: false)),
         };
 
-        public WheelModelInfo(int rpmLedCount, int buttonLedCount, bool hasFlagLeds, int[]? buttonLedMap, int knobCount = 0, int[]? knobRingLeds = null, bool? hasDisplay = null, int browSegmentSize = 0, bool hasSleepLight = true, int maxLedFps = 0, bool usesLegacyRpmTelemetry = false)
+        public WheelModelInfo(int rpmLedCount, int buttonLedCount, bool hasFlagLeds, int[]? buttonLedMap, int knobCount = 0, int[]? knobRingLeds = null, bool? hasDisplay = null, int browSegmentSize = 0, bool hasSleepLight = true, int maxLedFps = 0, bool usesLegacyRpmTelemetry = false, int[]? knobSignalModeOrder = null)
         {
             RpmLedCount = rpmLedCount;
             ButtonLedCount = buttonLedCount;
@@ -216,6 +228,34 @@ namespace MozaPlugin.Devices
             HasSleepLight = hasSleepLight;
             MaxLedFps = maxLedFps;
             UsesLegacyRpmTelemetry = usesLegacyRpmTelemetry;
+            KnobSignalModeOrder = knobSignalModeOrder;
+        }
+
+        /// <summary>
+        /// Firmware signal-mode index (<c>wheel-knob-signal-mode{i}</c>) that
+        /// controls the given logical knob — inverse of <see cref="KnobSignalModeOrder"/>.
+        /// Identity when no reorder is defined. Used on the write path so a UI
+        /// edit on logical knob N reaches the physical knob whose LED ring is N.
+        /// </summary>
+        public int SignalModeFirmwareIndex(int logicalKnob)
+        {
+            if (KnobSignalModeOrder == null) return logicalKnob;
+            int i = Array.IndexOf(KnobSignalModeOrder, logicalKnob);
+            return i >= 0 ? i : logicalKnob;
+        }
+
+        /// <summary>
+        /// Logical knob (LED/colour/UI order) controlled by a firmware
+        /// signal-mode index. Identity when no reorder is defined. Used on the
+        /// read path so a <c>wheel-knob-signal-mode{i}</c> response lands in the
+        /// slot matching the knob the user sees. See <see cref="KnobSignalModeOrder"/>.
+        /// </summary>
+        public int SignalModeLogicalKnob(int firmwareIndex)
+        {
+            if (KnobSignalModeOrder == null
+                || firmwareIndex < 0 || firmwareIndex >= KnobSignalModeOrder.Length)
+                return firmwareIndex;
+            return KnobSignalModeOrder[firmwareIndex];
         }
 
         /// <summary>
