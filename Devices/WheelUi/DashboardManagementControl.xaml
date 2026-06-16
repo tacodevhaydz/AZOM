@@ -266,21 +266,18 @@
                                                 Click="AdvancedEditMapping_Click"
                                                 Tag="{Binding}"
                                                 ToolTip="{x:Static res:Strings.Tooltip_EditFormula}"
-                                                Width="26" Height="22"
+                                                Width="34" Height="22"
                                                 Padding="2"
                                                 Margin="4,0,0,0"
                                                 Background="Transparent"
                                                 BorderThickness="0"
                                                 Cursor="Hand">
-                                            <Path Data="{StaticResource IconFormula}"
-                                                  Stretch="Uniform"
-                                                  Width="15" Height="15"
-                                                  Stroke="{DynamicResource CyanBrush}"
-                                                  StrokeThickness="1.5"
-                                                  Fill="{x:Null}"
-                                                  StrokeLineJoin="Round"
-                                                  StrokeStartLineCap="Round"
-                                                  StrokeEndLineCap="Round"/>
+                                            <TextBlock Text="𝑓(𝑥)"
+                                                       FontFamily="Cambria Math, Segoe UI"
+                                                       FontSize="14"
+                                                       HorizontalAlignment="Center"
+                                                       VerticalAlignment="Center"
+                                                       Foreground="{DynamicResource TextDimBrush}"/>
                                         </Button>
                                     </Grid>
                                     <TextBlock Grid.Column="2"
