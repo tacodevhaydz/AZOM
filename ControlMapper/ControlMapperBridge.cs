@@ -35,6 +35,9 @@ namespace MozaPlugin.ControlMapper
         private object? _remapperWorker;
         private IList? _providers;
         private MethodInfo? _updateProvidersMethod;
+        // RemapperWorker.UpdateControllerList — invoked once at registration to
+        // re-key a wheel already plugged in at SimHub launch with the MOZA variant.
+        private MethodInfo? _updateControllerListMethod;
         private bool _registered;
         private bool _giveUpLogged;
 
@@ -56,25 +59,12 @@ namespace MozaPlugin.ControlMapper
         private PropertyInfo? _stateAvailableProp;
         private bool _diagResolveAttempted;
         private string? _lastDiagVariant;
-        // Throttle the reflection-heavy AutoCreate scan (GetValue(ControllerMappings)
-        // + per-entry foreach). It only needs to react to a wheel/variant change,
-        // so cap it to once per AutoCreateScanIntervalMs plus immediately on a
-        // variant change — was running on every DataUpdate tick.
-        private string? _lastAutoCreateVariant;
-        private int _lastAutoCreateScanMs;
-        private const int AutoCreateScanIntervalMs = 1000;
         // Cached so Unregister can detach the CollectionChanged handler: the
         // publisher (SimHub's ControllerMappings) outlives a plugin reload, and
         // RemoveEventHandler needs the exact Delegate instance AddEventHandler used.
         private EventInfo? _mappingsCollChangedEvent;
         private Delegate? _mappingsCollChangedHandler;
         private object? _mappingsCollChangedTarget;
-
-        // Set of variants we've auto-created mappings for this session.
-        // Prevents re-creating after the user explicitly deletes one.
-        // Case-insensitive because Variant comparisons everywhere are ToLower'd.
-        private readonly System.Collections.Generic.HashSet<string> _autoCreatedVariants =
-            new System.Collections.Generic.HashSet<string>(StringComparer.OrdinalIgnoreCase);
 
         public bool IsRegistered => _registered;
 
@@ -279,14 +269,14 @@ namespace MozaPlugin.ControlMapper
                 // has registered — so any wheel already plugged in at SimHub
                 // launch gets enumerated without a variant. Re-running it here
                 // re-keys the wheelbase entry with the current MOZA variant.
-                MethodInfo? updateControllerListMethod = rwType.GetMethod(
+                _updateControllerListMethod = rwType.GetMethod(
                     "UpdateControllerList",
                     BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Instance);
-                if (updateControllerListMethod != null)
+                if (_updateControllerListMethod != null)
                 {
                     try
                     {
-                        updateControllerListMethod.Invoke(rw, null);
+                        _updateControllerListMethod.Invoke(rw, null);
                         MozaLog.Debug(
                             "[AZOM] ControlMapper bridge: forced UpdateControllerList " +
                             "to re-key controllers with MOZA variant");
@@ -340,45 +330,14 @@ namespace MozaPlugin.ControlMapper
                 MozaLog.Debug($"[AZOM] ControlMapper bridge poll: {ex.Message}");
             }
 
-            // Auto-create a new ControllerSourceMapping for the currently-
-            // attached wheel when:
-            //   (a) at least one MOZA wheelbase mapping for a CURRENTLY-CONNECTED
-            //       device already exists (user has engaged with the feature by
-            //       adding the wheelbase once, and that base is plugged in now),
-            //       AND
-            //   (b) no existing MOZA mapping has Variant == currentVariant
-            //       (the new wheel doesn't have its own slot yet), AND
-            //   (c) we haven't already auto-created for this variant this
-            //       session (so the user can delete an unwanted auto-add
-            //       without it re-appearing).
-            // SimHub's "Add Source Controller" UI dedupes the wheelbase by
-            // ControllerID, so once one MOZA mapping exists the UI hides the
-            // wheelbase entirely — even when the current variant has no
-            // mapping. This bypasses that UI bottleneck. The connected-device
-            // requirement in (a) keeps us from cloning an unrelated base's
-            // ControllerID for a wheel that is actually a distinct DirectInput
-            // device (e.g. an ES wheel on a separate base) — SimHub surfaces
-            // those in the dropdown natively, so a synthesized clone would only
-            // leave a phantom disconnected mapping.
-            // Wheel variant resolved once per tick; shared by auto-create and
-            // the diagnostic dump below (was computed independently in both).
+            // We deliberately do NOT auto-create a ControllerSourceMapping for a
+            // newly-attached wheel. The user adds each MOZA source controller via
+            // SimHub's "Add Source Controller" flow; the provider supplies the
+            // Variant string and AquireController's per-variant gate dispatches
+            // input to the matching mapping. (A previous build synthesized a
+            // per-variant mapping here, but it produced an unwanted extra mapping
+            // that SimHub never marked Available — see docs/controlmapper.md.)
             string? currentVariant = ComputeCurrentVariant();
-            // Run the reflection-heavy scan only when the variant changed or the
-            // throttle window elapsed — not every DataUpdate tick. The 1 s ceiling
-            // keeps auto-create responsive (a freshly-added wheelbase mapping is
-            // picked up within a second) without per-frame reflection.
-            int nowMs = Environment.TickCount;
-            bool variantChanged = !string.Equals(currentVariant, _lastAutoCreateVariant, StringComparison.Ordinal);
-            if (variantChanged || (uint)(nowMs - _lastAutoCreateScanMs) >= AutoCreateScanIntervalMs)
-            {
-                _lastAutoCreateVariant = currentVariant;
-                _lastAutoCreateScanMs = nowMs;
-                try { AutoCreateVariantMappingIfNeeded(currentVariant); }
-                catch (Exception ex)
-                {
-                    MozaLog.Debug($"[AZOM] CM auto-create: {ex.Message}");
-                }
-            }
 
             // Diagnostic: when the wheel-side variant changes, dump every
             // MOZA mapping's stored Description.Variant + Available + IsEnabled
@@ -509,33 +468,14 @@ namespace MozaPlugin.ControlMapper
         private static int GetHash(object o) => System.Runtime.CompilerServices.RuntimeHelpers.GetHashCode(o);
 
         /// <summary>
-        /// True when the mapping's DirectInput device is currently connected
-        /// (<c>ControllerState.Available</c>) — i.e. plugged in, irrespective of
-        /// whether its stored Variant matches the live wheel. Returns false if
-        /// the connection state can't be read so the caller can decide how to
-        /// fall back.
-        /// </summary>
-        private bool IsMappingConnected(object entry)
-        {
-            if (_csmStateProp == null || _stateAvailableProp == null) return false;
-            try
-            {
-                object? state = _csmStateProp.GetValue(entry);
-                if (state == null) return false;
-                return _stateAvailableProp.GetValue(state) is bool b && b;
-            }
-            catch { return false; }
-        }
-
-        /// <summary>
         /// Returns true iff the given <c>ControllerDescription</c> represents a
         /// MOZA wheelbase or hub — i.e. a USB endpoint that can carry a
         /// swappable wheel. Keeps the bridge's per-mapping bookkeeping (clone-
-        /// description on Add, auto-create per variant, diag dump) narrowed to
-        /// devices that actually have a wheel variant, so MOZA pedals /
-        /// shifters / handbrakes / mBoosters / dashboards under VID 0x346E are
-        /// left alone. Matches <see cref="MozaVariantProvider.GetVariant"/>'s
-        /// own filter so the variant pipeline and the bridge agree on scope.
+        /// description on Add, diag dump) narrowed to devices that actually have
+        /// a wheel variant, so MOZA pedals / shifters / handbrakes / mBoosters /
+        /// dashboards under VID 0x346E are left alone. Matches
+        /// <see cref="MozaVariantProvider.GetVariant"/>'s own filter so the
+        /// variant pipeline and the bridge agree on scope.
         /// </summary>
         private bool IsMozaWheelbaseOrHubDesc(object? desc)
         {
@@ -553,166 +493,10 @@ namespace MozaPlugin.ControlMapper
                 || Protocol.MozaUsbIds.IsHubPid(pidU);
         }
 
-        /// <summary>
-        /// If the currently-attached MOZA wheel has no matching
-        /// ControllerSourceMapping (and at least one MOZA mapping exists),
-        /// programmatically build a new mapping by cloning an existing MOZA
-        /// CSM's Description and setting Variant to the current wheel. This
-        /// bypasses SimHub's Add Source Controller UI, which hides the
-        /// wheelbase from its dropdown once any mapping references the same
-        /// ControllerID — even when the user is on a different variant that
-        /// doesn't have a slot yet.
-        /// </summary>
         // Resolve the current wheel variant friendly-name from live plugin state.
         // Delegates to the canonical resolver so the old-protocol ("ES") rule
         // and any future variant logic stay in one place.
         private static string? ComputeCurrentVariant() => MozaVariantProvider.ComputeCurrentVariant();
-
-        private void AutoCreateVariantMappingIfNeeded(string? currentVariant)
-        {
-            if (!_diagResolveAttempted)
-            {
-                _diagResolveAttempted = true;
-                ResolveDiagnosticReflection();
-            }
-            if (_controlMapperSettings == null
-                || _settingsControllerMappingsProp == null
-                || _csmDescriptionProp == null
-                || _descVendorIDProp == null
-                || _descProductIdProp == null
-                || _descVariantProp == null) return;
-
-            if (string.IsNullOrEmpty(currentVariant)) return;
-
-            // Never auto-create for old-protocol (ES) wheels. The user attaches a
-            // single old wheel and adds it once via SimHub's normal "Add Source
-            // Controller" flow, which works. Synthesizing a clone here instead
-            // produces a mapping SimHub never marks Available — it stays
-            // "disconnected" — because the cloned Description churns through
-            // SimHub's shared-reference CopyFrom path (confirmed in live logs:
-            // three same-ControllerID mappings, the auto-added "ES" one alone
-            // stuck Available=False after UpdateControllerList). There is also no
-            // multi-old-wheel swap scenario to justify the synthesis.
-            if (MozaPlugin.Instance?.IsOldWheelDetected == true) return;
-
-            if (_autoCreatedVariants.Contains(currentVariant!)) return;
-
-            object? mappingsObj;
-            try { mappingsObj = _settingsControllerMappingsProp.GetValue(_controlMapperSettings); }
-            catch { return; }
-            if (mappingsObj is not IList mappings) return;
-
-            // Pick the clone source. Auto-create only makes sense for the
-            // same-device hot-swap case: SimHub hides an already-mapped, still-
-            // connected wheelbase from the "Add Source Controller" dropdown, so a
-            // freshly-attached wheel on that SAME base has no way in and we
-            // synthesize its mapping. When the attached wheel is instead a
-            // DISTINCT DirectInput device (e.g. an old-protocol ES wheel on a
-            // separate base, which enumerates under its own ControllerID), SimHub
-            // already offers it in the dropdown — cloning a different base's
-            // mapping here would copy the wrong ControllerID and leave a phantom
-            // "disconnected" mapping behind. So prefer a clone source whose device
-            // is CURRENTLY connected (ControllerState.Available), and when we can
-            // read connection state, bail entirely if none is connected.
-            object? primaryMoza = null;     // first MOZA mapping (fallback if state unreadable)
-            object? connectedMoza = null;   // first CONNECTED MOZA mapping (preferred)
-            foreach (object? entry in mappings)
-            {
-                if (entry == null) continue;
-                object? desc;
-                try { desc = _csmDescriptionProp.GetValue(entry); } catch { continue; }
-                if (desc == null) continue;
-                if (!IsMozaWheelbaseOrHubDesc(desc)) continue;
-                primaryMoza ??= entry;
-                if (connectedMoza == null && IsMappingConnected(entry))
-                    connectedMoza = entry;
-                string variant = (_descVariantProp.GetValue(desc) as string) ?? string.Empty;
-                if (string.Equals(variant, currentVariant, StringComparison.OrdinalIgnoreCase))
-                    return; // mapping already exists for current variant — nothing to do
-            }
-            if (primaryMoza == null) return; // user hasn't added the wheelbase yet
-
-            // When connection state is readable, only clone a connected base. If
-            // none is connected, the attached wheel is a separate device SimHub
-            // will surface in the Add dropdown — leave it to the native flow
-            // rather than minting a phantom disconnected mapping.
-            bool canReadAvailability = _csmStateProp != null && _stateAvailableProp != null;
-            object? cloneSource = canReadAvailability ? connectedMoza : primaryMoza;
-            if (cloneSource == null) return;
-
-            // Build a fresh CSM + cloned Description with current Variant.
-            object? primaryDesc;
-            try { primaryDesc = _csmDescriptionProp.GetValue(cloneSource); } catch { return; }
-            if (primaryDesc == null) return;
-            Type csmType = cloneSource.GetType();
-            Type descType = primaryDesc.GetType();
-            MethodInfo? copyFrom = descType.GetMethod("CopyFrom");
-            if (copyFrom == null) return;
-
-            object? newCsm;
-            try { newCsm = Activator.CreateInstance(csmType); }
-            catch (Exception ex) { MozaLog.Debug($"[AZOM] CM auto-create: csm ctor: {ex.Message}"); return; }
-            if (newCsm == null) return;
-
-            object? newDesc;
-            try { newDesc = Activator.CreateInstance(descType); }
-            catch (Exception ex) { MozaLog.Debug($"[AZOM] CM auto-create: desc ctor: {ex.Message}"); return; }
-            if (newDesc == null) return;
-
-            try { copyFrom.Invoke(newDesc, new[] { primaryDesc }); }
-            catch (Exception ex) { MozaLog.Debug($"[AZOM] CM auto-create: desc CopyFrom: {ex.Message}"); return; }
-            try { _descVariantProp.SetValue(newDesc, currentVariant); }
-            catch (Exception ex) { MozaLog.Debug($"[AZOM] CM auto-create: set Variant: {ex.Message}"); return; }
-            try { _csmDescriptionProp.SetValue(newCsm, newDesc); }
-            catch (Exception ex) { MozaLog.Debug($"[AZOM] CM auto-create: set csm Description: {ex.Message}"); return; }
-
-            // Mark before Add so we don't re-attempt on the next tick if the
-            // async dispatch is still pending.
-            _autoCreatedVariants.Add(currentVariant!);
-
-            // ControllerMappings is bound to a WPF CollectionView, which only
-            // accepts modifications from the UI dispatcher thread. We're
-            // running from MozaPlugin.DataUpdate (SimHub's data thread), so
-            // marshal the Add through Application.Current.Dispatcher. Without
-            // this, the backing list updates but WPF throws on the change
-            // notification and the Control Mapper UI shows stale state.
-            System.Windows.Threading.Dispatcher? dispatcher = null;
-            try { dispatcher = System.Windows.Application.Current?.Dispatcher; }
-            catch { }
-
-            var capturedMappings = mappings;
-            var capturedCsm = newCsm;
-            var capturedVariant = currentVariant!;
-
-            void DoAdd()
-            {
-                try
-                {
-                    capturedMappings.Add(capturedCsm);
-                    MozaLog.Info(
-                        $"[AZOM] CM auto-create: added new mapping for variant \"{capturedVariant}\" "
-                        + $"(now {capturedMappings.Count} total mappings)");
-                }
-                catch (Exception ex)
-                {
-                    MozaLog.Warn(
-                        $"[AZOM] CM auto-create: Add threw on UI thread: {ex.GetBaseException().Message}");
-                }
-            }
-
-            if (dispatcher == null || dispatcher.CheckAccess())
-            {
-                DoAdd();
-            }
-            else
-            {
-                try { dispatcher.BeginInvoke(new Action(DoAdd)); }
-                catch (Exception ex)
-                {
-                    MozaLog.Warn($"[AZOM] CM auto-create: dispatcher BeginInvoke threw: {ex.GetBaseException().Message}");
-                }
-            }
-        }
 
         /// <summary>
         /// Subscribe to <c>ControllerMappings.CollectionChanged</c> so the
@@ -819,8 +603,11 @@ namespace MozaPlugin.ControlMapper
                 {
                     foreach (object? added in e.NewItems)
                     {
-                        if (added != null)
-                            DetachMozaDescription(added, currentVariant);
+                        if (added == null) continue;
+                        // Stamp the variant first, then dedupe — the dedupe key
+                        // reads the freshly-stamped variant.
+                        DetachMozaDescription(added, currentVariant);
+                        DeduplicateMozaMapping(added);
                     }
                 }
 
@@ -880,6 +667,110 @@ namespace MozaPlugin.ControlMapper
         }
 
         /// <summary>
+        /// Prevent double-adding the same MOZA wheelbase. The base can enumerate
+        /// under two DirectInput interface paths (one with a USB serial, one
+        /// synthesized — observed under Wine), so SimHub's "Add Source Controller"
+        /// lists it twice and lets the user map the same physical device for the
+        /// same wheel more than once; both mappings then acquire the same device
+        /// and double-process its input. When a freshly-added MOZA wheelbase/hub
+        /// mapping matches an EXISTING one on VID+PID+Variant (same wheelbase,
+        /// same wheel), the just-added one is redundant and gets removed. Distinct
+        /// variants on the same base (e.g. CS Pro + KS) are intentional per-wheel
+        /// mappings and are kept.
+        /// </summary>
+        private void DeduplicateMozaMapping(object addedCsm)
+        {
+            if (_settingsControllerMappingsProp == null || _controlMapperSettings == null
+                || _csmDescriptionProp == null || _descVendorIDProp == null
+                || _descProductIdProp == null || _descVariantProp == null) return;
+
+            object? addedDesc;
+            try { addedDesc = _csmDescriptionProp.GetValue(addedCsm); } catch { return; }
+            if (addedDesc == null || !IsMozaWheelbaseOrHubDesc(addedDesc)) return;
+
+            int vid, pid;
+            try
+            {
+                vid = Convert.ToInt32(_descVendorIDProp.GetValue(addedDesc));
+                pid = Convert.ToInt32(_descProductIdProp.GetValue(addedDesc));
+            }
+            catch { return; }
+            string variant = (_descVariantProp.GetValue(addedDesc) as string) ?? string.Empty;
+
+            object? mappingsObj;
+            try { mappingsObj = _settingsControllerMappingsProp.GetValue(_controlMapperSettings); }
+            catch { return; }
+            if (mappingsObj is not IList mappings) return;
+
+            // Is there ANOTHER MOZA wheelbase/hub mapping with the same
+            // VID+PID+Variant? If so the just-added one is a duplicate.
+            bool duplicate = false;
+            foreach (object? entry in mappings)
+            {
+                if (entry == null || ReferenceEquals(entry, addedCsm)) continue;
+                object? d;
+                try { d = _csmDescriptionProp.GetValue(entry); } catch { continue; }
+                if (d == null || !IsMozaWheelbaseOrHubDesc(d)) continue;
+                int v2, p2;
+                try
+                {
+                    v2 = Convert.ToInt32(_descVendorIDProp.GetValue(d));
+                    p2 = Convert.ToInt32(_descProductIdProp.GetValue(d));
+                }
+                catch { continue; }
+                if (v2 != vid || p2 != pid) continue;
+                string var2 = (_descVariantProp.GetValue(d) as string) ?? string.Empty;
+                if (string.Equals(var2, variant, StringComparison.OrdinalIgnoreCase))
+                {
+                    duplicate = true;
+                    break;
+                }
+            }
+            if (!duplicate) return;
+
+            // Remove the just-added duplicate. Must defer: we're inside the
+            // collection's own CollectionChanged dispatch, and ObservableCollection
+            // throws on re-entrant mutation. BeginInvoke runs after this event
+            // unwinds, on the UI thread the collection requires.
+            System.Windows.Threading.Dispatcher? dispatcher = null;
+            try { dispatcher = System.Windows.Application.Current?.Dispatcher; }
+            catch { }
+            if (dispatcher == null)
+            {
+                MozaLog.Debug("[AZOM] CM dedupe: no dispatcher; cannot remove duplicate mapping");
+                return;
+            }
+
+            var capturedMappings = mappings;
+            var capturedCsm = addedCsm;
+            var capturedVariant = variant;
+            try
+            {
+                dispatcher.BeginInvoke(new Action(() =>
+                {
+                    try
+                    {
+                        if (capturedMappings.Contains(capturedCsm))
+                        {
+                            capturedMappings.Remove(capturedCsm);
+                            MozaLog.Info(
+                                $"[AZOM] CM: removed duplicate MOZA wheelbase mapping for variant "
+                                + $"\"{capturedVariant}\" — that wheelbase + wheel is already mapped");
+                        }
+                    }
+                    catch (Exception ex)
+                    {
+                        MozaLog.Warn($"[AZOM] CM dedupe: remove threw: {ex.GetBaseException().Message}");
+                    }
+                }));
+            }
+            catch (Exception ex)
+            {
+                MozaLog.Warn($"[AZOM] CM dedupe: BeginInvoke threw: {ex.GetBaseException().Message}");
+            }
+        }
+
+        /// <summary>
         /// Remove the provider from Control Mapper's list so a plugin
         /// reload without SimHub restart doesn't leave a dead provider
         /// hanging in <c>VariantHelper.VariantProviders</c>. Called from
@@ -921,6 +812,7 @@ namespace MozaPlugin.ControlMapper
                 _providers = null;
                 _remapperWorker = null;
                 _updateProvidersMethod = null;
+                _updateControllerListMethod = null;
                 _registered = false;
             }
         }

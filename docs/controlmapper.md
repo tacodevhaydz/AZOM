@@ -127,23 +127,33 @@ the currently-attached wheel.
    inherit Variant rewrites whenever the wheel changes. The fix clones the new mapping's
    `ControllerDescription` (`Activator.CreateInstance` + `CopyFrom`) and stamps `Variant` with the
    currently-detected wheel before SimHub's next tick sees it.
-2. **Auto-create per-variant mapping** in `Poll()` — when the current variant has no matching
-   `ControllerSourceMapping` AND at least one MOZA mapping already exists (signals the user has
-   engaged with the feature so we don't auto-add on cold start), build a fresh CSM with a cloned
-   description and add to `ControllerMappings`. This bypasses SimHub's Add Source Controller UI,
-   which dedupes the wheelbase by ControllerID and won't offer it a second time once any saved
-   mapping exists. A `HashSet<string> _autoCreatedVariants` (per-session, not persisted) gates
-   re-creation: deleted auto-adds stay deleted until the next plugin Init. **Old-protocol (ES)
-   wheels are excluded from auto-create** (early return on `MozaPlugin.IsOldWheelDetected`): a
-   cloned ES Description churns through SimHub's shared-reference `CopyFrom` path and the
-   synthesized mapping never gets marked Available (stays "disconnected"), confirmed in live logs.
-   The single old wheel is added once via SimHub's normal Add Source Controller flow, which
-   connects correctly; the variant gate in `AquireController` still dispatches input to it.
-3. **Dispatcher marshal** — `ControllerMappings` is a WPF-bound
-   `ObservableCollection<ControllerSourceMapping>` whose `CollectionView` throws on
-   background-thread `Add`. Background mutation half-succeeds (`Count` rises, view stays stale),
-   so the auto-add routes through `Application.Current.Dispatcher.BeginInvoke` when
-   `dispatcher.CheckAccess()` is false.
+2. **Deduplicate double-adds** (`DeduplicateMozaMapping`) — the MOZA base can enumerate under two
+   DirectInput interface paths (one with a USB serial, one synthesized — observed under Wine), so
+   it appears twice in "Add Source Controller" and the user can map the same physical wheelbase for
+   the same wheel more than once; both mappings then acquire the device and double-process its
+   input. On `Add`, after the Variant is stamped, the bridge checks for an existing MOZA
+   wheelbase/hub mapping with the same **VID+PID+Variant** and removes the just-added duplicate.
+   Distinct variants on the same base (e.g. `CS Pro` + `KS`) are intentional per-wheel mappings and
+   are kept. The removal is deferred via `Application.Current.Dispatcher.BeginInvoke` because
+   `ObservableCollection` throws on re-entrant mutation inside its own `CollectionChanged`.
+
+The bridge does **not** auto-create per-variant mappings. The user adds each MOZA source
+controller through SimHub's own "Add Source Controller" flow (which runs `AddController` →
+`ControllerMappings.Add` → `ControlMapperPluginSettings.UpdateControllerList()`, the canonical
+async refresh that binds the device and marks it connected). The provider supplies the `Variant`
+string and `AquireController`'s per-variant gate dispatches input to the matching mapping.
+
+> **Removed (2026-06):** an earlier `AutoCreateVariantMappingIfNeeded` synthesized a per-variant
+> mapping each tick when the attached wheel had no slot, to work around SimHub hiding a wheelbase
+> from the dropdown once one mapping referenced its `ControllerID`. It was removed at the user's
+> direction: on MOZA hardware that enumerates the base as **two** DirectInput devices, the
+> wheelbase still appears in the dropdown, so manual add already works — and the synthesized
+> mapping showed up as an unwanted extra entry that SimHub never marked `Available` (stuck
+> "unplugged"). If a single-DirectInput-device base ever needs a programmatic second-wheel mapping
+> again, replicate SimHub's add path exactly: `ControllerMappings.Add` then the **async**
+> `ControlMapperPluginSettings.UpdateControllerList()` — never a synchronous
+> `RemapperWorker.UpdateControllerList()` from inside the `Add`'s `CollectionChanged` (re-entrant,
+> leaves the mapping un-acquired).
 
 ### Wiring
 
