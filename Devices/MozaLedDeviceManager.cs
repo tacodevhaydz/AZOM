@@ -158,6 +158,12 @@ namespace MozaPlugin.Devices
         private DateTime _lastKnobActivityTime = DateTime.MinValue;
         private const double KeepaliveIntervalSeconds = 1.0;
         private const double KnobIdleTimeoutSeconds = 30.0;
+        // Keep the keepalive running for this long after the LEDs last had lit
+        // content, then pause so the wheel can idle/sleep. A brief all-off lull does
+        // not drop engagement; only sustained idle lets the live stream go quiet.
+        private const double KeepaliveHoldSeconds = 45.0;
+        // Last time any cached channel showed a lit LED (drives the hold window).
+        private DateTime _lastLitUtc = DateTime.MinValue;
 
         // ES wheel wake-up
         private bool _ledsAwake;
@@ -212,6 +218,7 @@ namespace MozaPlugin.Devices
                 _knobStaticHoldReleased = false;
                 _lastKnobSendTime = DateTime.MinValue;
                 _lastKnobActivityTime = DateTime.MinValue;
+                _lastLitUtc = DateTime.MinValue;
                 _ledsAwake = false;
                 OnDisconnect?.Invoke(this, EventArgs.Empty);
             }
@@ -813,6 +820,10 @@ namespace MozaPlugin.Devices
                 //     pipeline uses. A transient 0 just sends a black frame; nothing
                 //     persists, so the stuck-dark bug can't recur.
 
+                // Track when the LEDs last showed lit content, for the keepalive
+                // hold window below.
+                if (HasLitState()) _lastLitUtc = DateTime.UtcNow;
+
                 // --- Keepalive: resend last state periodically for ES wheel compat ---
                 if (anySent)
                 {
@@ -821,16 +832,18 @@ namespace MozaPlugin.Devices
                     // suppresses static writes (HardwareApplier, UI handlers).
                     NoteLiveSend();
                 }
-                else if (_lastLeds != null && HasLitState())
+                else if (_lastLeds != null)
                 {
-                    // Skip the keepalive entirely when nothing is lit: the lit->off
-                    // transition already sent one off frame (change-detected), and
-                    // re-sending all-black at 1 Hz forever holds the wheel in
-                    // live-render mode so its sleep light never engages. Going quiet
-                    // lets the firmware idle timer elapse; a returning lit frame
+                    // Hold the keepalive for KeepaliveHoldSeconds after the LEDs last
+                    // had lit content, then pause. The lit->off transition already
+                    // sent one off frame (change-detected); re-sending all-black
+                    // forever would hold the wheel in live-render mode so its sleep
+                    // light never engages. After the hold the live stream goes quiet,
+                    // the firmware idle timer elapses, and a returning lit frame
                     // re-engages instantly via the normal change-driven path.
                     var now = DateTime.UtcNow;
-                    if ((now - _lastSendTime).TotalSeconds >= KeepaliveIntervalSeconds)
+                    bool withinHold = (now - _lastLitUtc).TotalSeconds < KeepaliveHoldSeconds;
+                    if (withinHold && (now - _lastSendTime).TotalSeconds >= KeepaliveIntervalSeconds)
                     {
                         _lastSendTime = now;
                         ResendLastState(plugin, isNewWheel, isOldWheel);

@@ -42,6 +42,11 @@ namespace MozaPlugin.Devices
         // (MozaLedDeviceManager.KeepaliveIntervalSeconds).
         private DateTime _lastSendTime = DateTime.MinValue;
         private const double KeepaliveIntervalSeconds = 1.0;
+        // Keep the bitmask keepalive running for this long after the bar last had a
+        // lit bit, then pause so the dash can idle/sleep. A brief all-off lull does
+        // not drop engagement; only sustained idle lets the stream go quiet.
+        private const double KeepaliveHoldSeconds = 45.0;
+        private DateTime _lastLitUtc = DateTime.MinValue;
 
         // Flag-LED keepalive: the 6 CM2 flag LEDs are driven by the live
         // dash-flag-colors array (group 0x32 cmd 08 00, 6×RGB, black = off), NOT
@@ -102,6 +107,7 @@ namespace MozaPlugin.Devices
             {
                 _lastBitmask = -1;
                 _lastSendTime = DateTime.MinValue;
+                _lastLitUtc = DateTime.MinValue;
                 _lastFlagPrimed = false;
                 _lastFlagSendTime = DateTime.MinValue;
                 _rpmColorsPrimed = false;
@@ -208,13 +214,15 @@ namespace MozaPlugin.Devices
                         bitmask |= (1 << i);
                 }
                 bool bitmaskChanged = bitmask != _lastBitmask;
+                if (bitmask != 0) _lastLitUtc = now;
+                bool withinHold = (now - _lastLitUtc).TotalSeconds < KeepaliveHoldSeconds;
                 bool keepaliveDue = (now - _lastSendTime).TotalSeconds >= KeepaliveIntervalSeconds;
-                // Resend a lit bar on change / keepalive / always-resend, but never
-                // re-assert a zero bitmask beyond the single off transition: a 1 Hz
-                // (or per-frame, under AlwaysResendBitmask) all-off resend pins the
-                // dash in live-render mode and blocks its idle/sleep — the same fix
-                // applied to the wheel keepalive.
-                if (bitmaskChanged || (bitmask != 0 && (alwaysResend || keepaliveDue)))
+                // Resend on change always; hold the keepalive / always-resend for
+                // KeepaliveHoldSeconds after the bar last had a lit bit, then pause.
+                // A 1 Hz (or per-frame, under AlwaysResendBitmask) all-off resend
+                // pins the dash in live-render mode and blocks its idle/sleep — the
+                // same fix applied to the wheel keepalive.
+                if (bitmaskChanged || (withinHold && (alwaysResend || keepaliveDue)))
                 {
                     _lastBitmask = bitmask;
                     _lastSendTime = now;
