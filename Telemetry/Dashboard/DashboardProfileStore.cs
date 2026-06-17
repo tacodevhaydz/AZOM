@@ -88,15 +88,14 @@ namespace MozaPlugin.Telemetry.Dashboard
             return ch;
         }
 
-        // Bulky track-map / radar position channels gated behind the radar
-        // setting: the per-opponent location array (patch/Location,
-        // patch/Location_N) and radar index channels (patch/riN).
-        // OpponentCount / PlayerIndex are deliberately NOT gated — they are
-        // 1-byte scalar session fields ordinary dashboards read for
-        // car-count / grid-position display (the FSR2 "LD - Marco" dash
-        // shows patch/OpponentCount+1 as the entry count), so they must
-        // emit regardless of the radar setting. Other patch/ channels
-        // (TrackPositionPercent, TrackName) and non-patch Heading untouched.
+        // The opt-in track-map (patch/Location, patch/Location_N) + radar
+        // (patch/riN) channels. GATED behind EnableRadarTrackMapChannels (default
+        // off) while the feature is under test: the wheel only advertises them on
+        // Map/Radar-widget dashboards, but the host-side encoding + coordinate-
+        // range work isn't verified on hardware yet, so they stay out of the
+        // subscription until the setting is flipped. OpponentCount / PlayerIndex /
+        // Heading / TrackName ride alongside as ordinary channels (never gated);
+        // data is sourced in GameDataSnapshot.PopulateCarLocations.
         internal static bool IsRadarTrackMapChannel(string url)
         {
             if (string.IsNullOrEmpty(url) || url.IndexOf("/patch/", StringComparison.Ordinal) < 0)
@@ -106,9 +105,22 @@ namespace MozaPlugin.Telemetry.Dashboard
                 return true;
             if (suffix.StartsWith("Location_", StringComparison.Ordinal))
                 return AllDigits(suffix, "Location_".Length);
-            if (suffix.StartsWith("ri", StringComparison.Ordinal) && suffix.Length > 2)
-                return AllDigits(suffix, 2);
-            return false;
+            return IsRadarRiChannel(url);
+        }
+
+        // Radar ri* subset (patch/riN): uint32 slots carrying the player-relative
+        // positions of nearby cars (two int16, packed by
+        // TelemetryFrameBuilder.RadarPair). Used to re-tier ri* off the advertised
+        // 30 ms fast tier onto a slower emit rate (RadarRiPackageLevelMs) so
+        // 24 × uint32 fits the serial budget when the feature is enabled.
+        internal static bool IsRadarRiChannel(string url)
+        {
+            if (string.IsNullOrEmpty(url) || url.IndexOf("/patch/", StringComparison.Ordinal) < 0)
+                return false;
+            string suffix = url.Substring(url.LastIndexOf('/') + 1);
+            return suffix.StartsWith("ri", StringComparison.Ordinal)
+                && suffix.Length > 2
+                && AllDigits(suffix, 2);
         }
 
         private static bool AllDigits(string s, int start)
@@ -119,10 +131,32 @@ namespace MozaPlugin.Telemetry.Dashboard
             return true;
         }
 
+        // The v1/preset/* namespace (TimeStamp, CurrentTorque,
+        // SteeringWheelAngle) is supplied by the wheel firmware from its own
+        // internal state — these are values the wheel measures or owns (its
+        // clock, its torque output, its steering-encoder angle), not host
+        // telemetry. PitHouse never subscribes to or transmits them:
+        // wire-verified against a single-channel preset/TimeStamp dashboard
+        // (bridge-timestamp-pithouse capture) where the wheel renders a live
+        // counting value with ZERO host tier-def subscription and ZERO value
+        // frames. Including a preset/* channel in our subscription makes the
+        // host override the wheel's correct internal value — e.g. sending
+        // @internal/TimeStamp as a large positive ms count garbled the display
+        // and broke the F1-Mercedes brake-bias flash logic. Drop the whole
+        // namespace from every subscription so the wheel fills it itself.
+        internal static bool IsWheelInternalPresetChannel(string url)
+            => !string.IsNullOrEmpty(url)
+               && url.IndexOf("/preset/", StringComparison.Ordinal) >= 0;
+
+        // Host-side emit rate for the radar ri* channels, overriding their
+        // advertised 30 ms fast tier. Keeps 24 × uint32 within the serial budget
+        // while staying smooth enough for the close-proximity radar.
+        private const int RadarRiPackageLevelMs = 100;
+
         public MultiStreamProfile BuildProfileFromCatalog(
             IReadOnlyList<string> catalog,
             string profileName = "WheelCatalog",
-            bool includeRadarTrackMap = true)
+            bool includeRadarTrackMap = false)
         {
             var telemetryMap = GetTelemetryMap();
             // Build a ChannelDefinition per catalog URL, looking up each
@@ -143,7 +177,13 @@ namespace MozaPlugin.Telemetry.Dashboard
             foreach (var url in catalog)
             {
                 if (string.IsNullOrEmpty(url)) continue;
+                // Track-map (patch/Location*) + radar (patch/ri*) channels are
+                // gated behind EnableRadarTrackMapChannels (default off) while the
+                // feature is under test. When enabled, ri* is re-tiered slower
+                // below (see the package_level override) so 24 × uint32 doesn't
+                // saturate the serial link.
                 if (!includeRadarTrackMap && IsRadarTrackMapChannel(url)) continue;
+                if (IsWheelInternalPresetChannel(url)) continue;
                 if (!seenUrls.Add(url)) continue;
                 string suffix = url.Substring(url.LastIndexOf('/') + 1);
                 ChannelDefinition ch;
@@ -151,6 +191,14 @@ namespace MozaPlugin.Telemetry.Dashboard
                 if (telemetryMap.TryGetValue(url, out var info))
                 {
                     packageLevel = info.PackageLevel;
+                    // Radar ri* channels are advertised at the 30 ms fast tier
+                    // (33 fps). 24 × uint32 at 33 fps ≈ 3.2 kB/s on a tier that
+                    // fires every tick (can't be staggered), which re-saturates
+                    // the 115200-baud link. "Cars passing nearby" doesn't need
+                    // 33 fps — re-tier ri* to ~10 Hz so it stays within budget
+                    // and phases across ticks like the track-map sub-tiers.
+                    if (IsRadarRiChannel(url) && packageLevel < RadarRiPackageLevelMs)
+                        packageLevel = RadarRiPackageLevelMs;
                     if (string.Equals(info.Compression, "string", StringComparison.OrdinalIgnoreCase))
                     {
                         stringChannels.Add(BuildStringChannel(url, info));
@@ -734,6 +782,7 @@ namespace MozaPlugin.Telemetry.Dashboard
 
             foreach (var url in urls)
             {
+                if (IsWheelInternalPresetChannel(url)) continue;
                 if (!map.TryGetValue(url, out var info))
                     continue;
 

@@ -100,7 +100,7 @@ Full serial number = serial-a + serial-b (32 ASCII chars total).
 | rpm-brightness | `1B 00 FF` | 1 | int | |
 | buttons-brightness | `1B 01 FF` | 1 | int | |
 | flags-brightness | `1B 02 FF` | 1 | int | |
-| paddles-calibration | `08` | 1 | int | Write-only |
+| paddles-calibration | `08` | 1 | int | Write-only, two commands: `08 01` = start, `08 02` = save. (PitHouse, dev `0x17`, write group `0x3F`.) |
 
 ### Group `0x3F` (63) — Live Telemetry (write-only)
 
@@ -259,6 +259,10 @@ Open item: whether the `0x40` config re-sweep is strictly required on a host swi
 
 The contributor's exact channels were game/hub-specific (`ATSRHubMain.Telemetry.*`, `PersistantTrackerPlugin.*`, plus generic `DataCorePlugin.*`); the **meaning** of each slot is the durable finding, since channel→slot assignment is host-chosen and user-overridable. The catalog seeds each decoded slot's default with the canonical `simhub_property` from [`Data/Telemetry.json`](../../../Data/Telemetry.json) (MOZA's own channel catalog) — e.g. speed → `DataCorePlugin.GameData.SpeedKmh`, fuel remaining laps → `DataCorePlugin.GameData.FuelLaps`, fuel/lap → `DataCorePlugin.GameData.FuelConsumeLap`. The one exception is **light stage** (record `12` @21): Telemetry.json has only individual light bools (`HighBeamLight`, `RainLight`, …), no aggregate, so it ships with no default. The `0x42` path is byte-aligned `u16` (not tier-def bit-packing), so only the property *names* are taken from Telemetry.json, not its compression codes.
 
+#### Per-profile field overrides & synthetic splits (plugin-side, not wire protocol)
+
+The plugin lets a user retune any `0x42` field without changing the wire format: move its start/end data byte, flip endianness (width 2), apply Scale/Bias, and remap its SimHub channel. Overrides are stored deviation-only — a field at its catalog default persists nothing. A user may also **split** a field into two — the new "synthetic" field is net-new (absent from the static catalog), owns a sub-span of the record's data bytes, and carries its own channel mapping; it's stored in the profile and merged into the field set at every enumeration point (stream/UI/probe/viz). The record stays a contiguous gapless partition of `[5, PayloadLen-1]`; *remove split* reclaims the bytes into a neighbour. None of this changes the bytes on the wire — it only changes which SimHub value drives each byte span.
+
 ### Group `0x43` (67) — Live Telemetry Stream (write-only)
 
 Main game telemetry sent at ~17–20×/sec. See [`../telemetry/live-stream.md`](../telemetry/live-stream.md) for full packet analysis and bit-packing format.
@@ -372,10 +376,13 @@ are **not** the fault signal.)
   unidentified wheel — only read a group once a known `WheelModelInfo` says it
   exists. A genuinely new wheel earns these reads by being added to
   `KnownModels`, not by speculative probing.
-- The load-bearing idle keepalives in `PollStatus` — group `0x00` presence poll,
-  group `0x0E` param poll, 1-byte group `0x43` keepalive — are PitHouse-parity
-  and **must stay on**; they hold the wheel's param subsystem up. They are not
-  the storm trigger and must not be backed off.
+- The idle keepalives in `PollStatus` — group `0x00` presence poll and the 1-byte
+  group `0x43` keepalive — are PitHouse-parity and stay on. The group `0x0E`
+  **param poll to the wheel was removed**: PitHouse does not poll the wheel's
+  param manager on the matching R9 rig (it polls `0x0E` only on the base), the
+  response was always the unset sentinel `FF FF FF FF`, and `0x0E` is the
+  `param_manage.c` channel that emits this storm — see
+  [`../periodic/group-0x0E-param-reader.md`](../periodic/group-0x0E-param-reader.md).
 
 **Runtime self-protection.** `FirmwareDebugLog` counts `Failed to Read/Write
 Parameter` lines in a trailing 10 s window; ≥ 3 marks a storm (and logs a

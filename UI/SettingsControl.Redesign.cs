@@ -226,11 +226,12 @@ namespace MozaPlugin
 
                 if (SteeringArcViz != null)
                 {
-                    // _data.MaxAngle is raw half-degrees; the arc's Angle is fed
-                    // full degrees (UpdateHidInputDisplays uses MaxAngle * 2 as
-                    // the range), so the scale must be doubled to match — else
-                    // the arc fills to "full lock" at half the real rotation.
-                    double maxA = _data.MaxAngle > 0 ? _data.MaxAngle * 2 : 540;
+                    // The arc's Angle is fed GetCurrentAngleDegrees(MaxAngle * 2),
+                    // which halves the range internally and so returns
+                    // ±_data.MaxAngle at full lock. The arc's MaxAngle must equal
+                    // that same value for the dot to reach the arc endpoint at the
+                    // configured rotation limit — doubling it filled only halfway.
+                    double maxA = _data.MaxAngle > 0 ? _data.MaxAngle : 270;
                     SteeringArcViz.MaxAngle = maxA;
                 }
                 UpdateConnectionPill();

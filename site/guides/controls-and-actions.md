@@ -3,7 +3,7 @@ layout: guide.njk
 title: Controls & Actions
 description: Bind wheel buttons to AZOM actions — FFB strength, rotation, brightness, dashboard switching and more.
 tags: guide
-order: 9
+order: 10
 ---
 
 AZOM exposes 40+ bindable actions — FFB strength up/down, rotation, display brightness,
@@ -16,7 +16,7 @@ through SimHub's **Controls and events**.
 Pick **Controls and events** from the left menu and stay on the **Controls** tab. This is
 the list of every button-to-action mapping on your rig. Click **New mapping** to add one.
 
-![The Controls and events screen listing controller action mappings](/docs/ControlsandEvents.png)
+![The Controls and events screen listing controller action mappings](/docs/images/ControlsandEvents.png)
 
 ## 2 · Bind a button to an AZOM action
 
@@ -28,7 +28,7 @@ The **Mapping Picker** opens. It has two halves:
   `AZOM.FfbStrengthUp`, `AZOM.RotationDown`, `AZOM.DisplayBrightnessUp`,
   `AZOM.DisplayToggle`, and so on. The `…Coarse` variants jump in bigger steps.
 
-![The Mapping Picker dialog with a wheel input as source and AZOM actions as target](/docs/MappingPicker.png)
+![The Mapping Picker dialog with a wheel input as source and AZOM actions as target](/docs/images/MappingPicker.png)
 
 Set the **Input mode** (ShortPress, LongPress, etc.), use **Trigger action now** to test
 it lands, and click **Ok**. Repeat for each control you want — a typical setup pairs two

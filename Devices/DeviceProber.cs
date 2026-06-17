@@ -15,7 +15,7 @@ namespace MozaPlugin.Devices
 
         internal static readonly string[] BaseSettingsReadCommands = new[]
         {
-            "base-limit", "base-ffb-strength", "base-torque", "base-speed",
+            "base-limit", "base-ffb-strength", "main-get-interpolation", "base-torque", "base-speed",
             "base-damper", "base-friction", "base-inertia", "base-spring",
             "base-protection", "base-natural-inertia",
             "base-speed-damping", "base-speed-damping-point",
@@ -179,19 +179,6 @@ namespace MozaPlugin.Devices
             "wheel-old-rpm-color10",
         };
 
-        internal static readonly string[] DashSettingsReadCommands = new[]
-        {
-            "dash-rpm-indicator-mode", "dash-flags-indicator-mode",
-            "dash-rpm-display-mode",
-            "dash-rpm-brightness", "dash-flags-brightness",
-            "dash-rpm-color1", "dash-rpm-color2", "dash-rpm-color3",
-            "dash-rpm-color4", "dash-rpm-color5", "dash-rpm-color6",
-            "dash-rpm-color7", "dash-rpm-color8", "dash-rpm-color9",
-            "dash-rpm-color10",
-            "dash-flag-color1", "dash-flag-color2", "dash-flag-color3",
-            "dash-flag-color4", "dash-flag-color5", "dash-flag-color6",
-        };
-
         internal static readonly string[] BaseAmbientReadCommands = new[]
         {
             "base-ambient-brightness",
@@ -273,15 +260,9 @@ namespace MozaPlugin.Devices
             if (cm2BehindBase)
                 _deviceManager.SendDisplayProbe(MozaProtocol.DeviceDash);
 
-            if (DeviceDefinitionDeployer.DeployDashboard(
-                    _connection.DiscoveredPid, forceCm2: cm2BehindBase ? true : (bool?)null))
+            if (DeviceDefinitionDeployer.DeployDashboard(_connection.DiscoveredPid))
                 _plugin.DeviceDefinitionDeployed = true;
             _plugin.ApplyDashToHardware(_plugin.Settings?.ProfileStore?.CurrentProfile);
-            // DashSettingsReadCommands are legacy SHDP dash registers (group 0x33).
-            // A CM2 is driven by the 0x43 telemetry path, not these — sending them
-            // to the CM2 is pointless bleedthrough, so only read them for a legacy dash.
-            if (!cm2BehindBase)
-                _deviceManager.ReadSettings(DashSettingsReadCommands);
             MozaLog.Info(cm2BehindBase
                 ? "[AZOM] Dashboard detected (CM2 on wheelbase bus — deployed CM2 profile, probing display identity at 0x12)"
                 : "[AZOM] Dashboard detected");
@@ -336,6 +317,48 @@ namespace MozaPlugin.Devices
         }
 
         /// <summary>
+        /// Wheel hot-swap detection by model-name change. Returns true (and triggers
+        /// a re-detect) when a different wheel model is now reporting than the one
+        /// last seen. Shared by the new-protocol (0x17) and ES (0x18) identity paths.
+        /// </summary>
+        private bool DetectWheelModelHotSwap(string currentModel)
+        {
+            if (!string.IsNullOrEmpty(_detectionState.LastKnownWheelModel) &&
+                _detectionState.LastKnownWheelModel != currentModel)
+            {
+                _plugin.ResetWheelDetection(
+                    $"Wheel model changed from '{_detectionState.LastKnownWheelModel}' " +
+                    $"to '{currentModel}' — hot-swap detected");
+                return true;
+            }
+            return false;
+        }
+
+        /// <summary>
+        /// Re-trigger telemetry start once the display sub-device's identity
+        /// has answered. The probe replies field-by-field, and on some wheels
+        /// (W17 / CS Pro) the model-name field comes back EMPTY while
+        /// HW/SW/MCU-UID populate. <see cref="MozaPlugin.IsDisplayDetected"/>
+        /// — and therefore both the <c>StartTelemetryIfReady</c> display gate
+        /// and the PollStatus display-wedge watchdog — rises on ANY of those
+        /// fields, so the pipeline-start re-trigger must fire from every
+        /// identity handler, not just model-name. Otherwise an empty-model-name
+        /// wheel flips IsDisplayDetected true ~1 ms after the start gate last
+        /// deferred, and nothing re-invokes the start: telemetry sits dead
+        /// until an unrelated user action pokes it (CS-Pro bundle 2026-06-13).
+        /// Idempotent: ClearDisplayWedgeRecovery is a flag clear and
+        /// StartTelemetryIfReady no-ops once the sender is running.
+        /// </summary>
+        private void NoteDisplayIdentityReady()
+        {
+            if (!_plugin.IsDisplayDetected) return;
+            // Display is responsive — a future wheel hot-swap that wedges
+            // should get its own recovery attempt.
+            _plugin.ClearDisplayWedgeRecovery();
+            _plugin.StartTelemetryIfReady();
+        }
+
+        /// <summary>
         /// Auto-detect connected devices based on response commands.
         /// First sight of a known response flips the matching detection flag
         /// and queues per-device settings reads + Apply*ToHardware.
@@ -357,6 +380,9 @@ namespace MozaPlugin.Devices
                 MozaLog.Debug(
                     $"[AZOM] Display MCU UID ({_data.DisplayMcuUid.Length}B): " +
                     MozaLog.RedactBytesHex(_data.DisplayMcuUid));
+                // MCU UID alone satisfies IsDisplayDetected — re-trigger the
+                // deferred telemetry start (empty-model-name wheels rely on it).
+                NoteDisplayIdentityReady();
                 return;
             }
 
@@ -491,23 +517,18 @@ namespace MozaPlugin.Devices
                     break;
 
                 case "wheel-model-name":
-                    // ES wheels share device 0x13 with the base, so their model
-                    // name response is the base name — skip the resolve path.
+                    // New-protocol (0x17) wheels resolve here. ES wheels are
+                    // handled in the es-wheel-model-name case (their real model
+                    // comes from module id 0x18; the locked-id read on ES returns
+                    // the base/motor name, so we never resolve from it here).
                     if (_detectionState.NewWheelDetected)
                     {
                         var currentModel = _data.WheelModelName;
                         if (string.IsNullOrEmpty(currentModel))
                             break;
 
-                        // Hot-swap detection by model name change.
-                        if (!string.IsNullOrEmpty(_detectionState.LastKnownWheelModel) &&
-                            _detectionState.LastKnownWheelModel != currentModel)
-                        {
-                            _plugin.ResetWheelDetection(
-                                $"Wheel model changed from '{_detectionState.LastKnownWheelModel}' " +
-                                $"to '{currentModel}' — hot-swap detected");
+                        if (DetectWheelModelHotSwap(currentModel))
                             break;
-                        }
 
                         // First-sight: resolve LED layout and deploy device defs.
                         if (string.IsNullOrEmpty(_detectionState.LastKnownWheelModel))
@@ -534,17 +555,7 @@ namespace MozaPlugin.Devices
                             // LED-group-filtered reads. Skipping reads for LEDs
                             // the wheel doesn't have keeps PendingResponseTracker
                             // from churning on inevitable timeouts.
-                            //
-                            // Self-protection backoff: if the wheel is already mid
-                            // param-read storm, don't pile the LED capability batch
-                            // on top — that's the fuel that keeps the re-detect
-                            // "dogging" loop alive on a wheel whose firmware can't
-                            // service the reads. The load-bearing keepalives in
-                            // PollStatus still run; we just skip the heavy batch.
-                            if (_plugin.WheelParamStormActive)
-                                MozaLog.Info("[AZOM] Wheel param storm active — skipping LED capability reads to avoid amplifying the fault");
-                            else
-                                _deviceManager.ReadSettingsPaced(BuildNewWheelLedReadCommands(info));
+                            _deviceManager.ReadSettingsPaced(BuildNewWheelLedReadCommands(info));
                             if (DeviceDefinitionDeployer.DeployForModel(currentModel, _connection.DiscoveredPid))
                                 _plugin.DeviceDefinitionDeployed = true;
 
@@ -600,7 +611,44 @@ namespace MozaPlugin.Devices
                     }
                     else
                     {
-                        MozaLog.Debug($"[AZOM] Wheel model (ES/base): {_data.WheelModelName}");
+                        MozaLog.Debug($"[AZOM] Wheel model (mis-routed locked-id read): {_data.WheelModelName}");
+                    }
+                    break;
+
+                case "es-wheel-model-name":
+                    {
+                        // ES (old-protocol) wheel identity from module id 0x18.
+                        // MozaData filled Wheel* from the 0x18 responses (0x17 is
+                        // silent on ES), so this gives the ES wheel a real model
+                        // ("ES"). Resolve it, detect a rim hot-swap by model change
+                        // (shared with the 0x17 path), and deploy the model-specific
+                        // definition so the ES wheel gets a proper per-wheel page
+                        // identity instead of only the generic old-proto device.
+                        var esModel = _data.WheelModelName;
+                        if (string.IsNullOrEmpty(esModel))
+                            break;
+                        if (DetectWheelModelHotSwap(esModel))
+                            break;
+                        if (string.IsNullOrEmpty(_detectionState.LastKnownWheelModel))
+                        {
+                            _detectionState.LastKnownWheelModel = esModel;
+                            _plugin.WheelModelInfo = WheelModelInfo.FromModelName(esModel);
+                            var info = _plugin.WheelModelInfo;
+                            MozaLog.Info(
+                                $"[AZOM] ES wheel model resolved: {esModel} " +
+                                $"(rpm={info!.RpmLedCount}, buttons={info.ButtonLedCount}, hw={_data.WheelHwVersion})");
+                            if (DeviceDefinitionDeployer.DeployForModel(esModel, _connection.DiscoveredPid))
+                                _plugin.DeviceDefinitionDeployed = true;
+                            // Mark the definition handled so PollStatus does not also
+                            // deploy the generic old-proto fallback (no duplicate).
+                            _detectionState.OldProtoFallbackDeployed = true;
+                            // Re-apply the profile now that the wheel page-GUID
+                            // resolves — ES LED colours / brightness / indicator
+                            // mode bind to the right per-wheel page overlay.
+                            var prof = _plugin.Settings?.ProfileStore?.CurrentProfile;
+                            if (prof != null)
+                                _plugin.ApplyProfile(prof);
+                        }
                     }
                     break;
 
@@ -656,7 +704,7 @@ namespace MozaPlugin.Devices
                         if (_plugin.IsCm2BehindBaseCandidate)
                         {
                             MozaLog.Info($"[AZOM] CM2-on-base display confirmed: {_data.DisplayModelName} — routing screen telemetry to 0x12");
-                            if (DeviceDefinitionDeployer.DeployDashboard(_connection.DiscoveredPid, forceCm2: true))
+                            if (DeviceDefinitionDeployer.DeployDashboard(_connection.DiscoveredPid))
                                 _plugin.DeviceDefinitionDeployed = true;
                             try { _plugin.ApplyTelemetrySettings(); }
                             catch (Exception ex) { MozaLog.Debug($"[AZOM] CM2-on-base ApplyTelemetrySettings skipped: {ex.Message}"); }
@@ -684,11 +732,21 @@ namespace MozaPlugin.Devices
                     break;
                 case "display-hw-version":
                     if (!string.IsNullOrEmpty(_data.DisplayHwVersion))
+                    {
                         MozaLog.Debug($"[AZOM] Display HW: {_data.DisplayHwVersion}");
+                        // HW version alone satisfies IsDisplayDetected — re-trigger
+                        // the deferred start for empty-model-name wheels (W17).
+                        NoteDisplayIdentityReady();
+                    }
                     break;
                 case "display-sw-version":
                     if (!string.IsNullOrEmpty(_data.DisplaySwVersion))
+                    {
                         MozaLog.Debug($"[AZOM] Display FW: {_data.DisplaySwVersion}");
+                        // SW version alone satisfies IsDisplayDetected — re-trigger
+                        // the deferred start for empty-model-name wheels (W17).
+                        NoteDisplayIdentityReady();
+                    }
                     break;
                 case "display-serial":
                     if (!string.IsNullOrEmpty(_data.DisplaySerialNumber))
@@ -721,9 +779,11 @@ namespace MozaPlugin.Devices
                     {
                         _detectionState.OldWheelDetected = true;
                         // Stamp first-detect time (mirror of new-protocol path).
-                        // Old-protocol wheels are always HasDisplay=false so the
-                        // wedge watchdog never actually fires for them, but the
-                        // timestamp is cheap and keeps both branches symmetric.
+                        // WheelModelInfo stays null for old-protocol wheels (the
+                        // wheel-model-name resolve below is gated on NewWheelDetected),
+                        // so the display-wedge watchdog is gated to NewWheelDetected
+                        // only and never runs for old wheels; the timestamp is cheap
+                        // and keeps both branches symmetric.
                         _plugin.NoteWheelDetected();
                         _deviceManager.LockWheelId(deviceId);
                         _plugin.ApplyWheelToHardware(_plugin.Settings?.ProfileStore?.CurrentProfile);
@@ -732,10 +792,26 @@ namespace MozaPlugin.Devices
                         _deviceManager.ReadSetting("wheel-hw-version");
                         _deviceManager.ReadSetting("wheel-serial-a");
                         _deviceManager.ReadSetting("wheel-serial-b");
+                        // ES wheel identity lives at the wheel's own module id 0x18.
+                        // The locked-id wheel-model-name above returns the BASE/motor
+                        // name on ES (0x13 is the base), so probe 0x18 directly to
+                        // learn the real model ("ES"). 0x18 is silent on a non-ES old
+                        // wheel, so these are a no-op there (and modern 0x17 wheels
+                        // never reach this branch). Handled in the es-wheel-model-name
+                        // case, which deploys the model-specific definition.
+                        _deviceManager.ReadSetting("es-wheel-model-name");
+                        _deviceManager.ReadSetting("es-wheel-hw-version");
+                        _deviceManager.ReadSetting("es-wheel-sw-version");
+                        _deviceManager.ReadSetting("es-wheel-mcu-uid");
                         _deviceManager.SendPithouseIdentityProbe(deviceId);
                         _deviceManager.ReadSettingsPaced(OldWheelSettingsReadCommands);
-                        if (DeviceDefinitionDeployer.DeployOldProtoWheel(_connection.DiscoveredPid))
-                            _plugin.DeviceDefinitionDeployed = true;
+                        // Device definition is deferred: an ES wheel deploys its
+                        // model-specific "MOZA ES" definition from the
+                        // es-wheel-model-name case once 0x18 answers; a genuinely
+                        // unidentifiable old wheel falls back to the generic
+                        // old-proto definition in PollStatus (gated on no model
+                        // resolving within a grace window) — so ES wheels never get
+                        // a duplicate generic device entry.
                         MozaLog.Info($"[AZOM] Old-protocol wheel detected on ID {deviceId}");
                         _plugin.StartTelemetryIfReady();
                     }

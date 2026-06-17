@@ -165,6 +165,11 @@ namespace MozaPlugin
         // Some ES wheels need this to stay in telemetry mode.
         public bool WheelKeepalive { get; set; } = true;
 
+        // How long (seconds) to keep re-sending the last LED frame after the LEDs go
+        // idle before pausing, so the wheel/dash can enter its own idle/sleep mode.
+        // 0 = pause immediately. Applies to both the wheel and dash LED keepalives.
+        public int WheelKeepaliveTimeoutSec { get; set; } = 45;
+
         // When true, always resend the LED bitmask alongside color updates even if the bitmask
         // value hasn't changed. Fixes wheels that don't pick up new colors without a bitmask write.
         public bool AlwaysResendBitmask { get; set; } = false;
@@ -330,37 +335,6 @@ namespace MozaPlugin
         // ===== Profile system (SimHub native) =====
         public MozaProfileStore ProfileStore { get; set; } = new MozaProfileStore();
 
-        // Persisted schema-migration marker.
-        //   2 = first cutover: legacy per-UID slots → profile.WheelOverridesByPageGuid.
-        //   3 = full clean cutover (telemetry settings moved to overlay).
-        //   4 = mzdash folder moved from per-overlay to per-wheel-page (shared
-        //       across profiles). Folder is a library setting tied to the wheel,
-        //       not the game.
-        //   6 = (broken) initial v4/v5/v6 cutover. The empty-profiles short-circuit
-        //       in MigrateSettingsToSchemaV2 returned without seeding the per-page
-        //       mzdash-folder dict or the default profile's dash baselines, so
-        //       pre-refactor users upgrading lost their folder + got a zero-default
-        //       display brightness on first launch.
-        //   7 = repair pass for the v6 short-circuit: re-runs the per-page folder
-        //       seed from the flat field (which survives ClearLegacyAfterMigration),
-        //       and reseeds every profile's dash/ambient/gearshift baselines from
-        //       _settings flat fields when still sentinel. Idempotent.
-        //   8 = wheel sleep-light settings (mode/timeout/speed/color) moved off
-        //       the per-game-per-wheel overlay onto WheelSleepByPageGuid (one
-        //       record per wheel, shared across profiles). Sleep behavior is a
-        //       firmware preference, not a per-game decision. Migration drains
-        //       from WheelOverride.WheelSleep* (now captured via LegacyJsonFields),
-        //       MozaProfile.WheelSleep* baseline (now captured via JsonExtensionData
-        //       on MozaProfile), and the _settings.WheelSleep* flat fields.
-        //   9 = wheel idle-effect + idle-speed (telemetry/buttons/knob) moved
-        //       off WheelOverride / MozaProfile baseline onto WheelIdleByPageGuid.
-        //       Same reasoning as v8 sleep: the idle animation pick is a property
-        //       of the wheel, not the game. Migration drains from the per-profile
-        //       overlay, the profile baseline, and the _settings flat fields,
-        //       then zeroes the legacy slots so subsequent saves don't resurrect
-        //       per-game values.
-        public int SettingsSchemaVersion { get; set; } = 0;
-
         // Explicit plugin-pane language override picked from the Options tab.
         // null/empty/"auto" = auto-detect (LanguageResolver walks SimHub culture
         // → OS culture → en). A BCP-47 tag like "es" / "fr" / "ru" pins the
@@ -390,6 +364,14 @@ namespace MozaPlugin
         // the profile's WheelOverride.
         public Dictionary<Guid, bool> WheelTelemetryEnabledByPageGuid { get; set; }
             = new Dictionary<Guid, bool>();
+
+        // Default telemetry-enable state for a wheel page that has no explicit entry
+        // in WheelTelemetryEnabledByPageGuid yet (dict-missing = "no opinion"). Fresh
+        // installs set this true via the ReadCommonSettings create-if-not-found factory
+        // so new users get dashboard telemetry on out of the box; existing users'
+        // on-disk JSON lacks the field, so it deserializes to false and their
+        // never-toggled wheels stay off, preserving prior behavior.
+        public bool TelemetryEnabledDefaultForNewWheels { get; set; } = false;
 
         // Per-wheel-page firmware-era pick. Keyed by SimHub page GUID, stored as int
         // (cast from MozaWheelEra). Firmware era is a property of the wheel/firmware,
@@ -428,21 +410,6 @@ namespace MozaPlugin
         // folder acts as fallback library when cache misses.
         public string TelemetryMzdashFolder { get; set; } = "";
 
-        // LEGACY (pre-2026-05-14 refactor): per-UID mzdash folder. Migration
-        // moves entries into the wheel-page overlay's TelemetryMzdashFolder.
-        [Newtonsoft.Json.JsonProperty(NullValueHandling = Newtonsoft.Json.NullValueHandling.Ignore,
-            DefaultValueHandling = Newtonsoft.Json.DefaultValueHandling.Ignore)]
-        public Dictionary<string, string> WheelMzdashFolderByUid { get; set; }
-            = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
-
-        // LEGACY (pre-2026-05-14 refactor): per-UID telemetry slot. Migration
-        // moves entries into the wheel-page overlay's TelemetryEnabled /
-        // TelemetryProfileName / TelemetryMzdashPath.
-        [Newtonsoft.Json.JsonProperty(NullValueHandling = Newtonsoft.Json.NullValueHandling.Ignore,
-            DefaultValueHandling = Newtonsoft.Json.DefaultValueHandling.Ignore)]
-        public Dictionary<string, TelemetryWheelSlot> TelemetryByWheelUid { get; set; }
-            = new Dictionary<string, TelemetryWheelSlot>(StringComparer.OrdinalIgnoreCase);
-
         // Byte limit override (0 = auto from profile)
         public int TelemetryByteLimitOverride { get; set; } = 0;
 
@@ -461,28 +428,6 @@ namespace MozaPlugin
 
         // Whether to send the 0x2D/F5:31 sequence counter to the base (~30 Hz)
         public bool TelemetrySendSequenceCounter { get; set; } = true;
-
-        // LEGACY (pre-2026-05-09): single-level dashboard → url → property dict, NOT
-        // scoped per wheel and using a brittle dashboard key (file SHA1 changes on
-        // every PitHouse re-save; cleared on dropdown switch). Kept solely for
-        // one-shot migration into TelemetryChannelMappingsByWheel — see
-        // MigrateLegacyChannelMappingsIfNeeded(). New code never writes here.
-        public Dictionary<string, Dictionary<string, string>>? TelemetryChannelMappings { get; set; }
-
-        // Per-wheel, per-dashboard channel mappings.
-        //   Outer key:  Wheel MCU UID hex (24 lowercase chars from MozaData.WheelMcuUid),
-        //               or "" when UID is unknown (pre-detect / legacy migration).
-        //   Middle key: Dashboard identity from MozaPlugin.GetActiveDashboardKeyCandidates().
-        //               Preferred: "wheel:&lt;configJsonId&gt;" (stable, survives re-uploads).
-        //               Fallback:  "file:&lt;filename&gt;:&lt;sha1-first-8&gt;" (custom mzdash file).
-        //               Fallback:  "builtin:&lt;profileName&gt;" (embedded profile).
-        //   Inner key:  Channel URL (e.g. "v1/gameData/Rpm").
-        //   Value:      SimHub property path (e.g. "DataCorePlugin.GameData.Rpms").
-        //               Empty/missing = use Telemetry.json default.
-        [Newtonsoft.Json.JsonProperty(NullValueHandling = Newtonsoft.Json.NullValueHandling.Ignore,
-            DefaultValueHandling = Newtonsoft.Json.DefaultValueHandling.Ignore)]
-        public Dictionary<string, Dictionary<string, Dictionary<string, string>>> TelemetryChannelMappingsByWheel { get; set; }
-            = new Dictionary<string, Dictionary<string, Dictionary<string, string>>>(StringComparer.OrdinalIgnoreCase);
 
         /// <summary>
         /// FSR V1 active built-in dashboard/page index (0..18), keyed by wheel-page
@@ -514,51 +459,6 @@ namespace MozaPlugin
         public Dictionary<Guid, int> Cm1ActiveDashboardByGuid { get; set; }
             = new Dictionary<Guid, int>();
 
-        /// <summary>
-        /// One-shot migration: copy entries from the legacy single-level
-        /// <see cref="TelemetryChannelMappings"/> into <see cref="TelemetryChannelMappingsByWheel"/>
-        /// under the empty-wheel slot ("") so users upgrading from 2026-05-08 or earlier
-        /// don't lose their per-dashboard mappings. The legacy field is cleared after
-        /// migration so it serializes as null on the next save and never re-runs.
-        /// Returns true when a migration actually happened (caller should SaveSettings()).
-        /// </summary>
-        public bool MigrateLegacyChannelMappingsIfNeeded()
-        {
-            var legacy = TelemetryChannelMappings;
-            if (legacy == null || legacy.Count == 0) return false;
-
-            if (TelemetryChannelMappingsByWheel == null)
-                TelemetryChannelMappingsByWheel =
-                    new Dictionary<string, Dictionary<string, Dictionary<string, string>>>(StringComparer.OrdinalIgnoreCase);
-
-            if (!TelemetryChannelMappingsByWheel.TryGetValue("", out var emptyWheel))
-            {
-                emptyWheel = new Dictionary<string, Dictionary<string, string>>(StringComparer.OrdinalIgnoreCase);
-                TelemetryChannelMappingsByWheel[""] = emptyWheel;
-            }
-
-            foreach (var kv in legacy)
-            {
-                if (string.IsNullOrEmpty(kv.Key) || kv.Value == null) continue;
-                // Don't clobber an existing entry under the empty-wheel slot — first
-                // wins. (Subsequent loads of the legacy field shouldn't happen because
-                // we null it out below, but be defensive.)
-                if (emptyWheel.ContainsKey(kv.Key)) continue;
-                emptyWheel[kv.Key] = new Dictionary<string, string>(kv.Value, StringComparer.OrdinalIgnoreCase);
-            }
-
-            TelemetryChannelMappings = null;
-            return true;
-        }
-
-        // LEGACY (pre-2026-05-14 refactor): per-wheel-model slot dict.
-        // Migration translates entries into profile.WheelOverridesByPageGuid
-        // and clears this dict; new code never reads or writes it. Kept on
-        // the type only so the one-shot migration can deserialize legacy JSON.
-        [Newtonsoft.Json.JsonProperty(NullValueHandling = Newtonsoft.Json.NullValueHandling.Ignore,
-            DefaultValueHandling = Newtonsoft.Json.DefaultValueHandling.Ignore)]
-        public Dictionary<string, PerWheelSlot> PerWheelSlots { get; set; }
-            = new Dictionary<string, PerWheelSlot>(StringComparer.OrdinalIgnoreCase);
     }
 
     /// <summary>
@@ -617,59 +517,5 @@ namespace MozaPlugin
                 KnobSpeedMs = KnobSpeedMs,
             };
         }
-    }
-
-    /// <summary>
-    /// Per-physical-wheel dashboard-telemetry slot. Keyed by MCU UID (24-char hex)
-    /// inside <see cref="MozaPluginSettings.TelemetryByWheelUid"/>. Holds the
-    /// dashboard profile selection for one specific physical wheel; lets the user
-    /// keep a VGS configured for "DNR endurance" while leaving a CS V2.1 with no
-    /// dashboard, even when both extensions are registered in SimHub at the same
-    /// time. UID-keyed rather than model-keyed so two wheels of the same model
-    /// can carry different profiles, and so the slot is never written before the
-    /// wheel has identified itself on the serial bus.
-    /// </summary>
-    public class TelemetryWheelSlot
-    {
-        public bool TelemetryEnabled { get; set; }
-        public string TelemetryProfileName { get; set; } = "";
-        public string TelemetryMzdashPath { get; set; } = "";
-    }
-
-    /// <summary>
-    /// Per-wheel-model snapshot of the subset of <see cref="MozaPluginSettings"/>
-    /// fields that are scoped to a specific wheel model. Keyed by wheel model name
-    /// inside <see cref="MozaPluginSettings.PerWheelSlots"/>.
-    /// </summary>
-    public class PerWheelSlot
-    {
-        public int WheelTelemetryMode { get; set; } = -1;
-        public int WheelIdleEffect { get; set; } = -1;
-        public int WheelButtonsIdleEffect { get; set; } = -1;
-        public int WheelKnobIdleEffect { get; set; } = -1;
-        public int WheelPaddlesMode { get; set; } = -1;
-        public int WheelClutchPoint { get; set; } = -1;
-        public int WheelKnobMode { get; set; } = -1;
-        public int WheelStickMode { get; set; } = -1;
-        public int WheelRpmIndicatorMode { get; set; } = -1;
-        public int WheelRpmDisplayMode { get; set; } = -1;
-        public int WheelRpmBrightness { get; set; } = 100;
-        public int WheelButtonsBrightness { get; set; } = 100;
-        public int WheelFlagsBrightness { get; set; } = 100;
-        public int WheelESRpmBrightness { get; set; } = 15;
-        public int[]? WheelRpmBlinkColors { get; set; }
-        public int[]? WheelKnobBackgroundColors { get; set; }
-        public int[]? WheelKnobPrimaryColors { get; set; }
-        public int[]? WheelKnobRingColors { get; set; }
-        public int WheelKnobRingBrightness { get; set; } = -1;
-        public int WheelKnobLedMode { get; set; } = -1;
-        public int WheelButtonsLedMode { get; set; } = -1;
-        public int WheelTelemetryIdleSpeedMs { get; set; } = -1;
-        public int WheelButtonsIdleSpeedMs { get; set; } = -1;
-        public int WheelKnobIdleSpeedMs { get; set; } = -1;
-        public int WheelSleepMode { get; set; } = -1;
-        public int WheelSleepTimeoutMin { get; set; } = -1;
-        public int WheelSleepSpeedMs { get; set; } = -1;
-        public int[]? WheelSleepColor { get; set; }
     }
 }

@@ -609,7 +609,17 @@ namespace MozaPlugin.Telemetry
             // Stage the target's settings first so the post-Start cold-start builds
             // tier-def from the right channels (wheel: ApplyTelemetrySettings; CM2:
             // EnsureCm2Pipeline re-applies its policy/resolver/mapping target).
-            if (isWheel) { ClearPendingDashboardKey(); ApplyTelemetrySettings(); }
+            if (isWheel)
+            {
+                ClearPendingDashboardKey();
+                ApplyTelemetrySettings();
+                // Catalog-only switches between same-catalog dashboards differ only in
+                // host-side channel bindings, which the Profile-swap guards ignore — so
+                // keepExistingSynth leaves the live profile (and the channel-mapping UI)
+                // on the prior dashboard. Rebind to the now-active dashboard in place
+                // (wire-neutral) so the downstream UI repaint shows the right mappings.
+                sender.ReResolveActiveDashboardMappings();
+            }
             else _plugin.EnsureCm2Pipeline();
             // SwitchToProfile emits FF kind=4 then runs Stop+Start; profile already
             // staged so pass null to keep current.

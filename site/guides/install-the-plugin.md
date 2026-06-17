@@ -30,7 +30,7 @@ C:\Program Files (x86)\SimHub\
 
 You can paste that path straight into the File Explorer address bar to jump there.
 
-![The SimHub program folder in Windows File Explorer](/docs/SimHubFolder.png)
+![The SimHub program folder in Windows File Explorer](/docs/images/SimHubFolder.png)
 
 > **Tip:** Not sure where SimHub lives? Right-click the SimHub shortcut, choose **Open
 > file location**, and you'll land in the right folder.
@@ -46,7 +46,7 @@ Start SimHub. The first time it sees the new file, it pops a **New plugins have 
 detected** dialog. Switch **AZOM** on, leave **Show in left main menu** enabled, and
 click **Ok**.
 
-![SimHub's new-plugin dialog with AZOM toggled on](/docs/PluginInstall.png)
+![SimHub's new-plugin dialog with AZOM toggled on](/docs/images/PluginInstall.png)
 
 AZOM now appears in the left-hand menu. If you ever miss this dialog, you can toggle the
 plugin from **Settings › Plugins** instead.
@@ -61,6 +61,6 @@ auto-detects your hardware and deploys its device definitions.
 After the definitions are deployed, AZOM shows a **Restart SimHub** banner. This last
 restart loads the new device definitions so your hardware is ready to add under **Devices**.
 
-![The AZOM panel showing a restart-required banner after device definitions were deployed](/docs/RestartPrompt.png)
+![The AZOM panel showing a restart-required banner after device definitions were deployed](/docs/images/RestartPrompt.png)
 
 Restart SimHub one more time.

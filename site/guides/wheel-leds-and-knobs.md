@@ -17,11 +17,12 @@ Open your wheel under **Devices** and switch to **LEDs**. Each LED group on the 
 **Buttons lighting**, **Telemetry LEDs**, **Knob Indicators**, **Individual LEDs** — gets
 its own effects profile that you can edit, import, or manage.
 
-![The Devices LEDs tab showing effects profiles for each LED group on the wheel](/docs/WheelLEDs.png)
+![The Devices LEDs tab showing effects profiles for each LED group on the wheel](/docs/images/WheelLEDs.png)
 
 This is standard SimHub LED territory: drop RPM strips, flag colours, limiter animations
 and status effects onto each group. For genuinely advanced, telemetry-driven animation,
-pair it with [ATSR-EVO](https://github.com/ATSR-Alex/ATSR-Hub-EVO/).
+pair it with ATSR-EVO — see [Advanced LEDs with ATSR](/guides/atsr-led-profiles/) for the
+ready-made MOZA profiles and import steps.
 
 > **Combined vs Individual.** The **Individual LEDs profiles** mode lets you draw across
 > the whole device for idle animations. *Combined* layers it on top of your regular
@@ -32,7 +33,7 @@ pair it with [ATSR-EVO](https://github.com/ATSR-Alex/ATSR-Hub-EVO/).
 The **RPM** tab (under **MOZA Wheel**) controls the shift lights. **RPM LED Mode** chooses
 between **Off**, **SimHub Mode** (driven by your telemetry effects), and **Static**.
 
-![The RPM LED configuration tab with mode, idle effect and static colours](/docs/WheelRPMLeds.png)
+![The RPM LED configuration tab with mode, idle effect and static colours](/docs/images/WheelRPMLeds.png)
 
 The **RPM Idle Effect** is what plays when you're not in a session — **Constant**,
 **Breathing**, **Color Cycle**, **Rainbow**, **Sand Flow** or **RGB Pulse** — with an
@@ -44,7 +45,7 @@ telemetry isn't sending.
 The **Knobs** tab configures the rotary LED rings. **Knob LED Mode** and **Knob Idle
 Effect** mirror the RPM controls, but the interesting part is per-knob colour.
 
-![The Knobs configuration tab showing per-knob colour rings and signal mode](/docs/WheelKnobs.png)
+![The Knobs configuration tab showing per-knob colour rings and signal mode](/docs/images/WheelKnobs.png)
 
 - **Signal Mode** — set each rotary to report as a **Button** (step clicks) or **Knob**
   (continuous), to match what the game expects.

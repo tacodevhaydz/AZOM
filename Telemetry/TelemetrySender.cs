@@ -1566,13 +1566,35 @@ namespace MozaPlugin.Telemetry
                 for (int attempt = 1; attempt <= MaxCatalogRequests; attempt++)
                 {
                     int waited = 0;
+                    bool catalogOnWrongSession = false;
                     while (waited < CatalogWaitMaxMs)
                     {
                         _catalogParser.TryParse();
-                        if (_catalogParser.HasRealCatalogOnSession(mgmt)
-                            || (flag != 0 && flag != mgmt && _catalogParser.HasRealCatalogOnSession(flag)))
+                        // Readiness is gated on the TIER-DEF session ONLY (mgmt —
+                        // the session the tier-def actually rides per
+                        // ResolveTierDefSession, regardless of where the cold-start
+                        // catalog landed). Accepting the catalog on the flag
+                        // session here was the cold-start wedge: the gate passed on
+                        // a flag-only (0x02) catalog, the emitter then forced the
+                        // tier-def onto the degenerate mgmt (0x01) with END=0, the
+                        // wheel rejected it and closed 0x01, and the DisplayWatchdog
+                        // had to do a full ~14 s pipeline restart (which collapses
+                        // the pipeline onto 0x01-only when 0x02 then fails to ack,
+                        // breaking FF/kind=4 dashboard switches). Catch the
+                        // wrong-session catalog up front and re-cycle below instead.
+                        if (_catalogParser.HasRealCatalogOnSession(mgmt))
                         {
                             haveCatalog = true;
+                            break;
+                        }
+                        if (flag != 0 && flag != mgmt
+                            && _catalogParser.HasRealCatalogOnSession(flag))
+                        {
+                            // Full catalog present, but on the flag session only.
+                            // No point waiting out the slice budget — go straight
+                            // to the re-cycle so the wheel re-pushes it on the
+                            // tier-def session while 0x02 is still healthy.
+                            catalogOnWrongSession = true;
                             break;
                         }
                         if (cancel.IsCancellationRequested
@@ -1583,20 +1605,24 @@ namespace MozaPlugin.Telemetry
                     totalWaited += waited;
                     if (haveCatalog) break;
 
-                    // Timed out with no usable catalog. Distinguish "incomplete
-                    // burst" (END seen, no valid URLs — re-request) from "no
-                    // catalog at all" (no END ever — screenless / nothing to ask
-                    // for, proceed).
+                    // Not ready on the tier-def session. Two re-requestable cases:
+                    //  • wrong-session: a full catalog landed on the flag session
+                    //    only (this R5/CS-Pro base's cold-start behavior).
+                    //  • incomplete burst: an END was seen but 0 valid URLs
+                    //    assembled anywhere (dropped/truncated chunks under Wine).
+                    // Both are fixed by wiping the buffer and re-cycling the catalog
+                    // sessions so the wheel re-advertises. "No catalog at all" (no
+                    // END ever — screenless / nothing bound) has nothing to ask for.
                     bool sawEnd = _catalogParser.GetEndMarkerForSession(mgmt) != 0
                         || (flag != 0 && _catalogParser.GetEndMarkerForSession(flag) != 0)
                         || _catalogParser.LastWheelEndMarker != 0;
-                    if (!sawEnd || attempt == MaxCatalogRequests)
+                    if ((!catalogOnWrongSession && !sawEnd) || attempt == MaxCatalogRequests)
                         break;
 
                     MozaLog.Warn(
-                        $"[AZOM] Incomplete channel catalog (END seen, 0 valid channels — " +
-                        $"dropped/truncated catalog chunks) after {waited}ms; re-requesting via " +
-                        $"session re-cycle (attempt {attempt}/{MaxCatalogRequests - 1}).");
+                        $"[AZOM] Catalog not on tier-def session 0x{mgmt:X2} after {waited}ms " +
+                        $"({(catalogOnWrongSession ? $"landed on flag session 0x{flag:X2} instead" : "END seen, 0 valid channels — dropped/truncated chunks")}); " +
+                        $"re-requesting via session re-cycle (attempt {attempt}/{MaxCatalogRequests - 1}).");
                     _catalogParser.ClearBuffer();
                     try { _sessionLife.TryCloseSession(0x01, 300); } catch { }
                     try { _sessionLife.TryCloseSession(0x02, 300); } catch { }
@@ -2749,25 +2775,15 @@ namespace MozaPlugin.Telemetry
             // skipped this branch when profile was null at apply time, so the
             // synthesised path owns it. Resolved per active dashboard key
             // candidate (wheel:<id> > file:<name>:<sha> > builtin:<name>).
-            var plugin = MozaPlugin.Instance;
-            int mappedCount = 0;
-            if (plugin != null)
-            {
-                var channelMap = plugin.GetActiveChannelMappings(MappingPageGuid);
-                if (channelMap != null)
-                {
-                    var keys = MappingDashKeys ?? plugin.GetActiveDashboardKeyCandidates();
-                    foreach (var dashKey in keys)
-                    {
-                        if (channelMap.TryGetValue(dashKey, out var overrides) && overrides != null)
-                        {
-                            DashboardProfileStore.ApplyUserMappings(synthesised, overrides);
-                            mappedCount = overrides.Count;
-                            break;
-                        }
-                    }
-                }
-            }
+            //
+            // Cold-start race: the wheel:<id> candidate needs the configJson
+            // state (EnabledDashboards), which can land AFTER this catalog burst
+            // — so a first synth here may resolve 0 overrides. The catalog-keyed
+            // dedup at the top would then pin the mapping-less profile until a
+            // dashboard switch. ReapplyUserChannelMappingsAfterConfigJson (called
+            // from the inbound configJson StateReady handler) closes that race by
+            // re-applying to the live profile once the state arrives.
+            int mappedCount = ApplyUserChannelMappings(synthesised);
 
             int chCount = 0;
             foreach (var t in synthesised.Tiers) chCount += t.Channels.Count;
@@ -2838,6 +2854,161 @@ namespace MozaPlugin.Telemetry
             // (sess=0x01/0x02 not engaging — now handled by the hard-
             // recovery path in ProbeAndOpenSessions). Restoring with the
             // same gating: only fires after a real catalog/endMarker advance.
+            MozaPlugin.Instance?.RaiseDashboardSelectionChangedInternal();
+        }
+
+        /// <summary>
+        /// Resolve the active channel-mapping overrides (profile × page ×
+        /// dashboard key) and apply them to <paramref name="profile"/>'s channels
+        /// in place, overriding each matched URL's
+        /// <see cref="ChannelDefinition.SimHubProperty"/>. Returns the number of
+        /// override entries applied; 0 when none resolve (e.g. the wheel:&lt;id&gt;
+        /// dashboard key can't be resolved yet because the configJson state hasn't
+        /// arrived). Only the per-channel property binding changes — the wire
+        /// layout is untouched, so callers need no tier-def re-emit (the frame
+        /// builder reads ch.SimHubProperty live each frame). The dashboard key is
+        /// resolved per candidate (wheel:&lt;id&gt; > file:&lt;name&gt;:&lt;sha&gt;
+        /// > builtin:&lt;name&gt;), or the fixed <see cref="MappingDashKeys"/> for
+        /// a CM2 sender.
+        /// </summary>
+        private int ApplyUserChannelMappings(MultiStreamProfile profile)
+        {
+            if (profile == null) return 0;
+            var plugin = MozaPlugin.Instance;
+            if (plugin == null) return 0;
+            var channelMap = plugin.GetActiveChannelMappings(MappingPageGuid);
+            if (channelMap == null) return 0;
+            var keys = MappingDashKeys ?? plugin.GetActiveDashboardKeyCandidates();
+            foreach (var dashKey in keys)
+            {
+                if (channelMap.TryGetValue(dashKey, out var overrides) && overrides != null)
+                {
+                    DashboardProfileStore.ApplyUserMappings(profile, overrides);
+                    return overrides.Count;
+                }
+            }
+            return 0;
+        }
+
+        /// <summary>
+        /// Re-resolve and re-apply user channel mappings to the live profile after
+        /// the wheel's configJson state (EnabledDashboards) arrives. Invoked from
+        /// the inbound configJson StateReady handler.
+        ///
+        /// The catalog-only synth (<see cref="MaybeSwapProfileForCatalog"/>)
+        /// applies user mappings keyed on the active dashboard key, which
+        /// <see cref="MozaPlugin.GetActiveDashboardKeyCandidates"/> resolves from
+        /// the wheel's configJson (the wheel:&lt;id&gt; candidate). On cold start
+        /// the wheel's catalog burst can land BEFORE its configJson burst
+        /// (verified: catalog at T, configJson ~1.2 s later), so the first synth
+        /// resolves 0 overrides and the catalog-keyed dedup then pins the
+        /// mapping-less profile until a dashboard switch forces a re-synth — the
+        /// reported "custom mappings don't load until I switch dashboards" bug.
+        /// Re-applying here closes that race with no tier-def re-emit: only the
+        /// per-channel SimHubProperty binding changes, picked up on the next value
+        /// frame (see <see cref="TelemetryFrameBuilder"/>'s live property read).
+        /// Idempotent when mappings were already applied or none are configured.
+        /// </summary>
+        internal void ReapplyUserChannelMappingsAfterConfigJson()
+        {
+            var profile = _profile;
+            if (profile == null || profile.Tiers.Count == 0) return;
+            int n = ApplyUserChannelMappings(profile);
+            if (n > 0)
+                MozaLog.Debug(
+                    $"[AZOM] Re-applied {n} user channel mapping(s) to live \"{profile.Name}\" " +
+                    "after configJson state arrived (cold-start catalog-before-configJson race)");
+        }
+
+        /// <summary>
+        /// Rebind the live catalog-synth profile's per-channel SimHubProperty to the
+        /// CURRENTLY-active dashboard (catalog default + this dashboard's user
+        /// overrides), in place, then raise <see cref="MozaPlugin.DashboardSelectionChanged"/>
+        /// so the channel-mapping UI repaints.
+        ///
+        /// Catalog-only switches between same-catalog dashboards differ ONLY in the
+        /// host-side SimHubProperty bindings — the tier-def wire content (URLs,
+        /// compression, structure) is identical. Both swap guards key on wire content
+        /// and ignore SimHubProperty: the <see cref="Profile"/> setter's
+        /// <see cref="AreProfileContentsEquivalent"/> check no-ops the reassignment,
+        /// and <see cref="MaybeSwapProfileForCatalog"/> dedups on catalog count +
+        /// URL signature. So a host (UI) switch leaves the live profile carrying the
+        /// PRIOR dashboard's bindings and never notifies the UI. (The wheel-initiated
+        /// path sidesteps both guards by nulling Profile first — which we must not do
+        /// on host switches, as rapid nulling is the 2026-05-26 sess=0x01 wedge that
+        /// <c>keepExistingSynth</c> prevents.)
+        ///
+        /// This rebinds each live channel by URL to catalog-default + active overrides,
+        /// RESETTING stale prior-dashboard overrides on channels the new dashboard does
+        /// not map (the correctness gain over <see cref="ReapplyUserChannelMappingsAfterConfigJson"/>,
+        /// which only adds overrides). No Profile setter, no frame-builder rebuild
+        /// (the builder reads SimHubProperty live per frame), no wire writes — so the
+        /// value stream picks up the new bindings on the next frame and the wedge can't
+        /// fire. No-op until the wheel has committed a catalog generation.
+        /// </summary>
+        internal void ReResolveActiveDashboardMappings()
+        {
+            var profile = _profile;
+            if (profile == null || profile.Tiers.Count == 0) return;
+            var catalog = _catalogParser.LiveCatalog ?? _catalogParser.Catalog;
+            if (catalog == null || catalog.Count == 0) return;
+            var store = MozaPlugin.Instance?.DashProfileStore;
+            if (store == null) return;
+
+            // Fresh catalog-default bindings for every URL, then this dashboard's
+            // user overrides on top — identical resolution to a MaybeSwap rebuild.
+            MultiStreamProfile resolved;
+            try
+            {
+                bool includeRadar = MozaPlugin.Instance?.Settings?.EnableRadarTrackMapChannels ?? false;
+                resolved = store.BuildProfileFromCatalog(catalog, CatalogProfileName, includeRadar);
+            }
+            catch (Exception ex)
+            {
+                MozaLog.Warn($"[AZOM] ReResolveActiveDashboardMappings: synth failed: {ex.GetType().Name}: {ex.Message}");
+                return;
+            }
+            if (resolved?.Tiers == null || resolved.Tiers.Count == 0) return;
+            ApplyUserChannelMappings(resolved);
+
+            var byUrl = new System.Collections.Generic.Dictionary<string, string>(
+                System.StringComparer.OrdinalIgnoreCase);
+            foreach (var t in resolved.Tiers)
+                foreach (var ch in t.Channels)
+                    if (!string.IsNullOrEmpty(ch.Url)) byUrl[ch.Url] = ch.SimHubProperty ?? "";
+            foreach (var sc in resolved.StringChannels)
+                if (!string.IsNullOrEmpty(sc.Url)) byUrl[sc.Url] = sc.SimHubProperty ?? "";
+
+            // Copy resolved bindings onto the LIVE profile's existing channel objects
+            // in place (reference-atomic string writes; same pattern as
+            // ReapplyUserChannelMappingsAfterConfigJson). Plugin-locked channels keep
+            // their internal sentinel.
+            int changed = 0;
+            foreach (var t in profile.Tiers)
+                foreach (var ch in t.Channels)
+                {
+                    if (DashboardProfileStore.IsInternalChannel(ch.SimHubProperty)) continue;
+                    if (ch.Url != null && byUrl.TryGetValue(ch.Url, out var p)
+                        && !string.Equals(ch.SimHubProperty ?? "", p, StringComparison.Ordinal))
+                    {
+                        ch.SimHubProperty = p;
+                        changed++;
+                    }
+                }
+            foreach (var sc in profile.StringChannels)
+            {
+                if (DashboardProfileStore.IsInternalChannel(sc.SimHubProperty)) continue;
+                if (sc.Url != null && byUrl.TryGetValue(sc.Url, out var p)
+                    && !string.Equals(sc.SimHubProperty ?? "", p, StringComparison.Ordinal))
+                {
+                    sc.SimHubProperty = p;
+                    changed++;
+                }
+            }
+
+            MozaLog.Debug(
+                $"[AZOM] ReResolveActiveDashboardMappings: rebound {changed} live channel " +
+                $"binding(s) to active dashboard for \"{profile.Name}\" (catalog={catalog.Count})");
             MozaPlugin.Instance?.RaiseDashboardSelectionChangedInternal();
         }
 
@@ -3231,19 +3402,19 @@ namespace MozaPlugin.Telemetry
                 // (_coldStartWheelGatePending=false → zero latency); on a warm
                 // wheel the tier-def session's catalog is already real so the
                 // gate passes on the first check.
-                // Wait for a real catalog (≥1 valid URL + valid END u32) on
-                // EITHER candidate session — the tier-def emitter then emits on
-                // whichever session actually carries it (catalog-following
-                // session pick; this wheel's catalog lands on 0x02). Gating on a
-                // single hardcoded session was the bug that made this hold time
-                // out uselessly on a 0x02-catalog wheel.
+                // Gate on the TIER-DEF session only (mgmt — where the tier-def
+                // rides per ResolveTierDefSession). The old "either session" check
+                // passed on a flag-only (0x02) cold catalog, then the emitter
+                // forced the tier-def onto the degenerate mgmt (0x01) and the wheel
+                // rejected it. StartInner's pre-init catalog wait now re-cycles the
+                // sessions so the wheel re-advertises on mgmt before we get here,
+                // so on a healthy cold start this gate passes on the first check
+                // (no dead latency); the cap only bites a screenless / never-ready
+                // wheel or one that wouldn't re-advertise after the re-requests.
                 byte gateMgmt = _mgmtPort != 0 ? _mgmtPort : (byte)0x01;
-                byte gateFlag = FlagByte;
-                bool anyRealCatalog =
-                    _catalogParser.HasRealCatalogOnSession(gateMgmt)
-                    || (gateFlag != 0 && gateFlag != gateMgmt
-                        && _catalogParser.HasRealCatalogOnSession(gateFlag));
-                if (_coldStartWheelGatePending && !anyRealCatalog)
+                bool tierDefSessionCatalogReady =
+                    _catalogParser.HasRealCatalogOnSession(gateMgmt);
+                if (_coldStartWheelGatePending && !tierDefSessionCatalogReady)
                 {
                     int catalogCap = Math.Max(_preambleTickTarget,
                         PreambleSess01CatalogWaitMaxMs / Math.Max(1, _baseTickMs));
@@ -3254,7 +3425,7 @@ namespace MozaPlugin.Telemetry
                             _coldStartGateLogged = true;
                             MozaLog.Info(
                                 $"[AZOM] Cold-start preamble hold: waiting for a real catalog " +
-                                $"(valid URL + END u32) on sess 0x{gateMgmt:X2} or 0x{gateFlag:X2} " +
+                                $"(valid URL + END u32) on tier-def sess 0x{gateMgmt:X2} " +
                                 $"before first tier-def. Cap {catalogCap} ticks " +
                                 $"({PreambleSess01CatalogWaitMaxMs} ms).");
                         }
@@ -3262,8 +3433,8 @@ namespace MozaPlugin.Telemetry
                     }
                     MozaLog.Warn(
                         $"[AZOM] Cold-start catalog wait exceeded {PreambleSess01CatalogWaitMaxMs} ms " +
-                        "without a real catalog on either session — proceeding to Active anyway " +
-                        "(screenless or slow wheel; watchdog will recover if binding fails).");
+                        $"without a real catalog on tier-def session 0x{gateMgmt:X2} — proceeding to " +
+                        "Active anyway (screenless or slow wheel; watchdog will recover if binding fails).");
                     // One-shot: don't re-hold if preamble is somehow re-entered.
                     _coldStartWheelGatePending = false;
                 }
@@ -3289,15 +3460,15 @@ namespace MozaPlugin.Telemetry
 
         /// <summary>Cold-start only: ceiling on the preamble→Active hold while
         /// waiting for the tier-def session to carry a REAL catalog (valid URL
-        /// record + valid END u32). NOTE: on wheels whose catalog only ever
-        /// lands on a DIFFERENT session than the tier-def session (e.g. this R5
-        /// base advertises its catalog on sess=0x02 while tier-def rides
-        /// sess=0x01), HasRealCatalogOnSession(tier-def session) is structurally
-        /// never satisfied, so this hold ALWAYS runs to the cap with zero
-        /// binding benefit — it is pure dead latency. Capped at 6 s (was 22 s)
-        /// to bound that wasted wait until the tier-def-session mismatch is
-        /// fixed upstream (see docs/connection-robustness-and-recovery-plan.md
-        /// P4.1). A screenless / never-ready wheel still proceeds after the cap.
+        /// record + valid END u32). On wheels whose cold-start catalog lands on
+        /// the flag session (e.g. this R5/CS-Pro base advertises on sess=0x02
+        /// while tier-def rides sess=0x01), StartInner's pre-init catalog wait
+        /// now re-cycles the sessions so the wheel re-advertises on the tier-def
+        /// session before reaching this hold — so on a healthy cold start this
+        /// passes immediately. The cap only bounds the residual wait for a
+        /// screenless / never-ready wheel, or one that won't re-advertise on the
+        /// tier-def session after StartInner's re-requests (the DisplayWatchdog
+        /// reject-recovery is the last-resort backstop there).
         /// Only consulted while _coldStartWheelGatePending is true.</summary>
         private const int PreambleSess01CatalogWaitMaxMs = 6_000;
 
@@ -3393,7 +3564,17 @@ namespace MozaPlugin.Telemetry
             for (int i = 0; i < tiers.Length; i++)
             {
                 var tier = tiers[i];
-                if (_tickCounter % tier.TickInterval != 0)
+                // Phase each tier by its index within its emit window so tiers
+                // sharing a package_level don't all fire on the same tick. A
+                // track-map dashboard splits its 63 location_t channels into ~11
+                // sub-tiers all at pkg=500 (TickInterval=16); without this offset
+                // they burst together — ~11 value frames back-to-back in one
+                // 33 ms tick (~200 fps on the wire), overrunning the 115200-baud
+                // ceiling and starving the LED + dashboard write pipeline.
+                // Phasing spreads them one-per-tick (≤33 fps, the telemetry wire
+                // norm); each tier's rate is unchanged (still once per
+                // TickInterval), only its phase shifts.
+                if (_tickCounter % tier.TickInterval != i % tier.TickInterval)
                     continue;
 
                 // Match flag byte to the tier-def we last sent: each tier-def

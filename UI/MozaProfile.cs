@@ -20,25 +20,15 @@ namespace MozaPlugin
     /// </summary>
     public sealed class WheelOverride
     {
-        // Captures legacy JSON keys that no longer exist on the class (e.g.
-        // pre-schema-v5 TelemetryEnabled, pre-schema-v4 TelemetryMzdashFolder).
-        // Migration reads these values into the new schema and clears the dict.
-        [Newtonsoft.Json.JsonExtensionData(WriteData = false)]
-        internal Dictionary<string, Newtonsoft.Json.Linq.JToken>? LegacyJsonFields;
-
         // LED / mode
         public int WheelTelemetryMode { get; set; } = -1;
         public int WheelKnobLedMode { get; set; } = -1;
         public int WheelButtonsLedMode { get; set; } = -1;
-        // NOTE: WheelSleep* (mode / timeout / speed / color) moved to
-        // MozaPluginSettings.WheelSleepByPageGuid in schema v8 — sleep is a
-        // firmware preference, not a per-game-per-wheel decision. Legacy
-        // values get drained via LegacyJsonFields during migration.
-        // NOTE: WheelIdleEffect / WheelButtonsIdleEffect / WheelKnobIdleEffect
-        // / WheelTelemetryIdleSpeedMs / WheelButtonsIdleSpeedMs / WheelKnobIdleSpeedMs
-        // moved to MozaPluginSettings.WheelIdleByPageGuid in schema v9 — same
-        // wheel-level reasoning as sleep. Legacy values are drained via
-        // LegacyJsonFields during migration.
+        // NOTE: WheelSleep* (mode / timeout / speed / color) live on
+        // MozaPluginSettings.WheelSleepByPageGuid — sleep is a firmware
+        // preference, not a per-game-per-wheel decision. WheelIdleEffect /
+        // WheelButtonsIdleEffect / WheelKnobIdleEffect and the matching *SpeedMs
+        // fields live on MozaPluginSettings.WheelIdleByPageGuid for the same reason.
 
         // Brightness (-1 = use profile baseline)
         public int WheelRpmBrightness { get; set; } = -1;
@@ -71,6 +61,10 @@ namespace MozaPlugin
         public int[]? WheelKnobPrimaryColors { get; set; }
         public int[]? WheelKnobRingColors { get; set; }
         public int WheelKnobRingBrightness { get; set; } = -1;
+        // null = no override (fall through to baseline). Single wheel-wide toggle.
+        public bool? WheelKnobDefaultDuringTelemetry { get; set; }
+        // Knob static-hold restore timeout (ms). -1 = no override; 0 = off.
+        public int WheelKnobStaticTimeoutMs { get; set; } = -1;
 
         // Telemetry — per-game dashboard selection (per-wheel-page-per-game).
         public string? TelemetryProfileName { get; set; }
@@ -112,6 +106,8 @@ namespace MozaPlugin
                 WheelKnobRingColors = WheelKnobRingColors != null
                     ? (int[])WheelKnobRingColors.Clone() : null,
                 WheelKnobRingBrightness = WheelKnobRingBrightness,
+                WheelKnobDefaultDuringTelemetry = WheelKnobDefaultDuringTelemetry,
+                WheelKnobStaticTimeoutMs = WheelKnobStaticTimeoutMs,
                 TelemetryProfileName = TelemetryProfileName,
                 TelemetryMzdashPath = TelemetryMzdashPath,
             };
@@ -136,13 +132,60 @@ namespace MozaPlugin
         /// <summary>Source value mapped to the field's full-scale output.</summary>
         public double InMax { get; set; } = 1;
 
+        // ── Boundary / encoding / gain overrides (null = use the catalog default) ──
+        // Per-profile layer over the static Fsr1DashboardCatalog so users can correct
+        // wrong-grid fields (e.g. GT-style 0x11/0x12) without a code change. A null
+        // override means "no opinion → catalog default"; only deviations are persisted.
+        /// <summary>Payload-relative first byte, null = catalog default.</summary>
+        public int? StartOffset { get; set; }
+        /// <summary>Payload-relative last byte (inclusive), null = catalog default.</summary>
+        public int? EndOffset { get; set; }
+        /// <summary>Width-2 only: true = U16-LE, false = U16-BE; null = catalog default.</summary>
+        public bool? LittleEndian { get; set; }
+        /// <summary>Output gain: raw·Scale + Bias; null = 1.0. (CM1: per-field gain.)</summary>
+        public double? Scale { get; set; }
+        /// <summary>Output offset added after Scale; null = 0.0.</summary>
+        public double? Bias { get; set; }
+
         public Fsr1FieldMapping Clone() =>
-            new Fsr1FieldMapping { Property = Property, InMin = InMin, InMax = InMax };
+            new Fsr1FieldMapping
+            {
+                Property = Property, InMin = InMin, InMax = InMax,
+                StartOffset = StartOffset, EndOffset = EndOffset,
+                LittleEndian = LittleEndian, Scale = Scale, Bias = Bias,
+            };
+    }
+
+    /// <summary>
+    /// A net-new FSR V1 field split out of a catalog field — it does not exist in the
+    /// static <see cref="MozaPlugin.Telemetry.Fsr1DashboardCatalog"/>, so it lives in the
+    /// profile and is merged into the field list at every enumeration point (driver, UI,
+    /// probe, viz). Carries its identity plus full mapping inline, so there is a single
+    /// source of truth (no two-dict consistency hazard). The inline mapping ALWAYS sets an
+    /// explicit StartOffset/EndOffset, so a synthetic never prunes to nothing.
+    /// </summary>
+    public sealed class Fsr1SyntheticField
+    {
+        /// <summary>Generated unique key within the record (e.g. "split1"). Never parsed.</summary>
+        public string FieldId { get; set; } = "";
+        /// <summary>Display label shown in the channel-mapping list.</summary>
+        public string Label { get; set; } = "";
+        /// <summary>Channel mapping + explicit byte span owned by this synthetic field.</summary>
+        public Fsr1FieldMapping Mapping { get; set; } = new Fsr1FieldMapping();
+
+        public Fsr1SyntheticField Clone() =>
+            new Fsr1SyntheticField
+            {
+                FieldId = FieldId,
+                Label = Label,
+                Mapping = Mapping?.Clone() ?? new Fsr1FieldMapping(),
+            };
     }
 
     public sealed class Ab9Settings
     {
         public Ab9Mode Mode { get; set; } = Ab9Mode.SevenPlusR_L1;
+        public Ab9InputMode InputMode { get; set; } = Ab9InputMode.Shifter;
         public byte MechanicalResistance { get; set; } = 50;
         public byte Spring { get; set; }              = 50;
         public byte NaturalDamping { get; set; }      = 50;
@@ -181,6 +224,7 @@ namespace MozaPlugin
             return new Ab9Settings
             {
                 Mode = Mode,
+                InputMode = InputMode,
                 MechanicalResistance = MechanicalResistance,
                 Spring = Spring,
                 NaturalDamping = NaturalDamping,
@@ -206,17 +250,10 @@ namespace MozaPlugin
         [JsonIgnore]
         public override Control ProfileContentControl => null!;
 
-        // Captures pre-schema-v8 JSON keys that no longer exist on this class
-        // (e.g. WheelSleepMode / WheelSleepTimeoutMin / WheelSleepSpeedMs /
-        // WheelSleepColor — moved to MozaPluginSettings.WheelSleepByPageGuid).
-        // Migration reads these into the per-wheel-page dict and clears the
-        // capture, so subsequent saves don't re-emit them.
-        [JsonExtensionData(WriteData = false)]
-        internal Dictionary<string, Newtonsoft.Json.Linq.JToken>? LegacyJsonFields;
-
         // ===== Base/Motor settings (raw device values from MozaData) =====
         public int Limit { get; set; } = -1;               // raw = degrees / 2
         public int FfbStrength { get; set; } = -1;          // raw = percent * 10
+        public int Interpolation { get; set; } = -1;        // raw = display(0-10) * 10
         public int Torque { get; set; } = -1;               // percent
         public int Speed { get; set; } = -1;                // raw = percent * 10
         public int Damper { get; set; } = -1;               // raw = percent * 10
@@ -254,14 +291,11 @@ namespace MozaPlugin
         public int WheelTelemetryMode { get; set; } = -1;
         public int WheelKnobLedMode { get; set; } = -1;
         public int WheelButtonsLedMode { get; set; } = -1;
-        // NOTE: WheelSleep* (mode / timeout / speed / color) moved to
-        // MozaPluginSettings.WheelSleepByPageGuid in schema v8 — see the
-        // baseline-shared LegacyJsonFields capture above.
-        // NOTE: WheelIdleEffect / WheelButtonsIdleEffect / WheelKnobIdleEffect
-        // / WheelTelemetryIdleSpeedMs / WheelButtonsIdleSpeedMs / WheelKnobIdleSpeedMs
-        // moved to MozaPluginSettings.WheelIdleByPageGuid in schema v9. Legacy
-        // baseline values get drained via the per-profile LegacyJsonFields
-        // capture above.
+        // NOTE: WheelSleep* (mode / timeout / speed / color) live on
+        // MozaPluginSettings.WheelSleepByPageGuid (sleep is a wheel-level, not
+        // per-game, preference). WheelIdleEffect / WheelButtonsIdleEffect /
+        // WheelKnobIdleEffect and the matching *SpeedMs fields live on
+        // MozaPluginSettings.WheelIdleByPageGuid for the same reason.
         public int WheelRpmBrightness { get; set; } = -1;
         public int WheelButtonsBrightness { get; set; } = -1;
         public int WheelFlagsBrightness { get; set; } = -1;
@@ -330,6 +364,10 @@ namespace MozaPlugin
         public int[]? WheelKnobPrimaryColors { get; set; }    // [5] — W17/W18
         public int[]? WheelKnobRingColors { get; set; }       // [56] — Group 3 per-LED ring
         public int WheelKnobRingBrightness { get; set; } = -1;
+        // Single wheel-wide "restore stored knob colors when telemetry sends off" toggle.
+        public bool WheelKnobDefaultDuringTelemetry { get; set; }
+        // Knob static-hold restore timeout in ms (0 = off).
+        public int WheelKnobStaticTimeoutMs { get; set; }
         public int[]? DashRpmColors { get; set; }         // [10]
         public int[]? DashRpmBlinkColors { get; set; }   // [10]
         public int[]? DashFlagColors { get; set; }        // [6]
@@ -387,10 +425,20 @@ namespace MozaPlugin
         public Dictionary<Guid, Dictionary<string, Dictionary<string, Fsr1FieldMapping>>> Fsr1DashboardMappings { get; set; }
             = new Dictionary<Guid, Dictionary<string, Dictionary<string, Fsr1FieldMapping>>>();
 
+        // ===== FSR V1 synthetic split fields (per-profile, net-new) =====
+        // A "split" carves a new sub-span out of a catalog field; the resulting field is
+        // net-new (not in the static catalog) and gets its own channel mapping. Stored here
+        // and merged into the field list at every enumeration point (see Fsr1FieldComposer).
+        // Outer key  = wheel page DescriptorUniqueId GUID
+        // Middle key = record-type key (Fsr1DashboardCatalog.Key, e.g. "type-02")
+        // List       = the synthetic fields added to that record, in creation order.
+        public Dictionary<Guid, Dictionary<string, List<Fsr1SyntheticField>>> Fsr1SyntheticFields { get; set; }
+            = new Dictionary<Guid, Dictionary<string, List<Fsr1SyntheticField>>>();
+
         // CM1 base-bridged dash (group-0x35) field mappings. Flat — the CM1 streams one
         // keyed field set regardless of selected dashboard, so there is no per-dashboard
         // record-key level:
-        //   Outer key = dash device GUID (MozaDeviceConstants.DashGuid)
+        //   Outer key = dash device GUID (MozaDeviceConstants.DashCm1Guid)
         //   Inner key = field id (Cm1FieldDef.FieldId, e.g. "f54d")
         // Reuses Fsr1FieldMapping (only Property is used; InMin/InMax unused for CM1).
         public Dictionary<Guid, Dictionary<string, Fsr1FieldMapping>> Cm1FieldMappings { get; set; }
@@ -420,6 +468,7 @@ namespace MozaPlugin
         {
             // Base/Motor
             Limit = p.Limit; FfbStrength = p.FfbStrength; Torque = p.Torque;
+            Interpolation = p.Interpolation;
             Speed = p.Speed; Damper = p.Damper; Friction = p.Friction;
             Inertia = p.Inertia; Spring = p.Spring;
             SpeedDamping = p.SpeedDamping; SpeedDampingPoint = p.SpeedDampingPoint;
@@ -492,6 +541,8 @@ namespace MozaPlugin
             WheelKnobPrimaryColors = CloneArray(p.WheelKnobPrimaryColors);
             WheelKnobRingColors = CloneArray(p.WheelKnobRingColors);
             WheelKnobRingBrightness = p.WheelKnobRingBrightness;
+            WheelKnobDefaultDuringTelemetry = p.WheelKnobDefaultDuringTelemetry;
+            WheelKnobStaticTimeoutMs = p.WheelKnobStaticTimeoutMs;
             DashRpmColors = CloneArray(p.DashRpmColors);
             DashRpmBlinkColors = CloneArray(p.DashRpmBlinkColors);
             DashFlagColors = CloneArray(p.DashFlagColors);
@@ -556,6 +607,26 @@ namespace MozaPlugin
                 }
             }
 
+            // FSR V1 synthetic split fields (deep clone)
+            Fsr1SyntheticFields = new Dictionary<Guid, Dictionary<string, List<Fsr1SyntheticField>>>();
+            if (p.Fsr1SyntheticFields != null)
+            {
+                foreach (var kvp in p.Fsr1SyntheticFields)
+                {
+                    if (kvp.Value == null) continue;
+                    var middle = new Dictionary<string, List<Fsr1SyntheticField>>(StringComparer.OrdinalIgnoreCase);
+                    foreach (var rec in kvp.Value)
+                    {
+                        if (rec.Value == null) continue;
+                        var list = new List<Fsr1SyntheticField>(rec.Value.Count);
+                        foreach (var syn in rec.Value)
+                            if (syn != null) list.Add(syn.Clone());
+                        middle[rec.Key] = list;
+                    }
+                    Fsr1SyntheticFields[kvp.Key] = middle;
+                }
+            }
+
             // CM1 dash field mappings (deep clone)
             Cm1FieldMappings = new Dictionary<Guid, Dictionary<string, Fsr1FieldMapping>>();
             if (p.Cm1FieldMappings != null)
@@ -603,6 +674,7 @@ namespace MozaPlugin
 
             // Base/Motor
             Limit = data.Limit; FfbStrength = data.FfbStrength; Torque = data.Torque;
+            Interpolation = data.Interpolation;
             Speed = data.Speed; Damper = data.Damper; Friction = data.Friction;
             Inertia = data.Inertia; Spring = data.Spring;
             SpeedDamping = data.SpeedDamping; SpeedDampingPoint = data.SpeedDampingPoint;
@@ -647,6 +719,44 @@ namespace MozaPlugin
             // them from stale flat fields would corrupt the persisted state.
             // Wheel colors / blink colors / knob colors live in WheelOverride;
             // dash colors / dash blink live on the profile via the dash UI handler.
+        }
+
+        /// <summary>
+        /// Seed this profile's dash / base-ambient / gearshift baselines from the
+        /// global <see cref="MozaPluginSettings"/> flat defaults. Sentinel-only
+        /// (writes only where the baseline is still at its -1 / null "not set"
+        /// marker), so it's idempotent and never overwrites a user value.
+        ///
+        /// Runs at profile creation (ProfileCoordinator.InitProfileSystem) and on
+        /// every dash apply (HardwareApplier.ApplyDashToHardware)
+        /// — SimHub auto-creates per-game profiles with all-sentinel fields, and
+        /// without seeding the >=0 guards downstream skip every write, leaving the
+        /// display dark.
+        /// </summary>
+        public void SeedBaselineFromFlatFields(MozaPluginSettings settings)
+        {
+            if (settings == null) return;
+
+            // Dash brightness baselines.
+            if (DashRpmBrightness     < 0) DashRpmBrightness     = settings.DashRpmBrightness;
+            if (DashFlagsBrightness   < 0) DashFlagsBrightness   = settings.DashFlagsBrightness;
+            if (DashDisplayBrightness < 0) DashDisplayBrightness = settings.DashDisplayBrightness;
+            if (DashDisplayStandbyMin < 0) DashDisplayStandbyMin = settings.DashDisplayStandbyMin;
+            if (DashRpmBlinkColors == null && settings.DashRpmBlinkColors != null)
+                DashRpmBlinkColors = (int[])settings.DashRpmBlinkColors.Clone();
+
+            // Base ambient.
+            if (BaseAmbientBrightness     < 0) BaseAmbientBrightness     = settings.BaseAmbientBrightness;
+            if (BaseAmbientStandbyMode    < 0) BaseAmbientStandbyMode    = settings.BaseAmbientStandbyMode;
+            if (BaseAmbientIndicatorState < 0) BaseAmbientIndicatorState = settings.BaseAmbientIndicatorState;
+            if (BaseAmbientSleepMode      < 0) BaseAmbientSleepMode      = settings.BaseAmbientSleepMode;
+            if (BaseAmbientSleepTimeout   < 0) BaseAmbientSleepTimeout   = settings.BaseAmbientSleepTimeout;
+            if (BaseAmbientStartupColor   < 0) BaseAmbientStartupColor   = settings.BaseAmbientStartupColor;
+            if (BaseAmbientShutdownColor  < 0) BaseAmbientShutdownColor  = settings.BaseAmbientShutdownColor;
+
+            // Gearshift.
+            if (GearshiftVibrateOnNeutral < 0) GearshiftVibrateOnNeutral = settings.GearshiftVibrateOnNeutral ? 1 : 0;
+            if (GearshiftDebounceMs       < 0) GearshiftDebounceMs       = settings.GearshiftDebounceMs;
         }
 
         // ===== Color packing helpers =====

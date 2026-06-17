@@ -101,7 +101,11 @@ namespace MozaPlugin.UI.Import
             AddGameGain(plan, dp, "setGameSpringValue", "Game Spring Gain",
                         () => profile.GameSpring, v => profile.GameSpring = v);
 
-            AddSkipped(plan, dp, "constForceExtraMode", "no profile field");
+            // constForceExtraMode is the 0-10 interpolation value; Interpolation
+            // stores it as display×10 (raw 0-100), like FfbStrength — scale ×10.
+            AddScaledInt(plan, dp, "constForceExtraMode", "Interpolation", "", 10,
+                         () => profile.Interpolation, v => profile.Interpolation = v);
+
             AddSkipped(plan, dp, "gameForceFeedbackFilter", "no profile field");
             AddSkipped(plan, dp, "gearJoltLevel", "no profile field");
             AddSkipped(plan, dp, "maximumGameSteeringAngle", "no profile field");

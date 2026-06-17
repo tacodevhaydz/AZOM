@@ -94,11 +94,18 @@ namespace MozaPlugin.Telemetry.Frames
         // (games that don't expose coordinates leave them null).
         private static void PopulateCarLocations(StatusDataBase data, ref GameDataSnapshot snap)
         {
+            // SimHub's recorded per-track map (PersistantTrackerPlugin) converts
+            // lap-relative coordinates to world space for games that report them
+            // (iRacing); a passthrough for world-coord games (AC/AMS2) and null
+            // until a lap has been recorded. Read reflectively to avoid a hard
+            // SimHub.Plugins compile-time dependency.
+            var map = TryGetMapRecord();
+
             var pc = data.CarCoordinates;
             float px = 0f, pz = 0f; bool havePlayer = false;
             if (pc != null && pc.Length >= 3)
             {
-                px = (float)pc[0]; pz = (float)pc[2]; havePlayer = true;
+                (px, pz) = ToGroundPlane(map, pc); havePlayer = true;
                 snap.PlayerLocation = (px, pz);
             }
 
@@ -106,19 +113,23 @@ namespace MozaPlugin.Telemetry.Frames
             if (opps == null || opps.Count == 0) return;
             int count = opps.Count;
 
-            // SimHub's generic Opponent.Coordinates / RelativeCoordinatesToPlayer
-            // are EMPTY for AC — measured 98.5% of radar frames carried all-zero
-            // ri despite OpponentCount=8. The reliable source is the per-car
-            // ABSOLUTE coordinates in the raw game struct
-            // (ACSharedMemory.DataContainer.Graphics.CarCoordinates — a flat
-            // [x,y,z, x,y,z, …] per slot). Read it reflectively (no compile-time
-            // AC reference) and compute each car's position relative to the
-            // player ourselves. Falls back to the generic fields when raw isn't
-            // available (other games / failure).
-            //
-            // NOTE: rels are WORLD-frame (Δ from player) for now — get real dots
-            // on the radar first. If they don't rotate with the car the way the
-            // widget expects, rotate by OrientationYawWorld (heading is wired).
+            // Resolve each car's ABSOLUTE ground-plane position (X, Z) — this is
+            // what the track-map patch/Location* channels emit; the wheel's Map
+            // widget plots each car's path around the track from absolute world
+            // positions (see TelemetryFrameBuilder.WriteLocationPair). Source
+            // priority matches what each game exposes:
+            //   1. AC raw struct (DataContainer.Graphics.CarCoordinates, a flat
+            //      [x,y,z,…] per slot) — world coords, the only reliable source
+            //      for AC where Opponent.Coordinates is ~98.5% empty. Read
+            //      reflectively (no compile-time AC reference).
+            //   2. SimHub's generic Opponent.Coordinates, normalised through the
+            //      recorded track map (ToGroundPlane) so lap-relative-coordinate
+            //      games (iRacing) map to world space; a passthrough otherwise.
+            //      Mirrors SimHub's own RadarItem.UpdateData.
+            // CarRelative (Δ from player, WORLD-frame, unrotated) feeds the radar
+            // patch/ri* channels — the player-relative "cars nearby" view — which
+            // stays disabled until that format is verified; heading rotation is
+            // deferred.
             float[]? raw = TryReadRawCarCoordinates(data);
 
             var locs = new (float X, float Y)[count];
@@ -143,7 +154,7 @@ namespace MozaPlugin.Telemetry.Frames
                     var c = opp?.Coordinates;
                     if (c != null && c.Length >= 3 && (c[0] != 0.0 || c[2] != 0.0))
                     {
-                        abs = ((float)c[0], (float)c[2]);
+                        abs = ToGroundPlane(map, c);
                         haveAbs = true;
                     }
                     else
@@ -192,6 +203,55 @@ namespace MozaPlugin.Telemetry.Frames
             {
                 return null;
             }
+        }
+
+        // Cached MethodInfo for SimHub.Plugins
+        // PersistantTrackerPlugin.GetMap() — the public static accessor for the
+        // recorded track map. Reflected (not a compile-time call) so a SimHub
+        // build that moves or renames it degrades to null instead of throwing.
+        private static MethodInfo? s_getMapMethod;
+        private static bool s_getMapResolved;
+
+        // The live recorded track-map record, or null when none exists yet or
+        // SimHub's internals have shifted.
+        private static DataRecordBase? TryGetMapRecord()
+        {
+            try
+            {
+                if (!s_getMapResolved)
+                {
+                    s_getMapResolved = true;
+                    var t = Type.GetType(
+                        "SimHub.Plugins.DataPlugins.PersistantTracker.PersistantTrackerPlugin, SimHub.Plugins");
+                    s_getMapMethod = t?.GetMethod("GetMap",
+                        BindingFlags.Public | BindingFlags.Static, null, Type.EmptyTypes, null);
+                }
+                return s_getMapMethod?.Invoke(null, null) as DataRecordBase;
+            }
+            catch
+            {
+                return null;
+            }
+        }
+
+        // Project a car's coordinate array to ground-plane (X, Z). When a track
+        // map is recorded for a lap-relative-coordinate game, route through
+        // DataRecordBase.ToAbsoluteCoordinates (→ world space); a passthrough for
+        // world-coordinate games. Mirrors RadarItem.UpdateData. Defensive: any
+        // failure or short result keeps the raw [0],[2].
+        private static (float X, float Y) ToGroundPlane(DataRecordBase? map, double[] c)
+        {
+            double x = c[0], z = c.Length > 2 ? c[2] : 0.0;
+            if (map != null)
+            {
+                try
+                {
+                    double[]? a = map.ToAbsoluteCoordinates(c);
+                    if (a != null && a.Length >= 3) { x = a[0]; z = a[2]; }
+                }
+                catch { /* keep raw [0],[2] */ }
+            }
+            return ((float)x, (float)z);
         }
 
         private static double ParseGear(string? gear)

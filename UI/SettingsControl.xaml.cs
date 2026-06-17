@@ -78,6 +78,9 @@ namespace MozaPlugin
                 AutoApplyProfileCheck.IsChecked = plugin.Settings.AutoApplyProfileOnLaunch;
                 LimitWheelUpdatesCheck.IsChecked = plugin.Settings.LimitWheelUpdates;
                 AlwaysResendBitmaskCheck.IsChecked = plugin.Settings.AlwaysResendBitmask;
+                int kaSec = plugin.Settings.WheelKeepaliveTimeoutSec;
+                KeepaliveTimeoutSlider.Value = Math.Max(KeepaliveTimeoutSlider.Minimum, Math.Min(KeepaliveTimeoutSlider.Maximum, kaSec));
+                KeepaliveTimeoutValue.Text = $"{kaSec} s";
                 // Gearshift coalescing controls (GearshiftVibrateOnNeutralCheck,
                 // GearshiftDebounceSlider) are profile-sourced — populated by
                 // RefreshBaseTab on every 500 ms tick so a profile switch with
@@ -92,7 +95,7 @@ namespace MozaPlugin
                 if (SerialTrafficCapture.Instance.Enabled)
                 {
                     SerialCaptureToggleButton.Content = "Stop capture";
-                    SerialCaptureStatusText.Text = "capturing… (always-capture is on — click Stop when ready)";
+                    SerialCaptureStatusText.Text = Strings.Status_CapturingClickStop;
                 }
             }
 
@@ -191,7 +194,6 @@ namespace MozaPlugin
             // background check finds a newer release, regardless of which tab
             // the user is on. Cheap (a few string compares); no network.
             try { RefreshHeaderBanner(); } catch { /* never let the banner break the refresh loop */ }
-            try { RefreshFirmwareWarningBanner(); } catch { /* never let the banner break the refresh loop */ }
 
             using (_suppressor.Begin())
             {
@@ -367,6 +369,10 @@ namespace MozaPlugin
             FfbStrengthSlider.Value = Clamp(ffb, 0, 100);
             SetValueText(FfbStrengthValue, $"{ffb:F0}%");
 
+            double interp = _data.Interpolation / 10.0;   // wire 0-100 -> display 0-10
+            InterpolationSlider.Value = Clamp(interp, 0, 10);
+            SetValueText(InterpolationValue, $"{interp:F0}");
+
             TorqueSlider.Value = Clamp(_data.Torque, 50, 100);
             SetValueText(TorqueValue, $"{_data.Torque}%");
 
@@ -492,6 +498,17 @@ namespace MozaPlugin
             FfbStrengthValue.Text = $"{pct}%";
             _data.FfbStrength = raw;
             _plugin.WriteIfBaseConnected("base-ffb-strength", raw);
+            _plugin.SaveSettings();
+        }
+
+        private void InterpolationSlider_ValueChanged(object sender, RoutedPropertyChangedEventArgs<double> e)
+        {
+            if (_suppressEvents) return;
+            int display = (int)Math.Round(e.NewValue);   // 0-10
+            int raw = display * 10;                       // wire value 0-100
+            InterpolationValue.Text = $"{display}";
+            _data.Interpolation = raw;
+            _plugin.WriteIfBaseConnected("main-set-interpolation", raw);
             _plugin.SaveSettings();
         }
 
@@ -830,7 +847,10 @@ namespace MozaPlugin
             _data.WheelKnobSignalModes[index] = value;
             _plugin.UpdateActiveWheelOverlay(o =>
                 o.WheelKnobSignalModes = (int[])_data.WheelKnobSignalModes.Clone());
-            _plugin.WriteIfWheelDetected($"wheel-knob-signal-mode{index}", value);
+            // index is the logical knob (LED/UI order); the wire command addresses
+            // the firmware signal-mode index, which differs on the KS Pro.
+            int fwIndex = _plugin.WheelModelInfo?.SignalModeFirmwareIndex(index) ?? index;
+            _plugin.WriteIfWheelDetected($"wheel-knob-signal-mode{fwIndex}", value);
             _plugin.SaveSettings();
         }
 
@@ -939,6 +959,18 @@ namespace MozaPlugin
         private void RefreshButton_Click(object sender, RoutedEventArgs e)
         {
             RequestAllSettings();
+        }
+
+        private void SoftRebootButton_Click(object sender, RoutedEventArgs e)
+        {
+            var result = MessageBox.Show(
+                Strings.Dialog_RestartWheelbase_Body,
+                Strings.Dialog_RestartWheelbase_Caption,
+                MessageBoxButton.YesNo,
+                MessageBoxImage.Warning);
+            if (result != MessageBoxResult.Yes)
+                return;
+            _plugin.WriteIfBaseConnected("main-soft-reboot", 1);
         }
 
         // ===== Helpers =====
@@ -1176,7 +1208,7 @@ namespace MozaPlugin
         private void BaseCalibrateButton_Click(object sender, RoutedEventArgs e)
         {
             _plugin.WriteIfBaseConnected("base-calibration", 1);
-            BaseCalibrateStatus.Text = "Calibration sent";
+            BaseCalibrateStatus.Text = Strings.Status_CalibrationSent;
             var timer = new DispatcherTimer { Interval = TimeSpan.FromSeconds(2) };
             timer.Tick += (s, _) => { BaseCalibrateStatus.Text = ""; ((DispatcherTimer)s!).Stop(); };
             timer.Start();
@@ -1220,20 +1252,40 @@ namespace MozaPlugin
         private void HbY4Slider_ValueChanged(object s, RoutedPropertyChangedEventArgs<double> e) => OnIntSliderChanged(e.NewValue, HbY4Value, "", v => { _data.HandbrakeCurve[3] = v; _plugin.WriteFloatIfHandbrakeDetected("handbrake-y4", v); });
         private void HbY5Slider_ValueChanged(object s, RoutedPropertyChangedEventArgs<double> e) => OnIntSliderChanged(e.NewValue, HbY5Value, "", v => { _data.HandbrakeCurve[4] = v; _plugin.WriteFloatIfHandbrakeDetected("handbrake-y5", v); });
 
-        private void HbCalStartButton_Click(object sender, RoutedEventArgs e)
-        {
-            _plugin.WriteIfHandbrakeDetected("handbrake-cal-start", 1);
-            HbCalStatus.Text = "Calibrating — pull fully then stop";
-        }
+        private const int CalibrationSeconds = 5;
 
-        private void HbCalStopButton_Click(object sender, RoutedEventArgs e)
+        // Shared single-button calibration flow: send start, show a live
+        // countdown instruction, then auto-send stop after CalibrationSeconds.
+        private void RunCalibrationCountdown(Button startButton, TextBlock status,
+            string instructionFormat, Action sendStart, Action sendStop)
         {
-            _plugin.WriteIfHandbrakeDetected("handbrake-cal-stop", 1);
-            HbCalStatus.Text = "Done";
-            var timer = new DispatcherTimer { Interval = TimeSpan.FromSeconds(2) };
-            timer.Tick += (s, _) => { HbCalStatus.Text = ""; ((DispatcherTimer)s!).Stop(); };
+            sendStart();
+            startButton.IsEnabled = false;
+            int remaining = CalibrationSeconds;
+            status.Text = string.Format(instructionFormat, remaining);
+            status.Visibility = Visibility.Visible;
+
+            var timer = new DispatcherTimer { Interval = TimeSpan.FromSeconds(1) };
+            timer.Tick += (s, _) =>
+            {
+                remaining--;
+                if (remaining > 0)
+                {
+                    status.Text = string.Format(instructionFormat, remaining);
+                    return;
+                }
+                ((DispatcherTimer)s!).Stop();
+                sendStop();
+                status.Text = Strings.Status_Done;
+                startButton.IsEnabled = true;
+            };
             timer.Start();
         }
+
+        private void HbCalStartButton_Click(object sender, RoutedEventArgs e) =>
+            RunCalibrationCountdown(HbCalStartButton, HbCalStatus, Strings.Hint_CalibrateHandbrake,
+                () => _plugin.WriteIfHandbrakeDetected("handbrake-cal-start", 1),
+                () => _plugin.WriteIfHandbrakeDetected("handbrake-cal-stop", 1));
 
         // ===== Pedals Tab =====
 
@@ -1365,8 +1417,10 @@ namespace MozaPlugin
         private void ThrottleY5Slider_ValueChanged(object s, RoutedPropertyChangedEventArgs<double> e) => OnIntSliderChanged(e.NewValue, ThrottleY5Value, "", v => { _data.PedalsThrottleCurve[4] = v; _plugin.WriteFloatIfPedalsDetected("pedals-throttle-y5", v); });
 
         // Throttle calibration
-        private void ThrottleCalStartButton_Click(object sender, RoutedEventArgs e) { _plugin.WriteIfPedalsDetected("pedals-throttle-cal-start", 1); }
-        private void ThrottleCalStopButton_Click(object sender, RoutedEventArgs e) { _plugin.WriteIfPedalsDetected("pedals-throttle-cal-stop", 1); }
+        private void ThrottleCalStartButton_Click(object sender, RoutedEventArgs e) =>
+            RunCalibrationCountdown(ThrottleCalStartButton, ThrottleCalStatus, Strings.Hint_CalibratePedal,
+                () => _plugin.WriteIfPedalsDetected("pedals-throttle-cal-start", 1),
+                () => _plugin.WriteIfPedalsDetected("pedals-throttle-cal-stop", 1));
 
         // Brake direction + range + curve sliders
         private void BrakeDirCheck_Click(object sender, RoutedEventArgs e) { if (_suppressEvents) return; int v = BrakeDirCheck.IsChecked == true ? 1 : 0; _data.PedalsBrakeDir = v; _plugin.WriteIfPedalsDetected("pedals-brake-dir", v); _plugin.SaveSettings(); }
@@ -1380,8 +1434,10 @@ namespace MozaPlugin
         private void BrakeY5Slider_ValueChanged(object s, RoutedPropertyChangedEventArgs<double> e) => OnIntSliderChanged(e.NewValue, BrakeY5Value, "", v => { _data.PedalsBrakeCurve[4] = v; _plugin.WriteFloatIfPedalsDetected("pedals-brake-y5", v); });
 
         // Brake calibration
-        private void BrakeCalStartButton_Click(object sender, RoutedEventArgs e) { _plugin.WriteIfPedalsDetected("pedals-brake-cal-start", 1); }
-        private void BrakeCalStopButton_Click(object sender, RoutedEventArgs e) { _plugin.WriteIfPedalsDetected("pedals-brake-cal-stop", 1); }
+        private void BrakeCalStartButton_Click(object sender, RoutedEventArgs e) =>
+            RunCalibrationCountdown(BrakeCalStartButton, BrakeCalStatus, Strings.Hint_CalibratePedal,
+                () => _plugin.WriteIfPedalsDetected("pedals-brake-cal-start", 1),
+                () => _plugin.WriteIfPedalsDetected("pedals-brake-cal-stop", 1));
 
         // Clutch direction + range + curve sliders
         private void ClutchDirCheck_Click(object sender, RoutedEventArgs e) { if (_suppressEvents) return; int v = ClutchDirCheck.IsChecked == true ? 1 : 0; _data.PedalsClutchDir = v; _plugin.WriteIfPedalsDetected("pedals-clutch-dir", v); _plugin.SaveSettings(); }
@@ -1394,8 +1450,10 @@ namespace MozaPlugin
         private void ClutchY5Slider_ValueChanged(object s, RoutedPropertyChangedEventArgs<double> e) => OnIntSliderChanged(e.NewValue, ClutchY5Value, "", v => { _data.PedalsClutchCurve[4] = v; _plugin.WriteFloatIfPedalsDetected("pedals-clutch-y5", v); });
 
         // Clutch calibration
-        private void ClutchCalStartButton_Click(object sender, RoutedEventArgs e) { _plugin.WriteIfPedalsDetected("pedals-clutch-cal-start", 1); }
-        private void ClutchCalStopButton_Click(object sender, RoutedEventArgs e) { _plugin.WriteIfPedalsDetected("pedals-clutch-cal-stop", 1); }
+        private void ClutchCalStartButton_Click(object sender, RoutedEventArgs e) =>
+            RunCalibrationCountdown(ClutchCalStartButton, ClutchCalStatus, Strings.Hint_CalibratePedal,
+                () => _plugin.WriteIfPedalsDetected("pedals-clutch-cal-start", 1),
+                () => _plugin.WriteIfPedalsDetected("pedals-clutch-cal-stop", 1));
 
         // ===== Options tab =====
 
@@ -1420,6 +1478,15 @@ namespace MozaPlugin
             _plugin.SaveSettings();
         }
 
+        private void KeepaliveTimeoutSlider_ValueChanged(object sender, RoutedPropertyChangedEventArgs<double> e)
+        {
+            if (_suppressEvents) return;
+            int sec = (int)Math.Round(e.NewValue);
+            KeepaliveTimeoutValue.Text = $"{sec} s";
+            _plugin.Settings.WheelKeepaliveTimeoutSec = sec;
+            _plugin.SaveSettings();
+        }
+
         private void DisableSerialProbeFallbackCheck_Changed(object sender, RoutedEventArgs e)
         {
             if (_suppressEvents) return;
@@ -1437,8 +1504,8 @@ namespace MozaPlugin
         private void ClearAllSettingsButton_Click(object sender, RoutedEventArgs e)
         {
             var result = MessageBox.Show(
-                "This will permanently delete all plugin settings and profiles.\n\nAre you sure?",
-                "Clear All Settings",
+                Strings.Dialog_ClearAllSettings_Body,
+                Strings.Dialog_ClearAllSettings_Caption,
                 MessageBoxButton.YesNo,
                 MessageBoxImage.Warning);
 
@@ -1654,7 +1721,7 @@ namespace MozaPlugin
                 SerialCaptureOutputBox.Text = string.Empty;
                 SerialCaptureExportButton.IsEnabled = false;
                 SerialCaptureCopyButton.IsEnabled = false;
-                SerialCaptureStatusText.Text = "capturing… (open another tab and use the device, then come back to stop)";
+                SerialCaptureStatusText.Text = Strings.Status_CapturingOpenTab;
                 return;
             }
 
@@ -1662,7 +1729,7 @@ namespace MozaPlugin
             _serialCaptureSnapshot = snap;
             _serialCaptureRendered = SerialTrafficCapture.Format(snap);
             SerialCaptureToggleButton.Content = "Start capture";
-            SerialCaptureStatusText.Text = $"stopped — {snap.Count} frames captured";
+            SerialCaptureStatusText.Text = string.Format(Strings.Status_CaptureStopped, snap.Count);
             SerialCaptureOutputBox.Text = _serialCaptureRendered;
             SerialCaptureOutputBox.Visibility = System.Windows.Visibility.Visible;
             SerialCaptureExportButton.IsEnabled = true;
@@ -1696,7 +1763,7 @@ namespace MozaPlugin
             var dlg = new Microsoft.Win32.SaveFileDialog
             {
                 FileName = $"{prefix}moza-diagnostics-bundle-{stamp}.zip",
-                Filter = "ZIP archive (*.zip)|*.zip",
+                Filter = Strings.Diag_ZipFilter,
                 DefaultExt = ".zip",
                 AddExtension = true,
                 OverwritePrompt = true,
@@ -1707,14 +1774,14 @@ namespace MozaPlugin
             {
                 var captureText = _serialCaptureRendered ?? "(no capture buffer — click Start, exercise the device, then Stop)\n";
                 DiagnosticsBundleWriter.Write(dlg.FileName, BuildDiagnosticsDump(), captureText, _serialCaptureSnapshot);
-                SerialCaptureStatusText.Text = $"exported to {dlg.FileName}";
+                SerialCaptureStatusText.Text = string.Format(Strings.Status_ExportedTo, dlg.FileName);
             }
             catch (Exception ex)
             {
                 MozaLog.Error($"[AZOM] Diagnostics export failed: {ex}");
                 System.Windows.MessageBox.Show(
                     System.Windows.Window.GetWindow(this),
-                    $"Export failed: {ex.Message}",
+                    string.Format(Strings.Dialog_ExportFailed, ex.Message),
                     "AZOM",
                     System.Windows.MessageBoxButton.OK,
                     System.Windows.MessageBoxImage.Error);
@@ -1760,8 +1827,8 @@ namespace MozaPlugin
         {
             var dlg = new Microsoft.Win32.OpenFileDialog
             {
-                Filter = "Moza dashboard (*.mzdash)|*.mzdash|All files (*.*)|*.*",
-                Title = "Pick a .mzdash file to upload",
+                Filter = Strings.Upload_FileDialog_Filter,
+                Title = Strings.Upload_FileDialog_Title,
             };
             if (dlg.ShowDialog() != true) return;
             try
@@ -1776,7 +1843,7 @@ namespace MozaPlugin
             }
             catch (Exception ex)
             {
-                System.Windows.MessageBox.Show($"Failed to read .mzdash file:\n{ex.Message}",
+                System.Windows.MessageBox.Show(string.Format(Strings.Dialog_ReadMzdashFailed, ex.Message),
                     "Moza", System.Windows.MessageBoxButton.OK,
                     System.Windows.MessageBoxImage.Error);
             }
@@ -1824,7 +1891,7 @@ namespace MozaPlugin
                 _uploadPickedSourceLabel = "";
                 _uploadPickedSourceDirectory = "";
                 if (UploadStatusText != null)
-                    UploadStatusText.Text = $"Cannot resolve raw bytes for \"{name}\" — pick a local file instead.";
+                    UploadStatusText.Text = string.Format(Strings.Upload_CannotResolveBytes, name);
                 return;
             }
             _uploadPickedContent = bytes;
@@ -1834,8 +1901,9 @@ namespace MozaPlugin
             // DashCache so widget PNG assets can be looked up. Builtins from
             // embedded resources have no dir → single-file upload.
             _uploadPickedSourceDirectory = DashboardLibraryResolver.ResolveDirectory(_plugin.DashCache, name);
-            if (UploadStatusText != null && UploadStatusText.Text.StartsWith("Cannot resolve"))
-                UploadStatusText.Text = "idle";
+            if (UploadStatusText != null
+                && UiHelpers.StatusMatchesFormatPrefix(UploadStatusText.Text, Strings.Upload_CannotResolveBytes))
+                UploadStatusText.Text = Strings.Status_Idle;
         }
 
         private void UploadNow_Click(object sender, RoutedEventArgs e)
@@ -1844,13 +1912,13 @@ namespace MozaPlugin
             if (ts == null)
             {
                 if (UploadStatusText != null)
-                    UploadStatusText.Text = "Telemetry sender unavailable (plugin not initialised).";
+                    UploadStatusText.Text = Strings.Status_TelemetrySenderUnavailableInit;
                 return;
             }
             if (_uploadPickedContent == null || _uploadPickedContent.Length == 0)
             {
                 if (UploadStatusText != null)
-                    UploadStatusText.Text = "Pick a .mzdash file or library entry first.";
+                    UploadStatusText.Text = Strings.Status_PickMzdashFirst;
                 return;
             }
             string name = !string.IsNullOrEmpty(_uploadPickedName) ? _uploadPickedName : "dashboard";
@@ -1861,8 +1929,8 @@ namespace MozaPlugin
             if (UploadStatusText != null)
             {
                 UploadStatusText.Text = queued
-                    ? $"Upload queued — pushing \"{name}\" to the wheel…"
-                    : "Upload not started — wheel not connected or no management session yet.";
+                    ? string.Format(Strings.Upload_Queued, name)
+                    : Strings.Upload_NotStarted;
             }
         }
 
@@ -1925,9 +1993,9 @@ namespace MozaPlugin
             if (UploadStatusText != null && !inFlight && total != 0)
             {
                 if (bw == total)
-                    UploadStatusText.Text = $"Upload complete (bytes_written={bw} == total_size={total}, status=0x{status:X2})";
-                else if (UploadStatusText.Text.StartsWith("Upload queued"))
-                    UploadStatusText.Text = $"Upload stopped (bytes_written={bw} / total_size={total}, status=0x{status:X2})";
+                    UploadStatusText.Text = string.Format(Strings.Upload_Complete, bw, total, status.ToString("X2"));
+                else if (UiHelpers.StatusMatchesFormatPrefix(UploadStatusText.Text, Strings.Upload_Queued))
+                    UploadStatusText.Text = string.Format(Strings.Upload_Stopped, bw, total, status.ToString("X2"));
             }
 
             // Enable the upload button only when the wheel is connected and a
@@ -2016,7 +2084,7 @@ namespace MozaPlugin
             if (WheelFilesStatusBox != null)
             {
                 if (state == null)
-                    WheelFilesStatusBox.Text = "(no configJson state received yet)";
+                    WheelFilesStatusBox.Text = Strings.Status_NoConfigJsonState;
                 else
                     WheelFilesStatusBox.Text =
                         $"{rows.Count} dashboards (captured {state.CapturedAt:HH:mm:ss})";
@@ -2040,21 +2108,21 @@ namespace MozaPlugin
             if (string.IsNullOrEmpty(row.Id))
             {
                 System.Windows.MessageBox.Show(
-                    $"Cannot delete \"{row.Title}\": wheel did not assign an id.",
+                    string.Format(Strings.Dialog_CannotDeleteNoId, row.Title),
                     "Moza", System.Windows.MessageBoxButton.OK,
                     System.Windows.MessageBoxImage.Warning);
                 return;
             }
             var confirm = System.Windows.MessageBox.Show(
-                $"Delete \"{row.Title}\" from the wheel?\n\nDirName: {row.DirName}\nId: {row.Id}",
-                "Moza — confirm delete",
+                string.Format(Strings.Dialog_ConfirmDelete_Body, row.Title, row.DirName, row.Id),
+                Strings.Dialog_ConfirmDelete_Caption,
                 System.Windows.MessageBoxButton.OKCancel,
                 System.Windows.MessageBoxImage.Question);
             if (confirm != System.Windows.MessageBoxResult.OK) return;
             var ts = _plugin.TelemetrySender;
             if (ts == null)
             {
-                System.Windows.MessageBox.Show("Telemetry sender unavailable.",
+                System.Windows.MessageBox.Show(Strings.Dialog_TelemetrySenderUnavailable,
                     "Moza", System.Windows.MessageBoxButton.OK,
                     System.Windows.MessageBoxImage.Error);
                 return;
@@ -2062,7 +2130,7 @@ namespace MozaPlugin
             byte[]? reply = ts.SendRpcCall("completelyRemove", row.Id);
             if (reply == null)
                 System.Windows.MessageBox.Show(
-                    $"completelyRemove(\"{row.Id}\") timed out. The dashboard may still be present on the wheel.",
+                    string.Format(Strings.Dialog_CompletelyRemoveTimeout, row.Id),
                     "Moza", System.Windows.MessageBoxButton.OK,
                     System.Windows.MessageBoxImage.Warning);
             // Wheel pushes a refreshed configJson state after completelyRemove —
@@ -2103,6 +2171,7 @@ namespace MozaPlugin
             var ab9 = _plugin.Settings?.ProfileStore?.CurrentProfile?.Ab9 ?? new Ab9Settings();
             using (_suppressor.Begin())
             {
+                SetAb9InputModeCombo(ab9.InputMode);
                 SetAb9ModeCombo(ab9.Mode);
                 SetAb9Slider(Ab9MechResistanceSlider,    Ab9MechResistanceValue,    ab9.MechanicalResistance);
                 SetAb9Slider(Ab9SpringSlider,            Ab9SpringValue,            ab9.Spring);
@@ -2143,6 +2212,32 @@ namespace MozaPlugin
                 }
             }
             Ab9ModeCombo.SelectedIndex = -1;
+        }
+
+        private void SetAb9InputModeCombo(Ab9InputMode mode)
+        {
+            for (int i = 0; i < Ab9InputModeCombo.Items.Count; i++)
+            {
+                var item = Ab9InputModeCombo.Items[i] as ComboBoxItem;
+                if (item?.Tag is string tag && byte.TryParse(tag, out byte val) && val == (byte)mode)
+                {
+                    Ab9InputModeCombo.SelectedIndex = i;
+                    return;
+                }
+            }
+            Ab9InputModeCombo.SelectedIndex = -1;
+        }
+
+        private void Ab9InputModeCombo_Changed(object sender, SelectionChangedEventArgs e)
+        {
+            if (_suppressEvents) return;
+            if (Ab9InputModeCombo.SelectedItem is not ComboBoxItem item) return;
+            if (item.Tag is not string tag || !byte.TryParse(tag, out byte val)) return;
+
+            var mode = (Ab9InputMode)val;
+            GetOrCreateAb9Profile().InputMode = mode;
+            _plugin.Ab9Manager?.SendInputMode(mode);
+            _plugin.SaveSettings();
         }
 
         private Ab9Settings GetOrCreateAb9Profile()
@@ -2321,7 +2416,7 @@ namespace MozaPlugin
             if (selected == null)
             {
                 MBoosterStatusDot.Fill = Brushes.Gray;
-                MBoosterStatusLabel.Text = "No mBooster selected";
+                MBoosterStatusLabel.Text = Strings.Status_NoMBoosterSelected;
                 MBoosterDevicePanel.Visibility = Visibility.Collapsed;
                 return;
             }

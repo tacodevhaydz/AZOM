@@ -594,7 +594,8 @@
       "default_value": 0,
       "compression": "percent_1",
       "is_visible": true,
-      "simhub_property": "DataCorePlugin.GameData.Boost"
+      "simhub_property": "DataCorePlugin.GameData.Boost",
+      "simhub_scale": 100.0
     },
     {
       "name": "FuelRemain",
@@ -616,7 +617,7 @@
       "default_value": 0,
       "compression": "percent_1",
       "simhub_property": "DataCorePlugin.GameData.FuelPercent",
-      "simhub_scale": 1.0,
+      "simhub_scale": 100.0,
       "simhub_field": "FuelPercent",
       "is_visible": true
     },
@@ -796,7 +797,8 @@
       "default_value": 0,
       "compression": "percent_1",
       "is_visible": true,
-      "simhub_property": "DataCorePlugin.GameData.ERSPercent"
+      "simhub_property": "DataCorePlugin.GameData.ERSPercent",
+      "simhub_scale": 100.0
     },
     {
       "name": "ERSStored",
@@ -1720,7 +1722,7 @@
       "default_value": 0,
       "compression": "percent_1",
       "simhub_property": "DataCorePlugin.GameData.TyreWearFrontLeft",
-      "simhub_scale": 1.0,
+      "simhub_scale": 100.0,
       "simhub_field": "TyreWearFrontLeft",
       "is_visible": true
     },
@@ -1744,7 +1746,7 @@
       "default_value": 0,
       "compression": "percent_1",
       "simhub_property": "DataCorePlugin.GameData.TyreWearFrontRight",
-      "simhub_scale": 1.0,
+      "simhub_scale": 100.0,
       "simhub_field": "TyreWearFrontRight",
       "is_visible": true
     },
@@ -1768,7 +1770,7 @@
       "default_value": 0,
       "compression": "percent_1",
       "simhub_property": "DataCorePlugin.GameData.TyreWearRearLeft",
-      "simhub_scale": 1.0,
+      "simhub_scale": 100.0,
       "simhub_field": "TyreWearRearLeft",
       "is_visible": true
     },
@@ -1792,7 +1794,7 @@
       "default_value": 0,
       "compression": "percent_1",
       "simhub_property": "DataCorePlugin.GameData.TyreWearRearRight",
-      "simhub_scale": 1.0,
+      "simhub_scale": 100.0,
       "simhub_field": "TyreWearRearRight",
       "is_visible": true
     },
@@ -1816,7 +1818,8 @@
       "default_value": 0,
       "compression": "percent_1",
       "is_visible": true,
-      "simhub_property": "DataCorePlugin.GameData.FrontLeftWingDamage"
+      "simhub_property": "DataCorePlugin.GameData.FrontLeftWingDamage",
+      "simhub_scale": 100.0
     },
     {
       "name": "WingWearFR",
@@ -1838,7 +1841,8 @@
       "default_value": 0,
       "compression": "percent_1",
       "is_visible": true,
-      "simhub_property": "DataCorePlugin.GameData.FrontRightWingDamage"
+      "simhub_property": "DataCorePlugin.GameData.FrontRightWingDamage",
+      "simhub_scale": 100.0
     },
     {
       "name": "WingWearR",
@@ -1860,7 +1864,8 @@
       "default_value": 0,
       "compression": "percent_1",
       "is_visible": true,
-      "simhub_property": "DataCorePlugin.GameData.RearWingDamage"
+      "simhub_property": "DataCorePlugin.GameData.RearWingDamage",
+      "simhub_scale": 100.0
     },
     {
       "name": "EngineWear",
@@ -1882,7 +1887,8 @@
       "default_value": 0,
       "compression": "percent_1",
       "is_visible": true,
-      "simhub_property": "DataCorePlugin.GameData.EngineDamage"
+      "simhub_property": "DataCorePlugin.GameData.EngineDamage",
+      "simhub_scale": 100.0
     },
     {
       "name": "GearBoxWear",
@@ -1904,7 +1910,8 @@
       "default_value": 0,
       "compression": "percent_1",
       "is_visible": true,
-      "simhub_property": "DataCorePlugin.GameData.GearBoxDamage"
+      "simhub_property": "DataCorePlugin.GameData.GearBoxDamage",
+      "simhub_scale": 100.0
     },
     {
       "name": "FuelCapacity",
@@ -3269,7 +3276,7 @@
       "default_value": "(0,0,0)",
       "compression": "location_t",
       "is_visible": false,
-      "simhub_property": "DataCorePlugin.GameData.Location"
+      "simhub_property": ""
     },
     {
       "name": "PlayerIndex",
@@ -3336,7 +3343,7 @@
       "default_value": "(0,0,0)",
       "compression": "location_t",
       "is_visible": false,
-      "simhub_property": "DataCorePlugin.GameData.Location_0"
+      "simhub_property": ""
     },
     {
       "name": "Location_1",
@@ -3358,7 +3365,7 @@
       "default_value": "(0,0,0)",
       "compression": "location_t",
       "is_visible": false,
-      "simhub_property": "DataCorePlugin.GameData.Location_1"
+      "simhub_property": ""
     },
     {
       "name": "Location_2",
@@ -3380,7 +3387,7 @@
       "default_value": "(0,0,0)",
       "compression": "location_t",
       "is_visible": false,
-      "simhub_property": "DataCorePlugin.GameData.Location_2"
+      "simhub_property": ""
     },
     {
       "name": "Location_3",
@@ -3402,7 +3409,7 @@
       "default_value": "(0,0,0)",
       "compression": "location_t",
       "is_visible": false,
-      "simhub_property": "DataCorePlugin.GameData.Location_3"
+      "simhub_property": ""
     },
     {
       "name": "Location_4",
@@ -3424,7 +3431,7 @@
       "default_value": "(0,0,0)",
       "compression": "location_t",
       "is_visible": false,
-      "simhub_property": "DataCorePlugin.GameData.Location_4"
+      "simhub_property": ""
     },
     {
       "name": "Location_5",
@@ -3446,7 +3453,7 @@
       "default_value": "(0,0,0)",
       "compression": "location_t",
       "is_visible": false,
-      "simhub_property": "DataCorePlugin.GameData.Location_5"
+      "simhub_property": ""
     },
     {
       "name": "Location_6",
@@ -3468,7 +3475,7 @@
       "default_value": "(0,0,0)",
       "compression": "location_t",
       "is_visible": false,
-      "simhub_property": "DataCorePlugin.GameData.Location_6"
+      "simhub_property": ""
     },
     {
       "name": "Location_7",
@@ -3490,7 +3497,7 @@
       "default_value": "(0,0,0)",
       "compression": "location_t",
       "is_visible": false,
-      "simhub_property": "DataCorePlugin.GameData.Location_7"
+      "simhub_property": ""
     },
     {
       "name": "Location_8",
@@ -3512,7 +3519,7 @@
       "default_value": "(0,0,0)",
       "compression": "location_t",
       "is_visible": false,
-      "simhub_property": "DataCorePlugin.GameData.Location_8"
+      "simhub_property": ""
     },
     {
       "name": "Location_9",
@@ -3534,7 +3541,7 @@
       "default_value": "(0,0,0)",
       "compression": "location_t",
       "is_visible": false,
-      "simhub_property": "DataCorePlugin.GameData.Location_9"
+      "simhub_property": ""
     },
     {
       "name": "Location_10",
@@ -3556,7 +3563,7 @@
       "default_value": "(0,0,0)",
       "compression": "location_t",
       "is_visible": false,
-      "simhub_property": "DataCorePlugin.GameData.Location_10"
+      "simhub_property": ""
     },
     {
       "name": "Location_11",
@@ -3578,7 +3585,7 @@
       "default_value": "(0,0,0)",
       "compression": "location_t",
       "is_visible": false,
-      "simhub_property": "DataCorePlugin.GameData.Location_11"
+      "simhub_property": ""
     },
     {
       "name": "Location_12",
@@ -3600,7 +3607,7 @@
       "default_value": "(0,0,0)",
       "compression": "location_t",
       "is_visible": false,
-      "simhub_property": "DataCorePlugin.GameData.Location_12"
+      "simhub_property": ""
     },
     {
       "name": "Location_13",
@@ -3622,7 +3629,7 @@
       "default_value": "(0,0,0)",
       "compression": "location_t",
       "is_visible": false,
-      "simhub_property": "DataCorePlugin.GameData.Location_13"
+      "simhub_property": ""
     },
     {
       "name": "Location_14",
@@ -3644,7 +3651,7 @@
       "default_value": "(0,0,0)",
       "compression": "location_t",
       "is_visible": false,
-      "simhub_property": "DataCorePlugin.GameData.Location_14"
+      "simhub_property": ""
     },
     {
       "name": "Location_15",
@@ -3666,7 +3673,7 @@
       "default_value": "(0,0,0)",
       "compression": "location_t",
       "is_visible": false,
-      "simhub_property": "DataCorePlugin.GameData.Location_15"
+      "simhub_property": ""
     },
     {
       "name": "Location_16",
@@ -3688,7 +3695,7 @@
       "default_value": "(0,0,0)",
       "compression": "location_t",
       "is_visible": false,
-      "simhub_property": "DataCorePlugin.GameData.Location_16"
+      "simhub_property": ""
     },
     {
       "name": "Location_17",
@@ -3710,7 +3717,7 @@
       "default_value": "(0,0,0)",
       "compression": "location_t",
       "is_visible": false,
-      "simhub_property": "DataCorePlugin.GameData.Location_17"
+      "simhub_property": ""
     },
     {
       "name": "Location_18",
@@ -3732,7 +3739,7 @@
       "default_value": "(0,0,0)",
       "compression": "location_t",
       "is_visible": false,
-      "simhub_property": "DataCorePlugin.GameData.Location_18"
+      "simhub_property": ""
     },
     {
       "name": "Location_19",
@@ -3754,7 +3761,7 @@
       "default_value": "(0,0,0)",
       "compression": "location_t",
       "is_visible": false,
-      "simhub_property": "DataCorePlugin.GameData.Location_19"
+      "simhub_property": ""
     },
     {
       "name": "Location_20",
@@ -3776,7 +3783,7 @@
       "default_value": "(0,0,0)",
       "compression": "location_t",
       "is_visible": false,
-      "simhub_property": "DataCorePlugin.GameData.Location_20"
+      "simhub_property": ""
     },
     {
       "name": "Location_21",
@@ -3798,7 +3805,7 @@
       "default_value": "(0,0,0)",
       "compression": "location_t",
       "is_visible": false,
-      "simhub_property": "DataCorePlugin.GameData.Location_21"
+      "simhub_property": ""
     },
     {
       "name": "Location_22",
@@ -3820,7 +3827,7 @@
       "default_value": "(0,0,0)",
       "compression": "location_t",
       "is_visible": false,
-      "simhub_property": "DataCorePlugin.GameData.Location_22"
+      "simhub_property": ""
     },
     {
       "name": "Location_23",
@@ -3842,7 +3849,7 @@
       "default_value": "(0,0,0)",
       "compression": "location_t",
       "is_visible": false,
-      "simhub_property": "DataCorePlugin.GameData.Location_23"
+      "simhub_property": ""
     },
     {
       "name": "Location_24",
@@ -3864,7 +3871,7 @@
       "default_value": "(0,0,0)",
       "compression": "location_t",
       "is_visible": false,
-      "simhub_property": "DataCorePlugin.GameData.Location_24"
+      "simhub_property": ""
     },
     {
       "name": "Location_25",
@@ -3886,7 +3893,7 @@
       "default_value": "(0,0,0)",
       "compression": "location_t",
       "is_visible": false,
-      "simhub_property": "DataCorePlugin.GameData.Location_25"
+      "simhub_property": ""
     },
     {
       "name": "Location_26",
@@ -3908,7 +3915,7 @@
       "default_value": "(0,0,0)",
       "compression": "location_t",
       "is_visible": false,
-      "simhub_property": "DataCorePlugin.GameData.Location_26"
+      "simhub_property": ""
     },
     {
       "name": "Location_27",
@@ -3930,7 +3937,7 @@
       "default_value": "(0,0,0)",
       "compression": "location_t",
       "is_visible": false,
-      "simhub_property": "DataCorePlugin.GameData.Location_27"
+      "simhub_property": ""
     },
     {
       "name": "Location_28",
@@ -3952,7 +3959,7 @@
       "default_value": "(0,0,0)",
       "compression": "location_t",
       "is_visible": false,
-      "simhub_property": "DataCorePlugin.GameData.Location_28"
+      "simhub_property": ""
     },
     {
       "name": "Location_29",
@@ -3974,7 +3981,7 @@
       "default_value": "(0,0,0)",
       "compression": "location_t",
       "is_visible": false,
-      "simhub_property": "DataCorePlugin.GameData.Location_29"
+      "simhub_property": ""
     },
     {
       "name": "Location_30",
@@ -3996,7 +4003,7 @@
       "default_value": "(0,0,0)",
       "compression": "location_t",
       "is_visible": false,
-      "simhub_property": "DataCorePlugin.GameData.Location_30"
+      "simhub_property": ""
     },
     {
       "name": "Location_31",
@@ -4018,7 +4025,7 @@
       "default_value": "(0,0,0)",
       "compression": "location_t",
       "is_visible": false,
-      "simhub_property": "DataCorePlugin.GameData.Location_31"
+      "simhub_property": ""
     },
     {
       "name": "Location_32",
@@ -4040,7 +4047,7 @@
       "default_value": "(0,0,0)",
       "compression": "location_t",
       "is_visible": false,
-      "simhub_property": "DataCorePlugin.GameData.Location_32"
+      "simhub_property": ""
     },
     {
       "name": "Location_33",
@@ -4062,7 +4069,7 @@
       "default_value": "(0,0,0)",
       "compression": "location_t",
       "is_visible": false,
-      "simhub_property": "DataCorePlugin.GameData.Location_33"
+      "simhub_property": ""
     },
     {
       "name": "Location_34",
@@ -4084,7 +4091,7 @@
       "default_value": "(0,0,0)",
       "compression": "location_t",
       "is_visible": false,
-      "simhub_property": "DataCorePlugin.GameData.Location_34"
+      "simhub_property": ""
     },
     {
       "name": "Location_35",
@@ -4106,7 +4113,7 @@
       "default_value": "(0,0,0)",
       "compression": "location_t",
       "is_visible": false,
-      "simhub_property": "DataCorePlugin.GameData.Location_35"
+      "simhub_property": ""
     },
     {
       "name": "Location_36",
@@ -4128,7 +4135,7 @@
       "default_value": "(0,0,0)",
       "compression": "location_t",
       "is_visible": false,
-      "simhub_property": "DataCorePlugin.GameData.Location_36"
+      "simhub_property": ""
     },
     {
       "name": "Location_37",
@@ -4150,7 +4157,7 @@
       "default_value": "(0,0,0)",
       "compression": "location_t",
       "is_visible": false,
-      "simhub_property": "DataCorePlugin.GameData.Location_37"
+      "simhub_property": ""
     },
     {
       "name": "Location_38",
@@ -4172,7 +4179,7 @@
       "default_value": "(0,0,0)",
       "compression": "location_t",
       "is_visible": false,
-      "simhub_property": "DataCorePlugin.GameData.Location_38"
+      "simhub_property": ""
     },
     {
       "name": "Location_39",
@@ -4194,7 +4201,7 @@
       "default_value": "(0,0,0)",
       "compression": "location_t",
       "is_visible": false,
-      "simhub_property": "DataCorePlugin.GameData.Location_39"
+      "simhub_property": ""
     },
     {
       "name": "Location_40",
@@ -4216,7 +4223,7 @@
       "default_value": "(0,0,0)",
       "compression": "location_t",
       "is_visible": false,
-      "simhub_property": "DataCorePlugin.GameData.Location_40"
+      "simhub_property": ""
     },
     {
       "name": "Location_41",
@@ -4238,7 +4245,7 @@
       "default_value": "(0,0,0)",
       "compression": "location_t",
       "is_visible": false,
-      "simhub_property": "DataCorePlugin.GameData.Location_41"
+      "simhub_property": ""
     },
     {
       "name": "Location_42",
@@ -4260,7 +4267,7 @@
       "default_value": "(0,0,0)",
       "compression": "location_t",
       "is_visible": false,
-      "simhub_property": "DataCorePlugin.GameData.Location_42"
+      "simhub_property": ""
     },
     {
       "name": "Location_43",
@@ -4282,7 +4289,7 @@
       "default_value": "(0,0,0)",
       "compression": "location_t",
       "is_visible": false,
-      "simhub_property": "DataCorePlugin.GameData.Location_43"
+      "simhub_property": ""
     },
     {
       "name": "Location_44",
@@ -4304,7 +4311,7 @@
       "default_value": "(0,0,0)",
       "compression": "location_t",
       "is_visible": false,
-      "simhub_property": "DataCorePlugin.GameData.Location_44"
+      "simhub_property": ""
     },
     {
       "name": "Location_45",
@@ -4326,7 +4333,7 @@
       "default_value": "(0,0,0)",
       "compression": "location_t",
       "is_visible": false,
-      "simhub_property": "DataCorePlugin.GameData.Location_45"
+      "simhub_property": ""
     },
     {
       "name": "Location_46",
@@ -4348,7 +4355,7 @@
       "default_value": "(0,0,0)",
       "compression": "location_t",
       "is_visible": false,
-      "simhub_property": "DataCorePlugin.GameData.Location_46"
+      "simhub_property": ""
     },
     {
       "name": "Location_47",
@@ -4370,7 +4377,7 @@
       "default_value": "(0,0,0)",
       "compression": "location_t",
       "is_visible": false,
-      "simhub_property": "DataCorePlugin.GameData.Location_47"
+      "simhub_property": ""
     },
     {
       "name": "Location_48",
@@ -4392,7 +4399,7 @@
       "default_value": "(0,0,0)",
       "compression": "location_t",
       "is_visible": false,
-      "simhub_property": "DataCorePlugin.GameData.Location_48"
+      "simhub_property": ""
     },
     {
       "name": "Location_49",
@@ -4414,7 +4421,7 @@
       "default_value": "(0,0,0)",
       "compression": "location_t",
       "is_visible": false,
-      "simhub_property": "DataCorePlugin.GameData.Location_49"
+      "simhub_property": ""
     },
     {
       "name": "Location_50",
@@ -4436,7 +4443,7 @@
       "default_value": "(0,0,0)",
       "compression": "location_t",
       "is_visible": false,
-      "simhub_property": "DataCorePlugin.GameData.Location_50"
+      "simhub_property": ""
     },
     {
       "name": "Location_51",
@@ -4458,7 +4465,7 @@
       "default_value": "(0,0,0)",
       "compression": "location_t",
       "is_visible": false,
-      "simhub_property": "DataCorePlugin.GameData.Location_51"
+      "simhub_property": ""
     },
     {
       "name": "Location_52",
@@ -4480,7 +4487,7 @@
       "default_value": "(0,0,0)",
       "compression": "location_t",
       "is_visible": false,
-      "simhub_property": "DataCorePlugin.GameData.Location_52"
+      "simhub_property": ""
     },
     {
       "name": "Location_53",
@@ -4502,7 +4509,7 @@
       "default_value": "(0,0,0)",
       "compression": "location_t",
       "is_visible": false,
-      "simhub_property": "DataCorePlugin.GameData.Location_53"
+      "simhub_property": ""
     },
     {
       "name": "Location_54",
@@ -4524,7 +4531,7 @@
       "default_value": "(0,0,0)",
       "compression": "location_t",
       "is_visible": false,
-      "simhub_property": "DataCorePlugin.GameData.Location_54"
+      "simhub_property": ""
     },
     {
       "name": "Location_55",
@@ -4546,7 +4553,7 @@
       "default_value": "(0,0,0)",
       "compression": "location_t",
       "is_visible": false,
-      "simhub_property": "DataCorePlugin.GameData.Location_55"
+      "simhub_property": ""
     },
     {
       "name": "Location_56",
@@ -4568,7 +4575,7 @@
       "default_value": "(0,0,0)",
       "compression": "location_t",
       "is_visible": false,
-      "simhub_property": "DataCorePlugin.GameData.Location_56"
+      "simhub_property": ""
     },
     {
       "name": "Location_57",
@@ -4590,7 +4597,7 @@
       "default_value": "(0,0,0)",
       "compression": "location_t",
       "is_visible": false,
-      "simhub_property": "DataCorePlugin.GameData.Location_57"
+      "simhub_property": ""
     },
     {
       "name": "Location_58",
@@ -4612,7 +4619,7 @@
       "default_value": "(0,0,0)",
       "compression": "location_t",
       "is_visible": false,
-      "simhub_property": "DataCorePlugin.GameData.Location_58"
+      "simhub_property": ""
     },
     {
       "name": "Location_59",
@@ -4634,7 +4641,7 @@
       "default_value": "(0,0,0)",
       "compression": "location_t",
       "is_visible": false,
-      "simhub_property": "DataCorePlugin.GameData.Location_59"
+      "simhub_property": ""
     },
     {
       "name": "Location_60",
@@ -4656,7 +4663,7 @@
       "default_value": "(0,0,0)",
       "compression": "location_t",
       "is_visible": false,
-      "simhub_property": "DataCorePlugin.GameData.Location_60"
+      "simhub_property": ""
     },
     {
       "name": "Location_61",
@@ -4678,7 +4685,7 @@
       "default_value": "(0,0,0)",
       "compression": "location_t",
       "is_visible": false,
-      "simhub_property": "DataCorePlugin.GameData.Location_61"
+      "simhub_property": ""
     },
     {
       "name": "Location_62",
@@ -4700,7 +4707,7 @@
       "default_value": "(0,0,0)",
       "compression": "location_t",
       "is_visible": false,
-      "simhub_property": "DataCorePlugin.GameData.Location_62"
+      "simhub_property": ""
     },
     {
       "name": "Location_63",
@@ -4722,7 +4729,7 @@
       "default_value": "(0,0,0)",
       "compression": "location_t",
       "is_visible": false,
-      "simhub_property": "DataCorePlugin.GameData.Location_63"
+      "simhub_property": ""
     },
     {
       "name": "FuelUsed",
@@ -6781,7 +6788,8 @@
       "default_value": 0,
       "compression": "percent_1",
       "is_visible": true,
-      "simhub_property": "DataCorePlugin.GameData.TurboPercent"
+      "simhub_property": "DataCorePlugin.GameData.TurboPercent",
+      "simhub_scale": 100.0
     },
     {
       "name": "TyreDirtFrontLeft",
@@ -7434,7 +7442,7 @@
       "default_value": 0,
       "compression": "uint32_t",
       "is_visible": false,
-      "simhub_property": "DataCorePlugin.GameData.ri0"
+      "simhub_property": ""
     },
     {
       "name": "RadarIndex1",
@@ -7456,7 +7464,7 @@
       "default_value": 0,
       "compression": "uint32_t",
       "is_visible": false,
-      "simhub_property": "DataCorePlugin.GameData.ri1"
+      "simhub_property": ""
     },
     {
       "name": "RadarIndex2",
@@ -7478,7 +7486,7 @@
       "default_value": 0,
       "compression": "uint32_t",
       "is_visible": false,
-      "simhub_property": "DataCorePlugin.GameData.ri2"
+      "simhub_property": ""
     },
     {
       "name": "RadarIndex3",
@@ -7500,7 +7508,7 @@
       "default_value": 0,
       "compression": "uint32_t",
       "is_visible": false,
-      "simhub_property": "DataCorePlugin.GameData.ri3"
+      "simhub_property": ""
     },
     {
       "name": "RadarIndex4",
@@ -7522,7 +7530,7 @@
       "default_value": 0,
       "compression": "uint32_t",
       "is_visible": false,
-      "simhub_property": "DataCorePlugin.GameData.ri4"
+      "simhub_property": ""
     },
     {
       "name": "RadarIndex5",
@@ -7544,7 +7552,7 @@
       "default_value": 0,
       "compression": "uint32_t",
       "is_visible": false,
-      "simhub_property": "DataCorePlugin.GameData.ri5"
+      "simhub_property": ""
     },
     {
       "name": "RadarIndex6",
@@ -7566,7 +7574,7 @@
       "default_value": 0,
       "compression": "uint32_t",
       "is_visible": false,
-      "simhub_property": "DataCorePlugin.GameData.ri6"
+      "simhub_property": ""
     },
     {
       "name": "RadarIndex7",
@@ -7588,7 +7596,7 @@
       "default_value": 0,
       "compression": "uint32_t",
       "is_visible": false,
-      "simhub_property": "DataCorePlugin.GameData.ri7"
+      "simhub_property": ""
     },
     {
       "name": "RadarIndex8",
@@ -7610,7 +7618,7 @@
       "default_value": 0,
       "compression": "uint32_t",
       "is_visible": false,
-      "simhub_property": "DataCorePlugin.GameData.ri8"
+      "simhub_property": ""
     },
     {
       "name": "RadarIndex9",
@@ -7632,7 +7640,7 @@
       "default_value": 0,
       "compression": "uint32_t",
       "is_visible": false,
-      "simhub_property": "DataCorePlugin.GameData.ri9"
+      "simhub_property": ""
     },
     {
       "name": "RadarIndex10",
@@ -7654,7 +7662,7 @@
       "default_value": 0,
       "compression": "uint32_t",
       "is_visible": false,
-      "simhub_property": "DataCorePlugin.GameData.ri10"
+      "simhub_property": ""
     },
     {
       "name": "RadarIndex11",
@@ -7676,7 +7684,7 @@
       "default_value": 0,
       "compression": "uint32_t",
       "is_visible": false,
-      "simhub_property": "DataCorePlugin.GameData.ri11"
+      "simhub_property": ""
     },
     {
       "name": "RadarIndex12",
@@ -7698,7 +7706,7 @@
       "default_value": 0,
       "compression": "uint32_t",
       "is_visible": false,
-      "simhub_property": "DataCorePlugin.GameData.ri12"
+      "simhub_property": ""
     },
     {
       "name": "RadarIndex13",
@@ -7720,7 +7728,7 @@
       "default_value": 0,
       "compression": "uint32_t",
       "is_visible": false,
-      "simhub_property": "DataCorePlugin.GameData.ri13"
+      "simhub_property": ""
     },
     {
       "name": "RadarIndex14",
@@ -7742,7 +7750,7 @@
       "default_value": 0,
       "compression": "uint32_t",
       "is_visible": false,
-      "simhub_property": "DataCorePlugin.GameData.ri14"
+      "simhub_property": ""
     },
     {
       "name": "RadarIndex15",
@@ -7764,7 +7772,7 @@
       "default_value": 0,
       "compression": "uint32_t",
       "is_visible": false,
-      "simhub_property": "DataCorePlugin.GameData.ri15"
+      "simhub_property": ""
     },
     {
       "name": "RadarIndex16",
@@ -7786,7 +7794,7 @@
       "default_value": 0,
       "compression": "uint32_t",
       "is_visible": false,
-      "simhub_property": "DataCorePlugin.GameData.ri16"
+      "simhub_property": ""
     },
     {
       "name": "RadarIndex17",
@@ -7808,7 +7816,7 @@
       "default_value": 0,
       "compression": "uint32_t",
       "is_visible": false,
-      "simhub_property": "DataCorePlugin.GameData.ri17"
+      "simhub_property": ""
     },
     {
       "name": "RadarIndex18",
@@ -7830,7 +7838,7 @@
       "default_value": 0,
       "compression": "uint32_t",
       "is_visible": false,
-      "simhub_property": "DataCorePlugin.GameData.ri18"
+      "simhub_property": ""
     },
     {
       "name": "RadarIndex19",
@@ -7852,7 +7860,7 @@
       "default_value": 0,
       "compression": "uint32_t",
       "is_visible": false,
-      "simhub_property": "DataCorePlugin.GameData.ri19"
+      "simhub_property": ""
     },
     {
       "name": "RadarIndex20",
@@ -7874,7 +7882,7 @@
       "default_value": 0,
       "compression": "uint32_t",
       "is_visible": false,
-      "simhub_property": "DataCorePlugin.GameData.ri20"
+      "simhub_property": ""
     },
     {
       "name": "RadarIndex21",
@@ -7896,7 +7904,7 @@
       "default_value": 0,
       "compression": "uint32_t",
       "is_visible": false,
-      "simhub_property": "DataCorePlugin.GameData.ri21"
+      "simhub_property": ""
     },
     {
       "name": "RadarIndex22",
@@ -7918,7 +7926,7 @@
       "default_value": 0,
       "compression": "uint32_t",
       "is_visible": false,
-      "simhub_property": "DataCorePlugin.GameData.ri22"
+      "simhub_property": ""
     },
     {
       "name": "RadarIndex23",
@@ -7940,7 +7948,7 @@
       "default_value": 0,
       "compression": "uint32_t",
       "is_visible": false,
-      "simhub_property": "DataCorePlugin.GameData.ri23"
+      "simhub_property": ""
     },
     {
       "name": "RadarIndex24",
@@ -7962,7 +7970,7 @@
       "default_value": 0,
       "compression": "uint32_t",
       "is_visible": false,
-      "simhub_property": "DataCorePlugin.GameData.ri24"
+      "simhub_property": ""
     },
     {
       "name": "RadarIndex25",
@@ -7984,7 +7992,7 @@
       "default_value": 0,
       "compression": "uint32_t",
       "is_visible": false,
-      "simhub_property": "DataCorePlugin.GameData.ri25"
+      "simhub_property": ""
     },
     {
       "name": "RadarIndex26",
@@ -8006,7 +8014,7 @@
       "default_value": 0,
       "compression": "uint32_t",
       "is_visible": false,
-      "simhub_property": "DataCorePlugin.GameData.ri26"
+      "simhub_property": ""
     },
     {
       "name": "RadarIndex27",
@@ -8028,7 +8036,7 @@
       "default_value": 0,
       "compression": "uint32_t",
       "is_visible": false,
-      "simhub_property": "DataCorePlugin.GameData.ri27"
+      "simhub_property": ""
     },
     {
       "name": "RadarIndex28",
@@ -8050,7 +8058,7 @@
       "default_value": 0,
       "compression": "uint32_t",
       "is_visible": false,
-      "simhub_property": "DataCorePlugin.GameData.ri28"
+      "simhub_property": ""
     },
     {
       "name": "RadarIndex29",
@@ -8072,7 +8080,7 @@
       "default_value": 0,
       "compression": "uint32_t",
       "is_visible": false,
-      "simhub_property": "DataCorePlugin.GameData.ri29"
+      "simhub_property": ""
     },
     {
       "name": "RadarIndex30",
@@ -8094,7 +8102,7 @@
       "default_value": 0,
       "compression": "uint32_t",
       "is_visible": false,
-      "simhub_property": "DataCorePlugin.GameData.ri30"
+      "simhub_property": ""
     },
     {
       "name": "RadarIndex31",
@@ -8116,7 +8124,7 @@
       "default_value": 0,
       "compression": "uint32_t",
       "is_visible": false,
-      "simhub_property": "DataCorePlugin.GameData.ri31"
+      "simhub_property": ""
     },
     {
       "name": "RadarIndex32",
@@ -8138,7 +8146,7 @@
       "default_value": 0,
       "compression": "uint32_t",
       "is_visible": false,
-      "simhub_property": "DataCorePlugin.GameData.ri32"
+      "simhub_property": ""
     },
     {
       "name": "RadarIndex33",
@@ -8160,7 +8168,7 @@
       "default_value": 0,
       "compression": "uint32_t",
       "is_visible": false,
-      "simhub_property": "DataCorePlugin.GameData.ri33"
+      "simhub_property": ""
     },
     {
       "name": "RadarIndex34",
@@ -8182,7 +8190,7 @@
       "default_value": 0,
       "compression": "uint32_t",
       "is_visible": false,
-      "simhub_property": "DataCorePlugin.GameData.ri34"
+      "simhub_property": ""
     },
     {
       "name": "RadarIndex35",
@@ -8204,7 +8212,7 @@
       "default_value": 0,
       "compression": "uint32_t",
       "is_visible": false,
-      "simhub_property": "DataCorePlugin.GameData.ri35"
+      "simhub_property": ""
     },
     {
       "name": "RadarIndex36",
@@ -8226,7 +8234,7 @@
       "default_value": 0,
       "compression": "uint32_t",
       "is_visible": false,
-      "simhub_property": "DataCorePlugin.GameData.ri36"
+      "simhub_property": ""
     },
     {
       "name": "RadarIndex37",
@@ -8248,7 +8256,7 @@
       "default_value": 0,
       "compression": "uint32_t",
       "is_visible": false,
-      "simhub_property": "DataCorePlugin.GameData.ri37"
+      "simhub_property": ""
     },
     {
       "name": "RadarIndex38",
@@ -8270,7 +8278,7 @@
       "default_value": 0,
       "compression": "uint32_t",
       "is_visible": false,
-      "simhub_property": "DataCorePlugin.GameData.ri38"
+      "simhub_property": ""
     },
     {
       "name": "RadarIndex39",
@@ -8292,7 +8300,7 @@
       "default_value": 0,
       "compression": "uint32_t",
       "is_visible": false,
-      "simhub_property": "DataCorePlugin.GameData.ri39"
+      "simhub_property": ""
     },
     {
       "name": "RadarIndex40",
@@ -8314,7 +8322,7 @@
       "default_value": 0,
       "compression": "uint32_t",
       "is_visible": false,
-      "simhub_property": "DataCorePlugin.GameData.ri40"
+      "simhub_property": ""
     },
     {
       "name": "RadarIndex41",
@@ -8336,7 +8344,7 @@
       "default_value": 0,
       "compression": "uint32_t",
       "is_visible": false,
-      "simhub_property": "DataCorePlugin.GameData.ri41"
+      "simhub_property": ""
     },
     {
       "name": "RadarIndex42",
@@ -8358,7 +8366,7 @@
       "default_value": 0,
       "compression": "uint32_t",
       "is_visible": false,
-      "simhub_property": "DataCorePlugin.GameData.ri42"
+      "simhub_property": ""
     },
     {
       "name": "RadarIndex43",
@@ -8380,7 +8388,7 @@
       "default_value": 0,
       "compression": "uint32_t",
       "is_visible": false,
-      "simhub_property": "DataCorePlugin.GameData.ri43"
+      "simhub_property": ""
     },
     {
       "name": "RadarIndex44",
@@ -8402,7 +8410,7 @@
       "default_value": 0,
       "compression": "uint32_t",
       "is_visible": false,
-      "simhub_property": "DataCorePlugin.GameData.ri44"
+      "simhub_property": ""
     },
     {
       "name": "RadarIndex45",
@@ -8424,7 +8432,7 @@
       "default_value": 0,
       "compression": "uint32_t",
       "is_visible": false,
-      "simhub_property": "DataCorePlugin.GameData.ri45"
+      "simhub_property": ""
     },
     {
       "name": "RadarIndex46",
@@ -8446,7 +8454,7 @@
       "default_value": 0,
       "compression": "uint32_t",
       "is_visible": false,
-      "simhub_property": "DataCorePlugin.GameData.ri46"
+      "simhub_property": ""
     },
     {
       "name": "RadarIndex47",
@@ -8468,7 +8476,7 @@
       "default_value": 0,
       "compression": "uint32_t",
       "is_visible": false,
-      "simhub_property": "DataCorePlugin.GameData.ri47"
+      "simhub_property": ""
     },
     {
       "name": "RadarIndex48",
@@ -8490,7 +8498,7 @@
       "default_value": 0,
       "compression": "uint32_t",
       "is_visible": false,
-      "simhub_property": "DataCorePlugin.GameData.ri48"
+      "simhub_property": ""
     },
     {
       "name": "RadarIndex49",
@@ -8512,7 +8520,7 @@
       "default_value": 0,
       "compression": "uint32_t",
       "is_visible": false,
-      "simhub_property": "DataCorePlugin.GameData.ri49"
+      "simhub_property": ""
     },
     {
       "name": "RadarIndex50",
@@ -8534,7 +8542,7 @@
       "default_value": 0,
       "compression": "uint32_t",
       "is_visible": false,
-      "simhub_property": "DataCorePlugin.GameData.ri50"
+      "simhub_property": ""
     },
     {
       "name": "RadarIndex51",
@@ -8556,7 +8564,7 @@
       "default_value": 0,
       "compression": "uint32_t",
       "is_visible": false,
-      "simhub_property": "DataCorePlugin.GameData.ri51"
+      "simhub_property": ""
     },
     {
       "name": "RadarIndex52",
@@ -8578,7 +8586,7 @@
       "default_value": 0,
       "compression": "uint32_t",
       "is_visible": false,
-      "simhub_property": "DataCorePlugin.GameData.ri52"
+      "simhub_property": ""
     },
     {
       "name": "RadarIndex53",
@@ -8600,7 +8608,7 @@
       "default_value": 0,
       "compression": "uint32_t",
       "is_visible": false,
-      "simhub_property": "DataCorePlugin.GameData.ri53"
+      "simhub_property": ""
     },
     {
       "name": "RadarIndex54",
@@ -8622,7 +8630,7 @@
       "default_value": 0,
       "compression": "uint32_t",
       "is_visible": false,
-      "simhub_property": "DataCorePlugin.GameData.ri54"
+      "simhub_property": ""
     },
     {
       "name": "RadarIndex55",
@@ -8644,7 +8652,7 @@
       "default_value": 0,
       "compression": "uint32_t",
       "is_visible": false,
-      "simhub_property": "DataCorePlugin.GameData.ri55"
+      "simhub_property": ""
     },
     {
       "name": "RadarIndex56",
@@ -8666,7 +8674,7 @@
       "default_value": 0,
       "compression": "uint32_t",
       "is_visible": false,
-      "simhub_property": "DataCorePlugin.GameData.ri56"
+      "simhub_property": ""
     },
     {
       "name": "RadarIndex57",
@@ -8688,7 +8696,7 @@
       "default_value": 0,
       "compression": "uint32_t",
       "is_visible": false,
-      "simhub_property": "DataCorePlugin.GameData.ri57"
+      "simhub_property": ""
     },
     {
       "name": "RadarIndex58",
@@ -8710,7 +8718,7 @@
       "default_value": 0,
       "compression": "uint32_t",
       "is_visible": false,
-      "simhub_property": "DataCorePlugin.GameData.ri58"
+      "simhub_property": ""
     },
     {
       "name": "RadarIndex59",
@@ -8732,7 +8740,7 @@
       "default_value": 0,
       "compression": "uint32_t",
       "is_visible": false,
-      "simhub_property": "DataCorePlugin.GameData.ri59"
+      "simhub_property": ""
     },
     {
       "name": "RadarIndex60",
@@ -8754,7 +8762,7 @@
       "default_value": 0,
       "compression": "uint32_t",
       "is_visible": false,
-      "simhub_property": "DataCorePlugin.GameData.ri60"
+      "simhub_property": ""
     },
     {
       "name": "RadarIndex61",
@@ -8776,7 +8784,7 @@
       "default_value": 0,
       "compression": "uint32_t",
       "is_visible": false,
-      "simhub_property": "DataCorePlugin.GameData.ri61"
+      "simhub_property": ""
     },
     {
       "name": "RadarIndex62",
@@ -8798,7 +8806,7 @@
       "default_value": 0,
       "compression": "uint32_t",
       "is_visible": false,
-      "simhub_property": "DataCorePlugin.GameData.ri62"
+      "simhub_property": ""
     },
     {
       "name": "RadarIndex63",
@@ -8820,7 +8828,7 @@
       "default_value": 0,
       "compression": "uint32_t",
       "is_visible": false,
-      "simhub_property": "DataCorePlugin.GameData.ri63"
+      "simhub_property": ""
     },
     {
       "name": "FrontARB",

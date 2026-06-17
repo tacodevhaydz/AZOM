@@ -3,7 +3,7 @@ layout: guide.njk
 title: SDK & iRacing
 description: Enable the MOZA SDK server for iRacing and 360 Hz mode, plus update channels and diagnostics.
 tags: guide
-order: 11
+order: 12
 ---
 
 Some titles — **iRacing** in particular — and any game running MOZA's **360 Hz** mode need
@@ -13,7 +13,7 @@ the official MOZA SDK. AZOM ships an embedded SDK server to provide all of the s
 
 Open the **SDK** tab in the AZOM panel.
 
-![The AZOM SDK tab showing the CoAP server and UDP control settings](/docs/SDK.png)
+![The AZOM SDK tab showing the CoAP server and UDP control settings](/docs/images/SDK.png)
 
 ### CoAP SDK server
 

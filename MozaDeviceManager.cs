@@ -228,22 +228,6 @@ namespace MozaPlugin
         }
 
         /// <summary>
-        /// Group-0x0e param-manager poll to the locked wheel
-        /// (<c>7e 03 0e &lt;wheelDeviceId&gt; 00 00 01 chk</c>) — the same read
-        /// shape <see cref="SendCm1ParamProbe"/> aims at the dash. PitHouse polls
-        /// this on the wheel ~1.7 Hz (210× in the screenless-R5 capture); the
-        /// plugin previously never touched the wheel's param subsystem. Part of
-        /// the PitHouse idle footprint that keeps the wheel's Table-8 param state
-        /// validated, so identity resolves instead of storming read/write failures.
-        /// </summary>
-        public void SendWheelParamPoll()
-        {
-            if (!_connection.IsConnected) return;
-            SendRawProbe(MozaProtocol.FirmwareDebugGroup, _wheelDeviceId,
-                new byte[] { 0x00, 0x00, 0x01 });
-        }
-
-        /// <summary>
         /// CM1-vs-CM2 discriminator probe: a group-0x0E param-manager register
         /// read to the dash (dev 0x14), <c>7E 03 0E 14 00 00 01 chk</c>. A CM1
         /// answers with a group-0x8E reply (<c>7E 07 8E 41 …</c>); a tier-def CM2
@@ -472,6 +456,7 @@ namespace MozaPlugin
                 case "base":     return MozaProtocol.DeviceBase;
                 case "pedals":   return MozaProtocol.DevicePedals;
                 case "wheel":    return _wheelDeviceId;
+                case "es-wheel": return MozaProtocol.DeviceEsWheel;
                 case "dash":     return MozaProtocol.DeviceDash;
                 case "hub":      return MozaProtocol.DeviceHub;
                 case "main":     return MozaProtocol.DeviceMain;

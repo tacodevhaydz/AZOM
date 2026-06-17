@@ -44,6 +44,13 @@
 | ffb-curve-y0 | `22 0A` | 1 | int | No read or write group (both -1) — not usable |
 | ffb-disable | `FE` | 2 | int | |
 
+PitHouse's wheelbase **FFB-curve / "deadzone"** slider drives these `22 0x` points
+directly — it has no dedicated deadzone register. In
+`soft-restart.calibrate-paddles.interpolation-0-5-10-0.deadzone-0-5-10-0-10-0.pcapng`
+each slider position re-emitted the y1–y4 points (`22 05`…`22 08`) as a 4-write
+burst (6 bursts for the 6 slider values). These map to the existing
+`base-ffb-curve-*` command-DB entries; no new command is needed.
+
 ### Group `0x2A` (42) — Calibration / Music (startup chime)
 
 Group 42 is used for both writes (calibration, music set) and reads (music get). `Dir` column applies.

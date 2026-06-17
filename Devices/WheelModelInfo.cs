@@ -66,6 +66,19 @@ namespace MozaPlugin.Devices
         public int KnobRingLedTotal { get; }
 
         /// <summary>
+        /// Maps the firmware per-knob signal-mode index (the <c>i</c> in
+        /// <c>wheel-knob-signal-mode{i}</c> / sub-id <c>[42, i]</c>) to the
+        /// logical knob index used everywhere else (LED rings, colours, UI
+        /// position): <c>KnobSignalModeOrder[firmwareIndex] = logicalKnob</c>.
+        /// Null = identity (firmware index == logical knob).
+        /// Some wheels address knob signal modes in a different order than their
+        /// LED groups (which are in physical order): CS Pro firmware 0..3 map to
+        /// physical knobs 1,4,3,2; KS Pro firmware 0..4 map to physical knobs
+        /// 1,5,4,2,3.
+        /// </summary>
+        public int[]? KnobSignalModeOrder { get; }
+
+        /// <summary>
         /// Whether this wheel model has a built-in display sub-device that can render
         /// dashboards. <c>true</c> = drive dashboard telemetry without waiting for the
         /// runtime probe; <c>false</c> = never drive dashboard telemetry (skip the
@@ -92,6 +105,29 @@ namespace MozaPlugin.Devices
         /// on models known to lack the feature.
         /// </summary>
         public bool HasSleepLight { get; }
+
+        /// <summary>
+        /// Maximum live LED-update wire rate in frames/sec; <c>0</c> = unlimited
+        /// (default — SimHub's 60 Hz tick drives the stream). The legacy bare-"CS"
+        /// rim is wireless and wedges its param manager when the RPM stream is
+        /// pushed at the full radio cadence (~3 ms gaps), so it is capped. The cap
+        /// coalesces — the latest colour state still goes out, just no faster than
+        /// the limit.
+        /// </summary>
+        public int MaxLedFps { get; }
+
+        /// <summary>
+        /// Drive RPM LEDs the PitHouse "old rim" way: a fixed colour palette
+        /// (<c>0x19</c>, sent only on palette change) + a streamed lit-state
+        /// bitmask (<c>wheel-send-rpm-telemetry</c> 0x1a and the old-protocol
+        /// <c>wheel-old-send-telemetry</c> 0x41 <c>fd de</c>). The legacy bare-"CS"
+        /// rim wedges its param manager (Table 8 read-fail storm) when the
+        /// per-frame full-colour stream (the default new-wheel path) hammers its
+        /// LED colour buffer — verified against <c>cs v2(1).pcapng</c> (wheel_wnfw),
+        /// where PitHouse sends colour frames ~0.5/s and the old bitmask ~68/s.
+        /// Default <c>false</c> (modern wheels keep the per-frame colour path).
+        /// </summary>
+        public bool UsesLegacyRpmTelemetry { get; }
 
         /// <summary>
         /// Returns the Group 3 start index for the given knob (0-based).
@@ -132,10 +168,10 @@ namespace MozaPlugin.Devices
             // primary colors (protocol groups 0..KnobCount-1 via cmd 0x27).
             // Group 3 (Rotary) provides per-LED ring control: 12 LEDs/knob on CS Pro,
             // 12/12/8/12/12 on KS Pro (knob 3 has 8 LEDs).
-            ("W17",     "CS Pro",     new WheelModelInfo(16, 8,  false, null, 4, new[] { 12, 12, 12, 12 }, hasDisplay: true,  browSegmentSize: 3)),
+            ("W17",     "CS Pro",     new WheelModelInfo(16, 8,  false, null, 4, new[] { 12, 12, 12, 12 }, hasDisplay: true,  browSegmentSize: 3, knobSignalModeOrder: new[] { 0, 3, 2, 1 })),
             // KS Pro 3/12/3 LED strip appears to live entirely in group 0 (Shift/RPM),
             // not split across RPM + Meter flag sub-device. Driving all 18 as one RPM strip.
-            ("W18",     "KS Pro",     new WheelModelInfo(18, 14, false, null, 5, new[] { 12, 12, 8, 12, 12 }, hasDisplay: true,  browSegmentSize: 3)),
+            ("W18",     "KS Pro",     new WheelModelInfo(18, 10, false, null, 5, new[] { 12, 12, 8, 12, 12 }, hasDisplay: true,  browSegmentSize: 3, knobSignalModeOrder: new[] { 0, 4, 3, 1, 2 })),
             ("KS",      "KS",         new WheelModelInfo(10, 10, false, null, 0, hasDisplay: false)),
             ("W13",     "FSR V2",     new WheelModelInfo(16, 10, false, null, 0, hasDisplay: true,  browSegmentSize: 3)),  // firmware reports "W13" for FSR V2
             // FSR V1 display wheel (box name "FSR1"): firmware reports model-name
@@ -164,10 +200,19 @@ namespace MozaPlugin.Devices
             // hasSleepLight=false: pushing wheel-idle-mode/timeout/speed/color at
             // this wheel triggers a Table 8 read-fail storm in its firmware that
             // makes it intermittently unresponsive.
-            ("CS",      "CS",         new WheelModelInfo(10, 0,  false, null, 0, hasDisplay: false, hasSleepLight: false)),
+            ("CS",      "CS",         new WheelModelInfo(10, 0,  false, null, 0, hasDisplay: false, hasSleepLight: false, usesLegacyRpmTelemetry: true)),
+            // ES — MOZA's entry wheel, integrated into the wheelbase as a module at
+            // internal id 0x18 (firmware model-name "ES", hw "RS21-D05-HW SM-C").
+            // Old-protocol RPM only: 10 RGB RPM LEDs driven via the wheel-old-rpm-*
+            // path; no button / flag / knob LEDs, no display. hasDisplay:false keeps
+            // the dashboard pipeline + 0x43 display probe OFF (screenless);
+            // hasSleepLight:false avoids the Table-8 read-fail storm legacy rims hit
+            // on sleep-light writes. Button-LED count is conservative (0) — refine
+            // from a live capability read if ES exposes addressable button LEDs.
+            ("ES",      "ES",         new WheelModelInfo(10, 0,  false, null, 0, hasDisplay: false, hasSleepLight: false)),
         };
 
-        public WheelModelInfo(int rpmLedCount, int buttonLedCount, bool hasFlagLeds, int[]? buttonLedMap, int knobCount = 0, int[]? knobRingLeds = null, bool? hasDisplay = null, int browSegmentSize = 0, bool hasSleepLight = true)
+        public WheelModelInfo(int rpmLedCount, int buttonLedCount, bool hasFlagLeds, int[]? buttonLedMap, int knobCount = 0, int[]? knobRingLeds = null, bool? hasDisplay = null, int browSegmentSize = 0, bool hasSleepLight = true, int maxLedFps = 0, bool usesLegacyRpmTelemetry = false, int[]? knobSignalModeOrder = null)
         {
             RpmLedCount = rpmLedCount;
             ButtonLedCount = buttonLedCount;
@@ -182,6 +227,36 @@ namespace MozaPlugin.Devices
             HasDisplay = hasDisplay;
             BrowSegmentSize = browSegmentSize;
             HasSleepLight = hasSleepLight;
+            MaxLedFps = maxLedFps;
+            UsesLegacyRpmTelemetry = usesLegacyRpmTelemetry;
+            KnobSignalModeOrder = knobSignalModeOrder;
+        }
+
+        /// <summary>
+        /// Firmware signal-mode index (<c>wheel-knob-signal-mode{i}</c>) that
+        /// controls the given logical knob — inverse of <see cref="KnobSignalModeOrder"/>.
+        /// Identity when no reorder is defined. Used on the write path so a UI
+        /// edit on logical knob N reaches the physical knob whose LED ring is N.
+        /// </summary>
+        public int SignalModeFirmwareIndex(int logicalKnob)
+        {
+            if (KnobSignalModeOrder == null) return logicalKnob;
+            int i = Array.IndexOf(KnobSignalModeOrder, logicalKnob);
+            return i >= 0 ? i : logicalKnob;
+        }
+
+        /// <summary>
+        /// Logical knob (LED/colour/UI order) controlled by a firmware
+        /// signal-mode index. Identity when no reorder is defined. Used on the
+        /// read path so a <c>wheel-knob-signal-mode{i}</c> response lands in the
+        /// slot matching the knob the user sees. See <see cref="KnobSignalModeOrder"/>.
+        /// </summary>
+        public int SignalModeLogicalKnob(int firmwareIndex)
+        {
+            if (KnobSignalModeOrder == null
+                || firmwareIndex < 0 || firmwareIndex >= KnobSignalModeOrder.Length)
+                return firmwareIndex;
+            return KnobSignalModeOrder[firmwareIndex];
         }
 
         /// <summary>

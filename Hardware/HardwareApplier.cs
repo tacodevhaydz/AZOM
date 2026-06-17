@@ -199,6 +199,11 @@ namespace MozaPlugin.Hardware
             int[]? knobBgColors       = EffArr(ov?.WheelKnobBackgroundColors, profile.WheelKnobBackgroundColors);
             int[]? knobPrimaryColors  = EffArr(ov?.WheelKnobPrimaryColors, profile.WheelKnobPrimaryColors);
             int[]? knobRingColors     = EffArr(ov?.WheelKnobRingColors, profile.WheelKnobRingColors);
+            bool knobDefaultTelemetry = ov?.WheelKnobDefaultDuringTelemetry
+                                        ?? profile.WheelKnobDefaultDuringTelemetry;
+            int knobStaticTimeoutMs   = (ov != null && ov.WheelKnobStaticTimeoutMs >= 0)
+                                        ? ov.WheelKnobStaticTimeoutMs
+                                        : profile.WheelKnobStaticTimeoutMs;
 
             // Mirror colors into _data (UI uses _data.* for swatches).
             MozaProfile.UnpackColorsInto(rpmColors, _data.WheelRpmColors);
@@ -223,6 +228,8 @@ namespace MozaPlugin.Hardware
             MozaProfile.UnpackColorsInto(knobPrimaryColors, _data.WheelKnobPrimaryColors);
             MozaProfile.UnpackColorsInto(knobRingColors, _data.KnobRingColors);
             if (knobRingBri >= 0) _data.KnobRingBrightness = knobRingBri;
+            _data.WheelKnobDefaultDuringTelemetry = knobDefaultTelemetry;
+            _data.WheelKnobStaticTimeoutMs = knobStaticTimeoutMs;
 
             // Hardware writes — gated per-section on the matching detection
             // flag. NOT gated on _data.IsConnected: that's the "any device
@@ -370,13 +377,13 @@ namespace MozaPlugin.Hardware
             if (profile == null) return;
 
             // SimHub auto-creates per-game profiles with all-sentinel dash fields
-            // and never routes them through SettingsMigrator. Without seeding,
-            // the >=0 guards below skip every write — _data keeps its sentinel
-            // default and the wire push never fires, so the wheel display sits
-            // at whatever value happened to be on it. Seed sentinels from the
-            // global defaults here; the helper is idempotent (sentinel-only).
+            // and never seeds their baselines. Without seeding, the >=0 guards
+            // below skip every write — _data keeps its sentinel default and the
+            // wire push never fires, so the wheel display sits at whatever value
+            // happened to be on it. Seed sentinels from the global defaults here;
+            // the helper is idempotent (sentinel-only).
             if (_plugin.Settings != null)
-                new SettingsMigrator(_plugin.Settings).SeedProfileBaselineFromFlatFields(profile);
+                profile.SeedBaselineFromFlatFields(_plugin.Settings);
 
             if (profile.DashRpmBrightness     >= 0) _data.DashRpmBrightness     = profile.DashRpmBrightness;
             if (profile.DashFlagsBrightness   >= 0) _data.DashFlagsBrightness   = profile.DashFlagsBrightness;
@@ -411,25 +418,7 @@ namespace MozaPlugin.Hardware
             if (profile.DashDisplayStandbyMin >= 0) sender?.SendDashDisplayStandbyMinutes(profile.DashDisplayStandbyMin);
 
             if (isCm2)
-            {
                 ApplyCm2DashboardConfig(profile);
-            }
-            else
-            {
-                if (profile.DashRpmIndicatorMode >= 0)
-                    _deviceManager.WriteSetting("dash-rpm-indicator-mode", profile.DashRpmIndicatorMode);
-                if (profile.DashRpmDisplayMode >= 0)
-                    _deviceManager.WriteSetting("dash-rpm-display-mode", profile.DashRpmDisplayMode);
-                // Legacy SHDP dashboard: dash-flags-indicator-mode defaults to 1
-                // when the profile has no stored value (firmware default 0 silently
-                // drops flag colour writes); a saved profile value wins.
-                _deviceManager.WriteSetting("dash-flags-indicator-mode",
-                    profile.DashFlagsIndicatorMode >= 0 ? profile.DashFlagsIndicatorMode : 1);
-
-                WriteColorArray(profile.DashRpmColors, "dash-rpm-color", 10);
-                WriteColorArray(profile.DashRpmBlinkColors, "dash-rpm-blink-color", 10);
-                WriteColorArray(profile.DashFlagColors, "dash-flag-color", 6);
-            }
         }
 
         /// <summary>
@@ -656,6 +645,9 @@ namespace MozaPlugin.Hardware
             Apply(() => profile.FfbStrength,        v => profile.FfbStrength        = v,
                   () => _data.FfbStrength,          v => _data.FfbStrength          = v,
                   "base-ffb-strength");
+            Apply(() => profile.Interpolation,      v => profile.Interpolation      = v,
+                  () => _data.Interpolation,        v => _data.Interpolation        = v,
+                  "main-set-interpolation");
             Apply(() => profile.Torque,             v => profile.Torque             = v,
                   () => _data.Torque,               v => _data.Torque               = v,
                   "base-torque");
@@ -791,6 +783,7 @@ namespace MozaPlugin.Hardware
             if (!_detectionState.Ab9Detected || _ab9Manager == null || !_ab9Manager.IsConnected) return;
 
             var ab9 = profile?.Ab9 ?? new Ab9Settings();
+            _ab9Manager.SendInputMode(ab9.InputMode);
             _ab9Manager.SendMode(ab9.Mode);
             _ab9Manager.SendSlider(Ab9Slider.MechanicalResistance, ab9.MechanicalResistance);
             _ab9Manager.SendSlider(Ab9Slider.Spring,               ab9.Spring);

@@ -16,7 +16,7 @@ The **Pedals** tab splits into **Throttle**, **Brake** and **Clutch**, each conf
 independently. The bars across the top show live input so you can confirm the axis is
 moving before you touch anything.
 
-![The AZOM Pedals tab showing throttle direction, range and output curve](/docs/Pedals.png)
+![The AZOM Pedals tab showing throttle direction, range and output curve](/docs/images/Pedals.png)
 
 ### Direction &amp; range
 
@@ -45,7 +45,7 @@ presets:
 
 The **Handbrake** tab works the same way, with one extra choice.
 
-![The AZOM Handbrake tab showing mode, range, calibration and output curve](/docs/Handbrake.png)
+![The AZOM Handbrake tab showing mode, range, calibration and output curve](/docs/images/Handbrake.png)
 
 - **Mode — Axis or Button.** *Axis* reports progressive pull (for rally and drift, where
   partial lock matters). *Button* fires a simple on/off at a threshold, which some titles

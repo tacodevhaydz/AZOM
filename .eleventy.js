@@ -14,6 +14,9 @@ module.exports = function (eleventyConfig) {
   // so the pages can reference /docs/<image>.
   eleventyConfig.addPassthroughCopy("docs/**/*.{png,webp,jpg,jpeg,gif,svg}");
 
+  // Downloadable ATSR wheel profiles linked from the ATSR LED guide.
+  eleventyConfig.addPassthroughCopy("docs/ATSR/*.atsrdevice");
+
   // Guides collection, ordered by front-matter `order`.
   eleventyConfig.addCollection("guides", (collectionApi) =>
     collectionApi

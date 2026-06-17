@@ -289,6 +289,23 @@
                                        Foreground="#FFD7A0"/>
                             <TextBlock Text="{Binding Body}" Foreground="#FFD7A0"
                                        TextWrapping="Wrap" Margin="0,2,0,0"/>
+                            <!-- Restart button: only the device-definition-deployed
+                                 banner shows it (ShowRestartButton). Wired to
+                                 MozaPlugin.RestartSimHub() via HintRestart_Click. -->
+                            <Button Content="{x:Static res:Strings.Button_RestartSimHub}"
+                                    Click="HintRestart_Click"
+                                    HorizontalAlignment="Left" Margin="0,8,0,0">
+                                <Button.Style>
+                                    <Style TargetType="Button" BasedOn="{StaticResource MozaButton}">
+                                        <Setter Property="Visibility" Value="Collapsed"/>
+                                        <Style.Triggers>
+                                            <DataTrigger Binding="{Binding ShowRestartButton}" Value="True">
+                                                <Setter Property="Visibility" Value="Visible"/>
+                                            </DataTrigger>
+                                        </Style.Triggers>
+                                    </Style>
+                                </Button.Style>
+                            </Button>
                         </StackPanel>
                     </Border>
                 </DataTemplate>
@@ -343,50 +360,6 @@
                     <Button x:Name="HeaderUpdateDismissButton"
                             Content="{x:Static res:Strings.Button_DismissUpdate}"
                             Click="HeaderUpdateDismiss_Click"/>
-                </StackPanel>
-            </Grid>
-        </Border>
-
-        <!-- Wheel firmware-error warning. Shown when the wheel firmware reports a
-             param-read/write storm (legacy "CS" rim that can't service the
-             plugin's reads). Driven by SettingsControl.UpdateBanner.cs via
-             RefreshFirmwareWarningBanner(). Asks the user to export a diagnostics
-             bundle so the fault can be investigated. -->
-        <Border x:Name="HeaderFirmwareWarningBanner" DockPanel.Dock="Top"
-                Visibility="Collapsed"
-                Margin="22,8,22,0"
-                BorderBrush="{StaticResource AmberBrush}"
-                BorderThickness="1"
-                Background="{StaticResource AmberSoftBrush}"
-                CornerRadius="4"
-                Padding="12,8">
-            <Grid>
-                <Grid.ColumnDefinitions>
-                    <ColumnDefinition Width="*"/>
-                    <ColumnDefinition Width="Auto"/>
-                </Grid.ColumnDefinitions>
-                <StackPanel Grid.Column="0" VerticalAlignment="Center">
-                    <TextBlock x:Name="HeaderFirmwareWarningTitle"
-                               Text="{x:Static res:Strings.Banner_WheelFirmwareErrors_Title}"
-                               FontFamily="{StaticResource FontUi}"
-                               FontSize="12.5" FontWeight="SemiBold"
-                               Foreground="{StaticResource AmberBrush}"
-                               TextWrapping="Wrap"/>
-                    <TextBlock x:Name="HeaderFirmwareWarningBody"
-                               Text="{x:Static res:Strings.Banner_WheelFirmwareErrors_Body}"
-                               Style="{StaticResource MutedHintText}"
-                               TextWrapping="Wrap"
-                               Margin="0,2,0,0"/>
-                </StackPanel>
-                <StackPanel Grid.Column="1" Orientation="Horizontal"
-                            VerticalAlignment="Center" Margin="12,0,0,0">
-                    <Button x:Name="HeaderFirmwareCaptureButton"
-                            Content="{x:Static res:Strings.Button_EnableSerialCapture}"
-                            Click="HeaderFirmwareCapture_Click"
-                            Margin="0,0,8,0"/>
-                    <Button x:Name="HeaderFirmwareDismissButton"
-                            Content="{x:Static res:Strings.Button_DismissUpdate}"
-                            Click="HeaderFirmwareDismiss_Click"/>
                 </StackPanel>
             </Grid>
         </Border>
@@ -648,6 +621,23 @@
                                                  KeyDown="SliderValueBox_KeyDown" LostFocus="SliderValueBox_LostFocus"
                                                  Text="100%"/>
                                     </Grid>
+                                    <Grid Margin="0,4">
+                                        <Grid.ColumnDefinitions>
+                                            <ColumnDefinition Width="Auto"/>
+                                            <ColumnDefinition Width="*"/>
+                                            <ColumnDefinition Width="Auto"/>
+                                        </Grid.ColumnDefinitions>
+                                        <TextBlock Grid.Column="0" Text="{x:Static res:Strings.SliderLabel_Interpolation}" Style="{StaticResource SliderLabel}"/>
+                                        <Slider Grid.Column="1" x:Name="InterpolationSlider" Style="{StaticResource SettingSlider}" Minimum="0" Maximum="10" TickFrequency="1" ValueChanged="InterpolationSlider_ValueChanged"/>
+                                        <TextBox Grid.Column="2" x:Name="InterpolationValue" Style="{StaticResource SliderValueEditBox}"
+                                                 Tag="{Binding ElementName=InterpolationSlider}"
+                                                 KeyDown="SliderValueBox_KeyDown" LostFocus="SliderValueBox_LostFocus"
+                                                 Text="0"/>
+                                    </Grid>
+                                    <StackPanel Orientation="Horizontal" Margin="0,8,0,0">
+                                        <Button x:Name="SoftRebootButton" Content="{x:Static res:Strings.Button_RestartWheelbase}"
+                                                Click="SoftRebootButton_Click" HorizontalAlignment="Left"/>
+                                    </StackPanel>
                                 </StackPanel>
                             </ctrl:SectionCard>
 
@@ -1191,10 +1181,9 @@
                                               Icon="{StaticResource IconCal}"
                                               AccentBrush="{StaticResource RedBrush}"
                                               Margin="7,0,0,14">
-                                <StackPanel Orientation="Horizontal" Margin="0,4">
-                                    <Button x:Name="HbCalStartButton" Content="{x:Static res:Strings.Button_StartCalibration}" Margin="0,0,10,0" Click="HbCalStartButton_Click"/>
-                                    <Button x:Name="HbCalStopButton" Content="{x:Static res:Strings.Button_Stop}" Click="HbCalStopButton_Click"/>
-                                    <TextBlock x:Name="HbCalStatus" Style="{StaticResource MutedHintText}" Margin="14,0,0,0" VerticalAlignment="Center"/>
+                                <StackPanel Margin="0,4">
+                                    <Button x:Name="HbCalStartButton" Content="{x:Static res:Strings.Button_StartCalibration}" HorizontalAlignment="Left" Click="HbCalStartButton_Click"/>
+                                    <TextBlock x:Name="HbCalStatus" Style="{StaticResource MutedHintText}" TextWrapping="Wrap" Margin="0,6,0,0" Visibility="Collapsed"/>
                                 </StackPanel>
                             </ctrl:SectionCard>
                         </Grid>
@@ -1443,9 +1432,9 @@
                         <ctrl:SectionCard Title="{x:Static res:Strings.Section_ThrottleCalibration}"
                                           Icon="{StaticResource IconCal}"
                                           AccentBrush="{StaticResource GreenBrush}">
-                            <StackPanel Orientation="Horizontal" Margin="0,4">
-                                <Button x:Name="ThrottleCalStartButton" Content="{x:Static res:Strings.Button_StartCalibration}" Margin="0,0,10,0" Click="ThrottleCalStartButton_Click"/>
-                                <Button x:Name="ThrottleCalStopButton" Content="{x:Static res:Strings.Button_Stop}" Click="ThrottleCalStopButton_Click"/>
+                            <StackPanel Margin="0,4">
+                                <Button x:Name="ThrottleCalStartButton" Content="{x:Static res:Strings.Button_StartCalibration}" HorizontalAlignment="Left" Click="ThrottleCalStartButton_Click"/>
+                                <TextBlock x:Name="ThrottleCalStatus" Style="{StaticResource MutedHintText}" TextWrapping="Wrap" Margin="0,6,0,0" Visibility="Collapsed"/>
                             </StackPanel>
                         </ctrl:SectionCard>
 
@@ -1548,9 +1537,9 @@
                         <ctrl:SectionCard Title="{x:Static res:Strings.Section_BrakeCalibration}"
                                           Icon="{StaticResource IconCal}"
                                           AccentBrush="{StaticResource RedBrush}">
-                            <StackPanel Orientation="Horizontal" Margin="0,4">
-                                <Button x:Name="BrakeCalStartButton" Content="{x:Static res:Strings.Button_StartCalibration}" Margin="0,0,10,0" Click="BrakeCalStartButton_Click"/>
-                                <Button x:Name="BrakeCalStopButton" Content="{x:Static res:Strings.Button_Stop}" Click="BrakeCalStopButton_Click"/>
+                            <StackPanel Margin="0,4">
+                                <Button x:Name="BrakeCalStartButton" Content="{x:Static res:Strings.Button_StartCalibration}" HorizontalAlignment="Left" Click="BrakeCalStartButton_Click"/>
+                                <TextBlock x:Name="BrakeCalStatus" Style="{StaticResource MutedHintText}" TextWrapping="Wrap" Margin="0,6,0,0" Visibility="Collapsed"/>
                             </StackPanel>
                         </ctrl:SectionCard>
 
@@ -1635,9 +1624,9 @@
                         <ctrl:SectionCard Title="{x:Static res:Strings.Section_ClutchCalibration}"
                                           Icon="{StaticResource IconCal}"
                                           AccentBrush="{StaticResource CyanBrush}">
-                            <StackPanel Orientation="Horizontal" Margin="0,4">
-                                <Button x:Name="ClutchCalStartButton" Content="{x:Static res:Strings.Button_StartCalibration}" Margin="0,0,10,0" Click="ClutchCalStartButton_Click"/>
-                                <Button x:Name="ClutchCalStopButton" Content="{x:Static res:Strings.Button_Stop}" Click="ClutchCalStopButton_Click"/>
+                            <StackPanel Margin="0,4">
+                                <Button x:Name="ClutchCalStartButton" Content="{x:Static res:Strings.Button_StartCalibration}" HorizontalAlignment="Left" Click="ClutchCalStartButton_Click"/>
+                                <TextBlock x:Name="ClutchCalStatus" Style="{StaticResource MutedHintText}" TextWrapping="Wrap" Margin="0,6,0,0" Visibility="Collapsed"/>
                             </StackPanel>
                         </ctrl:SectionCard>
                         </StackPanel><!-- /ClutchPedalGroup -->
@@ -1665,6 +1654,20 @@
                                            Style="{StaticResource MutedHintText}" VerticalAlignment="Center"/>
                             </StackPanel>
                         </Border>
+
+                        <ctrl:SectionCard Title="{x:Static res:Strings.Section_Ab9InputMode}" Icon="{StaticResource IconShift}">
+                            <Grid Margin="0,4">
+                                <Grid.ColumnDefinitions>
+                                    <ColumnDefinition Width="*"/>
+                                    <ColumnDefinition Width="*"/>
+                                </Grid.ColumnDefinitions>
+                                <TextBlock Grid.Column="0" Text="{x:Static res:Strings.SliderLabel_Mode}" Style="{StaticResource SliderLabel}"/>
+                                <ComboBox Grid.Column="1" x:Name="Ab9InputModeCombo" Width="220" SelectionChanged="Ab9InputModeCombo_Changed">
+                                    <ComboBoxItem Content="{x:Static res:Strings.Option_Ab9Shifter}" Tag="0"/>
+                                    <ComboBoxItem Content="{x:Static res:Strings.Option_Ab9FlightSim}" Tag="1"/>
+                                </ComboBox>
+                            </Grid>
+                        </ctrl:SectionCard>
 
                         <ctrl:SectionCard Title="{x:Static res:Strings.Section_MechanicalLayout}" Icon="{StaticResource IconShift}">
                             <Grid Margin="0,4">
@@ -2122,6 +2125,21 @@
                                               Checked="AlwaysResendBitmaskCheck_Changed" Unchecked="AlwaysResendBitmaskCheck_Changed"/>
                                 </StackPanel>
                                 <TextBlock Text="{x:Static res:Strings.Hint_AlwaysResendBitmask}"
+                                           Style="{StaticResource MutedHintText}" Margin="0,4,0,0" TextWrapping="Wrap"/>
+                                <Grid Margin="0,8">
+                                    <Grid.ColumnDefinitions>
+                                        <ColumnDefinition Width="Auto"/>
+                                        <ColumnDefinition Width="*"/>
+                                        <ColumnDefinition Width="Auto"/>
+                                    </Grid.ColumnDefinitions>
+                                    <TextBlock Grid.Column="0" Text="{x:Static res:Strings.SliderLabel_KeepaliveTimeout}" Style="{StaticResource SliderLabel}"/>
+                                    <Slider Grid.Column="1" x:Name="KeepaliveTimeoutSlider" Style="{StaticResource SettingSlider}" Minimum="0" Maximum="300" TickFrequency="5" SmallChange="1" LargeChange="15" IsSnapToTickEnabled="True" ValueChanged="KeepaliveTimeoutSlider_ValueChanged"/>
+                                    <TextBox Grid.Column="2" x:Name="KeepaliveTimeoutValue" Style="{StaticResource SliderValueEditBox}"
+                                             Tag="{Binding ElementName=KeepaliveTimeoutSlider}"
+                                             KeyDown="SliderValueBox_KeyDown" LostFocus="SliderValueBox_LostFocus"
+                                             Text="45 s"/>
+                                </Grid>
+                                <TextBlock Text="{x:Static res:Strings.Hint_KeepaliveTimeout}"
                                            Style="{StaticResource MutedHintText}" Margin="0,4,0,0" TextWrapping="Wrap"/>
                             </StackPanel>
                         </ctrl:SectionCard>

@@ -27,7 +27,7 @@ Use **Set folder…** if yours are somewhere else.
 Presets are grouped by type — **Wheel base (Motor)**, **Pedals**, or **Browse for file…**
 for one sitting elsewhere. Select the preset you want and click **Next**.
 
-![The AZOM Import tab listing wheel base presets from the Pit House folder](/docs/ImportProfile1.png)
+![The AZOM Import tab listing wheel base presets from the Pit House folder](/docs/images/ImportProfile1.png)
 
 > **Tip:** Names like `R5-GT_iRacing` or `R5-Performance_AC` encode the base, a feel
 > style, and the game they were tuned for. Pick one that matches your hardware and title.
@@ -38,7 +38,7 @@ This is the part that makes importing safe. AZOM compares the preset against you
 profile and lists **every setting that will change**, old value → new value, with the
 untouched ones greyed out.
 
-![The AZOM import review screen showing a diff of settings that will change](/docs/ImportProfile2.png)
+![The AZOM import review screen showing a diff of settings that will change](/docs/images/ImportProfile2.png)
 
 Anything the plugin can't map (Pit-House-only fields with no AZOM equivalent) is listed
 separately at the bottom as **not imported**, so there are no silent surprises.

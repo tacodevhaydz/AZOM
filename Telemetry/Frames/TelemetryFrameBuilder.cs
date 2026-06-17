@@ -250,6 +250,12 @@ namespace MozaPlugin.Telemetry.Frames
         // coordinate bit patterns are preserved exactly.
         private void WriteLocationPair(int locIndex, in GameDataSnapshot snap)
         {
+            // ABSOLUTE ground-plane world coordinates (X, Z), packed as two
+            // float32 in the 64-bit location_t slot. The wheel's Map widget plots
+            // each car's path around the track from these absolute positions; the
+            // player-relative "cars nearby" view is the separate radar patch/ri*
+            // channels. Opponent N → snap.CarLocations[N]; the base patch/Location
+            // (the player itself) → snap.PlayerLocation.
             float x, y;
             if (locIndex < 0)
             {

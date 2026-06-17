@@ -2,22 +2,25 @@ using System;
 using System.Collections.Generic;
 using System.ComponentModel;
 using MozaPlugin.Telemetry;
+using SimHub.Plugins.OutputPlugins.Dash.GLCDTemplating;
+using SimHub.Plugins.OutputPlugins.Dash.TemplatingCommon;
 
 namespace MozaPlugin.Devices.WheelUi
 {
     /// <summary>
     /// Row backing the per-wheel telemetry channel-mapping list. Holds the
     /// channel metadata (name/url/package level/compression) read from the
-    /// wheel's catalog, the user-edited SimHub property mapping, and the
-    /// inline-editor state (filter text + pending selection + visibility flag).
+    /// wheel's catalog, the user-edited SimHub property/formula mapping, and the
+    /// inline-editor state. Two edit modes share one stored string
+    /// (<see cref="SimHubProperty"/>): the <b>simple</b> inline property list
+    /// (pencil) and the <b>advanced</b> SimHub formula dialog (ƒₓ button, edits
+    /// the bound <see cref="Expression"/>).
     /// </summary>
     internal sealed class ChannelMappingRow : INotifyPropertyChanged
     {
-        // Cap filtered results — protects against substrings like "data"
-        // matching half the universe. The ListBox virtualizes, but a 1500-item
-        // unfiltered render with no virtualization at all (just-typed first
-        // char) would still cost layout time; this keeps the inline editor
-        // snappy.
+        // Cap simple-editor filtered results — protects against substrings like
+        // "data" matching half the property universe. The ListBox virtualizes,
+        // but an unfiltered first-keystroke render would still cost layout time.
         private const int MaxFilteredResults = 500;
 
         public string Name { get; set; } = "";
@@ -34,10 +37,181 @@ namespace MozaPlugin.Devices.WheelUi
         /// <summary>True for a CM1 base-bridged dash field (group-0x35). Flat — uses
         /// FieldId only (no RecordKey); the row maps the field to a SimHub property.</summary>
         public bool IsCm1 { get; set; }
+        /// <summary>True for a net-new synthetic split field (not in the static catalog).
+        /// Such a row offers "Remove split" instead of "Reset field" and always persists a
+        /// full mapping with an explicit byte span.</summary>
+        public bool IsSynthetic { get; set; }
         public string RecordKey { get; set; } = "";
         public string FieldId { get; set; } = "";
         /// <summary>Human-readable field output capability, e.g. "0–255".</summary>
         public string CapabilityText { get; set; } = "";
+        /// <summary>Record payload length (wire len byte) — caps the highest editable data
+        /// byte at <c>PayloadLen-1</c>. Set by the FSR1 factory; 0 for non-FSR1 rows.</summary>
+        public int PayloadLen { get; set; }
+
+        // ── FSR1 boundary / scale editor state (coupled-divider model) ──────
+        // An FSR1 record is a CONTIGUOUS, gapless partition of data bytes [5, PayloadLen-1]
+        // (that is how PitHouse packs it — every byte belongs to exactly one field). So the
+        // editor treats each field as separated from its neighbours by a shared divider:
+        // stepping a boundary moves that one divider, reapportioning a single byte between
+        // this field and the adjacent one. PrevField/NextField are wired by the FSR1 factory
+        // in field order; null at the record's fixed edges (first field's left edge = 5,
+        // last field's right edge = PayloadLen-1, neither of which can move). Span mutation
+        // goes through SetSpan (raises UI only); the code-behind owns persistence + probe so
+        // the per-property persist listener never double-fires on a coupled move.
+
+        /// <summary>Adjacent field sharing this field's LEFT divider, or null at the record start.</summary>
+        public ChannelMappingRow? PrevField { get; set; }
+        /// <summary>Adjacent field sharing this field's RIGHT divider, or null at the record end.</summary>
+        public ChannelMappingRow? NextField { get; set; }
+
+        /// <summary>Payload-relative first data byte of the field (inclusive).</summary>
+        public int Start { get; set; } = 5;
+        /// <summary>Payload-relative last data byte of the field (inclusive).</summary>
+        public int End { get; set; } = 5;
+
+        private bool _littleEndian;
+        /// <summary>Width-2 byte order. Ignored for width 1/3 (U8 / U24-BE are fixed). </summary>
+        public bool LittleEndian
+        {
+            get => _littleEndian;
+            set
+            {
+                if (_littleEndian == value) return;
+                _littleEndian = value;
+                // Raise LittleEndian itself so the persist listener fires, then the
+                // layout-dependent properties (EncodingText etc.) for the UI.
+                PropertyChanged?.Invoke(this, new PropertyChangedEventArgs(nameof(LittleEndian)));
+                RaiseLayoutChanged();
+            }
+        }
+
+        private double _scale = 1;
+        /// <summary>Per-field gain: emitted value = <c>raw·Scale + Bias</c>. 1 = no gain.</summary>
+        public double Scale
+        {
+            get => _scale;
+            set
+            {
+                if (_scale.Equals(value)) return;
+                _scale = value;
+                PropertyChanged?.Invoke(this, new PropertyChangedEventArgs(nameof(Scale)));
+            }
+        }
+
+        private double _bias;
+        /// <summary>Per-field offset added after Scale. 0 = none. (FSR1 only; CM1 uses Scale alone.)</summary>
+        public double Bias
+        {
+            get => _bias;
+            set
+            {
+                if (_bias.Equals(value)) return;
+                _bias = value;
+                PropertyChanged?.Invoke(this, new PropertyChangedEventArgs(nameof(Bias)));
+            }
+        }
+
+        /// <summary>Field width in bytes (1..3), derived from the current Start/End span.</summary>
+        public int Width => End - Start + 1;
+
+        /// <summary>The resolved encoding label shown next to the steppers, e.g. "U8", "U16 BE".</summary>
+        public string EncodingText => Width switch
+        {
+            1 => "U8",
+            2 => _littleEndian ? "U16 LE" : "U16 BE",
+            _ => "U24 BE",
+        };
+
+        /// <summary>BE/LE toggle only applies to a 2-byte field; hidden otherwise.</summary>
+        public bool EndianApplies => Width == 2;
+
+        /// <summary>An FSR1 field ≥ 2 bytes wide can be split into two smaller fields.</summary>
+        public bool CanSplit => IsFsr1 && Width >= 2;
+
+        /// <summary>A catalog (non-synthetic) FSR1 field — offers "Reset field"; a synthetic split
+        /// offers "Remove split" instead. Fixed per row lifetime (no notify).</summary>
+        public bool IsCatalogFsr1 => IsFsr1 && !IsSynthetic;
+
+        // Divider guards. A divider can move only if BOTH neighbours can absorb it: the field
+        // gaining a byte stays ≤ 3 wide, the field losing a byte stays ≥ 1 wide. A boundary at
+        // a record edge (Prev/Next == null) is fixed and never moves.
+        public bool CanStartMinus => PrevField != null && PrevField.Width > 1 && Width < 3;
+        public bool CanStartPlus => PrevField != null && Width > 1 && PrevField.Width < 3;
+        public bool CanEndMinus => NextField != null && Width > 1 && NextField.Width < 3;
+        public bool CanEndPlus => NextField != null && NextField.Width > 1 && Width < 3;
+
+        /// <summary>Move the LEFT divider one byte toward the record start: this field grows
+        /// left, the previous field shrinks from its right. Returns the neighbour that also
+        /// changed (so the caller can persist it), or null if the move was not allowed.</summary>
+        public ChannelMappingRow? StartMinus()
+        {
+            if (!CanStartMinus) return null;
+            var p = PrevField!;
+            p.SetSpan(p.Start, p.End - 1);
+            SetSpan(Start - 1, End);
+            return p;
+        }
+
+        /// <summary>Move the LEFT divider one byte toward the record end: this field shrinks
+        /// from its left, the previous field grows right.</summary>
+        public ChannelMappingRow? StartPlus()
+        {
+            if (!CanStartPlus) return null;
+            var p = PrevField!;
+            p.SetSpan(p.Start, p.End + 1);
+            SetSpan(Start + 1, End);
+            return p;
+        }
+
+        /// <summary>Move the RIGHT divider one byte toward the record start: this field shrinks
+        /// from its right, the next field grows left.</summary>
+        public ChannelMappingRow? EndMinus()
+        {
+            if (!CanEndMinus) return null;
+            var n = NextField!;
+            n.SetSpan(n.Start - 1, n.End);
+            SetSpan(Start, End - 1);
+            return n;
+        }
+
+        /// <summary>Move the RIGHT divider one byte toward the record end: this field grows
+        /// right, the next field shrinks from its left.</summary>
+        public ChannelMappingRow? EndPlus()
+        {
+            if (!CanEndPlus) return null;
+            var n = NextField!;
+            n.SetSpan(n.Start + 1, n.End);
+            SetSpan(Start, End + 1);
+            return n;
+        }
+
+        /// <summary>Set the span and refresh the dependent UI state. Does NOT route through the
+        /// Start/End setters, so the per-property persist listener is not triggered — the
+        /// code-behind persists both sides of a divider move explicitly.</summary>
+        public void SetSpan(int start, int end)
+        {
+            Start = start;
+            End = end;
+            RaiseLayoutChanged();
+        }
+
+        // A span/endianness change can flip the encoding text, the BE/LE visibility, and every
+        // stepper guard (a neighbour's guards depend on this field's width) — re-raise the lot.
+        // Public so the code-behind can refresh sibling rows after a divider move ripples out.
+        public void RaiseLayoutChanged()
+        {
+            PropertyChanged?.Invoke(this, new PropertyChangedEventArgs(nameof(Start)));
+            PropertyChanged?.Invoke(this, new PropertyChangedEventArgs(nameof(End)));
+            PropertyChanged?.Invoke(this, new PropertyChangedEventArgs(nameof(Width)));
+            PropertyChanged?.Invoke(this, new PropertyChangedEventArgs(nameof(EncodingText)));
+            PropertyChanged?.Invoke(this, new PropertyChangedEventArgs(nameof(EndianApplies)));
+            PropertyChanged?.Invoke(this, new PropertyChangedEventArgs(nameof(CanSplit)));
+            PropertyChanged?.Invoke(this, new PropertyChangedEventArgs(nameof(CanStartMinus)));
+            PropertyChanged?.Invoke(this, new PropertyChangedEventArgs(nameof(CanStartPlus)));
+            PropertyChanged?.Invoke(this, new PropertyChangedEventArgs(nameof(CanEndMinus)));
+            PropertyChanged?.Invoke(this, new PropertyChangedEventArgs(nameof(CanEndPlus)));
+        }
 
         private double _inMin;
         public double InMin
@@ -64,6 +238,12 @@ namespace MozaPlugin.Devices.WheelUi
         }
 
         private string _simHubProperty = "";
+        /// <summary>
+        /// The persisted mapping string — a plain SimHub property path
+        /// (<c>DataCorePlugin.GameData.Rpms</c>) or a SimHub formula
+        /// (<c>[SpeedKmh] * 0.621</c>, or a <c>js:</c> JavaScript expression).
+        /// Source of truth; <see cref="Expression"/> is kept in sync both ways.
+        /// </summary>
         public string SimHubProperty
         {
             get => _simHubProperty;
@@ -72,28 +252,129 @@ namespace MozaPlugin.Devices.WheelUi
                 var v = (value ?? "").Trim();
                 if (_simHubProperty == v) return;
                 _simHubProperty = v;
+                // Keep the bound ExpressionValue in sync without re-firing back
+                // into us (the FormulaPicker mutates Expression; this is the
+                // reverse direction — Reset, repopulate, programmatic set).
+                if (_expression != null && !_syncingExpression)
+                {
+                    _syncingExpression = true;
+                    try { ApplyStoredToExpression(_expression, v); }
+                    finally { _syncingExpression = false; }
+                }
                 PropertyChanged?.Invoke(this, new PropertyChangedEventArgs(nameof(SimHubProperty)));
                 // Clear the live value so the next refresh repopulates from the
-                // new path and the user doesn't see a stale value matched
-                // against an unrelated property name.
+                // new path/formula and the user doesn't see a stale value matched
+                // against an unrelated source.
                 CurrentValueText = "";
             }
         }
 
-        /// <summary>
-        /// Master snapshot of every SimHub property name (set once by the populator
-        /// from <see cref="MozaPlugin.GetAllSimHubPropertyNames"/>). The inline
-        /// editor's ListBox does NOT bind to this directly — filter into
-        /// <see cref="FilteredProperties"/> on each EditFilter keystroke.
-        /// </summary>
+        // ── Advanced editing (SimHub formula dialog) ───────────────────────
+        // The ƒₓ button opens SimHub's BindingEditor against Engine + a working
+        // copy of Expression; on OK the code-behind calls ApplyEditedFormula,
+        // which serializes the result back into SimHubProperty (the persisted
+        // form) and fires the per-row persist listener. SimHubProperty stays the
+        // source of truth so persistence/back-compat are unchanged.
+
+        /// <summary>Shared SimHub formula engine (set by the row factory). Null if
+        /// engine construction failed; the ƒₓ button is then disabled.</summary>
+        public NCalcEngineBase? Engine { get; set; }
+
+        private ExpressionValue? _expression;
+        /// <summary>The mapping as a SimHub <see cref="ExpressionValue"/>, kept in
+        /// sync with <see cref="SimHubProperty"/>. A bare property path is wrapped
+        /// as <c>[path]</c> so the formula dialog opens on valid NCalc.</summary>
+        public ExpressionValue Expression
+        {
+            get
+            {
+                if (_expression == null) _expression = MakeExpression(_simHubProperty);
+                return _expression;
+            }
+        }
+
+        // Sync direction string -> Expression only; the dialog never mutates the
+        // row's Expression directly (it works on a clone), so no reverse listener
+        // is needed — the code-behind calls ApplyEditedFormula on OK.
+        private bool _syncingExpression;
+
+        /// <summary>Apply a formula chosen in the advanced dialog: set the bound
+        /// Expression in place (so the live object the next ƒₓ open reads is
+        /// current) and serialize it once into SimHubProperty (firing persistence).
+        /// A sole <c>[property]</c> is unwrapped to a bare path; JavaScript is
+        /// <c>js:</c>-prefixed.</summary>
+        public void ApplyEditedFormula(string? expression, bool useJavascript)
+        {
+            var ev = Expression;
+            _syncingExpression = true;
+            try
+            {
+                ev.UseJavascript = useJavascript;
+                ev.Expression = expression ?? "";
+            }
+            finally { _syncingExpression = false; }
+            SimHubProperty = SerializeExpression(ev);
+        }
+
+        // Build a fresh ExpressionValue from a stored mapping string.
+        private static ExpressionValue MakeExpression(string? stored)
+        {
+            var ev = new ExpressionValue();
+            ApplyStoredToExpression(ev, stored);
+            return ev;
+        }
+
+        // Mutate an existing ExpressionValue in place to match a stored string
+        // (the FormulaPicker holds a reference to this object, so we must not swap
+        // it). A bare property path is WRAPPED as [path] so the NCalc editor sees
+        // a valid single-property formula — existing mappings persisted before
+        // this feature are bare paths and would otherwise be invalid NCalc. A
+        // string that already looks like a formula (brackets/operators/js:) is
+        // used verbatim. UseJavascript's setter flips the interpreter for us.
+        private static void ApplyStoredToExpression(ExpressionValue ev, string? stored)
+        {
+            var s = (stored ?? "").Trim();
+            if (s.Length == 0) { ev.UseJavascript = false; ev.Expression = ""; return; }
+            if (s.StartsWith("js:", StringComparison.OrdinalIgnoreCase))
+            {
+                ev.UseJavascript = true;
+                ev.Expression = s.Substring(3);
+                return;
+            }
+            ev.UseJavascript = false;
+            ev.Expression = NCalcExpressionEvaluator.LooksLikeExpression(s) ? s : "[" + s + "]";
+        }
+
+        // Serialize an ExpressionValue back to the persisted string form. A sole
+        // [property] reference is UNWRAPPED to its bare path so existing mappings
+        // keep their plain stored form (and the resolver's fast GetPropertyValue
+        // path); a real formula ([a]+[b], functions, js:, …) is stored verbatim
+        // (js:-prefixed for JavaScript so MakeExpression restores the interpreter).
+        private static string SerializeExpression(ExpressionValue ev)
+        {
+            var expr = (ev.Expression ?? "").Trim();
+            if (expr.Length == 0) return "";
+            if (ev.UseJavascript) return "js:" + expr;
+            if (expr.Length >= 2 && expr[0] == '[' && expr[expr.Length - 1] == ']')
+            {
+                var inner = expr.Substring(1, expr.Length - 2);
+                if (inner.IndexOf('[') < 0 && inner.IndexOf(']') < 0
+                    && !NCalcExpressionEvaluator.LooksLikeExpression(inner))
+                    return inner;
+            }
+            return expr;
+        }
+
+        // ── Simple editor: property list (pencil) ──────────────────────────
+
+        /// <summary>Master snapshot of every SimHub property name (set once by the
+        /// row factory). The inline ListBox binds to <see cref="FilteredProperties"/>,
+        /// filtered from this on each <see cref="EditFilter"/> keystroke.</summary>
         public IReadOnlyList<string> AllProperties { get; set; } = KnownSimHubProperties.Paths;
 
         private IReadOnlyList<string> _filteredProperties = Array.Empty<string>();
-        /// <summary>
-        /// Live filtered subset of <see cref="AllProperties"/>. Bound to the
-        /// inline editor's ListBox.ItemsSource. Immutable-list swap on each
-        /// keystroke — Clear+Add would race a mid-click on a list item.
-        /// </summary>
+        /// <summary>Live filtered subset of <see cref="AllProperties"/>, bound to the
+        /// simple editor's ListBox. Immutable-list swap per keystroke.</summary>
         public IReadOnlyList<string> FilteredProperties
         {
             get => _filteredProperties;
@@ -116,14 +397,13 @@ namespace MozaPlugin.Devices.WheelUi
             }
         }
 
-        // ── Inline-editor state ────────────────────────────────────────
+        // ── Inline simple-editor state ─────────────────────────────────────
 
         private bool _isEditing;
-        /// <summary>
-        /// Drives the inline editor panel's visibility. Set to true via
-        /// <see cref="BeginEdit"/> (user clicked the pencil icon), back to
-        /// false via <see cref="CommitEdit"/> / <see cref="CancelEdit"/>.
-        /// </summary>
+        /// <summary>Drives the inline simple-editor panel's visibility: a searchable
+        /// property list (all rows) plus the FSR1/CM1 boundary/scale/bias steppers.
+        /// Toggled by the row's pencil via <see cref="BeginEdit"/> /
+        /// <see cref="CommitEdit"/> / <see cref="CancelEdit"/>.</summary>
         public bool IsEditing
         {
             get => _isEditing;
@@ -136,13 +416,8 @@ namespace MozaPlugin.Devices.WheelUi
         }
 
         private string _editFilter = "";
-        /// <summary>
-        /// TextBox-backed filter inside the inline editor. Empty string = show
-        /// the full property list (the user has explicitly opened the editor,
-        /// so there's no "min 3 chars" gate). Substring + ordinal-ignore-case
-        /// match against <see cref="AllProperties"/>, capped at
-        /// <c>MaxFilteredResults</c>.
-        /// </summary>
+        /// <summary>Filter text inside the simple editor; substring, ordinal-ignore-case,
+        /// capped at <c>MaxFilteredResults</c>. Empty = full list.</summary>
         public string EditFilter
         {
             get => _editFilter;
@@ -157,11 +432,8 @@ namespace MozaPlugin.Devices.WheelUi
         }
 
         private string _pendingProperty = "";
-        /// <summary>
-        /// ListBox-backed selection inside the inline editor. Two-way bound
-        /// to ListBox.SelectedItem. Applied to <see cref="SimHubProperty"/>
-        /// on <see cref="CommitEdit"/>; discarded on <see cref="CancelEdit"/>.
-        /// </summary>
+        /// <summary>ListBox selection inside the simple editor. Applied to
+        /// <see cref="SimHubProperty"/> on <see cref="CommitEdit"/>.</summary>
         public string PendingProperty
         {
             get => _pendingProperty;
@@ -174,11 +446,8 @@ namespace MozaPlugin.Devices.WheelUi
             }
         }
 
-        /// <summary>
-        /// Open the inline editor: seed the filter empty (full list visible)
-        /// and the pending selection to the row's current SimHub property so
-        /// the user sees their current choice highlighted in the list.
-        /// </summary>
+        /// <summary>Open the simple editor: empty filter (full list) + pending seeded
+        /// to the current mapping so the user's choice is highlighted.</summary>
         public void BeginEdit()
         {
             _editFilter = "";
@@ -188,21 +457,15 @@ namespace MozaPlugin.Devices.WheelUi
             IsEditing = true;
         }
 
-        /// <summary>
-        /// Apply the pending selection to <see cref="SimHubProperty"/> and
-        /// collapse the editor. The SimHubProperty setter raises
-        /// PropertyChanged, which the populator's listener wires through to
-        /// <see cref="MozaPlugin.SetChannelMapping"/> for persistence.
-        /// </summary>
+        /// <summary>Apply the picked property to <see cref="SimHubProperty"/> (firing
+        /// persistence) and collapse the editor.</summary>
         public void CommitEdit()
         {
             SimHubProperty = PendingProperty;
             IsEditing = false;
         }
 
-        /// <summary>
-        /// Discard the pending selection and collapse the editor.
-        /// </summary>
+        /// <summary>Discard the pending selection and collapse the editor.</summary>
         public void CancelEdit()
         {
             PendingProperty = SimHubProperty;
@@ -219,10 +482,7 @@ namespace MozaPlugin.Devices.WheelUi
                 return;
             }
 
-            // Empty filter = full list (capped). The user explicitly opened
-            // the editor so a flood of options is the expected starting point.
             bool noFilter = string.IsNullOrEmpty(query);
-
             var seen = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
             var list = new List<string>(Math.Min(src.Count, MaxFilteredResults));
             for (int i = 0; i < src.Count; i++)
@@ -234,7 +494,6 @@ namespace MozaPlugin.Devices.WheelUi
                 list.Add(p);
                 if (list.Count >= MaxFilteredResults) break;
             }
-
             FilteredProperties = list;
         }
 
