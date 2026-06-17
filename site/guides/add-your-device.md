@@ -16,7 +16,7 @@ Open the **AZOM** panel. If your wheel isn't registered yet, a banner appears at
 naming the exact device to add — here, *MOZA CS Pro* — and the path to add it:
 **Devices › Add device**.
 
-![The AZOM panel showing a banner prompting you to add the MOZA CS Pro device](/docs/AddNewDevice.png)
+![The AZOM panel showing a banner prompting you to add the MOZA CS Pro device](/docs/images/AddNewDevice.png)
 
 ## 2 · Open Devices and add
 
@@ -25,7 +25,7 @@ the **Pick a supported device** dialog. Your connected MOZA hardware shows up at
 under **Devices found on your system** — select it there rather than hunting through the
 full manual list.
 
-![SimHub's device picker with the MOZA CS Pro listed under devices found on your system](/docs/PickDevice.png)
+![SimHub's device picker with the MOZA CS Pro listed under devices found on your system](/docs/images/PickDevice.png)
 
 Choose your device and click **Ok**. Your MOZA wheel is now a first-class SimHub
 device — ready for the LED effects pipeline, LCD dashboard telemetry and onboard lighting.

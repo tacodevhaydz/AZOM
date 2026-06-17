@@ -19,7 +19,7 @@ AZOM mappings you set up survive a wheel change instead of being redone per whee
 
 Control mapper is an optional SimHub feature. Turn it on from **Add/remove features**:
 
-![SimHub's enabled-features dialog with Control mapper switched on](/docs/ControlMapperEnable.png)
+![SimHub's enabled-features dialog with Control mapper switched on](/docs/images/ControlMapperEnable.png)
 
 ## 2 · Set the output and check your sources
 
@@ -29,7 +29,7 @@ Once enabled, the **Control mapper** page is where you set the output mode and c
 source controllers are recognised — for example a *MOZA R5 Base - CS Pro* showing as
 **Connected**.
 
-![The Control mapper page showing the target virtual controller and connected source controller](/docs/ControlMapperOption.png)
+![The Control mapper page showing the target virtual controller and connected source controller](/docs/images/ControlMapperOption.png)
 
 With your wheels feeding one virtual controller, the AZOM mappings from
 [Controls &amp; Actions](/guides/controls-and-actions/) keep working whichever wheel is

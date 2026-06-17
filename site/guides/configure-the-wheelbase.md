@@ -10,7 +10,7 @@ The **Base** tab is mission control for your wheelbase. Everything Pithouse expo
 force feedback lives here, plus a few extras, and every value is stored per game through
 SimHub's profile system. Here's what each section does.
 
-![The AZOM Base tab inside SimHub showing steering angle, performance output, core settings and the FFB curves](/docs/BasePage.png)
+![The AZOM Base tab inside SimHub showing steering angle, performance output, core settings and the FFB curves](/docs/images/BasePage.png)
 
 ## Status strip
 

@@ -13,7 +13,7 @@ the official MOZA SDK. AZOM ships an embedded SDK server to provide all of the s
 
 Open the **SDK** tab in the AZOM panel.
 
-![The AZOM SDK tab showing the CoAP server and UDP control settings](/docs/SDK.png)
+![The AZOM SDK tab showing the CoAP server and UDP control settings](/docs/images/SDK.png)
 
 ### CoAP SDK server
 

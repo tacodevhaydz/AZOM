@@ -9,7 +9,7 @@ order: 12
 The **About** tab in the AZOM panel carries the version, project links, the update notifier
 and the diagnostics tools — worth knowing for staying current and for reporting problems.
 
-![The AZOM About tab showing version, update channel and serial traffic capture](/docs/AboutPage.png)
+![The AZOM About tab showing version, update channel and serial traffic capture](/docs/images/AboutPage.png)
 
 ## Updates
 

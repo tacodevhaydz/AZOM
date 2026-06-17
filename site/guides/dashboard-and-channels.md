@@ -16,7 +16,7 @@ Open your wheel under **Devices**, go to **MOZA Wheel › Dashboard**, and switc
 dashboard telemetry** on. Choose a **Dashboard** layout from the dropdown, and use **Send
 test pattern** to confirm the screen is receiving data before you go racing.
 
-![The Dashboard tab showing telemetry toggle, layout picker, display settings and channel mappings](/docs/WheelDashboard.png)
+![The Dashboard tab showing telemetry toggle, layout picker, display settings and channel mappings](/docs/images/WheelDashboard.png)
 
 The **Display** panel sets screen **Brightness** and **Standby Time** — how long before
 the LCD sleeps when idle.
@@ -27,7 +27,7 @@ Each layout exposes a set of named **Channels** (Gear, SpeedKmh, CurrentLapTime,
 tyre pressures…), each already bound to a sensible SimHub property. To change one, click
 the **pencil** on its row and search the full SimHub property tree.
 
-![The channel mapping editor with a property search open](/docs/WheelChannelMapping.png)
+![The channel mapping editor with a property search open](/docs/images/WheelChannelMapping.png)
 
 Type to filter — for example `gap` surfaces every gap-to-leader and gap-to-player
 property — pick one, and click **Ok**. The **Current value** column updates live, so you
