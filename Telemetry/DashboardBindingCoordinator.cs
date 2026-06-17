@@ -178,14 +178,43 @@ namespace MozaPlugin.Telemetry
                 ? _plugin.PreferredStandaloneDashboardTargetDeviceId
                 : MozaProtocol.DeviceWheel;
 
-            // Point the sender at the connection that owns the screen: the
-            // dedicated dashboard connection for a standalone-USB CM2, else the
-            // wheelbase connection (wheel-hosted 0x17 / base-bridged CM2 0x12).
-            // Rebinding requires Idle; if the sender is mid-session, defer to the
-            // next apply (a connection swap mid-stream isn't safe anyway).
-            var desired = _plugin.DashboardUsbConnected
+            // Point the sender at the connection that owns the screen it drives:
+            // the dedicated dashboard pipe ONLY when the MAIN sender is itself the
+            // CM2's driver (standaloneDashboard) AND that CM2 is on its own USB
+            // cable; otherwise the wheelbase connection (wheel-hosted 0x17, or a
+            // base-bridged CM2 at 0x14). Tying this to standaloneDashboard — not to
+            // DashboardUsbConnected alone — keeps the main sender on the wheelbase
+            // when the wheel has its own screen and a USB CM2 is ALSO present (the
+            // dedicated _cm2Sender drives that CM2); binding to DashboardConnection
+            // there stole the main sender off the wheel. Rebinding requires Idle; if
+            // the sender is mid-session, defer to the next apply (a connection swap
+            // mid-stream isn't safe anyway).
+            var desired = (standaloneDashboard && _plugin.DashboardUsbConnected)
                 ? _plugin.DashboardConnection
                 : _plugin.Connection;
+            // If the sender is mid-session on the WRONG connection, a clean Stop is
+            // the only safe way to move it (a live swap mid-stream isn't safe). The
+            // canonical trigger is the reverse-order race: a USB CM2 is detected and
+            // binds the main sender BEFORE the wheel model resolves (WheelHasOwnScreen
+            // still false → standaloneDashboard true → desired = the CM2 pipe). Once
+            // the wheel turns out to have its own screen, the main sender must move
+            // back to the wheelbase. Stop() flips the sender to Idle synchronously so
+            // the Rebind below lands this same pass; StartTelemetryIfReady (poll/detect
+            // path) then restarts it on the right pipe. Without this, the
+            // deferred-until-idle rebind never fired for a stably-Active sender,
+            // leaving it stuck on the CM2 while the dedicated _cm2Sender also drove
+            // that CM2 — the "CM2 works, wheel doesn't" half of the dual-USB race.
+            if (desired != null
+                && !ReferenceEquals(desired, sender.ConnectionRef)
+                && !sender.StateIsIdle)
+            {
+                MozaLog.Info(
+                    "[AZOM] Main telemetry sender is on the wrong connection " +
+                    $"({sender.ConnectionRef?.CaptureLabel}); stopping to rebind to " +
+                    $"{desired.CaptureLabel}");
+                sender.Stop();
+                Interlocked.Exchange(ref _plugin._telemetryStartRequested, 0);
+            }
             if (desired != null && sender.StateIsIdle)
                 sender.Rebind(desired);
 

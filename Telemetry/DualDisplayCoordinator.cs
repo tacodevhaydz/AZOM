@@ -52,7 +52,7 @@ namespace MozaPlugin.Telemetry
         /// </summary>
         internal void EnsureCm2Pipeline()
         {
-            bool wheelHasOwnScreen = _plugin.IsFsr1DisplayWheel || (_plugin.WheelModelInfo?.HasDisplay == true);
+            bool wheelHasOwnScreen = _plugin.WheelHasOwnScreen;
             bool busCm2 = _detectionState.DashDetected && !_plugin.DashboardUsbConnected
                           && _plugin.Connection?.IsConnected == true;
             bool usbCm2 = _plugin.DashboardUsbConnected;

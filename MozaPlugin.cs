@@ -542,15 +542,43 @@ namespace MozaPlugin
             && !IsFsr1DisplayWheel;
 
         /// <summary>
+        /// True when the connected wheel renders its OWN dashboard screen — an
+        /// FSR V1 (group-0x42 driver) or any tier-def display wheel
+        /// (<see cref="Devices.WheelModelInfo.HasDisplay"/>). In that case the MAIN
+        /// tier-def sender drives the wheel screen and a CM2 (bus or USB) is driven
+        /// by the dedicated <see cref="_cm2Sender"/> lane; the MAIN sender must NOT
+        /// be retargeted to the CM2. When false (screenless wheel, or no wheel at
+        /// all) a CM2 is the only display, so the MAIN sender drives it.
+        ///
+        /// This is the single source of truth shared by
+        /// <see cref="ShouldUseStandaloneDashboardTarget"/> (which keeps the main
+        /// sender off a USB CM2) and
+        /// <see cref="Telemetry.DualDisplayCoordinator.EnsureCm2Pipeline"/> (which
+        /// creates <see cref="_cm2Sender"/>). They MUST agree: keying both off this
+        /// one predicate guarantees exactly one sender drives the CM2 — a divergence
+        /// would let both the main sender and the CM2 sender open sessions on dev
+        /// 0x12 of the same connection and collide.
+        /// </summary>
+        internal bool WheelHasOwnScreen =>
+            IsFsr1DisplayWheel || (WheelModelInfo?.HasDisplay == true);
+
+        /// <summary>
         /// True iff screen telemetry must target dev=0x12 (CM2 bridge/main)
         /// rather than a wheel-hosted display at dev=0x17 — a standalone-USB CM2
         /// or a CM2 wired through the wheelbase (<see cref="IsCm2BehindBaseCandidate"/>).
         /// </summary>
         internal bool ShouldUseStandaloneDashboardTarget()
         {
-            // Standalone-USB CM2 on its own connection drives the dashboard
-            // target even when a wheel is also present on the base.
-            if (DashboardUsbConnected) return true;
+            // A standalone-USB CM2 retargets the MAIN sender to dev=0x12 ONLY when
+            // no wheel screen needs it — a screenless wheel, or no wheel at all.
+            // When the wheel has its OWN screen (FSR1/FSR2/tier-def display) the
+            // MAIN sender stays on the wheel (dev=0x17) and the dedicated _cm2Sender
+            // drives the CM2 (DualDisplayCoordinator.EnsureCm2Pipeline). Without this
+            // guard a USB CM2 hijacked the main sender away from the wheel: the
+            // wheel's dashboard UI then showed the CM2's channel catalog and the
+            // wheel screen got no data (FSR2 + USB CM2 bundle 2026-06-17). Mirrors
+            // the screenless guard already baked into IsCm2BehindBaseCandidate.
+            if (DashboardUsbConnected && !WheelHasOwnScreen) return true;
             // CM2 bridged through the base bus (screenless wheel) → dev 0x14.
             if (IsCm2BehindBaseCandidate) return true;
             return false;
@@ -2627,7 +2655,7 @@ namespace MozaPlugin
         /// alone left a screenless-wheel + base-CM2 setup with no dashboard
         /// dropdown (dedicated sender null).</summary>
         internal TelemetrySender? ActiveCm2Sender =>
-            (IsFsr1DisplayWheel || (WheelModelInfo?.HasDisplay == true)) ? _cm2Sender : _telemetrySender;
+            WheelHasOwnScreen ? _cm2Sender : _telemetrySender;
 
         /// <summary>The CM2's selected dashboard name (independent of the wheel's).</summary>
         internal string ActiveCm2DashboardName

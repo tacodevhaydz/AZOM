@@ -192,6 +192,20 @@ namespace MozaPlugin.UI
             sb.AppendLine($"DashDetected:      {plugin?.IsDashDetected ?? false}");
             sb.AppendLine($"Standalone:        {standalone}");
             sb.Append    ($"Target dev_id:     {targetDesc}");
+
+            // Dedicated CM2 lane (second sender) — present only when the wheel has
+            // its own screen AND a CM2 is also attached (DualDisplayCoordinator).
+            // Surfacing it here makes the dual-display split observable: the MAIN
+            // line above stays on the wheel (0x17), this line drives the CM2 (0x12
+            // USB / 0x14 bus). When both are absent the line is omitted.
+            var cm2 = plugin?._cm2Sender;
+            if (cm2 != null)
+            {
+                sb.AppendLine();
+                sb.Append(
+                    $"CM2 dash lane:     {cm2.TargetDescription} on {cm2.ConnectionRef?.CaptureLabel} pipe " +
+                    $"(frames={cm2.FramesSent}, {cm2.Phase})");
+            }
             return sb.ToString();
         }
 
