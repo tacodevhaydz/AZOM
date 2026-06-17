@@ -3,7 +3,7 @@ layout: guide.njk
 title: Updates & Diagnostics
 description: Keep AZOM current from the right release channel, and capture serial traffic when you need to file a bug.
 tags: guide
-order: 12
+order: 13
 ---
 
 The **About** tab in the AZOM panel carries the version, project links, the update notifier

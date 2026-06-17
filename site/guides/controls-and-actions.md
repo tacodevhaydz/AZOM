@@ -3,7 +3,7 @@ layout: guide.njk
 title: Controls & Actions
 description: Bind wheel buttons to AZOM actions — FFB strength, rotation, brightness, dashboard switching and more.
 tags: guide
-order: 9
+order: 10
 ---
 
 AZOM exposes 40+ bindable actions — FFB strength up/down, rotation, display brightness,

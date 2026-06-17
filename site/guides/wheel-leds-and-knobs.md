@@ -21,7 +21,8 @@ its own effects profile that you can edit, import, or manage.
 
 This is standard SimHub LED territory: drop RPM strips, flag colours, limiter animations
 and status effects onto each group. For genuinely advanced, telemetry-driven animation,
-pair it with [ATSR-EVO](https://github.com/ATSR-Alex/ATSR-Hub-EVO/).
+pair it with ATSR-EVO — see [Advanced LEDs with ATSR](/guides/atsr-led-profiles/) for the
+ready-made MOZA profiles and import steps.
 
 > **Combined vs Individual.** The **Individual LEDs profiles** mode lets you draw across
 > the whole device for idle animations. *Combined* layers it on top of your regular

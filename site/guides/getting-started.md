@@ -34,7 +34,8 @@ walkthrough if you want it.
    live steering angle, temperatures and FFB settings populate.
 
 For advanced LED work, the [ATSR-EVO](https://github.com/ATSR-Alex/ATSR-Hub-EVO/)
-integration unlocks sophisticated telemetry-driven effects.
+integration unlocks sophisticated telemetry-driven effects — see
+[Advanced LEDs with ATSR](/guides/atsr-led-profiles/).
 
 > **Use at your own risk.** This software drives force-feedback hardware capable of high
 > torque. It is provided "as is", without warranty.

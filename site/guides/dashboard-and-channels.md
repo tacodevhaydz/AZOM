@@ -3,7 +3,7 @@ layout: guide.njk
 title: Dashboard & Channels
 description: Stream live telemetry to your wheel's LCD and bind any SimHub property to each display channel.
 tags: guide
-order: 8
+order: 9
 ---
 
 If your wheel has an LCD, AZOM can push live race data to it through MOZA's binary

@@ -3,7 +3,7 @@ layout: guide.njk
 title: Control Mapper
 description: Make several wheels or button boxes act as one virtual controller so your AZOM mappings survive a wheel swap.
 tags: guide
-order: 10
+order: 11
 ---
 
 [Controls &amp; Actions](/guides/controls-and-actions/) maps each wheel's buttons

@@ -3,7 +3,7 @@ layout: guide.njk
 title: SDK & iRacing
 description: Enable the MOZA SDK server for iRacing and 360 Hz mode, plus update channels and diagnostics.
 tags: guide
-order: 11
+order: 12
 ---
 
 Some titles — **iRacing** in particular — and any game running MOZA's **360 Hz** mode need
