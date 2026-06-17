@@ -220,6 +220,27 @@ namespace MozaPlugin.Telemetry
 
             sender.StandaloneDashboardMode = standaloneDashboard;
             sender.TargetDeviceId = targetDeviceId;
+            // Channel-mapping resolution identity. When the MAIN sender drives a
+            // standalone / base-bridged CM2 (no wheel screen — ShouldUseStandalone-
+            // DashboardTarget ⟹ !WheelHasOwnScreen, so ActiveCm2Sender is THIS
+            // sender), its catalog synth must resolve user channel mappings under
+            // the CM2's own page GUID + fixed key — the exact identity the dash UI
+            // saves them under and the one DualDisplayCoordinator sets on the
+            // dedicated _cm2Sender for the dual-screen case. Without this the main
+            // sender fell back to the wheel page GUID (null / screenless wheel's)
+            // and never loaded saved CM2 mappings on cold start ("CM2 forgets
+            // mappings on load"). A normal wheel clears these so wheel-page
+            // resolution applies.
+            if (standaloneDashboard)
+            {
+                sender.MappingPageGuid = MozaPlugin.Cm2PageGuid;
+                sender.MappingDashKeys = new[] { MozaPlugin.Cm2DashKey };
+            }
+            else
+            {
+                sender.MappingPageGuid = null;
+                sender.MappingDashKeys = null;
+            }
             // The main sender always uses lane base 0. Its strict-inbound / shares-
             // connection flags (set when a co-resident _cm2Sender shares the bus) are
             // owned by MozaPlugin.EnsureCm2Pipeline, not reset here.
