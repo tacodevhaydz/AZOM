@@ -133,7 +133,18 @@ namespace MozaPlugin.Telemetry
                 _plugin.TelemetrySender.StrictInboundFilter = wheelTierDefOnBus;
             }
 
-            if (cm2.FramesSent == 0)
+            // Only kick a FRESH cold-start when the sender is genuinely Idle.
+            // FramesSent stays 0 throughout the (multi-second) cold-start
+            // (Starting → Preamble → Active-before-first-value-frame), so gating on
+            // FramesSent==0 alone re-issued Start() on every EnsureCm2Pipeline call
+            // mid-cold-start — each one superseding the in-progress start (StartInner
+            // Stop). On a CM2 bridged behind a DISPLAY wheel (CS Pro + bus CM2) the two
+            // senders share the wheelbase pipe, so the wheel sender's restarts pump
+            // ApplyTelemetrySettings → EnsureCm2Pipeline frequently, and the CM2 sender
+            // never finished cold-start → stuck Idle, CM2 dark (bundle 2026-06-17). The
+            // StateIsIdle guard lets the cold-start run to completion; a sender that's
+            // Starting/Preamble/Active is left alone.
+            if (cm2.FramesSent == 0 && cm2.StateIsIdle)
             {
                 // Fresh start: allow the saved-dashboard re-assert to fire once the
                 // CM2 advertises its dashboard list (PollStatus → TickCm2DashboardReassert).
