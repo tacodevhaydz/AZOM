@@ -604,4 +604,6 @@ Id: {2}</value></data>
   <data name="Section_Ab9InputMode" xml:space="preserve"><value>Λειτουργία εισόδου</value></data>
   <data name="Option_Ab9Shifter" xml:space="preserve"><value>Λεβιές ταχυτήτων</value></data>
   <data name="Option_Ab9FlightSim" xml:space="preserve"><value>Προσομοίωση πτήσης</value></data>
+  <data name="SliderLabel_KeepaliveTimeout" xml:space="preserve"><value>Χρονικό όριο Keepalive</value></data>
+  <data name="Hint_KeepaliveTimeout" xml:space="preserve"><value>Πόση ώρα θα ανανεώνονται τα LED μετά τη διακοπή τηλεμετρίας πριν το τιμόνι μπει σε αδράνεια. 0 = άμεση διακοπή.</value></data>
 </root>

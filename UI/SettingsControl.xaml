@@ -2126,6 +2126,21 @@
                                 </StackPanel>
                                 <TextBlock Text="{x:Static res:Strings.Hint_AlwaysResendBitmask}"
                                            Style="{StaticResource MutedHintText}" Margin="0,4,0,0" TextWrapping="Wrap"/>
+                                <Grid Margin="0,8">
+                                    <Grid.ColumnDefinitions>
+                                        <ColumnDefinition Width="Auto"/>
+                                        <ColumnDefinition Width="*"/>
+                                        <ColumnDefinition Width="Auto"/>
+                                    </Grid.ColumnDefinitions>
+                                    <TextBlock Grid.Column="0" Text="{x:Static res:Strings.SliderLabel_KeepaliveTimeout}" Style="{StaticResource SliderLabel}"/>
+                                    <Slider Grid.Column="1" x:Name="KeepaliveTimeoutSlider" Style="{StaticResource SettingSlider}" Minimum="0" Maximum="300" TickFrequency="5" SmallChange="1" LargeChange="15" IsSnapToTickEnabled="True" ValueChanged="KeepaliveTimeoutSlider_ValueChanged"/>
+                                    <TextBox Grid.Column="2" x:Name="KeepaliveTimeoutValue" Style="{StaticResource SliderValueEditBox}"
+                                             Tag="{Binding ElementName=KeepaliveTimeoutSlider}"
+                                             KeyDown="SliderValueBox_KeyDown" LostFocus="SliderValueBox_LostFocus"
+                                             Text="45 s"/>
+                                </Grid>
+                                <TextBlock Text="{x:Static res:Strings.Hint_KeepaliveTimeout}"
+                                           Style="{StaticResource MutedHintText}" Margin="0,4,0,0" TextWrapping="Wrap"/>
                             </StackPanel>
                         </ctrl:SectionCard>
 

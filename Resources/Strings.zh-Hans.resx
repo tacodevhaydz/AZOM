@@ -605,4 +605,6 @@ Id: {2}</value></data>
   <data name="Section_Ab9InputMode" xml:space="preserve"><value>输入模式</value></data>
   <data name="Option_Ab9Shifter" xml:space="preserve"><value>换挡器</value></data>
   <data name="Option_Ab9FlightSim" xml:space="preserve"><value>飞行模拟</value></data>
+  <data name="SliderLabel_KeepaliveTimeout" xml:space="preserve"><value>保活超时</value></data>
+  <data name="Hint_KeepaliveTimeout" xml:space="preserve"><value>遥测停止后继续刷新 LED 多久，方向盘才能进入休眠。0 = 立即停止。</value></data>
 </root>

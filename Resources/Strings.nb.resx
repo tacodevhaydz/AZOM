@@ -610,4 +610,6 @@ Id: {2}</value></data>
   <data name="Section_Ab9InputMode" xml:space="preserve"><value>Inndatamodus</value></data>
   <data name="Option_Ab9Shifter" xml:space="preserve"><value>Girspak</value></data>
   <data name="Option_Ab9FlightSim" xml:space="preserve"><value>Flysimulering</value></data>
+  <data name="SliderLabel_KeepaliveTimeout" xml:space="preserve"><value>Keepalive-tidsavbrudd</value></data>
+  <data name="Hint_KeepaliveTimeout" xml:space="preserve"><value>Hvor lenge LED-ene oppdateres etter at telemetrien stopper før rattet kan gå i hvilemodus. 0 = stopp umiddelbart.</value></data>
 </root>

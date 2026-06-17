@@ -604,4 +604,6 @@ Id: {2}</value></data>
   <data name="Section_Ab9InputMode" xml:space="preserve"><value>입력 모드</value></data>
   <data name="Option_Ab9Shifter" xml:space="preserve"><value>시프터</value></data>
   <data name="Option_Ab9FlightSim" xml:space="preserve"><value>비행 시뮬레이션</value></data>
+  <data name="SliderLabel_KeepaliveTimeout" xml:space="preserve"><value>킵얼라이브 시간 제한</value></data>
+  <data name="Hint_KeepaliveTimeout" xml:space="preserve"><value>텔레메트리가 멈춘 후 휠이 절전 모드로 들어가기 전까지 LED를 새로 고치는 시간입니다. 0 = 즉시 중지.</value></data>
 </root>

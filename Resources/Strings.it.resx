@@ -608,4 +608,6 @@ Id: {2}</value></data>
   <data name="Section_Ab9InputMode" xml:space="preserve"><value>Modalità di ingresso</value></data>
   <data name="Option_Ab9Shifter" xml:space="preserve"><value>Cambio</value></data>
   <data name="Option_Ab9FlightSim" xml:space="preserve"><value>Simulazione di volo</value></data>
+  <data name="SliderLabel_KeepaliveTimeout" xml:space="preserve"><value>Timeout keepalive</value></data>
+  <data name="Hint_KeepaliveTimeout" xml:space="preserve"><value>Per quanto tempo continuare ad aggiornare i LED dopo l'arresto della telemetria prima che il volante possa andare in sospensione. 0 = arresta subito.</value></data>
 </root>

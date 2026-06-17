@@ -605,4 +605,6 @@ Id: {2}</value></data>
   <data name="Section_Ab9InputMode" xml:space="preserve"><value>Chế độ nhập</value></data>
   <data name="Option_Ab9Shifter" xml:space="preserve"><value>Cần số</value></data>
   <data name="Option_Ab9FlightSim" xml:space="preserve"><value>Mô phỏng bay</value></data>
+  <data name="SliderLabel_KeepaliveTimeout" xml:space="preserve"><value>Thời gian chờ keepalive</value></data>
+  <data name="Hint_KeepaliveTimeout" xml:space="preserve"><value>Thời gian tiếp tục làm mới đèn LED sau khi telemetry dừng trước khi vô-lăng có thể ngủ. 0 = dừng ngay.</value></data>
 </root>

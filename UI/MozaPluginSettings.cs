@@ -165,6 +165,11 @@ namespace MozaPlugin
         // Some ES wheels need this to stay in telemetry mode.
         public bool WheelKeepalive { get; set; } = true;
 
+        // How long (seconds) to keep re-sending the last LED frame after the LEDs go
+        // idle before pausing, so the wheel/dash can enter its own idle/sleep mode.
+        // 0 = pause immediately. Applies to both the wheel and dash LED keepalives.
+        public int WheelKeepaliveTimeoutSec { get; set; } = 45;
+
         // When true, always resend the LED bitmask alongside color updates even if the bitmask
         // value hasn't changed. Fixes wheels that don't pick up new colors without a bitmask write.
         public bool AlwaysResendBitmask { get; set; } = false;

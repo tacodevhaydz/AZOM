@@ -78,6 +78,9 @@ namespace MozaPlugin
                 AutoApplyProfileCheck.IsChecked = plugin.Settings.AutoApplyProfileOnLaunch;
                 LimitWheelUpdatesCheck.IsChecked = plugin.Settings.LimitWheelUpdates;
                 AlwaysResendBitmaskCheck.IsChecked = plugin.Settings.AlwaysResendBitmask;
+                int kaSec = plugin.Settings.WheelKeepaliveTimeoutSec;
+                KeepaliveTimeoutSlider.Value = Math.Max(KeepaliveTimeoutSlider.Minimum, Math.Min(KeepaliveTimeoutSlider.Maximum, kaSec));
+                KeepaliveTimeoutValue.Text = $"{kaSec} s";
                 // Gearshift coalescing controls (GearshiftVibrateOnNeutralCheck,
                 // GearshiftDebounceSlider) are profile-sourced — populated by
                 // RefreshBaseTab on every 500 ms tick so a profile switch with
@@ -1472,6 +1475,15 @@ namespace MozaPlugin
         {
             if (_suppressEvents) return;
             _plugin.Settings.AlwaysResendBitmask = AlwaysResendBitmaskCheck.IsChecked == true;
+            _plugin.SaveSettings();
+        }
+
+        private void KeepaliveTimeoutSlider_ValueChanged(object sender, RoutedPropertyChangedEventArgs<double> e)
+        {
+            if (_suppressEvents) return;
+            int sec = (int)Math.Round(e.NewValue);
+            KeepaliveTimeoutValue.Text = $"{sec} s";
+            _plugin.Settings.WheelKeepaliveTimeoutSec = sec;
             _plugin.SaveSettings();
         }
 

@@ -256,6 +256,8 @@ namespace MozaPlugin.Resources
         public static string Hint_OnlySendLedWhenChanged => Get("Hint_OnlySendLedWhenChanged");
         public static string SliderLabel_AlwaysResendBitmask => Get("SliderLabel_AlwaysResendBitmask");
         public static string Hint_AlwaysResendBitmask => Get("Hint_AlwaysResendBitmask");
+        public static string SliderLabel_KeepaliveTimeout => Get("SliderLabel_KeepaliveTimeout");
+        public static string Hint_KeepaliveTimeout => Get("Hint_KeepaliveTimeout");
         public static string Section_UsbDetection => Get("Section_UsbDetection");
         public static string SliderLabel_DisableSerialProbe => Get("SliderLabel_DisableSerialProbe");
         public static string Hint_DisableSerialProbe => Get("Hint_DisableSerialProbe");

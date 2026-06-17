@@ -605,4 +605,6 @@ Id: {2}</value></data>
   <data name="Section_Ab9InputMode" xml:space="preserve"><value>Режим ввода</value></data>
   <data name="Option_Ab9Shifter" xml:space="preserve"><value>Коробка передач</value></data>
   <data name="Option_Ab9FlightSim" xml:space="preserve"><value>Авиасимулятор</value></data>
+  <data name="SliderLabel_KeepaliveTimeout" xml:space="preserve"><value>Тайм-аут keepalive</value></data>
+  <data name="Hint_KeepaliveTimeout" xml:space="preserve"><value>Как долго обновлять светодиоды после остановки телеметрии, прежде чем руль перейдёт в спящий режим. 0 = остановить сразу.</value></data>
 </root>

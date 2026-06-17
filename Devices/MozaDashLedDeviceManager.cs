@@ -215,7 +215,8 @@ namespace MozaPlugin.Devices
                 }
                 bool bitmaskChanged = bitmask != _lastBitmask;
                 if (bitmask != 0) _lastLitUtc = now;
-                bool withinHold = (now - _lastLitUtc).TotalSeconds < KeepaliveHoldSeconds;
+                int holdSec = plugin.Settings?.WheelKeepaliveTimeoutSec ?? (int)KeepaliveHoldSeconds;
+                bool withinHold = (now - _lastLitUtc).TotalSeconds < holdSec;
                 bool keepaliveDue = (now - _lastSendTime).TotalSeconds >= KeepaliveIntervalSeconds;
                 // Resend on change always; hold the keepalive / always-resend for
                 // KeepaliveHoldSeconds after the bar last had a lit bit, then pause.
