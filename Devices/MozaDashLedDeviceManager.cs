@@ -218,12 +218,15 @@ namespace MozaPlugin.Devices
                 int holdSec = plugin.Settings?.WheelKeepaliveTimeoutSec ?? (int)KeepaliveHoldSeconds;
                 bool withinHold = (now - _lastLitUtc).TotalSeconds < holdSec;
                 bool keepaliveDue = (now - _lastSendTime).TotalSeconds >= KeepaliveIntervalSeconds;
-                // Resend on change always; hold the keepalive / always-resend for
-                // KeepaliveHoldSeconds after the bar last had a lit bit, then pause.
-                // A 1 Hz (or per-frame, under AlwaysResendBitmask) all-off resend
-                // pins the dash in live-render mode and blocks its idle/sleep — the
-                // same fix applied to the wheel keepalive.
-                if (bitmaskChanged || (withinHold && (alwaysResend || keepaliveDue)))
+                // While a game is actively feeding telemetry, NEVER pause the keepalive —
+                // the dash must stay live for the whole session and only idle once the
+                // game is closed. Otherwise resend on change always, and hold the
+                // keepalive / always-resend for holdSec after the bar last had a lit bit,
+                // then pause. A 1 Hz (or per-frame, under AlwaysResendBitmask) all-off
+                // resend pins the dash in live-render mode and blocks its idle/sleep —
+                // the same fix applied to the wheel keepalive.
+                bool gameActive = plugin.IsGameActive;
+                if (bitmaskChanged || ((gameActive || withinHold) && (alwaysResend || keepaliveDue)))
                 {
                     _lastBitmask = bitmask;
                     _lastSendTime = now;

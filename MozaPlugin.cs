@@ -58,6 +58,21 @@ namespace MozaPlugin
         private long _autoStandbyLastActivityTicks; // 0 until first reconcile (lazy baseline)
         private volatile int _autoStandbyApplied = -1; // -1 unknown / 0 active / 1 standby
         private const long AutoStandbyFeedStaleMs = 3000;
+
+        // True while a game is actively feeding telemetry: a fresh DataUpdate (within
+        // AutoStandbyFeedStaleMs) AND GameRunning. DataUpdate goes quiet when no game
+        // runs, so a stale feed means no game even if the last GameRunning we saw was
+        // true. GameRunning stays true through menus/pauses, so this spans the whole
+        // session. The LED keepalive reads this to never let the wheel sleep mid-game.
+        public bool IsGameActive
+        {
+            get
+            {
+                long lastFeed = Interlocked.Read(ref _autoStandbyLastDataUpdateTicks);
+                bool feedFresh = (DateTime.UtcNow.Ticks - lastFeed) <= AutoStandbyFeedStaleMs * TimeSpan.TicksPerMillisecond;
+                return feedFresh && _autoStandbyLastGameRunning;
+            }
+        }
         // HID-activity baseline (last sampled positions; change past the deadband
         // counts as physical use). _asHidBaselined gates the first sample so it
         // seeds the baseline instead of registering as activity.
@@ -1802,9 +1817,7 @@ namespace MozaPlugin
             // A game is "active" only with a fresh data feed AND GameRunning —
             // DataUpdate goes quiet when no game runs, so a stale feed means no
             // game even if the last GameRunning we saw was true.
-            long lastFeed = Interlocked.Read(ref _autoStandbyLastDataUpdateTicks);
-            bool feedFresh = (now - lastFeed) <= AutoStandbyFeedStaleMs * TimeSpan.TicksPerMillisecond;
-            bool gameActive = feedFresh && _autoStandbyLastGameRunning;
+            bool gameActive = IsGameActive;
 
             if (gameActive)
                 Interlocked.Exchange(ref _autoStandbyLastActivityTicks, now); // running game keeps it awake

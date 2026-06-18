@@ -835,14 +835,19 @@ namespace MozaPlugin.Devices
                 // each section independently.
                 var kaNow = DateTime.UtcNow;
                 int holdSec = plugin.Settings?.WheelKeepaliveTimeoutSec ?? (int)KeepaliveHoldSeconds;
-                if (_lastLeds != null && (AnyLit(_lastLeds) || WithinHold(kaNow, _rpmChangedUtc, holdSec))
+                // While a game is actively feeding telemetry, NEVER pause the keepalive —
+                // the wheel must stay live for the whole session (incl. menus/pauses) and
+                // only sleep once the game is closed. The lit/hold gate (which lets a
+                // steadily-black section time out) applies only when no game is active.
+                bool gameActive = plugin.IsGameActive;
+                if (_lastLeds != null && (gameActive || AnyLit(_lastLeds) || WithinHold(kaNow, _rpmChangedUtc, holdSec))
                     && (kaNow - _rpmFedUtc).TotalSeconds >= KeepaliveIntervalSeconds)
                 {
                     _rpmFedUtc = kaNow; _lastSendTime = kaNow;
                     ResendRpmFlags(plugin, isNewWheel, isOldWheel);
                     NoteLiveSend();
                 }
-                if (isNewWheel && _lastButtons != null && (AnyLit(_lastButtons) || WithinHold(kaNow, _btnChangedUtc, holdSec))
+                if (isNewWheel && _lastButtons != null && (gameActive || AnyLit(_lastButtons) || WithinHold(kaNow, _btnChangedUtc, holdSec))
                     && (kaNow - _btnFedUtc).TotalSeconds >= KeepaliveIntervalSeconds)
                 {
                     _btnFedUtc = kaNow; _lastSendTime = kaNow;
@@ -850,7 +855,7 @@ namespace MozaPlugin.Devices
                     NoteLiveSend();
                 }
                 if (isNewWheel && _lastKnobs != null && modelInfo?.KnobCount > 0
-                    && (AnyLit(_lastKnobs) || WithinHold(kaNow, _knobDrivenUtc, holdSec))
+                    && (gameActive || AnyLit(_lastKnobs) || WithinHold(kaNow, _knobDrivenUtc, holdSec))
                     && (kaNow - _knobFedUtc).TotalSeconds >= KeepaliveIntervalSeconds)
                 {
                     _knobFedUtc = kaNow; _lastSendTime = kaNow;
