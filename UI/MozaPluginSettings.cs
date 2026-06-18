@@ -157,6 +157,17 @@ namespace MozaPlugin
         // Whether to automatically apply profile settings on launch
         public bool AutoApplyProfileOnLaunch { get; set; } = true;
 
+        // When true, automatically put the wheelbase into Work Mode standby
+        // (main-set-work-mode=1) after the idle timeout elapses with no game
+        // running and no recent activity, and wake it (=0) the moment a game
+        // starts or the user interacts. Opt-in; default off.
+        public bool AutoStandbyWhenNoGame { get; set; } = false;
+
+        // Minutes of inactivity (no game, no wheel/pedal input, no UI use)
+        // before auto-standby engages. Only meaningful when AutoStandbyWhenNoGame
+        // is true. Selected from a preset combo in the UI.
+        public int AutoStandbyTimeoutMinutes { get; set; } = 10;
+
         // When true, only send LED updates to wheel when data actually changed (ignores SimHub forceRefresh).
         // Fixes flickering on some non-ES wheels. When false, respects SimHub's refresh cycle.
         public bool LimitWheelUpdates { get; set; } = false;

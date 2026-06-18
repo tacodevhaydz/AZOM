@@ -66,6 +66,7 @@
   <data name="Subtitle_HighSpeedDamping" xml:space="preserve"><value>// понятия не имею, что делают эти настройки</value></data>
   <data name="SliderLabel_ForceFeedbackReversal" xml:space="preserve"><value>Инверсия обратной связи</value></data>
   <data name="SliderLabel_StandbyMode" xml:space="preserve"><value>Режим ожидания</value></data>
+  <data name="SliderLabel_AutoStandbyTimeout" xml:space="preserve"><value>Ожидание через</value></data>
   <data name="SliderLabel_BaseStatusLed" xml:space="preserve"><value>Светодиод статуса базы</value></data>
   <data name="SliderLabel_Bluetooth" xml:space="preserve"><value>Bluetooth</value></data>
   <data name="SliderLabel_DampingLevel" xml:space="preserve"><value>Уровень демпфирования</value></data>
