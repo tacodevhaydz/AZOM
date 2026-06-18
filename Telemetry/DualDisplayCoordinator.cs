@@ -208,17 +208,14 @@ namespace MozaPlugin.Telemetry
         // is timed from here: a CM1 advertises no catalog AND emits no value frames,
         // so timing from FramesSent>0 (which never happens) wedged the discriminator.
         private DateTime _cm2ActiveUtc = DateTime.MinValue;
-        // Past the watchdog's 20s engagement grace + 3s confirm; a real tier-def CM2
-        // advertises its catalog well within this, a CM1 never does.
-        private static readonly TimeSpan Cm1DecideAfter = TimeSpan.FromSeconds(25);
         // Set when the dash answers the group-0x0E param-read probe with a 0x8E
-        // reply (MozaPlugin.OnMessageReceived) — a positive CM1 signal a tier-def
-        // CM2 doesn't produce. Lets TickCm1Discriminator latch CM1 on the fast path.
+        // reply (MozaPlugin.OnMessageReceived) — the CM1-exclusive positive signal a
+        // tier-def CM2 never produces. The SOLE basis for latching CM1.
         private volatile bool _dashParamReadAnswered;
         private DateTime _lastCm1ProbeUtc = DateTime.MinValue;
-        // Fast-path latch: param-read answered + no catalog after this short
-        // settle → CM1, without waiting out Cm1DecideAfter. Kept long enough that
-        // a slow tier-def CM2's catalog still arrives first and wins.
+        // Settle window after the positive 0x8E answer before latching CM1, long
+        // enough that a slow tier-def CM2's catalog still arrives first and wins via
+        // the CatalogCount check.
         private static readonly TimeSpan Cm1FastDecideAfter = TimeSpan.FromSeconds(5);
 
         /// <summary>Serial-read-thread hook: the dash answered the group-0x0E
@@ -243,11 +240,14 @@ namespace MozaPlugin.Telemetry
         }
 
         /// <summary>
-        /// PollStatus hook: decide whether a bus-bridged dash is a CM1 (group-0x35, never
-        /// advertises a tier-def catalog) rather than a tier-def CM2. Once the tier-def
-        /// _cm2Sender has run past the engagement grace with no catalog, latch DashIsCm1,
-        /// tear down the (watchdog-suppressed) _cm2Sender, and hand off to the CM1 driver.
-        /// If a catalog DOES arrive, it's a real CM2 → drop the suppress flag.
+        /// PollStatus hook: decide whether a bus-bridged dash is a CM1 (group-0x35)
+        /// rather than a tier-def CM2, using only POSITIVE evidence. While the dash
+        /// is unclassified the tier-def _cm2Sender runs (engagement watchdog
+        /// suppressed) and we probe the CM1-exclusive group-0x0E param register ~1 Hz.
+        /// Two mutually-exclusive outcomes: a tier-def catalog arrives → real CM2,
+        /// drop the suppress flag; or the dash answers the probe with a 0x8E reply →
+        /// latch DashIsCm1, tear down the _cm2Sender, hand off to the CM1 driver.
+        /// Mere absence of a catalog NEVER latches CM1 (see body).
         /// </summary>
         internal void TickCm1Discriminator()
         {
@@ -277,13 +277,23 @@ namespace MozaPlugin.Telemetry
 
             var elapsed = DateTime.UtcNow - _cm2ActiveUtc;
 
-            // Fast positive CM1 signal: the dash answers the group-0x0E param-read
-            // probe with a 0x8E reply (_dashParamReadAnswered); a tier-def CM2
-            // doesn't. Re-probe ~1 Hz until it answers or a catalog arrives. Once
-            // answered, latch CM1 after a short settle (Cm1FastDecideAfter) so a
-            // slow CM2 — whose catalog arrives well inside that window — still
-            // wins via the CatalogCount check above. Falls back to the long
-            // no-catalog timeout when the dash never answers the probe.
+            // CM1 is latched ONLY on the POSITIVE signal: the dash answered the
+            // group-0x0E param-read probe with a 0x8E reply (_dashParamReadAnswered).
+            // That register interface is CM1-exclusive — PitHouse sweeps ~49 of these
+            // registers on a CM1 at connect, and a tier-def CM2 implements none of
+            // them (verified across the whole capture set: FSR1_CM1.pcapng answers,
+            // every CM2 / wheel / base capture answers zero). So we re-probe ~1 Hz
+            // until either the dash answers (→ CM1) or its tier-def catalog arrives
+            // (→ CM2, handled by the CatalogCount check above).
+            //
+            // There is deliberately NO no-catalog timeout fallback. "No catalog yet"
+            // is NOT proof of a CM1 — it equally describes a CM2 whose catalog is
+            // merely slow or was starved — and that absence-based fallback is exactly
+            // what mislabeled a real CM2 as a CM1 (then persisted it globally). A
+            // genuine CM1 always announces itself via 0x8E, so absence-of-evidence
+            // must never latch. A dash that is neither (no catalog, no 0x8E) simply
+            // stays in discrimination — re-probed each tick — rather than being
+            // guessed into the wrong device class.
             if (!_dashParamReadAnswered)
             {
                 if ((DateTime.UtcNow - _lastCm1ProbeUtc).TotalMilliseconds >= 1000)
@@ -291,16 +301,15 @@ namespace MozaPlugin.Telemetry
                     _lastCm1ProbeUtc = DateTime.UtcNow;
                     try { _plugin.DeviceManager.SendCm1ParamProbe(); } catch { }
                 }
-            }
-            else if (elapsed >= Cm1FastDecideAfter)
-            {
-                LatchDashAsCm1($"answered param-read (0x8E) with no tier-def catalog in "
-                    + $"{Cm1FastDecideAfter.TotalSeconds:F0}s");
                 return;
             }
 
-            if (elapsed < Cm1DecideAfter) return;
-            LatchDashAsCm1($"no tier-def catalog within {Cm1DecideAfter.TotalSeconds:F0}s (timeout fallback)");
+            // Positive CM1 signal received. Latch after a short settle so a slow CM2
+            // whose catalog lands inside the window still wins via the CatalogCount
+            // check above.
+            if (elapsed >= Cm1FastDecideAfter)
+                LatchDashAsCm1("answered param-read (0x8E) — positive CM1 signal "
+                    + $"(settled {Cm1FastDecideAfter.TotalSeconds:F0}s)");
         }
 
         /// <summary>Latch the bus-bridged dash as a CM1 for THIS session: set the
