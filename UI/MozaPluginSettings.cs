@@ -452,16 +452,13 @@ namespace MozaPlugin
         public Dictionary<Guid, int> Fsr1ActiveDashboardByWheelGuid { get; set; }
             = new Dictionary<Guid, int>();
 
-        /// <summary>
-        /// Latched per dash GUID: true once a base-bridged dash is confirmed to be a CM1
-        /// (group-0x35, no tier-def catalog) rather than a tier-def CM2. Lets subsequent
-        /// boots route straight to the CM1 driver instead of re-running the tier-def probe.
-        /// See <see cref="MozaPlugin.TickCm1Discriminator"/>.
-        /// </summary>
-        [Newtonsoft.Json.JsonProperty(NullValueHandling = Newtonsoft.Json.NullValueHandling.Ignore,
-            DefaultValueHandling = Newtonsoft.Json.DefaultValueHandling.Ignore)]
-        public Dictionary<Guid, bool> DashIsCm1ByGuid { get; set; }
-            = new Dictionary<Guid, bool>();
+        // NOTE: the CM1-vs-CM2 verdict is intentionally NOT persisted. It's a
+        // statement about what's physically on the bus right now and is re-derived
+        // each boot by the discriminator (see Fsr1Cm1MappingCoordinator.DashIsCm1).
+        // A prior persisted form (DashIsCm1ByGuid, keyed by the constant CM1 GUID)
+        // made a single mis-latch permanent and global; it has been removed. Any
+        // stale value left in an existing settings file is ignored and dropped on
+        // the next save.
 
         /// <summary>CM1 selected dashboard page index (1-based), per dash GUID. Set via the
         /// 0x32/0x81 select command and reported back by the dash's Param-6 log. Absent = 1.</summary>

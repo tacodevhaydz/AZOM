@@ -527,19 +527,26 @@ namespace MozaPlugin.Telemetry
             SetActiveCm1Index(index, sendToWheel: false);
         }
 
-        /// <summary>True once this dash is confirmed a CM1 (group-0x35). Persisted per
-        /// dash GUID so later boots skip the tier-def probe.</summary>
+        // True once THIS session's bus dash has been confirmed a CM1 (group-0x35)
+        // by the live discriminator. Deliberately SESSION-ONLY (in-memory): the
+        // CM1-vs-CM2 verdict is a statement about what's physically on the bus
+        // right now and MUST be re-derived each boot. It used to be persisted "so
+        // later boots skip the tier-def probe", keyed by the constant Cm1PageGuid —
+        // i.e. one global bit, not per-device — so a single mis-latch (e.g. a real
+        // CM2 whose cold-start was starved before the dual-bus start-gate fix)
+        // turned EVERY future bus dash into a CM1 permanently, across reboots and
+        // hardware swaps (CS Pro + bus CM2 bundle 2026-06-18: a real CM2 stuck on
+        // the CM1 driver — telemetry + dashboard tab dead, only LEDs alive). The
+        // discriminator re-latches a genuine CM1 within ~5 s via the 0x8E fast path,
+        // so re-deriving each boot is cheap and correct.
+        private volatile bool _dashIsCm1;
+
+        /// <summary>True once this session's bus dash is confirmed a CM1 (group-0x35).
+        /// Session-only — never persisted; re-derived each boot by the discriminator.</summary>
         internal bool DashIsCm1
         {
-            get => _plugin.Settings?.DashIsCm1ByGuid != null
-                   && _plugin.Settings.DashIsCm1ByGuid.TryGetValue(MozaPlugin.Cm1PageGuid, out var v) && v;
-            set
-            {
-                if (_plugin.Settings == null) return;
-                if (_plugin.Settings.DashIsCm1ByGuid == null)
-                    _plugin.Settings.DashIsCm1ByGuid = new Dictionary<Guid, bool>();
-                _plugin.Settings.DashIsCm1ByGuid[MozaPlugin.Cm1PageGuid] = value;
-            }
+            get => _dashIsCm1;
+            set => _dashIsCm1 = value;
         }
     }
 }

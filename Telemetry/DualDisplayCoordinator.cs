@@ -303,16 +303,16 @@ namespace MozaPlugin.Telemetry
             LatchDashAsCm1($"no tier-def catalog within {Cm1DecideAfter.TotalSeconds:F0}s (timeout fallback)");
         }
 
-        /// <summary>Latch the bus-bridged dash as a CM1: persist the flag, deploy
-        /// the CM1 device definition (its own GUID/tab) and drop the speculative
-        /// CM2 copy MarkDashDetected wrote before we could tell them apart (guarded
-        /// against a real USB CM2), tear down the tier-def sender, and start the
-        /// CM1 driver.</summary>
+        /// <summary>Latch the bus-bridged dash as a CM1 for THIS session: set the
+        /// in-memory flag, deploy the CM1 device definition (its own GUID/tab) and
+        /// drop the speculative CM2 copy MarkDashDetected wrote before we could tell
+        /// them apart (guarded against a real USB CM2), tear down the tier-def
+        /// sender, and start the CM1 driver. The flag is session-only — re-derived
+        /// each boot by the discriminator — so there is nothing to persist here.</summary>
         private void LatchDashAsCm1(string reason)
         {
             MozaLog.Info($"[AZOM] Bridged dash → CM1 (group-0x35): {reason}; handing off to CM1 driver");
             _plugin.DashIsCm1 = true;
-            _plugin.SaveSettings();
 
             try
             {
