@@ -1680,8 +1680,8 @@
                                 </Grid.ColumnDefinitions>
                                 <TextBlock Grid.Column="0" Text="{x:Static res:Strings.SliderLabel_Mode}" Style="{StaticResource SliderLabel}"/>
                                 <ComboBox Grid.Column="1" x:Name="Ab9InputModeCombo" Width="220" SelectionChanged="Ab9InputModeCombo_Changed">
-                                    <ComboBoxItem Content="{x:Static res:Strings.Option_Ab9Shifter}" Tag="0"/>
-                                    <ComboBoxItem Content="{x:Static res:Strings.Option_Ab9FlightSim}" Tag="1"/>
+                                    <ComboBoxItem Content="{x:Static res:Strings.Option_Ab9Shifter}" Tag="1"/>
+                                    <ComboBoxItem Content="{x:Static res:Strings.Option_Ab9FlightSim}" Tag="0"/>
                                 </ComboBox>
                             </Grid>
                         </ctrl:SectionCard>
