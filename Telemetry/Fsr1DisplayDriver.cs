@@ -55,6 +55,9 @@ namespace MozaPlugin.Telemetry
         private int _diagRecords;
         private long _diagLastLogMs;
 
+        // One-time-per-process guard for the catalog gapless self-check (runs on first Start).
+        private static bool s_partitionsValidated;
+
         public Fsr1DisplayDriver(MozaSerialConnection connection, Func<string, double> resolve)
         {
             _connection = connection;
@@ -68,6 +71,14 @@ namespace MozaPlugin.Telemetry
         public void Start()
         {
             if (_running) return;
+            // Invariant self-check (once/process): every 0x42 catalog record must tile its
+            // data range [5, PayloadLen-1] gaplessly — a gap is a dead byte on the wheel.
+            // Warns if a future catalog edit breaks the partition; no effect in normal runs.
+            if (!s_partitionsValidated)
+            {
+                s_partitionsValidated = true;
+                try { Fsr1DashboardCatalog.ValidateDefaultPartitions(); } catch { }
+            }
             _running = true;
             _tickCounter = 0;
             _lastStreamedIndex = -1;
@@ -191,14 +202,13 @@ namespace MozaPlugin.Telemetry
                 return Clamp((long)Math.Round(t * outMax), 0, outMax);
             }
 
-            // Per-field effective (offsets, encoding, value) honouring per-profile boundary /
-            // endianness overrides — the emitter packs each field at its resolved span.
-            (int[]? offsets, Fsr1Encoding enc, long value) LayoutValueFor(Fsr1Dashboard dash, Fsr1FieldDef f)
+            // A field's value given the encoding the partition resolved for it — the partition
+            // owns offsets/encoding; this applies the field's mapping + output ceiling.
+            long ValueForSlot(Fsr1Dashboard dash, Fsr1FieldDef f, Fsr1Encoding enc)
             {
                 var m = plugin?.GetFsr1FieldMapping(dash.Key, f.FieldId);
-                var (offsets, enc) = Fsr1DashboardCatalog.ResolveLayout(f, m, dash.PayloadLen);
                 long outMax = Fsr1DashboardCatalog.OutputMaxFor(enc, f.FullScale);
-                return (offsets, enc, ValueFor(dash, f, m, outMax));
+                return ValueFor(dash, f, m, outMax);
             }
 
             // Probe modes (mutually exclusive, both override value computation):
@@ -227,22 +237,21 @@ namespace MozaPlugin.Telemetry
                 if (probe)
                     return Fsr1DisplayEmitter.BuildProbeRecord(
                         dash, dash.RecordType == probeType ? probeOff : -1, probeValue);
-                // Compose catalog + synthetic split fields so net-new fields are packed too.
-                var fields = Fsr1FieldComposer.FieldsFor(plugin, dash);
-                return Fsr1DisplayEmitter.BuildRecord(dash, fields, f => LayoutValueFor(dash, f));
+                // Resolve the gapless partition (catalog + synthetic splits, broken configs
+                // auto-repaired) and pack each slot's value — never a gap/overlap on the wire.
+                var partition = Fsr1DashboardCatalog.ResolvePartition(plugin, dash);
+                return Fsr1DisplayEmitter.BuildRecord(dash, partition, (f, enc) => ValueForSlot(dash, f, enc));
             }
 
             // Build the live numeric-viz record for one dash from its REAL telemetry values
             // (independent of probe/test — the panel shows actual data, not the probe pattern).
             Fsr1VizRecord BuildVizRecord(Fsr1Dashboard dash)
             {
-                var fields = Fsr1FieldComposer.FieldsFor(plugin, dash);
-                var frame = Fsr1DisplayEmitter.BuildRecord(dash, fields, f => LayoutValueFor(dash, f));
-                var vfields = new List<Fsr1VizField>(fields.Count);
-                foreach (var f in fields)
+                var partition = Fsr1DashboardCatalog.ResolvePartition(plugin, dash);
+                var frame = Fsr1DisplayEmitter.BuildRecord(dash, partition, (f, enc) => ValueForSlot(dash, f, enc));
+                var vfields = new List<Fsr1VizField>(partition.Count);
+                foreach (var (f, offsets, enc) in partition)
                 {
-                    var (offsets, enc, value) = LayoutValueFor(dash, f);
-                    if (offsets == null || offsets.Length == 0) continue;
                     int start = offsets[0], end = offsets[offsets.Length - 1];
                     var bytes = new byte[end - start + 1];
                     for (int o = start; o <= end; o++)
@@ -250,6 +259,7 @@ namespace MozaPlugin.Telemetry
                         int idx = 4 + o;
                         bytes[o - start] = (idx >= 0 && idx < frame.Length) ? frame[idx] : (byte)0;
                     }
+                    long value = ValueForSlot(dash, f, enc);
                     bool synth = Fsr1FieldComposer.IsSynthetic(plugin, dash.Key, f.FieldId);
                     vfields.Add(new Fsr1VizField(f.Label, start, end, enc.ToString(), value, bytes, synth));
                 }

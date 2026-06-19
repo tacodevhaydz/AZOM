@@ -70,24 +70,19 @@ namespace MozaPlugin.Devices.WheelUi
             var dashes = followingActive ? active : Telemetry.Fsr1DashboardCatalog.LiveDashboards;
             foreach (var dash in dashes)
             {
-                // Build this dash's rows in Start order, then link only the rows whose spans
-                // actually touch (current.Start == prev.End + 1). An FSR1 record is a gapless
-                // partition, but non-mappable anchor fields are skipped here — a mappable field
-                // adjacent to an anchor has a FIXED edge there (no shared divider to step), so it
-                // stays unlinked (Prev/Next null) rather than coupling across the anchor.
-                var dashRows = new List<ChannelMappingRow>();
-                // Compose catalog fields with per-profile synthetic split fields so net-new
-                // splits surface as their own rows (and get their own channel mapping).
-                foreach (var f in Telemetry.Fsr1FieldComposer.FieldsFor(plugin, dash))
+                // Build rows from the gapless partition (catalog + synthetic splits, already
+                // sorted by start and auto-repaired). Link each mappable row to the previous
+                // one ONLY when they are consecutive partition slots — a non-mappable anchor
+                // between two mappable fields breaks the chain (its bytes are fixed, no shared
+                // divider to step), so the rows on either side stay uncoupled.
+                ChannelMappingRow? prevRow = null;
+                foreach (var (f, offsets, enc) in Telemetry.Fsr1DashboardCatalog.ResolvePartition(plugin, dash))
                 {
-                    if (!f.IsUserMappable) continue;
+                    if (!f.IsUserMappable) { prevRow = null; continue; }  // anchor breaks coupling
                     var m = plugin.GetFsr1FieldMapping(dash.Key, f.FieldId);
                     bool direct = f.Kind == Telemetry.Fsr1FieldKind.Direct;
                     bool synthetic = Telemetry.Fsr1FieldComposer.IsSynthetic(plugin, dash.Key, f.FieldId);
-                    // Resolve the effective span/encoding (catalog default merged with the
-                    // per-profile override) so the boundary editor opens on the live layout.
-                    var (offsets, enc) = Telemetry.Fsr1DashboardCatalog.ResolveLayout(f, m, dash.PayloadLen);
-                    dashRows.Add(new ChannelMappingRow
+                    var row = new ChannelMappingRow
                     {
                         AllProperties = props,
                         Engine = engine,
@@ -97,32 +92,22 @@ namespace MozaPlugin.Devices.WheelUi
                         FieldId = f.FieldId,
                         Name = $"{dash.Label} · {f.Label}" + (f.Decoded ? "" : "  (raw)"),
                         Url = dash.Key + "/" + f.FieldId,
-                        Compression = f.Encoding.ToString(),
-                        CapabilityText = direct ? "direct value" : $"0–{f.OutputMax}",
+                        Compression = enc.ToString(),
+                        CapabilityText = direct ? "direct value" : $"0–{Telemetry.Fsr1DashboardCatalog.OutputMaxFor(enc, f.FullScale)}",
                         InMin = m?.InMin ?? f.DefaultInMin,
                         InMax = m?.InMax ?? f.DefaultInMax,
                         SimHubProperty = m?.Property ?? f.DefaultProperty,
                         PayloadLen = dash.PayloadLen,
-                        Start = offsets.Length > 0 ? offsets[0] : 5,
-                        End = offsets.Length > 0 ? offsets[offsets.Length - 1] : 5,
+                        Start = offsets[0],
+                        End = offsets[offsets.Length - 1],
                         LittleEndian = enc == Telemetry.Fsr1Encoding.U16_LE,
                         Scale = m?.Scale ?? 1.0,
                         Bias = m?.Bias ?? 0.0,
-                    });
+                    };
+                    rows.Add(row);
+                    if (prevRow != null) { prevRow.NextField = row; row.PrevField = prevRow; }
+                    prevRow = row;
                 }
-                // Link contiguous neighbours so divider steps reapportion the shared byte.
-                dashRows.Sort((a, b) => a.Start.CompareTo(b.Start));
-                for (int i = 1; i < dashRows.Count; i++)
-                {
-                    var prev = dashRows[i - 1];
-                    var cur = dashRows[i];
-                    if (cur.Start == prev.End + 1)
-                    {
-                        prev.NextField = cur;
-                        cur.PrevField = prev;
-                    }
-                }
-                rows.AddRange(dashRows);
             }
             string status = followingActive
                 ? $"(FSR V1: dashboard {activeIdx + 1} — {rows.Count} mappable fields; switch dashboards to map another page)"
