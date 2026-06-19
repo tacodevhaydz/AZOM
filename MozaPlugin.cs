@@ -648,14 +648,19 @@ namespace MozaPlugin
         /// </summary>
         internal bool WriteDashLedBitmask(int bitmask)
         {
+            // Stream lane (latest-wins, coalescing) — keep the per-frame CM2 LED
+            // bitmask off the throttled one-shot FIFO so a shared-bus value stream
+            // can't starve it. Idempotent end-state, safe to coalesce.
             if (DashboardUsbConnected)
-                return _dashboardManager.WriteSettingForDevice(
-                    "dash-send-telemetry", PreferredStandaloneDashboardTargetDeviceId, bitmask);
+                return _dashboardManager.WriteSettingForDeviceStream(
+                    "dash-send-telemetry", PreferredStandaloneDashboardTargetDeviceId, bitmask,
+                    Protocol.StreamKind.DashRpmBitmask);
 
             byte dev = ShouldUseStandaloneDashboardTarget()
                 ? PreferredStandaloneDashboardTargetDeviceId   // DeviceDash (0x14) behind base
                 : MozaProtocol.DeviceDash;                     // base-bridged dash (CM1) at 0x14
-            return _deviceManager.WriteSettingForDevice("dash-send-telemetry", dev, bitmask);
+            return _deviceManager.WriteSettingForDeviceStream(
+                "dash-send-telemetry", dev, bitmask, Protocol.StreamKind.DashRpmBitmask);
         }
 
         /// <summary>
@@ -669,13 +674,15 @@ namespace MozaPlugin
         internal bool WriteDashFlagColors(byte[] rgb18)
         {
             if (DashboardUsbConnected)
-                return _dashboardManager.WriteArrayForDevice(
-                    "dash-flag-colors", PreferredStandaloneDashboardTargetDeviceId, rgb18);
+                return _dashboardManager.WriteArrayForDeviceStream(
+                    "dash-flag-colors", PreferredStandaloneDashboardTargetDeviceId, rgb18,
+                    Protocol.StreamKind.DashFlagColors);
 
             byte dev = ShouldUseStandaloneDashboardTarget()
                 ? PreferredStandaloneDashboardTargetDeviceId
                 : MozaProtocol.DeviceDash;
-            return _deviceManager.WriteArrayForDevice("dash-flag-colors", dev, rgb18);
+            return _deviceManager.WriteArrayForDeviceStream(
+                "dash-flag-colors", dev, rgb18, Protocol.StreamKind.DashFlagColors);
         }
 
         /// <summary>
@@ -687,14 +694,25 @@ namespace MozaPlugin
         internal bool WriteDashRpmColor(int index, byte r, byte g, byte b)
         {
             var rgb = new byte[] { r, g, b };
+            // One coalescing stream slot per RPM index (DashRpmColor0..9) bounds the
+            // per-frame SyncRpmColors write-amplifier (up to 10 writes/frame) and
+            // keeps it off the throttled one-shot lane. index is 0-based, 0..9.
+            var slot = (Protocol.StreamKind)((int)Protocol.StreamKind.DashRpmColor0 + index);
+            bool inRange = index >= 0
+                && (int)slot <= (int)Protocol.StreamKind.DashRpmColor9;
             if (DashboardUsbConnected)
-                return _dashboardManager.WriteArrayForDevice(
-                    $"cm2-indicator-color{index + 1}", PreferredStandaloneDashboardTargetDeviceId, rgb);
+                return inRange
+                    ? _dashboardManager.WriteArrayForDeviceStream(
+                        $"cm2-indicator-color{index + 1}", PreferredStandaloneDashboardTargetDeviceId, rgb, slot)
+                    : _dashboardManager.WriteArrayForDevice(
+                        $"cm2-indicator-color{index + 1}", PreferredStandaloneDashboardTargetDeviceId, rgb);
 
             byte dev = ShouldUseStandaloneDashboardTarget()
                 ? PreferredStandaloneDashboardTargetDeviceId
                 : MozaProtocol.DeviceDash;
-            return _deviceManager.WriteArrayForDevice($"dash-rpm-color{index + 1}", dev, rgb);
+            return inRange
+                ? _deviceManager.WriteArrayForDeviceStream($"dash-rpm-color{index + 1}", dev, rgb, slot)
+                : _deviceManager.WriteArrayForDevice($"dash-rpm-color{index + 1}", dev, rgb);
         }
 
         internal bool IsBaseAmbientLedSupported => DetectionState.BaseAmbientLedSupported;

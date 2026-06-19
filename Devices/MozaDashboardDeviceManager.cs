@@ -71,6 +71,15 @@ namespace MozaPlugin.Devices
         public bool WriteArrayForDevice(string commandName, byte deviceId, byte[] payload)
             => _deviceManager.WriteArrayForDevice(commandName, deviceId, payload);
 
+        /// <summary>Stream-lane (latest-wins, coalescing) variants of the LED writes
+        /// above — keep high-rate idempotent CM2 LED frames off the throttled
+        /// one-shot FIFO. See MozaDeviceManager.Write*Stream.</summary>
+        public bool WriteSettingForDeviceStream(string commandName, byte deviceId, int value, Protocol.StreamKind slot)
+            => _deviceManager.WriteSettingForDeviceStream(commandName, deviceId, value, slot);
+
+        public bool WriteArrayForDeviceStream(string commandName, byte deviceId, byte[] payload, Protocol.StreamKind slot)
+            => _deviceManager.WriteArrayForDeviceStream(commandName, deviceId, payload, slot);
+
         public void Disconnect() => _connection.Disconnect();
 
         public void Dispose()

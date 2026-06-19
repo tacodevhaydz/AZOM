@@ -24,6 +24,17 @@ namespace MozaPlugin.Telemetry
             _detectionState = detectionState;
         }
 
+        // Teardown debounce: when EnsureCm2Pipeline computes want==false, hold off
+        // tearing the CM2 pipeline down until want has stayed false this long. A
+        // single-tick detection blip must not abort a mid-cold-start / Active CM2.
+        // Stored as UtcNow.Ticks and read/written via Interlocked because
+        // EnsureCm2Pipeline runs from BOTH the PollStatus timer thread and the
+        // serial-read thread (DeviceProber/ApplyTelemetrySettings) — a non-atomic
+        // 64-bit DateTime could tear on 32-bit and yield a garbage elapsed interval.
+        // 0 = want is currently true (no pending teardown).
+        private long _wantFalseSinceUtcTicks;
+        private const int TeardownDwellMs = 3000;
+
         /// <summary>Start the FSR V1 group-0x42 display driver when an FSR1 wheel is
         /// connected; stop it if the wheel is no longer FSR1 (hot-swap). Telemetry-
         /// enable gating is handled inside the driver tick.</summary>
@@ -60,6 +71,23 @@ namespace MozaPlugin.Telemetry
 
             if (!want)
             {
+                // Debounce the ENTIRE teardown — the Stop, the CM1-driver stop, AND
+                // the wheel-flag clears must all wait out the dwell. A one-tick blip
+                // on any `want` input (DashDetected / DashboardUsbConnected /
+                // Connection.IsConnected / ActiveTelemetryEnabled / WheelHasOwnScreen)
+                // must change nothing: it would otherwise abort a multi-second CM2
+                // cold-start (the CS-Pro 3-attempt/29s pathology) and flip the wheel's
+                // SharesConnection false for a tick — which is exactly the flag Stop()
+                // reads to choose ClearStreamSlots (safe) vs FlushPendingWrites (blanks
+                // the co-resident pipeline + in-flight LEDs). Holding the whole branch
+                // keeps the wheel's flags stable-true while the CM2 is live, closing
+                // that window without a connection-level rewrite.
+                long since = System.Threading.Interlocked.CompareExchange(
+                    ref _wantFalseSinceUtcTicks, DateTime.UtcNow.Ticks, 0);
+                if (since == 0) since = System.Threading.Interlocked.Read(ref _wantFalseSinceUtcTicks);
+                if ((DateTime.UtcNow.Ticks - since) / TimeSpan.TicksPerMillisecond < TeardownDwellMs)
+                    return; // within dwell — leave the CM2 sender + wheel flags untouched
+
                 if (_plugin._cm2Sender != null) { try { _plugin._cm2Sender.Stop(); } catch { } }
                 if (_plugin._cm1Driver != null && _plugin._cm1Driver.IsRunning) { try { _plugin._cm1Driver.Stop(); } catch { } }
                 // Wheel sender no longer shares the bus with a CM2 sender.
@@ -70,6 +98,8 @@ namespace MozaPlugin.Telemetry
                 }
                 return;
             }
+            // want is true — clear any pending teardown dwell.
+            System.Threading.Interlocked.Exchange(ref _wantFalseSinceUtcTicks, 0);
 
             // Known CM1 base-bridged dash (group-0x35, no tier-def catalog): drive it with
             // the dedicated Cm1DisplayDriver, never the tier-def sender. (CM1 only applies
@@ -109,8 +139,17 @@ namespace MozaPlugin.Telemetry
             cm2.UploadDashboard = false;
             cm2.SetDownloadEnabled(false);
             cm2.StandaloneDashboardMode = true;
-            cm2.TargetDeviceId = dev;
-            cm2.StreamSlotBase = slotBase;
+            // Re-point the wire target (dev id + slot base) ONLY when Idle — never
+            // mid-cold-start. A usbCm2<->busCm2 flap must not move dev 0x14<->0x12 /
+            // slot-base 18<->0 under a Starting/Preamble sender (its session opens
+            // would land on one dev and its tier-def on another). Stable topologies
+            // set the same values (no-op); a real change re-applies on the next idle
+            // (re)start, alongside the Idle-gated Rebind above.
+            if (cm2.StateIsIdle)
+            {
+                cm2.TargetDeviceId = dev;
+                cm2.StreamSlotBase = slotBase;
+            }
             cm2.SharesConnection = shareBus;
             cm2.StrictInboundFilter = shareBus;
             cm2.ProfileTelemetryEnabled = true;

@@ -404,6 +404,61 @@ namespace MozaPlugin
             return WriteArrayForDevice(commandName, deviceId, new byte[] { r, g, b });
         }
 
+        // ============================================================
+        // Stream-lane variants. Identical frame construction to the Send
+        // counterparts above, but enqueued via SendStream (latest-wins,
+        // coalescing, unthrottled) instead of the paced/throttled one-shot
+        // FIFO. Used for high-rate, idempotent LED writes so a co-resident
+        // value stream on a shared bus can never starve them. The caller
+        // supplies the absolute StreamKind slot (LED region). Only use for
+        // end-state-idempotent writes — an intermediate frame may be
+        // coalesced away; never for ordered/setup writes.
+        // ============================================================
+
+        public bool WriteSettingStream(string commandName, int value, StreamKind slot)
+        {
+            if (!_connection.IsConnected) return false;
+            var cmd = MozaCommandDatabase.Get(commandName);
+            if (cmd == null) return false;
+            var msg = cmd.BuildWriteInt(GetDeviceId(cmd.DeviceType), value);
+            if (msg == null) return false;
+            _connection.SendStream(slot, msg);
+            return true;
+        }
+
+        public bool WriteArrayStream(string commandName, byte[] payload, StreamKind slot)
+        {
+            if (!_connection.IsConnected) return false;
+            var cmd = MozaCommandDatabase.Get(commandName);
+            if (cmd == null) return false;
+            var msg = cmd.BuildWriteMessage(GetDeviceId(cmd.DeviceType), payload);
+            if (msg == null) return false;
+            _connection.SendStream(slot, msg);
+            return true;
+        }
+
+        public bool WriteSettingForDeviceStream(string commandName, byte deviceId, int value, StreamKind slot)
+        {
+            if (!_connection.IsConnected) return false;
+            var cmd = MozaCommandDatabase.Get(commandName);
+            if (cmd == null) return false;
+            var msg = cmd.BuildWriteInt(deviceId, value);
+            if (msg == null) return false;
+            _connection.SendStream(slot, msg);
+            return true;
+        }
+
+        public bool WriteArrayForDeviceStream(string commandName, byte deviceId, byte[] payload, StreamKind slot)
+        {
+            if (!_connection.IsConnected) return false;
+            var cmd = MozaCommandDatabase.Get(commandName);
+            if (cmd == null) return false;
+            var msg = cmd.BuildWriteMessage(deviceId, payload);
+            if (msg == null) return false;
+            _connection.SendStream(slot, msg);
+            return true;
+        }
+
         public void ReadSettings(params string[] commandNames)
         {
             foreach (var name in commandNames)
