@@ -385,6 +385,10 @@ namespace MozaPlugin
         // AB9 host-rendered engine-vibration worker. See Devices/Ab9EngineVibrationWorker.cs.
         private Ab9EngineVibrationWorker? _ab9Worker;
 
+        // "FFB Lag Fix": holds the Windows timer resolution at 1 ms while a game
+        // is running (gated by Settings.FfbLagFixEnabled). See TimerResolutionManager.
+        private TimerResolutionManager? _timerResolution;
+
         // Control Mapper IVariantProvider bridge — see ControlMapper/. Registration
         // is reflection-based against an internal SimHub API, so the bridge is wrapped
         // in defensive guards and gated on MozaPluginSettings.EnableControlMapperVariants.
@@ -1392,6 +1396,11 @@ namespace MozaPlugin
                 // StartTelemetryIfReady() is called from DetectDevices() when the wheel
                 // is first detected, and from profile application callbacks.
 
+                // "FFB Lag Fix" timer-resolution holder. Constructed unconditionally
+                // (no device dependency); gated at apply-time by Settings.FfbLagFixEnabled
+                // and IsGameActive. Released in End()/CleanupPartialInit().
+                _timerResolution = new TimerResolutionManager();
+
                 // Publish Instance only after all resources are wired so a partial-init
                 // throw can't leave a half-built plugin reachable from background callbacks.
                 Instance = this;
@@ -1455,6 +1464,8 @@ namespace MozaPlugin
 
             // Halt the AB9 engine-vib worker before disposing the AB9 manager.
             try { _ab9Worker?.Stop(); _ab9Worker = null; } catch { }
+            // Release the FFB Lag Fix timer-resolution request (balanced begin/end).
+            try { _timerResolution?.Dispose(); _timerResolution = null; } catch { }
             // Dispose every mBooster controller — same reason: stop workers
             // before the connections they own get torn down.
             try { _mboosterRegistry?.Dispose(); _mboosterRegistry = null; } catch { }
@@ -1671,6 +1682,9 @@ namespace MozaPlugin
             // doesn't make the feed look quiet.
             Interlocked.Exchange(ref _autoStandbyLastDataUpdateTicks, DateTime.UtcNow.Ticks);
             _autoStandbyLastGameRunning = data.GameRunning;
+            // "FFB Lag Fix": raise the timer resolution the moment a game is active.
+            // Idempotent; the PollStatus backstop handles release if DataUpdate goes quiet.
+            ApplyFfbLagFixState();
             // Persistent-wire reload guard. On a SimHub plugin reload, End()
             // keeps the telemetry sender alive in s_persistentTelemetrySender
             // (the next Init reuses it) but nulls the reloaded instance's
@@ -2017,6 +2031,9 @@ namespace MozaPlugin
             // are disposed; the tick gates on connection state but joining here
             // keeps shutdown deterministic.
             try { _ab9Worker?.Stop(); _ab9Worker = null; } catch { }
+            // Release the FFB Lag Fix timer-resolution request on shutdown/reload so
+            // the 1 ms request never leaks past the plugin's lifetime.
+            try { _timerResolution?.Dispose(); _timerResolution = null; } catch { }
 
             // Remove the Control Mapper variant provider so a plugin reload
             // (game switch) doesn't leave a dead provider in VariantHelper's
@@ -3226,9 +3243,23 @@ namespace MozaPlugin
             try { PendingResponses.Clear(); } catch { }
         }
 
+        // "FFB Lag Fix" reconcile: hold the Windows timer resolution at 1 ms only
+        // while a game is actively feeding data (IsGameActive) and the toggle is on.
+        // Idempotent + thread-safe, so it is driven from both DataUpdate (responsive
+        // raise) and PollStatus (release backstop for when DataUpdate goes quiet on
+        // game exit), and called directly from the UI toggle handler.
+        internal void ApplyFfbLagFixState()
+            => _timerResolution?.Apply(_settings != null && _settings.FfbLagFixEnabled
+                                       && IsGameActive && !IsShuttingDown);
+
         private void PollStatus(object sender, ElapsedEventArgs e)
         {
             if (IsShuttingDown) return;
+
+            // "FFB Lag Fix" release backstop: SimHub stops calling DataUpdate when a
+            // game exits, so the raise can only be released here once IsGameActive
+            // goes false via feed-staleness (~3 s) — within one 5 s poll.
+            ApplyFfbLagFixState();
 
             // The dedicated hub pipe is polled independently of the primary
             // (base) connection — a Universal Hub can be present with the base

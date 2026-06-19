@@ -607,4 +607,7 @@ Id: {2}</value></data>
   <data name="Option_Ab9FlightSim" xml:space="preserve"><value>비행 시뮬레이션</value></data>
   <data name="SliderLabel_KeepaliveTimeout" xml:space="preserve"><value>킵얼라이브 시간 제한</value></data>
   <data name="Hint_KeepaliveTimeout" xml:space="preserve"><value>텔레메트리가 멈춘 후 휠이 절전 모드로 들어가기 전까지 LED를 새로 고치는 시간입니다. 0 = 즉시 중지.</value></data>
+  <data name="Section_Performance" xml:space="preserve"><value>성능</value></data>
+  <data name="SliderLabel_FfbLagFix" xml:space="preserve"><value>FFB 지연 수정</value></data>
+  <data name="Hint_FfbLagFix" xml:space="preserve"><value>포스 피드백 휠이 연결되어 있을 때 끊김이 발생하거나 프레임이 절반으로 떨어지는 일부 게임(예: Forza)의 프레임 페이싱을 개선합니다. 게임이 실행되는 동안 Windows 타이머 해상도를 높입니다.</value></data>
 </root>

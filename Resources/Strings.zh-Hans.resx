@@ -608,4 +608,7 @@ Id: {2}</value></data>
   <data name="Option_Ab9FlightSim" xml:space="preserve"><value>飞行模拟</value></data>
   <data name="SliderLabel_KeepaliveTimeout" xml:space="preserve"><value>保活超时</value></data>
   <data name="Hint_KeepaliveTimeout" xml:space="preserve"><value>遥测停止后继续刷新 LED 多久，方向盘才能进入休眠。0 = 立即停止。</value></data>
+  <data name="Section_Performance" xml:space="preserve"><value>性能</value></data>
+  <data name="SliderLabel_FfbLagFix" xml:space="preserve"><value>FFB 延迟修复</value></data>
+  <data name="Hint_FfbLagFix" xml:space="preserve"><value>改善某些游戏（例如 Forza）在连接力反馈方向盘时出现卡顿或帧率减半的帧节奏。在游戏运行期间提高 Windows 计时器分辨率。</value></data>
 </root>

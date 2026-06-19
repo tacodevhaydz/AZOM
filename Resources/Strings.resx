@@ -615,4 +615,7 @@ Id: {2}</value></data>
   <data name="Option_Ab9FlightSim" xml:space="preserve"><value>Flight Simulation</value></data>
   <data name="SliderLabel_KeepaliveTimeout" xml:space="preserve"><value>Keepalive timeout</value></data>
   <data name="Hint_KeepaliveTimeout" xml:space="preserve"><value>How long to keep refreshing the LEDs after telemetry stops before the wheel can sleep. 0 = stop immediately.</value></data>
+  <data name="Section_Performance" xml:space="preserve"><value>PERFORMANCE</value></data>
+  <data name="SliderLabel_FfbLagFix" xml:space="preserve"><value>FFB Lag Fix</value></data>
+  <data name="Hint_FfbLagFix" xml:space="preserve"><value>Improves frame pacing in some games (e.g. Forza) that stutter or halve their frame rate while a force-feedback wheel is connected. Raises the Windows timer resolution while a game is running.</value></data>
 </root>

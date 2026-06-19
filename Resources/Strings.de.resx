@@ -608,4 +608,7 @@ Id: {2}</value></data>
   <data name="Option_Ab9FlightSim" xml:space="preserve"><value>Flugsimulation</value></data>
   <data name="SliderLabel_KeepaliveTimeout" xml:space="preserve"><value>Keepalive-Timeout</value></data>
   <data name="Hint_KeepaliveTimeout" xml:space="preserve"><value>Wie lange die LEDs nach dem Ende der Telemetrie aktualisiert werden, bevor das Lenkrad in den Ruhezustand wechseln kann. 0 = sofort stoppen.</value></data>
+  <data name="Section_Performance" xml:space="preserve"><value>LEISTUNG</value></data>
+  <data name="SliderLabel_FfbLagFix" xml:space="preserve"><value>FFB-Lag-Fix</value></data>
+  <data name="Hint_FfbLagFix" xml:space="preserve"><value>Verbessert das Frame-Pacing in einigen Spielen (z. B. Forza), die mit angeschlossenem Force-Feedback-Lenkrad ruckeln oder ihre Bildrate halbieren. Erhöht die Windows-Timerauflösung, während ein Spiel läuft.</value></data>
 </root>

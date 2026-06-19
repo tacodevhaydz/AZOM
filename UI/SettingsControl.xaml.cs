@@ -88,6 +88,7 @@ namespace MozaPlugin
                 // the panel open tracks the new game's values. See the comment
                 // in RefreshBaseTab for why the constructor copy was removed.
                 DisableSerialProbeFallbackCheck.IsChecked = plugin.Settings.DisableSerialProbeFallback;
+                FfbLagFixCheck.IsChecked = plugin.Settings.FfbLagFixEnabled;
                 DisableAb9DetectionCheck.IsChecked = plugin.Settings.DisableAb9Detection;
                 AlwaysCaptureOnStartupCheck.IsChecked = plugin.Settings.AlwaysCaptureOnStartup;
                 // Reflect any in-flight capture (auto-started by MozaPlugin.Init when
@@ -1545,6 +1546,14 @@ namespace MozaPlugin
         {
             if (_suppressEvents) return;
             _plugin.Settings.DisableSerialProbeFallback = DisableSerialProbeFallbackCheck.IsChecked == true;
+            _plugin.SaveSettings();
+        }
+
+        private void FfbLagFixCheck_Changed(object sender, RoutedEventArgs e)
+        {
+            if (_suppressEvents) return;
+            _plugin.Settings.FfbLagFixEnabled = FfbLagFixCheck.IsChecked == true;
+            _plugin.ApplyFfbLagFixState(); // apply/release immediately; don't wait for a tick
             _plugin.SaveSettings();
         }
 
