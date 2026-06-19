@@ -2678,6 +2678,20 @@ namespace MozaPlugin
         // active page's record(s); -1 = probe off. Volatile: UI writes, driver reads.
         private volatile int _fsr1ProbeStep = -1;
 
+        // Page index captured when the byte probe is armed. The wheel streams its
+        // "Table 7, Param 6 Written: N" page-report log continuously, which the plugin
+        // follows live (NoteFsr1WheelIndex) — so the active index can move WHILE the user
+        // steps the probe, scrambling the step→(record,byte) mapping every refresh. Freezing
+        // the index for the probe's lifetime keeps stepping stable and contiguous; -1 = no
+        // freeze (probe off). See GetActiveFsr1Index.
+        private volatile int _fsr1ProbeFrozenIndex = -1;
+
+        /// <summary>Page index the byte probe is locked to while armed, or -1 when the probe
+        /// is off — <see cref="Telemetry.Fsr1Cm1MappingCoordinator.GetActiveFsr1Index"/> returns
+        /// this (instead of the live, log-followed index) so a stepping sweep can't be
+        /// derailed by a mid-probe page-report.</summary>
+        internal int Fsr1ProbeFrozenIndex => _fsr1ProbeStep >= 0 ? _fsr1ProbeFrozenIndex : -1;
+
         /// <summary>True while EITHER FSR V1 probe diagnostic is active — the toolbar
         /// single-byte stepper or the row-driven field-span probe. The two are mutually
         /// exclusive; the driver gates its probe override on this.</summary>
@@ -2743,8 +2757,20 @@ namespace MozaPlugin
         /// FSR1-only; mutually exclusive with the sweep test pattern.</summary>
         internal void SetFsr1Probe(bool on)
         {
-            _fsr1ProbeStep = on ? 0 : -1;
-            if (on) { _fsr1FieldProbe = null; SetDashboardTestPattern(false); } // exclusive with the field probe
+            if (on)
+            {
+                // Capture the live page BEFORE arming (step still -1, so GetActiveFsr1Index
+                // returns the real log-followed index, not a stale freeze), then lock to it.
+                _fsr1ProbeFrozenIndex = GetActiveFsr1Index();
+                _fsr1ProbeStep = 0;
+                _fsr1FieldProbe = null;            // exclusive with the field probe
+                SetDashboardTestPattern(false);
+            }
+            else
+            {
+                _fsr1ProbeStep = -1;
+                _fsr1ProbeFrozenIndex = -1;
+            }
         }
 
         /// <summary>Step the probe offset by <paramref name="delta"/>, wrapping within the

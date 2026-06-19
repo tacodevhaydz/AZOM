@@ -74,6 +74,11 @@ namespace MozaPlugin.Devices.WheelUi
             StopMappingValueTimer();
             try { _plugin?.SetFsr1VizActive(false); } catch { }
             _refreshTimer.Stop();
+            // InitTelemetryUI is one-shot (guarded by _telemetryUIInitialized) but the two
+            // lifecycle bits above (value timer + viz publishing) are torn down on every
+            // unload. Clear the guard so the next load re-runs InitTelemetryUI and re-arms
+            // them — otherwise after one tab-switch the byte preview + value column stay dead.
+            _telemetryUIInitialized = false;
 
             if (_dashEventSubscribedPlugin != null)
             {

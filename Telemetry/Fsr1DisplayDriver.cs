@@ -22,7 +22,13 @@ namespace MozaPlugin.Telemetry
     /// </summary>
     internal sealed class Fsr1DisplayDriver : IDisposable
     {
-        private const double TickIntervalMs = 35.0;   // ~28.6 Hz, matches capture
+        // ~50 Hz. PitHouse streams each 0x42 record at ~20 ms during ACTIVE gameplay —
+        // single page 02 @ ~21 ms (46.7 Hz) and GT dual page 11/12 each @ ~20 ms (≈50 Hz),
+        // interleaved 11 12 11 12. Measured from usb-capture/fsr1 GT + game captures via
+        // tools/fsr1-0x42-cadence.py. The old 35 ms matched the whole-capture AVERAGE
+        // (~28/s), which is diluted by menu/idle gaps — not the live rate. Both active
+        // records are still streamed per tick, so each refreshes at the full tick rate.
+        private const double TickIntervalMs = 20.0;
         // FSR1 occupies the wheel lane: TierDash0..6 (records) + Enable (keepalive).
         private const int LaneSlotCount = 9;          // slots 0..8
         // _lastStreamedIndex sentinel meaning "currently in full-set fallback mode".
@@ -125,9 +131,15 @@ namespace MozaPlugin.Telemetry
             bool testMode = plugin?.DashboardTestPatternActive ?? false;
             bool probe = plugin?.Fsr1ProbeActive ?? false;
 
-            // Telemetry disabled by the user: keepalive only (keeps the wheel engaged).
-            // The test pattern / byte probe override this so the screen renders with no game.
-            if (!(plugin?.ActiveTelemetryEnabled ?? false) && !testMode && !probe)
+            // What drives the wheel this tick: live telemetry, the test sweep, or the byte
+            // probe. When none are active we normally just keepalive — but if the channel-
+            // mapping panel's byte preview is open (Fsr1VizActive) we still flow through to
+            // compute and publish a viz snapshot from live game data, so the preview stays
+            // live while the user edits with telemetry-send toggled off. Wheel streaming is
+            // skipped in that case (vizOnly), so nothing is actually pushed to the screen.
+            bool streamLive = (plugin?.ActiveTelemetryEnabled ?? false) || testMode || probe;
+            bool vizOnly = !streamLive && (plugin?.Fsr1VizActive ?? false);
+            if (!streamLive && !vizOnly)
             {
                 if (_tickCounter % oneHzEvery == 0)
                     _connection.SendStream(StreamKind.Enable, Fsr1DisplayEmitter.Keepalive43);
@@ -141,7 +153,9 @@ namespace MozaPlugin.Telemetry
             long testNowMs = testMode ? DashboardTestPattern.NowMs() : 0;
 
             // Host-initiated dashboard switch: emit the group-0x32/0x81 select command.
-            int pending = plugin?.TakePendingFsr1Select() ?? -1;
+            // Only when actually driving the wheel — in viz-only mode the pending select
+            // stays queued so it fires once telemetry resumes.
+            int pending = streamLive ? (plugin?.TakePendingFsr1Select() ?? -1) : -1;
             if (pending >= 0)
                 _connection.Send(Fsr1DisplayEmitter.BuildSelect(pending));
 
@@ -191,10 +205,15 @@ namespace MozaPlugin.Telemetry
             //  • Field-span probe (row editor open): light exactly the edited field's CURRENT
             //    byte span on its record type, zeroing every other record — the user watches
             //    that box move/grow as the boundary steppers change the span.
-            //  • Byte-stepper probe (toolbar ◀/▶): a single data byte held at 0xFF; stepping
-            //    the offset reveals which box each byte feeds (boundary = where the lit box
-            //    changes, width = consecutive offsets lighting the same box).
-            const int ProbeValue = 0xFF;
+            //  • Byte-stepper probe (toolbar ◀/▶): a single data byte swept 0→255→0;
+            //    stepping the offset reveals which box each byte feeds (boundary = where the
+            //    animated box changes, width = consecutive offsets driving the same box).
+            //    The value RAMPS rather than holding a constant 0xFF: a static byte renders a
+            //    16-bit gauge's LOW byte at only 255/65535 ≈ 0.4% (invisible), so the box looks
+            //    dead on every other step. A 0→255→0 triangle makes every byte's box visibly
+            //    pulse, including low bytes (which sweep 0→255 — small but clearly moving).
+            long probeRamp = DashboardTestPattern.NowMs() / 3 % 512;   // 0..511 over ~1.5 s
+            int probeValue = (int)(probeRamp < 256 ? probeRamp : 511 - probeRamp); // triangle 0..255..0
             var fieldProbe = probe ? plugin?.Fsr1FieldProbeTarget() : null;
             (byte probeType, int probeOff) = (probe && fieldProbe == null)
                 ? (plugin?.Fsr1ProbeTarget() ?? ((byte)0, -1)) : ((byte)0, -1);
@@ -203,11 +222,11 @@ namespace MozaPlugin.Telemetry
             {
                 if (fieldProbe is { } fp)
                     return dash.RecordType == fp.type
-                        ? Fsr1DisplayEmitter.BuildProbeSpanRecord(dash, fp.startOff, fp.endOff, ProbeValue)
+                        ? Fsr1DisplayEmitter.BuildProbeSpanRecord(dash, fp.startOff, fp.endOff, probeValue)
                         : Fsr1DisplayEmitter.BuildProbeRecord(dash, -1, 0); // other records: all-zero
                 if (probe)
                     return Fsr1DisplayEmitter.BuildProbeRecord(
-                        dash, dash.RecordType == probeType ? probeOff : -1, ProbeValue);
+                        dash, dash.RecordType == probeType ? probeOff : -1, probeValue);
                 // Compose catalog + synthetic split fields so net-new fields are packed too.
                 var fields = Fsr1FieldComposer.FieldsFor(plugin, dash);
                 return Fsr1DisplayEmitter.BuildRecord(dash, fields, f => LayoutValueFor(dash, f));
@@ -249,46 +268,51 @@ namespace MozaPlugin.Telemetry
             var live = Fsr1DashboardCatalog.LiveDashboards;
             int streamedThisTick = 0;
 
-            if (active.Length > 0)
+            // Push records to the wheel only when actually driving it. In viz-only mode we
+            // skip all streaming (the panel just wants the computed values for its preview).
+            if (streamLive)
             {
-                if (_lastStreamedIndex != activeIdx)
+                if (active.Length > 0)
                 {
-                    _lastStreamedIndex = activeIdx;
-                    // Drop any leftover records from the previous page / fallback so
-                    // only the active type(s) keep retransmitting, then re-declare each
-                    // (PitHouse re-declares on every switch before streaming). Most
-                    // pages map to one type; the GT-style page streams two (11+12).
-                    _connection.ClearStreamSlots(0, live.Length);
-                    foreach (var dash in active)
-                        _connection.Send(Fsr1DisplayEmitter.BuildDeclaration(dash));
+                    if (_lastStreamedIndex != activeIdx)
+                    {
+                        _lastStreamedIndex = activeIdx;
+                        // Drop any leftover records from the previous page / fallback so
+                        // only the active type(s) keep retransmitting, then re-declare each
+                        // (PitHouse re-declares on every switch before streaming). Most
+                        // pages map to one type; the GT-style page streams two (11+12).
+                        _connection.ClearStreamSlots(0, live.Length);
+                        foreach (var dash in active)
+                            _connection.Send(Fsr1DisplayEmitter.BuildDeclaration(dash));
+                    }
+                    for (int slot = 0; slot < active.Length; slot++)
+                    {
+                        var dash = active[slot];
+                        _connection.SendStream(
+                            (StreamKind)((int)StreamKind.TierDash0 + slot),
+                            RecordFor(dash));
+                        streamedThisTick++;
+                    }
                 }
-                for (int slot = 0; slot < active.Length; slot++)
+                else
                 {
-                    var dash = active[slot];
-                    _connection.SendStream(
-                        (StreamKind)((int)StreamKind.TierDash0 + slot),
-                        RecordFor(dash));
-                    streamedThisTick++;
-                }
-            }
-            else
-            {
-                if (_lastStreamedIndex != FloodSentinel)
-                {
-                    _lastStreamedIndex = FloodSentinel;
-                    MozaLog.Debug(
-                        $"[AZOM] FSR1 active index {activeIdx} not in the decoded " +
-                        "index→type map — streaming the full live set as a fallback " +
-                        "until the wheel reports a known page.");
-                }
-                for (int slot = 0; slot < live.Length; slot++)
-                {
-                    var dash = live[slot];
-                    if (dash.Fields.Length == 0) continue;
-                    _connection.SendStream(
-                        (StreamKind)((int)StreamKind.TierDash0 + slot),
-                        RecordFor(dash));
-                    streamedThisTick++;
+                    if (_lastStreamedIndex != FloodSentinel)
+                    {
+                        _lastStreamedIndex = FloodSentinel;
+                        MozaLog.Debug(
+                            $"[AZOM] FSR1 active index {activeIdx} not in the decoded " +
+                            "index→type map — streaming the full live set as a fallback " +
+                            "until the wheel reports a known page.");
+                    }
+                    for (int slot = 0; slot < live.Length; slot++)
+                    {
+                        var dash = live[slot];
+                        if (dash.Fields.Length == 0) continue;
+                        _connection.SendStream(
+                            (StreamKind)((int)StreamKind.TierDash0 + slot),
+                            RecordFor(dash));
+                        streamedThisTick++;
+                    }
                 }
             }
 

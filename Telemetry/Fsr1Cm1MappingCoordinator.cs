@@ -353,6 +353,19 @@ namespace MozaPlugin.Telemetry
         /// <summary>Current FSR1 active dashboard index (0..18), default 0.</summary>
         internal int GetActiveFsr1Index()
         {
+            // While the byte probe is armed it pins the page so a mid-sweep page-report
+            // can't scramble stepping (see MozaPlugin.Fsr1ProbeFrozenIndex). The driver,
+            // probe target, channel UI, and label all read through here, so they stay in
+            // agreement on the frozen page for the probe's lifetime.
+            int frozen = _plugin.Fsr1ProbeFrozenIndex;
+            if (frozen >= 0) return frozen;
+            return RawActiveFsr1Index();
+        }
+
+        /// <summary>The persisted active index for the current wheel page, ignoring any probe
+        /// freeze — the true wheel-followed value used for change detection.</summary>
+        private int RawActiveFsr1Index()
+        {
             var g = _plugin.GetCurrentWheelPageGuid();
             if (g.HasValue && _plugin.Settings?.Fsr1ActiveDashboardByWheelGuid != null
                 && _plugin.Settings.Fsr1ActiveDashboardByWheelGuid.TryGetValue(g.Value, out var i))
@@ -395,7 +408,12 @@ namespace MozaPlugin.Telemetry
         /// (wheel self-switch); follows without re-commanding the wheel.</summary>
         internal void NoteFsr1WheelIndex(int index)
         {
-            if (index == GetActiveFsr1Index()) return;
+            // Compare against the RAW stored index, not GetActiveFsr1Index — the latter is
+            // pinned during a probe, which would suppress real wheel switches and break the
+            // change log used to diagnose page-report spam.
+            int prev = RawActiveFsr1Index();
+            if (index == prev) return;
+            MozaLog.Info($"[AZOM] FSR1 wheel-reported page index {prev} → {index} (Param-6 follow)");
             SetActiveFsr1Index(index, sendToWheel: false);
         }
 
