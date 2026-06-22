@@ -232,12 +232,22 @@ namespace MozaPlugin.Devices
             }
         }
 
-        public bool IsConnected()
+        public bool IsConnected() => IsModelConnected(MozaPlugin.Instance, ExpectedModelPrefix);
+
+        /// <summary>
+        /// Detection-based connection verdict for a wheel device extension whose
+        /// device-type resolved to <paramref name="expectedPrefix"/>. Reads only
+        /// plugin detection state (set at Init/probe), so it is valid even when no
+        /// virtual LED driver has been injected yet (the injected driver is created
+        /// lazily in the extension's DataUpdate). The settings-control connection
+        /// gate calls this directly so the tab reflects detection rather than the
+        /// LED-injection lifecycle.
+        /// </summary>
+        internal static bool IsModelConnected(MozaPlugin? p, string? expectedPrefix)
         {
-            if (ExpectedModelPrefix == null)
+            if (expectedPrefix == null)
                 return false;
 
-            var p = MozaPlugin.Instance;
             if (p == null)
                 return false;
 
@@ -246,7 +256,7 @@ namespace MozaPlugin.Devices
             // rim). An ES wheel resolves model "ES" from id 0x18 and is served by
             // its own model-specific device below, so the marker device steps
             // aside for it.
-            if (ExpectedModelPrefix == MozaDeviceConstants.OldProtocolMarker)
+            if (expectedPrefix == MozaDeviceConstants.OldProtocolMarker)
                 return p.IsOldWheelDetected && string.IsNullOrEmpty(p.Data.WheelModelName);
 
             // Any other device requires a detected wheel — new OR old protocol.
@@ -258,7 +268,7 @@ namespace MozaPlugin.Devices
             // Empty prefix = generic new-protocol fallback, matches any
             // new-protocol wheel UNLESS a model-specific device extension is
             // active for this wheel.
-            if (ExpectedModelPrefix.Length == 0)
+            if (expectedPrefix.Length == 0)
                 return p.IsNewWheelDetected
                     && !p.IsModelSpecificExtensionActive(p.Data.WheelModelName);
 
@@ -269,7 +279,7 @@ namespace MozaPlugin.Devices
             if (string.IsNullOrEmpty(modelName))
                 return false;
 
-            return modelName.StartsWith(ExpectedModelPrefix, StringComparison.OrdinalIgnoreCase);
+            return modelName.StartsWith(expectedPrefix, StringComparison.OrdinalIgnoreCase);
         }
 
         public string GetSerialNumber() => "MOZA-VIRTUAL";
