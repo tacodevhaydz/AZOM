@@ -460,6 +460,20 @@ namespace MozaPlugin.Telemetry
                 return true;
             }
 
+            // The synthetic catalog-only profile is persisted as "builtin:WheelCatalog"
+            // but is NOT a real switchable wheel dashboard — it just mirrors the wheel's
+            // advertised catalog, which the pipeline already serves. Binding it is a no-op;
+            // without this guard the builtin fallback below would Stop+Start the pipeline
+            // (the ~11 s silence gate) on every cold start / game-switch reload.
+            if (string.Equals(key, "builtin:" + TelemetrySender.CatalogProfileName,
+                              StringComparison.OrdinalIgnoreCase))
+            {
+                MozaLog.Debug("[AZOM] Profile dashboard is the catalog-only synthetic profile (" +
+                              key + "); pipeline already serves the catalog — no switch needed");
+                SetLastAppliedKey(key);
+                return true;
+            }
+
             // Channel-readiness gate: kind=4 before preamble reaches Active is dropped
             // silently; defer during post-emit cooldown too.
             var sender = _plugin.TelemetrySender;
