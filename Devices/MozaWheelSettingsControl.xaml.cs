@@ -821,18 +821,15 @@ skipReadByMode:
                 // Tri-state display gate: known-display wheels (HasDisplay==true) show the
                 // dashboard tab immediately on connect; known-no-display wheels (false) never
                 // show it; unknown models defer to the runtime IsDisplayDetected probe.
-                // A CM2 behind the base owns the dashboard UI on its own device
-                // page, so hide it here; displayed wheels keep it.
-                // FSR V1 has its own screen (group-0x42 driver) and ALWAYS gets the
-                // Dashboard tab — independent of IsCm2BehindBaseCandidate, which is
-                // true for it when a CM2 dash shares the bus (the CM2 is driven
-                // concurrently by the tier-def sender). A normal tier-def wheel shows
-                // the tab only when it drives the dashboard and isn't the CM2-behind-
-                // base case (there the CM2's own device page owns the dashboard UI).
+                // DECOUPLED: the WHEEL's dashboard tab is shown iff the WHEEL drives its
+                // own screen — independent of any CM2. A CM2 has its OWN device page
+                // (MozaDashSettingsControl) driven by the dedicated _cm2Sender, so a
+                // display wheel + CM2 correctly shows BOTH tabs. FSR V1 (group-0x42
+                // driver) always has its own screen. (ShouldDriveDashboard already
+                // returns false for a screenless wheel + bus CM2.)
                 bool showTelemetry = newWheel
                                      && ((_plugin?.IsFsr1DisplayWheel ?? false)
-                                         || ((_plugin?.ShouldDriveDashboard() ?? false)
-                                             && !(_plugin?.IsCm2BehindBaseCandidate ?? false)));
+                                         || (_plugin?.ShouldDriveDashboard() ?? false));
                 bool showButtonsTab = newWheel && (modelInfoForTabs?.ButtonLedCount ?? 0) > 0;
                 bool showKnobsTab = newWheel && (modelInfoForTabs?.KnobCount ?? 0) > 0;
 

@@ -263,16 +263,12 @@ namespace MozaPlugin.Devices
             StatusDot.Fill = dashConnected ? Brushes.LimeGreen : Brushes.Red;
             StatusText.Text = dashConnected ? "Connected" : "Disconnected";
 
-            // Dashboard tab (dash selection + channel mapping + files) shows
-            // whenever a CM2 EXISTS to manage — behind the base or standalone-USB.
-            // Keyed on presence (DashboardUsbConnected), NOT on
-            // ShouldUseStandaloneDashboardTarget(): that predicate is false for a
-            // USB CM2 alongside a screen-wheel (the wheel keeps the main sender),
-            // but the CM2 is still present and its dashboard is managed here via the
-            // dedicated _cm2Sender.
+            // Dashboard tab (dash selection + channel mapping + files) shows whenever
+            // a CM2 EXISTS to manage — behind the base or standalone-USB — since the
+            // CM2 is always driven by the dedicated _cm2Sender. IsCm2Present captures
+            // exactly that presence (bus OR USB), independent of the wheel.
             DashMgmtTab.Visibility =
-                (_plugin.IsCm2BehindBaseCandidate || _plugin.DashboardUsbConnected)
-                    ? Visibility.Visible : Visibility.Collapsed;
+                _plugin.IsCm2Present ? Visibility.Visible : Visibility.Collapsed;
 
             bool dashDetected = dashConnected;
 

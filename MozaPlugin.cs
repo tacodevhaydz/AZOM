@@ -363,10 +363,10 @@ namespace MozaPlugin
         // tier-def _telemetrySender so an FSR1 screen + a CM2 dash run concurrently.
         internal Telemetry.Fsr1DisplayDriver? _fsr1Driver;
 
-        // Second tier-def sender for a CM2 dash driven CONCURRENTLY with a wheel that
-        // has its own screen (FSR1 or a tier-def display wheel). Targets dev 0x14 on
-        // the shared wheelbase connection (lane base 18) or dev 0x12 on the CM2's own
-        // USB connection (lane base 0). Null until such a dual-screen setup is seen.
+        // Dedicated tier-def sender that drives a CM2 dash whenever a CM2 is present —
+        // regardless of the wheel (display wheel, screenless wheel, or no wheel at all).
+        // Targets dev 0x14 on the shared wheelbase connection (lane base 18) or dev 0x12
+        // on the CM2's own USB connection (lane base 0). Null until a CM2 is detected.
         internal TelemetrySender? _cm2Sender;
 
         // Standalone CM1 base-bridged dash driver (group-0x35 → dev 0x14). Used instead
@@ -568,78 +568,39 @@ namespace MozaPlugin
             DetectionState.DashDetected || IsStandaloneDashboardUsbConnection;
 
         /// <summary>
-        /// A CM2 (external display) wired through the wheelbase: dash sub-device
-        /// present on a base bus whose attached wheel has no display of its own.
-        /// Drives the CM2 device profile + 0x12 screen-telemetry routing.
+        /// True when a CM2 is present at all — on its own USB cable OR bridged through
+        /// the wheelbase — independent of whether a wheel (and what kind) is attached.
+        /// This is the "a CM2 exists, so manage it" predicate, distinct from the
+        /// retired "should the MAIN sender drive the CM2" routing question: the CM2 is
+        /// always driven by the dedicated <see cref="_cm2Sender"/> now. Used for UI tab
+        /// visibility, CM2 meter-config gating, and diagnostics.
+        /// </summary>
+        internal bool IsCm2Present =>
+            DashboardUsbConnected
+            || (_connection?.IsConnected == true
+                && DetectionState.BaseDetected
+                && DetectionState.DashDetected);
+
+        /// <summary>
+        /// Wire dev_id of the CM2: a standalone-USB CM2 bridges as 0x12 (DeviceMain on
+        /// its own pipe); a CM2 behind the wheelbase is the meter at 0x14 (DeviceDash).
+        /// The <see cref="_cm2Sender"/>'s <c>TargetDeviceId</c> equals this; the CM2 LED
+        /// writes and meter-config commands route here.
+        /// </summary>
+        internal byte Cm2TargetDeviceId =>
+            DashboardUsbConnected ? MozaProtocol.DeviceMain : MozaProtocol.DeviceDash;
+
+        /// <summary>
+        /// A CM2 (external display) wired through the wheelbase bus (dash sub-device
+        /// at 0x14), as opposed to a standalone-USB CM2. DECOUPLED: this is now a pure
+        /// "bus CM2 present" predicate — independent of the wheel's screen — since the
+        /// CM2 is always driven by the dedicated <see cref="_cm2Sender"/> regardless of
+        /// the wheel. Used by detection (probe the dash at 0x14) and the CM2 meter-config
+        /// re-assert. Equivalent to <c>IsCm2Present &amp;&amp; !DashboardUsbConnected</c>.
         /// </summary>
         internal bool IsCm2BehindBaseCandidate =>
-            _connection?.IsConnected == true
-            && DetectionState.BaseDetected
-            && DetectionState.DashDetected
-            && !IsStandaloneDashboardUsbConnection
-            && WheelModelInfo?.HasDisplay != true
-            // IsCm2BehindBaseCandidate means "the MAIN sender should drive the CM2"
-            // — true only for a SCREENLESS wheel + CM2. A wheel WITH its own screen
-            // (FSR1, or a tier-def display wheel) keeps the main sender on the wheel
-            // (or idle for FSR1); its CM2 is driven by the dedicated _cm2Sender.
-            && !IsFsr1DisplayWheel;
+            IsCm2Present && !DashboardUsbConnected;
 
-        /// <summary>
-        /// True when the connected wheel renders its OWN dashboard screen — an
-        /// FSR V1 (group-0x42 driver) or any tier-def display wheel
-        /// (<see cref="Devices.WheelModelInfo.HasDisplay"/>). In that case the MAIN
-        /// tier-def sender drives the wheel screen and a CM2 (bus or USB) is driven
-        /// by the dedicated <see cref="_cm2Sender"/> lane; the MAIN sender must NOT
-        /// be retargeted to the CM2. When false (screenless wheel, or no wheel at
-        /// all) a CM2 is the only display, so the MAIN sender drives it.
-        ///
-        /// This is the single source of truth shared by
-        /// <see cref="ShouldUseStandaloneDashboardTarget"/> (which keeps the main
-        /// sender off a USB CM2) and
-        /// <see cref="Telemetry.DualDisplayCoordinator.EnsureCm2Pipeline"/> (which
-        /// creates <see cref="_cm2Sender"/>). They MUST agree: keying both off this
-        /// one predicate guarantees exactly one sender drives the CM2 — a divergence
-        /// would let both the main sender and the CM2 sender open sessions on dev
-        /// 0x12 of the same connection and collide.
-        /// </summary>
-        internal bool WheelHasOwnScreen =>
-            IsFsr1DisplayWheel || (WheelModelInfo?.HasDisplay == true);
-
-        /// <summary>
-        /// True iff screen telemetry must target dev=0x12 (CM2 bridge/main)
-        /// rather than a wheel-hosted display at dev=0x17 — a standalone-USB CM2
-        /// or a CM2 wired through the wheelbase (<see cref="IsCm2BehindBaseCandidate"/>).
-        /// </summary>
-        internal bool ShouldUseStandaloneDashboardTarget()
-        {
-            // A standalone-USB CM2 retargets the MAIN sender to dev=0x12 ONLY when
-            // no wheel screen needs it — a screenless wheel, or no wheel at all.
-            // When the wheel has its OWN screen (FSR1/FSR2/tier-def display) the
-            // MAIN sender stays on the wheel (dev=0x17) and the dedicated _cm2Sender
-            // drives the CM2 (DualDisplayCoordinator.EnsureCm2Pipeline). Without this
-            // guard a USB CM2 hijacked the main sender away from the wheel: the
-            // wheel's dashboard UI then showed the CM2's channel catalog and the
-            // wheel screen got no data (FSR2 + USB CM2 bundle 2026-06-17). Mirrors
-            // the screenless guard already baked into IsCm2BehindBaseCandidate.
-            if (DashboardUsbConnected && !WheelHasOwnScreen) return true;
-            // CM2 bridged through the base bus (screenless wheel) → dev 0x14.
-            if (IsCm2BehindBaseCandidate) return true;
-            return false;
-        }
-
-        /// <summary>
-        /// Target dev_id for screen telemetry / session-control frames. A
-        /// standalone-USB CM2 bridges as 0x12; a CM2 behind the wheelbase is the
-        /// meter at 0x14 (0x12 there is the base main, which never engages the
-        /// session layer), so target 0x14 in that topology. PitHouse cm2.pcapng
-        /// (bus CM2) runs the whole session + value stream on 0x14 — 0x14 answers
-        /// (b2h session chunks) and the firmware lights RPM/flag LEDs from the RPM
-        /// channel in that 0x14 stream. Collapsing this to "always 0x12" left the
-        /// behind-base CM2 talking to the silent base main, so neither the display
-        /// nor the LEDs came up.
-        /// </summary>
-        internal byte PreferredStandaloneDashboardTargetDeviceId =>
-            IsCm2BehindBaseCandidate ? MozaProtocol.DeviceDash : MozaProtocol.DeviceMain;
 
         /// <summary>
         /// Push the dashboard's live RPM LED bitmask (dash-send-telemetry,
@@ -654,17 +615,14 @@ namespace MozaPlugin
         {
             // Stream lane (latest-wins, coalescing) — keep the per-frame CM2 LED
             // bitmask off the throttled one-shot FIFO so a shared-bus value stream
-            // can't starve it. Idempotent end-state, safe to coalesce.
+            // can't starve it. Idempotent end-state, safe to coalesce. Routed to the
+            // CM2's connection + device (Cm2TargetDeviceId: 0x12 USB / 0x14 bus) —
+            // the same place the dedicated _cm2Sender lives.
             if (DashboardUsbConnected)
                 return _dashboardManager.WriteSettingForDeviceStream(
-                    "dash-send-telemetry", PreferredStandaloneDashboardTargetDeviceId, bitmask,
-                    Protocol.StreamKind.DashRpmBitmask);
-
-            byte dev = ShouldUseStandaloneDashboardTarget()
-                ? PreferredStandaloneDashboardTargetDeviceId   // DeviceDash (0x14) behind base
-                : MozaProtocol.DeviceDash;                     // base-bridged dash (CM1) at 0x14
+                    "dash-send-telemetry", Cm2TargetDeviceId, bitmask, Protocol.StreamKind.DashRpmBitmask);
             return _deviceManager.WriteSettingForDeviceStream(
-                "dash-send-telemetry", dev, bitmask, Protocol.StreamKind.DashRpmBitmask);
+                "dash-send-telemetry", Cm2TargetDeviceId, bitmask, Protocol.StreamKind.DashRpmBitmask);
         }
 
         /// <summary>
@@ -679,14 +637,9 @@ namespace MozaPlugin
         {
             if (DashboardUsbConnected)
                 return _dashboardManager.WriteArrayForDeviceStream(
-                    "dash-flag-colors", PreferredStandaloneDashboardTargetDeviceId, rgb18,
-                    Protocol.StreamKind.DashFlagColors);
-
-            byte dev = ShouldUseStandaloneDashboardTarget()
-                ? PreferredStandaloneDashboardTargetDeviceId
-                : MozaProtocol.DeviceDash;
+                    "dash-flag-colors", Cm2TargetDeviceId, rgb18, Protocol.StreamKind.DashFlagColors);
             return _deviceManager.WriteArrayForDeviceStream(
-                "dash-flag-colors", dev, rgb18, Protocol.StreamKind.DashFlagColors);
+                "dash-flag-colors", Cm2TargetDeviceId, rgb18, Protocol.StreamKind.DashFlagColors);
         }
 
         /// <summary>
@@ -707,17 +660,32 @@ namespace MozaPlugin
             if (DashboardUsbConnected)
                 return inRange
                     ? _dashboardManager.WriteArrayForDeviceStream(
-                        $"cm2-indicator-color{index + 1}", PreferredStandaloneDashboardTargetDeviceId, rgb, slot)
+                        $"cm2-indicator-color{index + 1}", Cm2TargetDeviceId, rgb, slot)
                     : _dashboardManager.WriteArrayForDevice(
-                        $"cm2-indicator-color{index + 1}", PreferredStandaloneDashboardTargetDeviceId, rgb);
+                        $"cm2-indicator-color{index + 1}", Cm2TargetDeviceId, rgb);
 
-            byte dev = ShouldUseStandaloneDashboardTarget()
-                ? PreferredStandaloneDashboardTargetDeviceId
-                : MozaProtocol.DeviceDash;
             return inRange
-                ? _deviceManager.WriteArrayForDeviceStream($"dash-rpm-color{index + 1}", dev, rgb, slot)
-                : _deviceManager.WriteArrayForDevice($"dash-rpm-color{index + 1}", dev, rgb);
+                ? _deviceManager.WriteArrayForDeviceStream($"dash-rpm-color{index + 1}", Cm2TargetDeviceId, rgb, slot)
+                : _deviceManager.WriteArrayForDevice($"dash-rpm-color{index + 1}", Cm2TargetDeviceId, rgb);
         }
+
+        /// <summary>
+        /// Route a one-shot CM2 meter-config write (group 0x32: modes, thresholds,
+        /// indicator brightness, stored idle colours) to the CM2's OWN pipe + device.
+        /// A standalone-USB CM2 lives on the dedicated _dashboardManager connection,
+        /// NOT the wheelbase _deviceManager — so a name-based _deviceManager.WriteSetting
+        /// would land on the wheelbase's own 0x12 (the base main, which drops group-0x32)
+        /// and never reach the USB CM2. These mirror the per-frame WriteDash* LED routing.
+        /// </summary>
+        internal bool WriteCm2Config(string commandName, int value) =>
+            DashboardUsbConnected
+                ? _dashboardManager.WriteSettingForDevice(commandName, Cm2TargetDeviceId, value)
+                : _deviceManager.WriteSettingForDevice(commandName, Cm2TargetDeviceId, value);
+
+        internal bool WriteCm2Config(string commandName, byte[] payload) =>
+            DashboardUsbConnected
+                ? _dashboardManager.WriteArrayForDevice(commandName, Cm2TargetDeviceId, payload)
+                : _deviceManager.WriteArrayForDevice(commandName, Cm2TargetDeviceId, payload);
 
         internal bool IsBaseAmbientLedSupported => DetectionState.BaseAmbientLedSupported;
         internal bool IsHandbrakeDetected => DetectionState.HandbrakeDetected;
@@ -825,12 +793,25 @@ namespace MozaPlugin
 
         internal bool ShouldDriveDashboard()
         {
-            // CM2 on the wheelbase bus drives a dashboard even on a screenless wheel.
-            if (IsCm2BehindBaseCandidate) return true;
+            // DECOUPLED: this gates ONLY the MAIN (wheel-screen) sender. A bus CM2 on a
+            // screenless wheel is driven by _cm2Sender, not the main sender, so the old
+            // `if (IsCm2BehindBaseCandidate) return true;` short-circuit is gone — the
+            // main sender must NOT start on a screenless wheel just because a CM2 is on
+            // the bus (that would put it on 0x17 with no screen, or collide on 0x14).
             bool? hasDisplay = WheelModelInfo?.HasDisplay;
             if (hasDisplay == false) return false;   // known no-display: never
             if (hasDisplay == true)  return true;    // known display: don't wait for probe
-            return IsDisplayDetected;                // unknown model: trust the probe
+            // Unknown model: trust the display probe — EXCEPT when a bus CM2 is present.
+            // That CM2's own display-identity probe (sent to 0x14) populates the SAME
+            // _data.Display* fields IsDisplayDetected reads, falsely implying the WHEEL
+            // has a screen. Treat an unknown wheel + bus CM2 as screenless: the CM2 is
+            // the display (driven by _cm2Sender at 0x14), and the main sender stays idle
+            // rather than co-reside on 0x17 with SharesConnection=false (whose Stop()
+            // would FlushPendingWrites and blank the CM2). A real display wheel resolves
+            // HasDisplay==true above. (A USB CM2 is on its own pipe and doesn't
+            // contaminate _data.Display*, so it's excluded here.)
+            if (IsCm2Present && !DashboardUsbConnected) return false;
+            return IsDisplayDetected;                // unknown model, no bus CM2: trust the probe
         }
 
         /// <summary>Display sub-device model name (e.g. "W18 Display"), or empty.</summary>
@@ -2663,7 +2644,8 @@ namespace MozaPlugin
 
         internal TelemetrySender? TelemetrySender => _telemetrySender;
 
-        /// <summary>The secondary CM2-dash tier-def sender (dual-screen), or null.</summary>
+        /// <summary>The dedicated CM2-dash tier-def sender (drives any attached CM2, bus
+        /// or USB, independent of the wheel), or null when no CM2 is present.</summary>
         internal TelemetrySender? Cm2Sender => _cm2Sender;
 
         // "Send Test Pattern" toggle, shared across every display pipeline. The
@@ -2882,17 +2864,13 @@ namespace MozaPlugin
         internal bool WheelUsesTierDefDisplaySender =>
             !IsFsr1DisplayWheel && (WheelModelInfo?.HasDisplay == true);
 
-        /// <summary>The sender that actually drives the CM2 dashboard. When the
-        /// wheel has its own screen (FSR1 / tier-def display) the dedicated
-        /// <see cref="Cm2Sender"/> lane drives the CM2 alongside the wheel; when
-        /// the wheel is SCREENLESS the CM2 is the only display, so the MAIN sender
-        /// is retargeted to it and <see cref="Cm2Sender"/> is never created
-        /// (EnsureCm2Pipeline gates on wheelHasOwnScreen). The CM2 dash UI must
-        /// read THIS sender's WheelState/ConfigJsonList — keying off Cm2Sender
-        /// alone left a screenless-wheel + base-CM2 setup with no dashboard
-        /// dropdown (dedicated sender null).</summary>
-        internal TelemetrySender? ActiveCm2Sender =>
-            WheelHasOwnScreen ? _cm2Sender : _telemetrySender;
+        /// <summary>The sender that drives the CM2 dashboard. DECOUPLED: the CM2 is
+        /// ALWAYS driven by the dedicated <see cref="_cm2Sender"/> (created whenever a
+        /// CM2 is present, regardless of the wheel), so this is simply that sender —
+        /// null when no CM2 is attached. The CM2 dash UI reads its WheelState/
+        /// ConfigJsonList. (Previously this fell back to the MAIN sender for a
+        /// screenless wheel, because the main sender drove the CM2 then.)</summary>
+        internal TelemetrySender? ActiveCm2Sender => _cm2Sender;
 
         /// <summary>The CM2's selected dashboard name (independent of the wheel's).</summary>
         internal string ActiveCm2DashboardName
@@ -3269,16 +3247,28 @@ namespace MozaPlugin
             // polled independently for base temps/state. No-op unless connected.
             _connectionCoordinator?.PollBaseAux();
 
+            // CM2 / dashboard-pipeline reconcile runs REGARDLESS of the wheelbase
+            // connection. DECOUPLED: a standalone-USB CM2 is driven by the dedicated
+            // _cm2Sender on its own pipe with no wheelbase, so gating these behind the
+            // wheelbase guard below would never service it. EnsureCm2Pipeline is the
+            // periodic reconcile (start when a CM2 appears, reconfigure, and complete
+            // the debounced teardown when the CM2 is gone) — it MUST run on a timer for
+            // the teardown dwell to elapse; the event-driven apply/detect callers alone
+            // can't advance it. Each call is a no-op / idempotent when nothing changed
+            // (the Start gate prevents restart churn; the CM1 discriminator early-returns
+            // for a non-bus CM2). For a bus CM2 the wheelbase IS connected so the guard
+            // below passes anyway — running them here only adds the USB-only case.
+            _dualDisplay?.EnsureCm2Pipeline();
+            _dashboardBindingCoordinator?.TickPendingDashboardRetry();
+            _dualDisplay?.TickCm2DashboardReassert();
+            _dualDisplay?.TickCm1Discriminator();
+
             if (!_connection.IsConnected) return;
 
             // Auto-standby backstop: enters standby when idle (covers the case
             // where SimHub stops calling DataUpdate with no game running) and
             // re-applies the desired work mode after a base reconnect.
             ApplyAutoStandby();
-
-            _dashboardBindingCoordinator?.TickPendingDashboardRetry();
-            _dualDisplay?.TickCm2DashboardReassert();
-            _dualDisplay?.TickCm1Discriminator();
 
             // Hot-swap detection: track whether the locked wheel is still responding
             // and periodically verify the model name hasn't changed.

@@ -5,8 +5,9 @@ using MozaPlugin.Protocol;
 namespace MozaPlugin.Telemetry
 {
     /// <summary>
-    /// Dual-display pipeline coordination: drives a CM2 dash on a second
-    /// tier-def sender concurrently with a wheel screen, discriminates a
+    /// Dual-display pipeline coordination: drives a CM2 dash on a dedicated
+    /// tier-def sender whenever a CM2 is present (independent of the wheel —
+    /// display wheel, screenless wheel, or none), discriminates a
     /// bus-bridged CM1 (group-0x35, no tier-def catalog) from a real CM2 and
     /// hands off to the CM1 driver, and owns the FSR1/CM1 driver start/stop
     /// gates. The sender/driver instances (<c>_cm2Sender</c>/<c>_cm1Driver</c>/
@@ -53,29 +54,35 @@ namespace MozaPlugin.Telemetry
         }
 
         /// <summary>
-        /// Drive a CM2 dash on a SECOND tier-def sender concurrently with a wheel that
-        /// has its own screen (FSR1 driver or a tier-def display wheel). The CM2
+        /// Drive a CM2 dash on the dedicated _cm2Sender whenever a CM2 is present —
+        /// regardless of the wheel (display wheel, screenless wheel, or none). The CM2
         /// catalog-synthesises its own dashboard, so no mzdash is needed here. On the
-        /// shared wheelbase bus the CM2 sender uses lane base 18 + strict inbound, and
-        /// the wheel's tier-def sender (if any) is flipped to strict/shares so the two
-        /// don't collide. On a CM2's own USB cable it uses base 0 on that connection.
-        /// Tears the CM2 sender down when the dual-screen condition no longer holds.
+        /// shared wheelbase bus the CM2 sender uses lane base 18 + strict inbound, and a
+        /// tier-def DISPLAY wheel co-residing on that bus is flipped to strict/shares so
+        /// the two don't collide. On a CM2's own USB cable it uses base 0. Tears the CM2
+        /// sender down (debounced) when no CM2 is present.
         /// </summary>
         internal void EnsureCm2Pipeline()
         {
-            bool wheelHasOwnScreen = _plugin.WheelHasOwnScreen;
             bool busCm2 = _detectionState.DashDetected && !_plugin.DashboardUsbConnected
                           && _plugin.Connection?.IsConnected == true;
             bool usbCm2 = _plugin.DashboardUsbConnected;
-            bool want = _plugin.ActiveTelemetryEnabled && wheelHasOwnScreen && (busCm2 || usbCm2);
+            // DECOUPLED: the dedicated _cm2Sender drives the CM2 whenever a CM2 is
+            // present — regardless of the wheel. (Previously gated on the wheel having
+            // its own screen, which left the MAIN sender driving the CM2 for screenless/no-wheel rigs
+            // and never ran the CM1 discriminator there — a CM1 with no display-wheel
+            // was never identified.) The MAIN sender is now always wheel-only;
+            // ApplyTelemetrySettings guarantees it never targets a CM2 device, so the
+            // two senders can never collide on 0x12/0x14.
+            bool want = _plugin.ActiveTelemetryEnabled && (busCm2 || usbCm2);
 
             if (!want)
             {
                 // Debounce the ENTIRE teardown — the Stop, the CM1-driver stop, AND
                 // the wheel-flag clears must all wait out the dwell. A one-tick blip
                 // on any `want` input (DashDetected / DashboardUsbConnected /
-                // Connection.IsConnected / ActiveTelemetryEnabled / WheelHasOwnScreen)
-                // must change nothing: it would otherwise abort a multi-second CM2
+                // Connection.IsConnected / ActiveTelemetryEnabled) must change nothing:
+                // it would otherwise abort a multi-second CM2
                 // cold-start (the CS-Pro 3-attempt/29s pathology) and flip the wheel's
                 // SharesConnection false for a tick — which is exactly the flag Stop()
                 // reads to choose ClearStreamSlots (safe) vs FlushPendingWrites (blanks
@@ -183,7 +190,20 @@ namespace MozaPlugin.Telemetry
             // never finished cold-start → stuck Idle, CM2 dark (bundle 2026-06-17). The
             // StateIsIdle guard lets the cold-start run to completion; a sender that's
             // Starting/Preamble/Active is left alone.
-            if (cm2.FramesSent == 0 && cm2.StateIsIdle)
+            // Collision guard: never start _cm2Sender on a device the MAIN sender is
+            // still Active on. A persistent main sender can carry a stale CM2 target
+            // (0x14/0x12) across a plugin reload until ApplyTelemetrySettings' device-id
+            // Stop moves it back to the wheel (0x17); in that window, starting here
+            // would open dual sessions on the same dev/connection — the exact collision
+            // the decoupling prevents. Defer: a later reconcile starts _cm2Sender once
+            // the main sender has relinquished the device. (Normal case: main is on
+            // 0x17 != dev, so this never blocks.)
+            var mainSender = _plugin.TelemetrySender;
+            bool mainHoldsThisDevice = mainSender != null && !mainSender.StateIsIdle
+                && ReferenceEquals(mainSender.ConnectionRef, conn)
+                && mainSender.TargetDeviceId == dev;
+
+            if (cm2.FramesSent == 0 && cm2.StateIsIdle && !mainHoldsThisDevice)
             {
                 // Fresh start: allow the saved-dashboard re-assert to fire once the
                 // CM2 advertises its dashboard list (PollStatus → TickCm2DashboardReassert).

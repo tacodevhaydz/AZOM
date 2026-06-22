@@ -521,7 +521,7 @@ namespace MozaPlugin
                 // stream. (A dedicated standalone pipe is handled by the override
                 // above.)
                 case "cm2-main":
-                    return MozaPlugin.Instance?.PreferredStandaloneDashboardTargetDeviceId
+                    return MozaPlugin.Instance?.Cm2TargetDeviceId
                         ?? MozaProtocol.DeviceMain;
                 case "handbrake": return MozaProtocol.DeviceHandbrake;
                 case "ab9":      return MozaProtocol.DeviceAb9;

@@ -270,7 +270,9 @@ namespace MozaPlugin
             val = val < 0 ? 0 : (val > 100 ? 100 : val);
             if (_plugin.Data != null) _plugin.Data.DashDisplayBrightness = val;
             _plugin.UpdateActiveProfile(p => p.DashDisplayBrightness = val);
-            _plugin.TelemetrySender?.SendDashDisplayBrightness(val, allowZero: true);
+            // Decoupled: target the CM2's own sender when a CM2 is present (it drives
+            // the CM2 screen); fall back to the wheel-screen main sender otherwise.
+            (_plugin.ActiveCm2Sender ?? _plugin.TelemetrySender)?.SendDashDisplayBrightness(val, allowZero: true);
             _plugin.SaveSettings();
         }
 

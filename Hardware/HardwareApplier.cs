@@ -409,11 +409,21 @@ namespace MozaPlugin.Hardware
             // cm2-indicator-brightness write is the authoritative one, but
             // sending the legacy dash-rpm-brightness too costs nothing and
             // might engage on different firmware revisions.
-            bool isCm2 = _plugin.ShouldUseStandaloneDashboardTarget();
+            // A CM2 is present (bus or USB) — apply its meter LED config. DECOUPLED:
+            // keyed on presence, not on the retired "main sender drives the CM2"
+            // predicate, so a CM2 alongside a DISPLAY wheel (which the old predicate
+            // excluded) now also gets its meter config.
+            bool isCm2 = _plugin.IsCm2Present;
 
             if (profile.DashRpmBrightness   >= 0) _deviceManager.WriteSetting("dash-rpm-brightness", profile.DashRpmBrightness);
             if (profile.DashFlagsBrightness >= 0) _deviceManager.WriteSetting("dash-flags-brightness", profile.DashFlagsBrightness);
-            var sender = _plugin.TelemetrySender;
+            // DECOUPLED: dash screen brightness + standby target the CM2's OWN sender
+            // (the _cm2Sender drives the CM2 screen now — the main sender is wheel-only,
+            // and idle entirely for a screenless/no-wheel rig, so routing these via the
+            // main sender silently no-op'd the CM2 screen). ApplyDashToHardware only
+            // runs once a dash is detected, so ActiveCm2Sender is the right target;
+            // fall back to the main sender only if no dedicated CM2 sender exists.
+            var sender = _plugin.ActiveCm2Sender ?? _plugin.TelemetrySender;
             if (profile.DashDisplayBrightness   >= 0) sender?.SendDashDisplayBrightness(profile.DashDisplayBrightness);
             if (profile.DashDisplayStandbyMin >= 0) sender?.SendDashDisplayStandbyMinutes(profile.DashDisplayStandbyMin);
 
@@ -430,27 +440,32 @@ namespace MozaPlugin.Hardware
         /// </summary>
         private void ApplyCm2DashboardConfig(MozaProfile profile)
         {
+            // All writes go through _plugin.WriteCm2Config so they reach the CM2's OWN
+            // pipe + device — a standalone-USB CM2 is on the dedicated dashboard
+            // connection, not the wheelbase _deviceManager (which would land these on
+            // the wheelbase's 0x12 base-main and drop them). Bus CM2 → wheelbase 0x14.
+
             // Meter mode toggles — required to put CM2 firmware in SimHub
             // telemetry mode so screen widgets + LED ramp follow value frames.
             // TODO(cm2): cm2-normal-mode 1 vs 2 visually similar in CM2.md
             // lab — confirm 1 is the correct SimHub-mode value via capture.
-            _deviceManager.WriteSetting("cm2-normal-mode", 1);
-            _deviceManager.WriteSetting("cm2-rpm-group-mode", 1);
-            _deviceManager.WriteSetting("cm2-flag-group-mode", 1);
+            _plugin.WriteCm2Config("cm2-normal-mode", 1);
+            _plugin.WriteCm2Config("cm2-rpm-group-mode", 1);
+            _plugin.WriteCm2Config("cm2-flag-group-mode", 1);
 
             // RPM regulation mode + thresholds. CM2.md notes percent-vs-absolute
             // encoding is not independently verified, so we write BOTH (percent
             // mode + percent thresholds, plus absolute thresholds derived from
             // MaxRpm) and let the firmware honour whichever it actually uses.
             // TODO(cm2): confirm regulation-mode encoding via capture.
-            _deviceManager.WriteSetting("cm2-rpm-regulation-mode", 0);
+            _plugin.WriteCm2Config("cm2-rpm-regulation-mode", 0);
 
             // Default percent ramp: 50,55,60,…,95 covering the upper half of
             // the rev range. CM2 has 16 physical LEDs but the firmware accepts
             // a 10-entry percent ramp (one entry per "rung"; the firmware
             // interpolates across physical positions).
             byte[] percentRamp = new byte[] { 50, 55, 60, 65, 70, 75, 80, 85, 90, 95 };
-            _deviceManager.WriteArray("cm2-rpm-percent-thresholds", percentRamp);
+            _plugin.WriteCm2Config("cm2-rpm-percent-thresholds", percentRamp);
 
             // Absolute thresholds derived from MaxRpm (fallback 8000 per
             // CM2.md). Each rung gets (rpm * (i+1) / 10) so the 10 thresholds
@@ -461,7 +476,7 @@ namespace MozaPlugin.Hardware
             for (byte i = 0; i < 10; i++)
             {
                 int threshold = (int)((long)maxRpm * (i + 1) / 10);
-                _deviceManager.WriteSetting($"cm2-rpm-absolute-threshold{i + 1}", threshold);
+                _plugin.WriteCm2Config($"cm2-rpm-absolute-threshold{i + 1}", threshold);
             }
 
             // Indicator brightness — authoritative path for CM2. Reuse the
@@ -469,7 +484,7 @@ namespace MozaPlugin.Hardware
             // does not double up; the legacy dash-rpm-brightness write above
             // is kept for compatibility.
             if (profile.DashRpmBrightness >= 0)
-                _deviceManager.WriteSetting("cm2-indicator-brightness", profile.DashRpmBrightness);
+                _plugin.WriteCm2Config("cm2-indicator-brightness", profile.DashRpmBrightness);
 
             // STANDBY per-LED colors only (idle appearance, shown when no game
             // is running). rs21_parameter.db: SetIndicatorGroupStandbyModeColor
@@ -486,7 +501,7 @@ namespace MozaPlugin.Hardware
                 for (int i = 0; i < rpmCount; i++)
                 {
                     var rgb = MozaProfile.UnpackColor(profile.DashRpmColors[i]);
-                    _deviceManager.WriteColor($"cm2-stored-color{i + 1}", rgb[0], rgb[1], rgb[2]);
+                    _plugin.WriteCm2Config($"cm2-stored-color{i + 1}", new byte[] { rgb[0], rgb[1], rgb[2] });
                 }
             }
             if (profile.DashFlagColors != null)
@@ -495,7 +510,7 @@ namespace MozaPlugin.Hardware
                 for (int i = 0; i < flagCount; i++)
                 {
                     var rgb = MozaProfile.UnpackColor(profile.DashFlagColors[i]);
-                    _deviceManager.WriteColor($"cm2-stored-color{i + 11}", rgb[0], rgb[1], rgb[2]);
+                    _plugin.WriteCm2Config($"cm2-stored-color{i + 11}", new byte[] { rgb[0], rgb[1], rgb[2] });
                 }
             }
         }

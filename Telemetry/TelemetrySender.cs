@@ -1750,7 +1750,17 @@ namespace MozaPlugin.Telemetry
         private void CloseHostSessions()
         {
             if (!_connection.IsConnected) return;
-            if (MozaPlugin.Instance?.ShouldDriveDashboard() == false) return;
+            // A CM2 / standalone-dashboard sender (target 0x12/0x14) ALWAYS opened host
+            // sessions on its device, so it must ALWAYS close them — the wheel-centric
+            // ShouldDriveDashboard() skip does NOT apply to it (post-decoupling that
+            // predicate is false for a screenless/no-wheel rig whose CM2 is driven by
+            // this very sender; gating on it left the CM2's 0x01/0x02/0x03 dangling).
+            // Only the WHEEL-screen main sender (target 0x17) honors the screenless
+            // skip: there Start() never opened a session and the closes would emit
+            // stray dev=0x17 session frames to a wheel that doesn't speak the layer.
+            bool cm2TargetSender = _targetDeviceId == MozaProtocol.DeviceMain
+                                   || _targetDeviceId == MozaProtocol.DeviceDash;
+            if (!cm2TargetSender && MozaPlugin.Instance?.ShouldDriveDashboard() == false) return;
             try { _sessionLife.SendSessionClose(0x01); } catch { }
             try { _sessionLife.SendSessionClose(0x02); } catch { }
             try { _sessionLife.SendSessionClose(0x03); } catch { }
