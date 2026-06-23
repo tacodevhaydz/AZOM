@@ -168,13 +168,6 @@ namespace MozaPlugin
         // is true. Selected from a preset combo in the UI.
         public int AutoStandbyTimeoutMinutes { get; set; } = 10;
 
-        // When true, hold the Windows multimedia timer resolution at 1 ms while a
-        // game is running (released at idle). Some games (e.g. Forza) halve their
-        // frame rate while a force-feedback wheel is connected because the default
-        // ~15.6 ms scheduler tick coarsens their FFB-pacing waits; 1 ms restores
-        // full frame pacing. Opt-in; default off. See TimerResolutionManager.
-        public bool FfbLagFixEnabled { get; set; } = false;
-
         // When true, only send LED updates to wheel when data actually changed (ignores SimHub forceRefresh).
         // Fixes flickering on some non-ES wheels. When false, respects SimHub's refresh cycle.
         public bool LimitWheelUpdates { get; set; } = false;

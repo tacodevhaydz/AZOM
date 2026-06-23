@@ -608,7 +608,4 @@ Id: {2}</value></data>
   <data name="Option_Ab9FlightSim" xml:space="preserve"><value>Авиасимулятор</value></data>
   <data name="SliderLabel_KeepaliveTimeout" xml:space="preserve"><value>Тайм-аут keepalive</value></data>
   <data name="Hint_KeepaliveTimeout" xml:space="preserve"><value>Как долго обновлять светодиоды после остановки телеметрии, прежде чем руль перейдёт в спящий режим. 0 = остановить сразу.</value></data>
-  <data name="Section_Performance" xml:space="preserve"><value>ПРОИЗВОДИТЕЛЬНОСТЬ</value></data>
-  <data name="SliderLabel_FfbLagFix" xml:space="preserve"><value>Исправление задержки FFB</value></data>
-  <data name="Hint_FfbLagFix" xml:space="preserve"><value>Улучшает плавность кадров в некоторых играх (например, Forza), которые подтормаживают или вдвое снижают частоту кадров при подключённом руле с обратной связью. Повышает разрешение таймера Windows, пока запущена игра.</value></data>
 </root>

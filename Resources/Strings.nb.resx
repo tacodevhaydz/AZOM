@@ -613,7 +613,4 @@ Id: {2}</value></data>
   <data name="Option_Ab9FlightSim" xml:space="preserve"><value>Flysimulering</value></data>
   <data name="SliderLabel_KeepaliveTimeout" xml:space="preserve"><value>Keepalive-tidsavbrudd</value></data>
   <data name="Hint_KeepaliveTimeout" xml:space="preserve"><value>Hvor lenge LED-ene oppdateres etter at telemetrien stopper før rattet kan gå i hvilemodus. 0 = stopp umiddelbart.</value></data>
-  <data name="Section_Performance" xml:space="preserve"><value>YTELSE</value></data>
-  <data name="SliderLabel_FfbLagFix" xml:space="preserve"><value>FFB-lagg-fiks</value></data>
-  <data name="Hint_FfbLagFix" xml:space="preserve"><value>Forbedrer bildeflyten i enkelte spill (f.eks. Forza) som hakker eller halverer bildefrekvensen når et force feedback-ratt er tilkoblet. Øker oppløsningen på Windows-tidtakeren mens et spill kjører.</value></data>
 </root>

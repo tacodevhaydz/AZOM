@@ -613,7 +613,4 @@ Id: {2}</value></data>
   <data name="Option_Ab9FlightSim" xml:space="preserve"><value>Simulación de vuelo</value></data>
   <data name="SliderLabel_KeepaliveTimeout" xml:space="preserve"><value>Tiempo de keepalive</value></data>
   <data name="Hint_KeepaliveTimeout" xml:space="preserve"><value>Cuánto tiempo seguir actualizando los LED tras detenerse la telemetría antes de que el volante pueda dormir. 0 = detener de inmediato.</value></data>
-  <data name="Section_Performance" xml:space="preserve"><value>RENDIMIENTO</value></data>
-  <data name="SliderLabel_FfbLagFix" xml:space="preserve"><value>Corrección de lag de FFB</value></data>
-  <data name="Hint_FfbLagFix" xml:space="preserve"><value>Mejora el ritmo de fotogramas en algunos juegos (p. ej., Forza) que se entrecortan o reducen a la mitad su tasa de fotogramas cuando hay un volante con force feedback conectado. Aumenta la resolución del temporizador de Windows mientras se ejecuta un juego.</value></data>
 </root>

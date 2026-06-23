@@ -608,7 +608,4 @@ Id: {2}</value></data>
   <data name="Option_Ab9FlightSim" xml:space="preserve"><value>Mô phỏng bay</value></data>
   <data name="SliderLabel_KeepaliveTimeout" xml:space="preserve"><value>Thời gian chờ keepalive</value></data>
   <data name="Hint_KeepaliveTimeout" xml:space="preserve"><value>Thời gian tiếp tục làm mới đèn LED sau khi telemetry dừng trước khi vô-lăng có thể ngủ. 0 = dừng ngay.</value></data>
-  <data name="Section_Performance" xml:space="preserve"><value>HIỆU SUẤT</value></data>
-  <data name="SliderLabel_FfbLagFix" xml:space="preserve"><value>Sửa độ trễ FFB</value></data>
-  <data name="Hint_FfbLagFix" xml:space="preserve"><value>Cải thiện nhịp khung hình trong một số trò chơi (ví dụ: Forza) bị giật hoặc giảm một nửa tốc độ khung hình khi có vô-lăng phản hồi lực được kết nối. Tăng độ phân giải bộ định thời Windows khi trò chơi đang chạy.</value></data>
 </root>

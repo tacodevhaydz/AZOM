@@ -2123,18 +2123,6 @@
                             </ctrl:SectionCard>
                         </Grid>
 
-                        <ctrl:SectionCard Title="{x:Static res:Strings.Section_Performance}" Icon="{StaticResource IconBolt}">
-                            <StackPanel>
-                                <StackPanel Orientation="Horizontal" Margin="0,8">
-                                    <TextBlock Text="{x:Static res:Strings.SliderLabel_FfbLagFix}" Style="{StaticResource SliderLabel}"/>
-                                    <ctrl:OffOnToggle x:Name="FfbLagFixCheck" VerticalAlignment="Center"
-                                              Checked="FfbLagFixCheck_Changed" Unchecked="FfbLagFixCheck_Changed"/>
-                                </StackPanel>
-                                <TextBlock Text="{x:Static res:Strings.Hint_FfbLagFix}"
-                                           Style="{StaticResource MutedHintText}" Margin="0,4,0,0" TextWrapping="Wrap"/>
-                            </StackPanel>
-                        </ctrl:SectionCard>
-
                         <ctrl:SectionCard Title="{x:Static res:Strings.Section_WheelLedOutput}"
                                           Subtitle="{x:Static res:Strings.Subtitle_WheelLedOutput}"
                                           Icon="{StaticResource IconLed}">

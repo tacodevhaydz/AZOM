@@ -607,7 +607,4 @@ Id: {2}</value></data>
   <data name="Option_Ab9FlightSim" xml:space="preserve"><value>Προσομοίωση πτήσης</value></data>
   <data name="SliderLabel_KeepaliveTimeout" xml:space="preserve"><value>Χρονικό όριο Keepalive</value></data>
   <data name="Hint_KeepaliveTimeout" xml:space="preserve"><value>Πόση ώρα θα ανανεώνονται τα LED μετά τη διακοπή τηλεμετρίας πριν το τιμόνι μπει σε αδράνεια. 0 = άμεση διακοπή.</value></data>
-  <data name="Section_Performance" xml:space="preserve"><value>ΑΠΟΔΟΣΗ</value></data>
-  <data name="SliderLabel_FfbLagFix" xml:space="preserve"><value>Διόρθωση καθυστέρησης FFB</value></data>
-  <data name="Hint_FfbLagFix" xml:space="preserve"><value>Βελτιώνει τον ρυθμό καρέ σε ορισμένα παιχνίδια (π.χ. Forza) που κολλάνε ή υποδιπλασιάζουν τα καρέ τους όταν είναι συνδεδεμένο τιμόνι force-feedback. Αυξάνει την ανάλυση του χρονομέτρου των Windows όσο εκτελείται ένα παιχνίδι.</value></data>
 </root>
