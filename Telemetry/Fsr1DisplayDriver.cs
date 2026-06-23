@@ -22,7 +22,13 @@ namespace MozaPlugin.Telemetry
     /// </summary>
     internal sealed class Fsr1DisplayDriver : IDisposable
     {
-        private const double TickIntervalMs = 35.0;   // ~28.6 Hz, matches capture
+        // ~50 Hz. PitHouse streams each 0x42 record at ~20 ms during ACTIVE gameplay —
+        // single page 02 @ ~21 ms (46.7 Hz) and GT dual page 11/12 each @ ~20 ms (≈50 Hz),
+        // interleaved 11 12 11 12. Measured from usb-capture/fsr1 GT + game captures via
+        // tools/fsr1-0x42-cadence.py. The old 35 ms matched the whole-capture AVERAGE
+        // (~28/s), which is diluted by menu/idle gaps — not the live rate. Both active
+        // records are still streamed per tick, so each refreshes at the full tick rate.
+        private const double TickIntervalMs = 20.0;
         // FSR1 occupies the wheel lane: TierDash0..6 (records) + Enable (keepalive).
         private const int LaneSlotCount = 9;          // slots 0..8
         // _lastStreamedIndex sentinel meaning "currently in full-set fallback mode".
@@ -49,6 +55,9 @@ namespace MozaPlugin.Telemetry
         private int _diagRecords;
         private long _diagLastLogMs;
 
+        // One-time-per-process guard for the catalog gapless self-check (runs on first Start).
+        private static bool s_partitionsValidated;
+
         public Fsr1DisplayDriver(MozaSerialConnection connection, Func<string, double> resolve)
         {
             _connection = connection;
@@ -62,6 +71,14 @@ namespace MozaPlugin.Telemetry
         public void Start()
         {
             if (_running) return;
+            // Invariant self-check (once/process): every 0x42 catalog record must tile its
+            // data range [5, PayloadLen-1] gaplessly — a gap is a dead byte on the wheel.
+            // Warns if a future catalog edit breaks the partition; no effect in normal runs.
+            if (!s_partitionsValidated)
+            {
+                s_partitionsValidated = true;
+                try { Fsr1DashboardCatalog.ValidateDefaultPartitions(); } catch { }
+            }
             _running = true;
             _tickCounter = 0;
             _lastStreamedIndex = -1;
@@ -125,9 +142,15 @@ namespace MozaPlugin.Telemetry
             bool testMode = plugin?.DashboardTestPatternActive ?? false;
             bool probe = plugin?.Fsr1ProbeActive ?? false;
 
-            // Telemetry disabled by the user: keepalive only (keeps the wheel engaged).
-            // The test pattern / byte probe override this so the screen renders with no game.
-            if (!(plugin?.ActiveTelemetryEnabled ?? false) && !testMode && !probe)
+            // What drives the wheel this tick: live telemetry, the test sweep, or the byte
+            // probe. When none are active we normally just keepalive — but if the channel-
+            // mapping panel's byte preview is open (Fsr1VizActive) we still flow through to
+            // compute and publish a viz snapshot from live game data, so the preview stays
+            // live while the user edits with telemetry-send toggled off. Wheel streaming is
+            // skipped in that case (vizOnly), so nothing is actually pushed to the screen.
+            bool streamLive = (plugin?.ActiveTelemetryEnabled ?? false) || testMode || probe;
+            bool vizOnly = !streamLive && (plugin?.Fsr1VizActive ?? false);
+            if (!streamLive && !vizOnly)
             {
                 if (_tickCounter % oneHzEvery == 0)
                     _connection.SendStream(StreamKind.Enable, Fsr1DisplayEmitter.Keepalive43);
@@ -141,7 +164,9 @@ namespace MozaPlugin.Telemetry
             long testNowMs = testMode ? DashboardTestPattern.NowMs() : 0;
 
             // Host-initiated dashboard switch: emit the group-0x32/0x81 select command.
-            int pending = plugin?.TakePendingFsr1Select() ?? -1;
+            // Only when actually driving the wheel — in viz-only mode the pending select
+            // stays queued so it fires once telemetry resumes.
+            int pending = streamLive ? (plugin?.TakePendingFsr1Select() ?? -1) : -1;
             if (pending >= 0)
                 _connection.Send(Fsr1DisplayEmitter.BuildSelect(pending));
 
@@ -177,24 +202,28 @@ namespace MozaPlugin.Telemetry
                 return Clamp((long)Math.Round(t * outMax), 0, outMax);
             }
 
-            // Per-field effective (offsets, encoding, value) honouring per-profile boundary /
-            // endianness overrides — the emitter packs each field at its resolved span.
-            (int[]? offsets, Fsr1Encoding enc, long value) LayoutValueFor(Fsr1Dashboard dash, Fsr1FieldDef f)
+            // A field's value given the encoding the partition resolved for it — the partition
+            // owns offsets/encoding; this applies the field's mapping + output ceiling.
+            long ValueForSlot(Fsr1Dashboard dash, Fsr1FieldDef f, Fsr1Encoding enc)
             {
                 var m = plugin?.GetFsr1FieldMapping(dash.Key, f.FieldId);
-                var (offsets, enc) = Fsr1DashboardCatalog.ResolveLayout(f, m, dash.PayloadLen);
                 long outMax = Fsr1DashboardCatalog.OutputMaxFor(enc, f.FullScale);
-                return (offsets, enc, ValueFor(dash, f, m, outMax));
+                return ValueFor(dash, f, m, outMax);
             }
 
             // Probe modes (mutually exclusive, both override value computation):
             //  • Field-span probe (row editor open): light exactly the edited field's CURRENT
             //    byte span on its record type, zeroing every other record — the user watches
             //    that box move/grow as the boundary steppers change the span.
-            //  • Byte-stepper probe (toolbar ◀/▶): a single data byte held at 0xFF; stepping
-            //    the offset reveals which box each byte feeds (boundary = where the lit box
-            //    changes, width = consecutive offsets lighting the same box).
-            const int ProbeValue = 0xFF;
+            //  • Byte-stepper probe (toolbar ◀/▶): a single data byte swept 0→255→0;
+            //    stepping the offset reveals which box each byte feeds (boundary = where the
+            //    animated box changes, width = consecutive offsets driving the same box).
+            //    The value RAMPS rather than holding a constant 0xFF: a static byte renders a
+            //    16-bit gauge's LOW byte at only 255/65535 ≈ 0.4% (invisible), so the box looks
+            //    dead on every other step. A 0→255→0 triangle makes every byte's box visibly
+            //    pulse, including low bytes (which sweep 0→255 — small but clearly moving).
+            long probeRamp = DashboardTestPattern.NowMs() / 3 % 512;   // 0..511 over ~1.5 s
+            int probeValue = (int)(probeRamp < 256 ? probeRamp : 511 - probeRamp); // triangle 0..255..0
             var fieldProbe = probe ? plugin?.Fsr1FieldProbeTarget() : null;
             (byte probeType, int probeOff) = (probe && fieldProbe == null)
                 ? (plugin?.Fsr1ProbeTarget() ?? ((byte)0, -1)) : ((byte)0, -1);
@@ -203,27 +232,26 @@ namespace MozaPlugin.Telemetry
             {
                 if (fieldProbe is { } fp)
                     return dash.RecordType == fp.type
-                        ? Fsr1DisplayEmitter.BuildProbeSpanRecord(dash, fp.startOff, fp.endOff, ProbeValue)
+                        ? Fsr1DisplayEmitter.BuildProbeSpanRecord(dash, fp.startOff, fp.endOff, probeValue)
                         : Fsr1DisplayEmitter.BuildProbeRecord(dash, -1, 0); // other records: all-zero
                 if (probe)
                     return Fsr1DisplayEmitter.BuildProbeRecord(
-                        dash, dash.RecordType == probeType ? probeOff : -1, ProbeValue);
-                // Compose catalog + synthetic split fields so net-new fields are packed too.
-                var fields = Fsr1FieldComposer.FieldsFor(plugin, dash);
-                return Fsr1DisplayEmitter.BuildRecord(dash, fields, f => LayoutValueFor(dash, f));
+                        dash, dash.RecordType == probeType ? probeOff : -1, probeValue);
+                // Resolve the gapless partition (catalog + synthetic splits, broken configs
+                // auto-repaired) and pack each slot's value — never a gap/overlap on the wire.
+                var partition = Fsr1DashboardCatalog.ResolvePartition(plugin, dash);
+                return Fsr1DisplayEmitter.BuildRecord(dash, partition, (f, enc) => ValueForSlot(dash, f, enc));
             }
 
             // Build the live numeric-viz record for one dash from its REAL telemetry values
             // (independent of probe/test — the panel shows actual data, not the probe pattern).
             Fsr1VizRecord BuildVizRecord(Fsr1Dashboard dash)
             {
-                var fields = Fsr1FieldComposer.FieldsFor(plugin, dash);
-                var frame = Fsr1DisplayEmitter.BuildRecord(dash, fields, f => LayoutValueFor(dash, f));
-                var vfields = new List<Fsr1VizField>(fields.Count);
-                foreach (var f in fields)
+                var partition = Fsr1DashboardCatalog.ResolvePartition(plugin, dash);
+                var frame = Fsr1DisplayEmitter.BuildRecord(dash, partition, (f, enc) => ValueForSlot(dash, f, enc));
+                var vfields = new List<Fsr1VizField>(partition.Count);
+                foreach (var (f, offsets, enc) in partition)
                 {
-                    var (offsets, enc, value) = LayoutValueFor(dash, f);
-                    if (offsets == null || offsets.Length == 0) continue;
                     int start = offsets[0], end = offsets[offsets.Length - 1];
                     var bytes = new byte[end - start + 1];
                     for (int o = start; o <= end; o++)
@@ -231,6 +259,7 @@ namespace MozaPlugin.Telemetry
                         int idx = 4 + o;
                         bytes[o - start] = (idx >= 0 && idx < frame.Length) ? frame[idx] : (byte)0;
                     }
+                    long value = ValueForSlot(dash, f, enc);
                     bool synth = Fsr1FieldComposer.IsSynthetic(plugin, dash.Key, f.FieldId);
                     vfields.Add(new Fsr1VizField(f.Label, start, end, enc.ToString(), value, bytes, synth));
                 }
@@ -249,46 +278,51 @@ namespace MozaPlugin.Telemetry
             var live = Fsr1DashboardCatalog.LiveDashboards;
             int streamedThisTick = 0;
 
-            if (active.Length > 0)
+            // Push records to the wheel only when actually driving it. In viz-only mode we
+            // skip all streaming (the panel just wants the computed values for its preview).
+            if (streamLive)
             {
-                if (_lastStreamedIndex != activeIdx)
+                if (active.Length > 0)
                 {
-                    _lastStreamedIndex = activeIdx;
-                    // Drop any leftover records from the previous page / fallback so
-                    // only the active type(s) keep retransmitting, then re-declare each
-                    // (PitHouse re-declares on every switch before streaming). Most
-                    // pages map to one type; the GT-style page streams two (11+12).
-                    _connection.ClearStreamSlots(0, live.Length);
-                    foreach (var dash in active)
-                        _connection.Send(Fsr1DisplayEmitter.BuildDeclaration(dash));
+                    if (_lastStreamedIndex != activeIdx)
+                    {
+                        _lastStreamedIndex = activeIdx;
+                        // Drop any leftover records from the previous page / fallback so
+                        // only the active type(s) keep retransmitting, then re-declare each
+                        // (PitHouse re-declares on every switch before streaming). Most
+                        // pages map to one type; the GT-style page streams two (11+12).
+                        _connection.ClearStreamSlots(0, live.Length);
+                        foreach (var dash in active)
+                            _connection.Send(Fsr1DisplayEmitter.BuildDeclaration(dash));
+                    }
+                    for (int slot = 0; slot < active.Length; slot++)
+                    {
+                        var dash = active[slot];
+                        _connection.SendStream(
+                            (StreamKind)((int)StreamKind.TierDash0 + slot),
+                            RecordFor(dash));
+                        streamedThisTick++;
+                    }
                 }
-                for (int slot = 0; slot < active.Length; slot++)
+                else
                 {
-                    var dash = active[slot];
-                    _connection.SendStream(
-                        (StreamKind)((int)StreamKind.TierDash0 + slot),
-                        RecordFor(dash));
-                    streamedThisTick++;
-                }
-            }
-            else
-            {
-                if (_lastStreamedIndex != FloodSentinel)
-                {
-                    _lastStreamedIndex = FloodSentinel;
-                    MozaLog.Debug(
-                        $"[AZOM] FSR1 active index {activeIdx} not in the decoded " +
-                        "index→type map — streaming the full live set as a fallback " +
-                        "until the wheel reports a known page.");
-                }
-                for (int slot = 0; slot < live.Length; slot++)
-                {
-                    var dash = live[slot];
-                    if (dash.Fields.Length == 0) continue;
-                    _connection.SendStream(
-                        (StreamKind)((int)StreamKind.TierDash0 + slot),
-                        RecordFor(dash));
-                    streamedThisTick++;
+                    if (_lastStreamedIndex != FloodSentinel)
+                    {
+                        _lastStreamedIndex = FloodSentinel;
+                        MozaLog.Debug(
+                            $"[AZOM] FSR1 active index {activeIdx} not in the decoded " +
+                            "index→type map — streaming the full live set as a fallback " +
+                            "until the wheel reports a known page.");
+                    }
+                    for (int slot = 0; slot < live.Length; slot++)
+                    {
+                        var dash = live[slot];
+                        if (dash.Fields.Length == 0) continue;
+                        _connection.SendStream(
+                            (StreamKind)((int)StreamKind.TierDash0 + slot),
+                            RecordFor(dash));
+                        streamedThisTick++;
+                    }
                 }
             }
 

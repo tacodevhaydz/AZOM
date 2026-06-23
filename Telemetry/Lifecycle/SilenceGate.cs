@@ -21,12 +21,19 @@ namespace MozaPlugin.Telemetry.Lifecycle
     /// enabled (queried via the constructor callback).</item>
     /// </list>
     ///
-    /// Both timestamps are <b>static</b> so they survive plugin-instance
-    /// recycle within one SimHub process (game switch reloads the plugin
-    /// without restarting SimHub; the wheel's sess=0x09 timer doesn't
-    /// reset just because we recycled). They live on the gate class as
-    /// statics with the same semantics that previously held on
-    /// <c>TelemetrySender</c>.
+    /// The timestamps are <b>per-instance</b> (one gate per
+    /// <see cref="TelemetrySender"/>). They were once static "to survive plugin
+    /// recycle", but that scope error coupled the two senders that share a bus: a
+    /// CM2 Stop overwrote the static so the WHEEL's next reopen waited ~11 s though
+    /// the wheel never stopped (the "could not acquire start lock" storms + the
+    /// cross-sender double-stalls). Each sender must gate only on its OWN last Stop
+    /// — the wheel's sess=0x09 interlock is per-device-session, keyed by dev-id on
+    /// the wire. Cross-reload survival for the WHEEL is preserved another way: the
+    /// main sender (and hence its gate instance, a readonly field) is REUSED across
+    /// plugin recycle via <c>s_persistentTelemetrySender</c>, so its last-Stop
+    /// timestamp travels with it. The CM2 sender is recreated each Init and
+    /// legitimately starts fresh (its bus-0x14 session close targets its own dev,
+    /// not the wheel's 0x17).
     /// </summary>
     internal sealed class SilenceGate
     {
@@ -35,10 +42,12 @@ namespace MozaPlugin.Telemetry.Lifecycle
         public const int HotSwitchCooldownMs = 200;
 
         // ── State ─────────────────────────────────────────────────────────
-        // Static so the gates survive plugin recycle (game-switch reload)
-        // within one SimHub process.
-        private static long _lastStopUtcTicks;
-        private static long _lastSwitchEmittedUtcTicks;
+        // Per-instance: each sender gates only on its OWN last Stop/switch, so
+        // one sender's Stop never stalls the other's reopen on a shared bus.
+        // Cross-reload survival rides the reused persistent main-sender instance
+        // (see the class summary), not a process-static.
+        private long _lastStopUtcTicks;
+        private long _lastSwitchEmittedUtcTicks;
 
         private readonly Func<bool> _isHotRenegotiationEnabled;
 

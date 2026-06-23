@@ -22,12 +22,6 @@ namespace MozaPlugin.Devices
 
         private readonly DispatcherTimer _refreshTimer;
 
-        /// <summary>
-        /// The virtual LED driver for the device instance this control belongs to.
-        /// When set, connection status is derived from the driver's IsConnected().
-        /// </summary>
-        internal MozaDashLedDeviceManager? LinkedLedDriver { get; set; }
-
         // Color swatch references
         private readonly Border[] _dashRpmColorSwatches = new Border[10];
         private readonly Border[] _dashRpmBlinkColorSwatches = new Border[10];
@@ -263,15 +257,18 @@ namespace MozaPlugin.Devices
             if (!_swatchesBuilt)
                 BuildColorSwatches();
 
-            bool dashConnected = LinkedLedDriver?.IsConnected() ?? false;
+            // Detection-based (matches MozaDashLedDeviceManager.IsConnected) so the
+            // tab reflects detection independent of the lazily-injected LED driver.
+            bool dashConnected = _plugin!.IsDashDetected;
             StatusDot.Fill = dashConnected ? Brushes.LimeGreen : Brushes.Red;
             StatusText.Text = dashConnected ? "Connected" : "Disconnected";
 
-            // Dashboard tab (dash selection + channel mapping + files) shows for
-            // a CM2 — behind the base or standalone-USB.
+            // Dashboard tab (dash selection + channel mapping + files) shows whenever
+            // a CM2 EXISTS to manage — behind the base or standalone-USB — since the
+            // CM2 is always driven by the dedicated _cm2Sender. IsCm2Present captures
+            // exactly that presence (bus OR USB), independent of the wheel.
             DashMgmtTab.Visibility =
-                (_plugin.IsCm2BehindBaseCandidate || _plugin.ShouldUseStandaloneDashboardTarget())
-                    ? Visibility.Visible : Visibility.Collapsed;
+                _plugin.IsCm2Present ? Visibility.Visible : Visibility.Collapsed;
 
             bool dashDetected = dashConnected;
 

@@ -139,7 +139,7 @@ namespace MozaPlugin.Devices
 
         public override Control CreateSettingControl()
         {
-            return new MozaBaseSettingsControl { LinkedLedDriver = _ledDriver };
+            return new MozaBaseSettingsControl();
         }
 
         public override IEnumerable<DynamicButtonAction> GetDynamicButtonActions()

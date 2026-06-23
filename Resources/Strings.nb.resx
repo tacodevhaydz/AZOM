@@ -71,6 +71,7 @@
   <data name="Subtitle_HighSpeedDamping" xml:space="preserve"><value>// jeg vet ærlig talt ikke hva disse gjør</value></data>
   <data name="SliderLabel_ForceFeedbackReversal" xml:space="preserve"><value>FFB-reversering</value></data>
   <data name="SliderLabel_StandbyMode" xml:space="preserve"><value>Standby-modus</value></data>
+  <data name="SliderLabel_AutoStandbyTimeout" xml:space="preserve"><value>Standby etter</value></data>
   <data name="SliderLabel_BaseStatusLed" xml:space="preserve"><value>Base-status-LED</value></data>
   <data name="SliderLabel_Bluetooth" xml:space="preserve"><value>Bluetooth</value></data>
   <data name="SliderLabel_DampingLevel" xml:space="preserve"><value>Dempenivå</value></data>

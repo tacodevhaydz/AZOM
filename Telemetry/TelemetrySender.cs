@@ -1750,7 +1750,17 @@ namespace MozaPlugin.Telemetry
         private void CloseHostSessions()
         {
             if (!_connection.IsConnected) return;
-            if (MozaPlugin.Instance?.ShouldDriveDashboard() == false) return;
+            // A CM2 / standalone-dashboard sender (target 0x12/0x14) ALWAYS opened host
+            // sessions on its device, so it must ALWAYS close them — the wheel-centric
+            // ShouldDriveDashboard() skip does NOT apply to it (post-decoupling that
+            // predicate is false for a screenless/no-wheel rig whose CM2 is driven by
+            // this very sender; gating on it left the CM2's 0x01/0x02/0x03 dangling).
+            // Only the WHEEL-screen main sender (target 0x17) honors the screenless
+            // skip: there Start() never opened a session and the closes would emit
+            // stray dev=0x17 session frames to a wheel that doesn't speak the layer.
+            bool cm2TargetSender = _targetDeviceId == MozaProtocol.DeviceMain
+                                   || _targetDeviceId == MozaProtocol.DeviceDash;
+            if (!cm2TargetSender && MozaPlugin.Instance?.ShouldDriveDashboard() == false) return;
             try { _sessionLife.SendSessionClose(0x01); } catch { }
             try { _sessionLife.SendSessionClose(0x02); } catch { }
             try { _sessionLife.SendSessionClose(0x03); } catch { }
@@ -3765,7 +3775,19 @@ namespace MozaPlugin.Telemetry
         private void TickEmitEnableAndSequence()
         {
             if (!TestMode && (!_gameRunning || !_profileTelemetryEnabled)) return;
-            SendStreamSlot((int)StreamKind.Enable, _frames.EnableFrame);
+            // The 0x41 FD DE "enable" (BaseSendTelemetry, hardcoded dev 0x17) is the
+            // dash/CM2 legacy RPM-LED on/off bitmask command, and belongs to a CM2/dash
+            // target only. The FSR V2 (W13) drives its RPM rim through the SAME wheel
+            // pipeline as the CS Pro — the group-0x3F windowed bitmask from
+            // MozaLedDeviceManager — and needs no FD DE frame: a CS Pro drives screen +
+            // rim with zero FD DE on the wire. Streaming FD DE with bitmask=0 to the
+            // wheel at 0x17 every tick stomps those 0x3F RPM bars and holds the rim
+            // dark. (Before the CM2 routing fix the main sender lived on the CM2, so the
+            // wheel never saw this; once it correctly moved to the wheel screen it began
+            // pouring the dash enable onto 0x17.) Emit it only when this sender is
+            // actually driving a dashboard — never to a wheel screen, matching CS Pro.
+            if (StandaloneDashboardMode)
+                SendStreamSlot((int)StreamKind.Enable, _frames.EnableFrame);
             if (SendSequenceCounter)
                 SendStreamSlot((int)StreamKind.Sequence, _frames.BuildSequenceCounterFrame());
         }

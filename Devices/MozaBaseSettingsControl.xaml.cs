@@ -20,12 +20,6 @@ namespace MozaPlugin.Devices
 
         private readonly DispatcherTimer _refreshTimer;
 
-        /// <summary>
-        /// The virtual LED driver for the device instance this control belongs to.
-        /// When set, connection status is derived from the driver's IsConnected().
-        /// </summary>
-        internal MozaBaseLedDeviceManager? LinkedLedDriver { get; set; }
-
         public MozaBaseSettingsControl()
         {
             using (_suppressor.Begin())
@@ -76,7 +70,9 @@ namespace MozaPlugin.Devices
                 return;
             }
 
-            bool detected = LinkedLedDriver?.IsConnected() ?? false;
+            // Detection-based (matches MozaBaseLedDeviceManager.IsConnected) so the
+            // tab reflects detection independent of the lazily-injected LED driver.
+            bool detected = _plugin!.IsBaseAmbientLedSupported;
             StatusDot.Fill = detected ? Brushes.LimeGreen : Brushes.Red;
             StatusText.Text = detected ? "Connected" : "Disconnected";
             BaseModelText.Text = string.IsNullOrEmpty(_data!.BaseModelName)

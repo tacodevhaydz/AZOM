@@ -154,6 +154,25 @@ namespace MozaPlugin.Telemetry
         }
 
         /// <summary>
+        /// Pack a record from a resolved gapless partition (see
+        /// <see cref="Fsr1DashboardCatalog.ResolvePartition"/>): each slot's value comes from
+        /// <paramref name="valueFor"/> and is written at the slot's offsets/encoding. The
+        /// partition guarantees every data byte is covered exactly once.
+        /// </summary>
+        internal static byte[] BuildRecord(
+            Fsr1Dashboard dash,
+            System.Collections.Generic.IReadOnlyList<(Fsr1FieldDef field, int[] offsets, Fsr1Encoding enc)> partition,
+            Func<Fsr1FieldDef, Fsr1Encoding, long> valueFor)
+        {
+            if (dash == null) throw new ArgumentNullException(nameof(dash));
+            var frame = NewFrame(dash.RecordType, dash.PayloadLen, dash.LiveB1, dash.LiveB2);
+            foreach (var (f, offsets, enc) in partition)
+                WriteField(frame, offsets, enc, valueFor(f, enc));
+            Finish(frame);
+            return frame;
+        }
+
+        /// <summary>
         /// Diagnostic field-span probe record: all data bytes are 0 except the contiguous
         /// span <paramref name="startOff"/>..<paramref name="endOff"/> (inclusive), each set
         /// to <paramref name="value"/>. Lights exactly the on-screen box(es) the edited

@@ -86,6 +86,70 @@ namespace MozaPlugin.Hardware
             return WheelCfgChanged(key, h);
         }
 
+        // Base FFB/motor settings are flash-backed exactly like the wheel config
+        // above. ApplyBaseToHardware fires on every wheel-detect (not just base
+        // detect), and it re-wrote the WHOLE base parameter table unconditionally.
+        // On an R5 + bare-"CS" rim (bundle 2026-06-22) that re-push, while the rim
+        // was mid-attach, bounced the motor (motor_wrapper "MotorMode From 12 to
+        // 0") and reset the base — dropping the rim — a self-sustaining
+        // detect->reapply->reset->redetect loop. PitHouse never re-writes base FFB
+        // params (it reads them; the base holds them in NVM), so it never trips
+        // this. Mirror the wheel cache: only write a base setting when its value
+        // actually changed since the last write to THIS base.
+        //
+        // CAUTION — empty UID must NOT invalidate: ResetWheelDetection ->
+        // _data.ClearWheelIdentity() blanks _data.BaseMcuUid on every rim detach,
+        // and the base is not re-probed mid-session (BaseDetected stays latched),
+        // so the UID reads back empty after the first flap. Treat an empty UID as
+        // "unknown, keep the cache" rather than a new base — otherwise each flap
+        // would clear the cache and re-push the very storm this guards against. A
+        // genuinely different base reports a different non-empty UID and re-writes
+        // its config once.
+        //
+        // STATIC so the "write base config once per physical base" guarantee spans
+        // plugin reloads: HardwareApplier is reconstructed on every game-switch
+        // (it is not part of the persistent wire), and a single full re-push WITH
+        // the rim attached is exactly what reboots a marginal base. The persistent
+        // wire already keeps the wheel from re-negotiating across a reload; this
+        // keeps the base from being re-flashed across one. A game switch still
+        // applies the new profile's *changed* base values as minimal diffs.
+        private static readonly System.Collections.Generic.Dictionary<string, long> s_baseCfgCache
+            = new System.Collections.Generic.Dictionary<string, long>();
+        private static byte[] s_baseCfgCacheUid = System.Array.Empty<byte>();
+
+        private void SyncBaseCfgCache()
+        {
+            var uid = _data.BaseMcuUid ?? System.Array.Empty<byte>();
+            if (uid.Length == 0) return;   // unknown/blanked identity — keep cache
+            // First non-empty identity on a fresh cache: adopt it without clearing
+            // so config written while the UID was still being read (cold start)
+            // isn't needlessly re-sent. Only a genuinely DIFFERENT base clears.
+            if (s_baseCfgCacheUid.Length == 0)
+            {
+                s_baseCfgCacheUid = (byte[])uid.Clone();
+                return;
+            }
+            bool same = uid.Length == s_baseCfgCacheUid.Length;
+            for (int i = 0; same && i < uid.Length; i++)
+                if (uid[i] != s_baseCfgCacheUid[i]) same = false;
+            if (!same)
+            {
+                s_baseCfgCache.Clear();
+                s_baseCfgCacheUid = (byte[])uid.Clone();
+            }
+        }
+
+        /// <summary>True (and records the new value) iff this base setting differs
+        /// from the last value written to the current base — i.e. an actual change
+        /// worth a wire write. Returns false to skip a redundant re-write, which on
+        /// some bases bounces the motor mode and resets the base.</summary>
+        private bool BaseCfgChanged(string key, long value)
+        {
+            if (s_baseCfgCache.TryGetValue(key, out var prev) && prev == value) return false;
+            s_baseCfgCache[key] = value;
+            return true;
+        }
+
         // Resolve the pipe that owns pedals / handbrake. Pedals or a handbrake
         // can be attached to the base OR to a dedicated Universal Hub pipe, so
         // settings reads and calibration writes must target whichever connection
@@ -409,11 +473,21 @@ namespace MozaPlugin.Hardware
             // cm2-indicator-brightness write is the authoritative one, but
             // sending the legacy dash-rpm-brightness too costs nothing and
             // might engage on different firmware revisions.
-            bool isCm2 = _plugin.ShouldUseStandaloneDashboardTarget();
+            // A CM2 is present (bus or USB) — apply its meter LED config. DECOUPLED:
+            // keyed on presence, not on the retired "main sender drives the CM2"
+            // predicate, so a CM2 alongside a DISPLAY wheel (which the old predicate
+            // excluded) now also gets its meter config.
+            bool isCm2 = _plugin.IsCm2Present;
 
             if (profile.DashRpmBrightness   >= 0) _deviceManager.WriteSetting("dash-rpm-brightness", profile.DashRpmBrightness);
             if (profile.DashFlagsBrightness >= 0) _deviceManager.WriteSetting("dash-flags-brightness", profile.DashFlagsBrightness);
-            var sender = _plugin.TelemetrySender;
+            // DECOUPLED: dash screen brightness + standby target the CM2's OWN sender
+            // (the _cm2Sender drives the CM2 screen now — the main sender is wheel-only,
+            // and idle entirely for a screenless/no-wheel rig, so routing these via the
+            // main sender silently no-op'd the CM2 screen). ApplyDashToHardware only
+            // runs once a dash is detected, so ActiveCm2Sender is the right target;
+            // fall back to the main sender only if no dedicated CM2 sender exists.
+            var sender = _plugin.ActiveCm2Sender ?? _plugin.TelemetrySender;
             if (profile.DashDisplayBrightness   >= 0) sender?.SendDashDisplayBrightness(profile.DashDisplayBrightness);
             if (profile.DashDisplayStandbyMin >= 0) sender?.SendDashDisplayStandbyMinutes(profile.DashDisplayStandbyMin);
 
@@ -430,27 +504,32 @@ namespace MozaPlugin.Hardware
         /// </summary>
         private void ApplyCm2DashboardConfig(MozaProfile profile)
         {
+            // All writes go through _plugin.WriteCm2Config so they reach the CM2's OWN
+            // pipe + device — a standalone-USB CM2 is on the dedicated dashboard
+            // connection, not the wheelbase _deviceManager (which would land these on
+            // the wheelbase's 0x12 base-main and drop them). Bus CM2 → wheelbase 0x14.
+
             // Meter mode toggles — required to put CM2 firmware in SimHub
             // telemetry mode so screen widgets + LED ramp follow value frames.
             // TODO(cm2): cm2-normal-mode 1 vs 2 visually similar in CM2.md
             // lab — confirm 1 is the correct SimHub-mode value via capture.
-            _deviceManager.WriteSetting("cm2-normal-mode", 1);
-            _deviceManager.WriteSetting("cm2-rpm-group-mode", 1);
-            _deviceManager.WriteSetting("cm2-flag-group-mode", 1);
+            _plugin.WriteCm2Config("cm2-normal-mode", 1);
+            _plugin.WriteCm2Config("cm2-rpm-group-mode", 1);
+            _plugin.WriteCm2Config("cm2-flag-group-mode", 1);
 
             // RPM regulation mode + thresholds. CM2.md notes percent-vs-absolute
             // encoding is not independently verified, so we write BOTH (percent
             // mode + percent thresholds, plus absolute thresholds derived from
             // MaxRpm) and let the firmware honour whichever it actually uses.
             // TODO(cm2): confirm regulation-mode encoding via capture.
-            _deviceManager.WriteSetting("cm2-rpm-regulation-mode", 0);
+            _plugin.WriteCm2Config("cm2-rpm-regulation-mode", 0);
 
             // Default percent ramp: 50,55,60,…,95 covering the upper half of
             // the rev range. CM2 has 16 physical LEDs but the firmware accepts
             // a 10-entry percent ramp (one entry per "rung"; the firmware
             // interpolates across physical positions).
             byte[] percentRamp = new byte[] { 50, 55, 60, 65, 70, 75, 80, 85, 90, 95 };
-            _deviceManager.WriteArray("cm2-rpm-percent-thresholds", percentRamp);
+            _plugin.WriteCm2Config("cm2-rpm-percent-thresholds", percentRamp);
 
             // Absolute thresholds derived from MaxRpm (fallback 8000 per
             // CM2.md). Each rung gets (rpm * (i+1) / 10) so the 10 thresholds
@@ -461,7 +540,7 @@ namespace MozaPlugin.Hardware
             for (byte i = 0; i < 10; i++)
             {
                 int threshold = (int)((long)maxRpm * (i + 1) / 10);
-                _deviceManager.WriteSetting($"cm2-rpm-absolute-threshold{i + 1}", threshold);
+                _plugin.WriteCm2Config($"cm2-rpm-absolute-threshold{i + 1}", threshold);
             }
 
             // Indicator brightness — authoritative path for CM2. Reuse the
@@ -469,7 +548,7 @@ namespace MozaPlugin.Hardware
             // does not double up; the legacy dash-rpm-brightness write above
             // is kept for compatibility.
             if (profile.DashRpmBrightness >= 0)
-                _deviceManager.WriteSetting("cm2-indicator-brightness", profile.DashRpmBrightness);
+                _plugin.WriteCm2Config("cm2-indicator-brightness", profile.DashRpmBrightness);
 
             // STANDBY per-LED colors only (idle appearance, shown when no game
             // is running). rs21_parameter.db: SetIndicatorGroupStandbyModeColor
@@ -486,7 +565,7 @@ namespace MozaPlugin.Hardware
                 for (int i = 0; i < rpmCount; i++)
                 {
                     var rgb = MozaProfile.UnpackColor(profile.DashRpmColors[i]);
-                    _deviceManager.WriteColor($"cm2-stored-color{i + 1}", rgb[0], rgb[1], rgb[2]);
+                    _plugin.WriteCm2Config($"cm2-stored-color{i + 1}", new byte[] { rgb[0], rgb[1], rgb[2] });
                 }
             }
             if (profile.DashFlagColors != null)
@@ -495,7 +574,7 @@ namespace MozaPlugin.Hardware
                 for (int i = 0; i < flagCount; i++)
                 {
                     var rgb = MozaProfile.UnpackColor(profile.DashFlagColors[i]);
-                    _deviceManager.WriteColor($"cm2-stored-color{i + 11}", rgb[0], rgb[1], rgb[2]);
+                    _plugin.WriteCm2Config($"cm2-stored-color{i + 11}", new byte[] { rgb[0], rgb[1], rgb[2] });
                 }
             }
         }
@@ -613,6 +692,11 @@ namespace MozaPlugin.Hardware
         public void ApplyBaseToHardware(MozaProfile? profile)
         {
             if (profile == null) return;
+
+            // Drop the per-base write cache if a different base is now attached
+            // (keeps base config from being re-pushed on every wheel hot-attach —
+            // see s_baseCfgCache notes). Empty UID is treated as "same base".
+            SyncBaseCfgCache();
 
             // Debug-level — fires on every game switch / wheel-detect /
             // dashboard re-apply, which is too noisy for SimHub.txt. The
@@ -732,7 +816,8 @@ namespace MozaPlugin.Hardware
                 dataSet(val);
                 if (_detectionState.BaseDetected)
                     foreach (var cmd in commands)
-                        BaseManager.WriteSetting(cmd, val);
+                        if (BaseCfgChanged(cmd, val))
+                            BaseManager.WriteSetting(cmd, val);
             }
 
             // FFB Equalizer (sentinel = -1000): mirror always, write when live.
@@ -742,7 +827,8 @@ namespace MozaPlugin.Hardware
             {
                 if (val <= -1000) return;
                 setData(val);
-                if (_detectionState.BaseDetected) BaseManager.WriteSetting(cmd, val);
+                if (_detectionState.BaseDetected && BaseCfgChanged(cmd, val))
+                    BaseManager.WriteSetting(cmd, val);
             }
             ApplyEq(profile.Equalizer1, v => _data.Equalizer1 = v, "base-equalizer1");
             ApplyEq(profile.Equalizer2, v => _data.Equalizer2 = v, "base-equalizer2");
@@ -759,16 +845,29 @@ namespace MozaPlugin.Hardware
             if (profile.FfbCurveY5 >= 0) _data.FfbCurveY5 = profile.FfbCurveY5;
             // Persisted BaseDetected gate (see ApplyBaseSettingIfSet comment).
             if (!_detectionState.BaseDetected) return;
-            // X breakpoints always written when live (device doesn't persist them).
-            BaseManager.WriteSetting("base-ffb-curve-x1", 20);
-            BaseManager.WriteSetting("base-ffb-curve-x2", 40);
-            BaseManager.WriteSetting("base-ffb-curve-x3", 60);
-            BaseManager.WriteSetting("base-ffb-curve-x4", 80);
-            BaseManager.WriteSetting("base-ffb-curve-y1", _data.FfbCurveY1);
-            BaseManager.WriteSetting("base-ffb-curve-y2", _data.FfbCurveY2);
-            BaseManager.WriteSetting("base-ffb-curve-y3", _data.FfbCurveY3);
-            BaseManager.WriteSetting("base-ffb-curve-y4", _data.FfbCurveY4);
-            BaseManager.WriteSetting("base-ffb-curve-y5", _data.FfbCurveY5);
+            // The device doesn't persist the X breakpoints, so they have to ride
+            // every curve write — but the curve only needs re-sending when a Y
+            // value actually changed. Gate the whole curve as a unit (X + Y) on
+            // the Y hash so an unchanged re-apply (e.g. a wheel hot-attach) sends
+            // nothing — re-pushing it bounces the motor mode on some bases.
+            long curveHash = unchecked((long)1469598103934665603UL);
+            curveHash = Fnv(curveHash, _data.FfbCurveY1);
+            curveHash = Fnv(curveHash, _data.FfbCurveY2);
+            curveHash = Fnv(curveHash, _data.FfbCurveY3);
+            curveHash = Fnv(curveHash, _data.FfbCurveY4);
+            curveHash = Fnv(curveHash, _data.FfbCurveY5);
+            if (BaseCfgChanged("base-ffb-curve", curveHash))
+            {
+                BaseManager.WriteSetting("base-ffb-curve-x1", 20);
+                BaseManager.WriteSetting("base-ffb-curve-x2", 40);
+                BaseManager.WriteSetting("base-ffb-curve-x3", 60);
+                BaseManager.WriteSetting("base-ffb-curve-x4", 80);
+                BaseManager.WriteSetting("base-ffb-curve-y1", _data.FfbCurveY1);
+                BaseManager.WriteSetting("base-ffb-curve-y2", _data.FfbCurveY2);
+                BaseManager.WriteSetting("base-ffb-curve-y3", _data.FfbCurveY3);
+                BaseManager.WriteSetting("base-ffb-curve-y4", _data.FfbCurveY4);
+                BaseManager.WriteSetting("base-ffb-curve-y5", _data.FfbCurveY5);
+            }
         }
 
         /// <summary>

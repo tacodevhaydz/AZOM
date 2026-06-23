@@ -163,18 +163,18 @@ namespace MozaPlugin.UI
             return sb.ToString();
         }
 
-        /// <summary>Diagnostics block for standalone dashboard target (CM2 etc.).
-        /// Reports whether the open serial connection holds a Dashboard-PID port,
-        /// the active telemetry target dev_id, and whether the dashboard pipeline
-        /// is running in standalone mode. Empty when no Moza serial connection
-        /// is open or when a wheel is driving the pipeline instead.</summary>
+        /// <summary>Diagnostics block for the CM2 dashboard. Reports the wheelbase PID,
+        /// the standalone-USB dashboard connection, whether a CM2 is present (and its
+        /// wire dev_id), the MAIN sender's target dev_id, and the dedicated _cm2Sender
+        /// lane when one exists. Returns "(no MOZA serial connection)" when no Moza
+        /// serial connection is open.</summary>
         public static string BuildStandaloneDashboardState(MozaPlugin plugin)
         {
             var conn = plugin?.Connection;
             if (conn == null) return "(no MOZA serial connection)";
             string pid = conn.DiscoveredPid ?? "(unknown)";
             string pidDesc = Protocol.MozaUsbIds.Describe(conn.DiscoveredPid);
-            bool standalone = plugin?.ShouldUseStandaloneDashboardTarget() ?? false;
+            bool cm2Present = plugin?.IsCm2Present ?? false;
             byte target = plugin?.TelemetrySender?.TargetDeviceId ?? Protocol.MozaProtocol.DeviceWheel;
             string targetDesc = plugin?.TelemetrySender?.TargetDescription ?? $"0x{target:X2}";
 
@@ -190,8 +190,22 @@ namespace MozaPlugin.UI
             sb.AppendLine($"Dashboard conn:    {dashLine}");
             sb.AppendLine($"Dashboard USB:     {(dashUsb ? "yes" : "no")}");
             sb.AppendLine($"DashDetected:      {plugin?.IsDashDetected ?? false}");
-            sb.AppendLine($"Standalone:        {standalone}");
-            sb.Append    ($"Target dev_id:     {targetDesc}");
+            sb.AppendLine($"CM2 present:       {cm2Present}{(cm2Present ? $" (dev 0x{plugin!.Cm2TargetDeviceId:X2})" : "")}");
+            sb.Append    ($"Main target dev:   {targetDesc}");
+
+            // Dedicated CM2 lane (the _cm2Sender). DECOUPLED: present whenever a CM2
+            // is attached (bus or USB), regardless of the wheel — the CM2 is ALWAYS
+            // driven by this dedicated sender now. The MAIN line above stays on the
+            // wheel (0x17); this line drives the CM2 (0x12 USB / 0x14 bus). Omitted
+            // when no CM2 is attached.
+            var cm2 = plugin?._cm2Sender;
+            if (cm2 != null)
+            {
+                sb.AppendLine();
+                sb.Append(
+                    $"CM2 dash lane:     {cm2.TargetDescription} on {cm2.ConnectionRef?.CaptureLabel} pipe " +
+                    $"(frames={cm2.FramesSent}, {cm2.Phase})");
+            }
             return sb.ToString();
         }
 

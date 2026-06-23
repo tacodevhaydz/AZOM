@@ -76,6 +76,7 @@ namespace MozaPlugin
                 _clutchCurveLabels    = new[] { ClutchY1Value,    ClutchY2Value,    ClutchY3Value,    ClutchY4Value,    ClutchY5Value };
                 ConnectionToggle.IsChecked = plugin.ConnectionEnabled;
                 AutoApplyProfileCheck.IsChecked = plugin.Settings.AutoApplyProfileOnLaunch;
+                SyncAutoStandbyCombo();
                 LimitWheelUpdatesCheck.IsChecked = plugin.Settings.LimitWheelUpdates;
                 AlwaysResendBitmaskCheck.IsChecked = plugin.Settings.AlwaysResendBitmask;
                 int kaSec = plugin.Settings.WheelKeepaliveTimeoutSec;
@@ -126,6 +127,14 @@ namespace MozaPlugin
 
             Loaded   += OnLoadedStartTimers;
             Unloaded += OnUnloadedStopTimers;
+
+            // Any interaction with the settings pane counts as activity, so
+            // auto-standby never powers the wheel down mid-configuration.
+            // Preview (tunneling) events fire on the root first regardless of
+            // which child handles them.
+            PreviewMouseDown  += (s, ev) => _plugin?.NotifyUserActivity();
+            PreviewKeyDown    += (s, ev) => _plugin?.NotifyUserActivity();
+            PreviewMouseWheel += (s, ev) => _plugin?.NotifyUserActivity();
 
             RequestAllSettings();
         }
@@ -440,6 +449,7 @@ namespace MozaPlugin
             SoftLimitRetainCheck.IsChecked = _data.SoftLimitRetain != 0;
 
             StandbyCheck.IsChecked = _data.WorkMode != 0;
+            SyncAutoStandbyCombo();
             LedStatusCheck.IsChecked = _data.LedStatus != 0;
             BluetoothCheck.IsChecked = _data.BleMode == 0;
 
@@ -741,6 +751,50 @@ namespace MozaPlugin
             _data.WorkMode = val;
             _plugin.WriteIfBaseConnected("main-set-work-mode", val);
             _plugin.SaveSettings();
+        }
+
+        private void AutoStandbyTimeoutCombo_Changed(object sender, SelectionChangedEventArgs e)
+        {
+            if (_suppressEvents) return;
+            if (!(AutoStandbyTimeoutCombo.SelectedItem is ComboBoxItem item
+                  && item.Tag is string tag && int.TryParse(tag, out int minutes)))
+                return;
+
+            if (minutes <= 0)
+            {
+                // "Disabled" — turn auto-standby off and wake the base if we put
+                // it to sleep. The timeout value is left as-is for next time.
+                _plugin.Settings.AutoStandbyWhenNoGame = false;
+                _plugin.SaveSettings();
+                _plugin.CancelAutoStandby();
+            }
+            else
+            {
+                _plugin.Settings.AutoStandbyWhenNoGame = true;
+                _plugin.Settings.AutoStandbyTimeoutMinutes = minutes;
+                _plugin.SaveSettings();
+                // Selecting a timeout counts as activity so we never standby
+                // immediately; the idle timer starts fresh from here.
+                _plugin.NotifyUserActivity();
+                _plugin.ApplyAutoStandby();
+            }
+        }
+
+        // Selects "Disabled" when auto-standby is off, else the saved timeout.
+        private void SyncAutoStandbyCombo()
+        {
+            int target = _plugin.Settings.AutoStandbyWhenNoGame
+                ? _plugin.Settings.AutoStandbyTimeoutMinutes
+                : 0;
+            foreach (var obj in AutoStandbyTimeoutCombo.Items)
+            {
+                if (obj is ComboBoxItem it && it.Tag is string t
+                    && int.TryParse(t, out int m) && m == target)
+                {
+                    AutoStandbyTimeoutCombo.SelectedItem = it;
+                    return;
+                }
+            }
         }
 
         private void LedStatusCheck_Click(object sender, RoutedEventArgs e)

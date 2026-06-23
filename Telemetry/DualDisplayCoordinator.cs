@@ -5,8 +5,9 @@ using MozaPlugin.Protocol;
 namespace MozaPlugin.Telemetry
 {
     /// <summary>
-    /// Dual-display pipeline coordination: drives a CM2 dash on a second
-    /// tier-def sender concurrently with a wheel screen, discriminates a
+    /// Dual-display pipeline coordination: drives a CM2 dash on a dedicated
+    /// tier-def sender whenever a CM2 is present (independent of the wheel —
+    /// display wheel, screenless wheel, or none), discriminates a
     /// bus-bridged CM1 (group-0x35, no tier-def catalog) from a real CM2 and
     /// hands off to the CM1 driver, and owns the FSR1/CM1 driver start/stop
     /// gates. The sender/driver instances (<c>_cm2Sender</c>/<c>_cm1Driver</c>/
@@ -23,6 +24,17 @@ namespace MozaPlugin.Telemetry
             _plugin = plugin;
             _detectionState = detectionState;
         }
+
+        // Teardown debounce: when EnsureCm2Pipeline computes want==false, hold off
+        // tearing the CM2 pipeline down until want has stayed false this long. A
+        // single-tick detection blip must not abort a mid-cold-start / Active CM2.
+        // Stored as UtcNow.Ticks and read/written via Interlocked because
+        // EnsureCm2Pipeline runs from BOTH the PollStatus timer thread and the
+        // serial-read thread (DeviceProber/ApplyTelemetrySettings) — a non-atomic
+        // 64-bit DateTime could tear on 32-bit and yield a garbage elapsed interval.
+        // 0 = want is currently true (no pending teardown).
+        private long _wantFalseSinceUtcTicks;
+        private const int TeardownDwellMs = 3000;
 
         /// <summary>Start the FSR V1 group-0x42 display driver when an FSR1 wheel is
         /// connected; stop it if the wheel is no longer FSR1 (hot-swap). Telemetry-
@@ -42,24 +54,47 @@ namespace MozaPlugin.Telemetry
         }
 
         /// <summary>
-        /// Drive a CM2 dash on a SECOND tier-def sender concurrently with a wheel that
-        /// has its own screen (FSR1 driver or a tier-def display wheel). The CM2
+        /// Drive a CM2 dash on the dedicated _cm2Sender whenever a CM2 is present —
+        /// regardless of the wheel (display wheel, screenless wheel, or none). The CM2
         /// catalog-synthesises its own dashboard, so no mzdash is needed here. On the
-        /// shared wheelbase bus the CM2 sender uses lane base 18 + strict inbound, and
-        /// the wheel's tier-def sender (if any) is flipped to strict/shares so the two
-        /// don't collide. On a CM2's own USB cable it uses base 0 on that connection.
-        /// Tears the CM2 sender down when the dual-screen condition no longer holds.
+        /// shared wheelbase bus the CM2 sender uses lane base 18 + strict inbound, and a
+        /// tier-def DISPLAY wheel co-residing on that bus is flipped to strict/shares so
+        /// the two don't collide. On a CM2's own USB cable it uses base 0. Tears the CM2
+        /// sender down (debounced) when no CM2 is present.
         /// </summary>
         internal void EnsureCm2Pipeline()
         {
-            bool wheelHasOwnScreen = _plugin.IsFsr1DisplayWheel || (_plugin.WheelModelInfo?.HasDisplay == true);
             bool busCm2 = _detectionState.DashDetected && !_plugin.DashboardUsbConnected
                           && _plugin.Connection?.IsConnected == true;
             bool usbCm2 = _plugin.DashboardUsbConnected;
-            bool want = _plugin.ActiveTelemetryEnabled && wheelHasOwnScreen && (busCm2 || usbCm2);
+            // DECOUPLED: the dedicated _cm2Sender drives the CM2 whenever a CM2 is
+            // present — regardless of the wheel. (Previously gated on the wheel having
+            // its own screen, which left the MAIN sender driving the CM2 for screenless/no-wheel rigs
+            // and never ran the CM1 discriminator there — a CM1 with no display-wheel
+            // was never identified.) The MAIN sender is now always wheel-only;
+            // ApplyTelemetrySettings guarantees it never targets a CM2 device, so the
+            // two senders can never collide on 0x12/0x14.
+            bool want = _plugin.ActiveTelemetryEnabled && (busCm2 || usbCm2);
 
             if (!want)
             {
+                // Debounce the ENTIRE teardown — the Stop, the CM1-driver stop, AND
+                // the wheel-flag clears must all wait out the dwell. A one-tick blip
+                // on any `want` input (DashDetected / DashboardUsbConnected /
+                // Connection.IsConnected / ActiveTelemetryEnabled) must change nothing:
+                // it would otherwise abort a multi-second CM2
+                // cold-start (the CS-Pro 3-attempt/29s pathology) and flip the wheel's
+                // SharesConnection false for a tick — which is exactly the flag Stop()
+                // reads to choose ClearStreamSlots (safe) vs FlushPendingWrites (blanks
+                // the co-resident pipeline + in-flight LEDs). Holding the whole branch
+                // keeps the wheel's flags stable-true while the CM2 is live, closing
+                // that window without a connection-level rewrite.
+                long since = System.Threading.Interlocked.CompareExchange(
+                    ref _wantFalseSinceUtcTicks, DateTime.UtcNow.Ticks, 0);
+                if (since == 0) since = System.Threading.Interlocked.Read(ref _wantFalseSinceUtcTicks);
+                if ((DateTime.UtcNow.Ticks - since) / TimeSpan.TicksPerMillisecond < TeardownDwellMs)
+                    return; // within dwell — leave the CM2 sender + wheel flags untouched
+
                 if (_plugin._cm2Sender != null) { try { _plugin._cm2Sender.Stop(); } catch { } }
                 if (_plugin._cm1Driver != null && _plugin._cm1Driver.IsRunning) { try { _plugin._cm1Driver.Stop(); } catch { } }
                 // Wheel sender no longer shares the bus with a CM2 sender.
@@ -70,6 +105,8 @@ namespace MozaPlugin.Telemetry
                 }
                 return;
             }
+            // want is true — clear any pending teardown dwell.
+            System.Threading.Interlocked.Exchange(ref _wantFalseSinceUtcTicks, 0);
 
             // Known CM1 base-bridged dash (group-0x35, no tier-def catalog): drive it with
             // the dedicated Cm1DisplayDriver, never the tier-def sender. (CM1 only applies
@@ -109,8 +146,17 @@ namespace MozaPlugin.Telemetry
             cm2.UploadDashboard = false;
             cm2.SetDownloadEnabled(false);
             cm2.StandaloneDashboardMode = true;
-            cm2.TargetDeviceId = dev;
-            cm2.StreamSlotBase = slotBase;
+            // Re-point the wire target (dev id + slot base) ONLY when Idle — never
+            // mid-cold-start. A usbCm2<->busCm2 flap must not move dev 0x14<->0x12 /
+            // slot-base 18<->0 under a Starting/Preamble sender (its session opens
+            // would land on one dev and its tier-def on another). Stable topologies
+            // set the same values (no-op); a real change re-applies on the next idle
+            // (re)start, alongside the Idle-gated Rebind above.
+            if (cm2.StateIsIdle)
+            {
+                cm2.TargetDeviceId = dev;
+                cm2.StreamSlotBase = slotBase;
+            }
             cm2.SharesConnection = shareBus;
             cm2.StrictInboundFilter = shareBus;
             cm2.ProfileTelemetryEnabled = true;
@@ -133,7 +179,31 @@ namespace MozaPlugin.Telemetry
                 _plugin.TelemetrySender.StrictInboundFilter = wheelTierDefOnBus;
             }
 
-            if (cm2.FramesSent == 0)
+            // Only kick a FRESH cold-start when the sender is genuinely Idle.
+            // FramesSent stays 0 throughout the (multi-second) cold-start
+            // (Starting → Preamble → Active-before-first-value-frame), so gating on
+            // FramesSent==0 alone re-issued Start() on every EnsureCm2Pipeline call
+            // mid-cold-start — each one superseding the in-progress start (StartInner
+            // Stop). On a CM2 bridged behind a DISPLAY wheel (CS Pro + bus CM2) the two
+            // senders share the wheelbase pipe, so the wheel sender's restarts pump
+            // ApplyTelemetrySettings → EnsureCm2Pipeline frequently, and the CM2 sender
+            // never finished cold-start → stuck Idle, CM2 dark (bundle 2026-06-17). The
+            // StateIsIdle guard lets the cold-start run to completion; a sender that's
+            // Starting/Preamble/Active is left alone.
+            // Collision guard: never start _cm2Sender on a device the MAIN sender is
+            // still Active on. A persistent main sender can carry a stale CM2 target
+            // (0x14/0x12) across a plugin reload until ApplyTelemetrySettings' device-id
+            // Stop moves it back to the wheel (0x17); in that window, starting here
+            // would open dual sessions on the same dev/connection — the exact collision
+            // the decoupling prevents. Defer: a later reconcile starts _cm2Sender once
+            // the main sender has relinquished the device. (Normal case: main is on
+            // 0x17 != dev, so this never blocks.)
+            var mainSender = _plugin.TelemetrySender;
+            bool mainHoldsThisDevice = mainSender != null && !mainSender.StateIsIdle
+                && ReferenceEquals(mainSender.ConnectionRef, conn)
+                && mainSender.TargetDeviceId == dev;
+
+            if (cm2.FramesSent == 0 && cm2.StateIsIdle && !mainHoldsThisDevice)
             {
                 // Fresh start: allow the saved-dashboard re-assert to fire once the
                 // CM2 advertises its dashboard list (PollStatus → TickCm2DashboardReassert).
@@ -197,17 +267,14 @@ namespace MozaPlugin.Telemetry
         // is timed from here: a CM1 advertises no catalog AND emits no value frames,
         // so timing from FramesSent>0 (which never happens) wedged the discriminator.
         private DateTime _cm2ActiveUtc = DateTime.MinValue;
-        // Past the watchdog's 20s engagement grace + 3s confirm; a real tier-def CM2
-        // advertises its catalog well within this, a CM1 never does.
-        private static readonly TimeSpan Cm1DecideAfter = TimeSpan.FromSeconds(25);
         // Set when the dash answers the group-0x0E param-read probe with a 0x8E
-        // reply (MozaPlugin.OnMessageReceived) — a positive CM1 signal a tier-def
-        // CM2 doesn't produce. Lets TickCm1Discriminator latch CM1 on the fast path.
+        // reply (MozaPlugin.OnMessageReceived) — the CM1-exclusive positive signal a
+        // tier-def CM2 never produces. The SOLE basis for latching CM1.
         private volatile bool _dashParamReadAnswered;
         private DateTime _lastCm1ProbeUtc = DateTime.MinValue;
-        // Fast-path latch: param-read answered + no catalog after this short
-        // settle → CM1, without waiting out Cm1DecideAfter. Kept long enough that
-        // a slow tier-def CM2's catalog still arrives first and wins.
+        // Settle window after the positive 0x8E answer before latching CM1, long
+        // enough that a slow tier-def CM2's catalog still arrives first and wins via
+        // the CatalogCount check.
         private static readonly TimeSpan Cm1FastDecideAfter = TimeSpan.FromSeconds(5);
 
         /// <summary>Serial-read-thread hook: the dash answered the group-0x0E
@@ -232,11 +299,14 @@ namespace MozaPlugin.Telemetry
         }
 
         /// <summary>
-        /// PollStatus hook: decide whether a bus-bridged dash is a CM1 (group-0x35, never
-        /// advertises a tier-def catalog) rather than a tier-def CM2. Once the tier-def
-        /// _cm2Sender has run past the engagement grace with no catalog, latch DashIsCm1,
-        /// tear down the (watchdog-suppressed) _cm2Sender, and hand off to the CM1 driver.
-        /// If a catalog DOES arrive, it's a real CM2 → drop the suppress flag.
+        /// PollStatus hook: decide whether a bus-bridged dash is a CM1 (group-0x35)
+        /// rather than a tier-def CM2, using only POSITIVE evidence. While the dash
+        /// is unclassified the tier-def _cm2Sender runs (engagement watchdog
+        /// suppressed) and we probe the CM1-exclusive group-0x0E param register ~1 Hz.
+        /// Two mutually-exclusive outcomes: a tier-def catalog arrives → real CM2,
+        /// drop the suppress flag; or the dash answers the probe with a 0x8E reply →
+        /// latch DashIsCm1, tear down the _cm2Sender, hand off to the CM1 driver.
+        /// Mere absence of a catalog NEVER latches CM1 (see body).
         /// </summary>
         internal void TickCm1Discriminator()
         {
@@ -266,13 +336,23 @@ namespace MozaPlugin.Telemetry
 
             var elapsed = DateTime.UtcNow - _cm2ActiveUtc;
 
-            // Fast positive CM1 signal: the dash answers the group-0x0E param-read
-            // probe with a 0x8E reply (_dashParamReadAnswered); a tier-def CM2
-            // doesn't. Re-probe ~1 Hz until it answers or a catalog arrives. Once
-            // answered, latch CM1 after a short settle (Cm1FastDecideAfter) so a
-            // slow CM2 — whose catalog arrives well inside that window — still
-            // wins via the CatalogCount check above. Falls back to the long
-            // no-catalog timeout when the dash never answers the probe.
+            // CM1 is latched ONLY on the POSITIVE signal: the dash answered the
+            // group-0x0E param-read probe with a 0x8E reply (_dashParamReadAnswered).
+            // That register interface is CM1-exclusive — PitHouse sweeps ~49 of these
+            // registers on a CM1 at connect, and a tier-def CM2 implements none of
+            // them (verified across the whole capture set: FSR1_CM1.pcapng answers,
+            // every CM2 / wheel / base capture answers zero). So we re-probe ~1 Hz
+            // until either the dash answers (→ CM1) or its tier-def catalog arrives
+            // (→ CM2, handled by the CatalogCount check above).
+            //
+            // There is deliberately NO no-catalog timeout fallback. "No catalog yet"
+            // is NOT proof of a CM1 — it equally describes a CM2 whose catalog is
+            // merely slow or was starved — and that absence-based fallback is exactly
+            // what mislabeled a real CM2 as a CM1 (then persisted it globally). A
+            // genuine CM1 always announces itself via 0x8E, so absence-of-evidence
+            // must never latch. A dash that is neither (no catalog, no 0x8E) simply
+            // stays in discrimination — re-probed each tick — rather than being
+            // guessed into the wrong device class.
             if (!_dashParamReadAnswered)
             {
                 if ((DateTime.UtcNow - _lastCm1ProbeUtc).TotalMilliseconds >= 1000)
@@ -280,28 +360,27 @@ namespace MozaPlugin.Telemetry
                     _lastCm1ProbeUtc = DateTime.UtcNow;
                     try { _plugin.DeviceManager.SendCm1ParamProbe(); } catch { }
                 }
-            }
-            else if (elapsed >= Cm1FastDecideAfter)
-            {
-                LatchDashAsCm1($"answered param-read (0x8E) with no tier-def catalog in "
-                    + $"{Cm1FastDecideAfter.TotalSeconds:F0}s");
                 return;
             }
 
-            if (elapsed < Cm1DecideAfter) return;
-            LatchDashAsCm1($"no tier-def catalog within {Cm1DecideAfter.TotalSeconds:F0}s (timeout fallback)");
+            // Positive CM1 signal received. Latch after a short settle so a slow CM2
+            // whose catalog lands inside the window still wins via the CatalogCount
+            // check above.
+            if (elapsed >= Cm1FastDecideAfter)
+                LatchDashAsCm1("answered param-read (0x8E) — positive CM1 signal "
+                    + $"(settled {Cm1FastDecideAfter.TotalSeconds:F0}s)");
         }
 
-        /// <summary>Latch the bus-bridged dash as a CM1: persist the flag, deploy
-        /// the CM1 device definition (its own GUID/tab) and drop the speculative
-        /// CM2 copy MarkDashDetected wrote before we could tell them apart (guarded
-        /// against a real USB CM2), tear down the tier-def sender, and start the
-        /// CM1 driver.</summary>
+        /// <summary>Latch the bus-bridged dash as a CM1 for THIS session: set the
+        /// in-memory flag, deploy the CM1 device definition (its own GUID/tab) and
+        /// drop the speculative CM2 copy MarkDashDetected wrote before we could tell
+        /// them apart (guarded against a real USB CM2), tear down the tier-def
+        /// sender, and start the CM1 driver. The flag is session-only — re-derived
+        /// each boot by the discriminator — so there is nothing to persist here.</summary>
         private void LatchDashAsCm1(string reason)
         {
             MozaLog.Info($"[AZOM] Bridged dash → CM1 (group-0x35): {reason}; handing off to CM1 driver");
             _plugin.DashIsCm1 = true;
-            _plugin.SaveSettings();
 
             try
             {

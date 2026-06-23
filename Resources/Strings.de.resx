@@ -66,6 +66,7 @@
   <data name="Subtitle_HighSpeedDamping" xml:space="preserve"><value>// keine Ahnung, was diese Einstellungen bewirken</value></data>
   <data name="SliderLabel_ForceFeedbackReversal" xml:space="preserve"><value>Force-Feedback-Umkehrung</value></data>
   <data name="SliderLabel_StandbyMode" xml:space="preserve"><value>Standby-Modus</value></data>
+  <data name="SliderLabel_AutoStandbyTimeout" xml:space="preserve"><value>Standby nach</value></data>
   <data name="SliderLabel_BaseStatusLed" xml:space="preserve"><value>Basis-Status-LED</value></data>
   <data name="SliderLabel_Bluetooth" xml:space="preserve"><value>Bluetooth</value></data>
   <data name="SliderLabel_DampingLevel" xml:space="preserve"><value>Dämpfungsstufe</value></data>

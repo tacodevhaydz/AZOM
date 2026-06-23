@@ -353,6 +353,19 @@ namespace MozaPlugin.Telemetry
         /// <summary>Current FSR1 active dashboard index (0..18), default 0.</summary>
         internal int GetActiveFsr1Index()
         {
+            // While the byte probe is armed it pins the page so a mid-sweep page-report
+            // can't scramble stepping (see MozaPlugin.Fsr1ProbeFrozenIndex). The driver,
+            // probe target, channel UI, and label all read through here, so they stay in
+            // agreement on the frozen page for the probe's lifetime.
+            int frozen = _plugin.Fsr1ProbeFrozenIndex;
+            if (frozen >= 0) return frozen;
+            return RawActiveFsr1Index();
+        }
+
+        /// <summary>The persisted active index for the current wheel page, ignoring any probe
+        /// freeze — the true wheel-followed value used for change detection.</summary>
+        private int RawActiveFsr1Index()
+        {
             var g = _plugin.GetCurrentWheelPageGuid();
             if (g.HasValue && _plugin.Settings?.Fsr1ActiveDashboardByWheelGuid != null
                 && _plugin.Settings.Fsr1ActiveDashboardByWheelGuid.TryGetValue(g.Value, out var i))
@@ -395,7 +408,12 @@ namespace MozaPlugin.Telemetry
         /// (wheel self-switch); follows without re-commanding the wheel.</summary>
         internal void NoteFsr1WheelIndex(int index)
         {
-            if (index == GetActiveFsr1Index()) return;
+            // Compare against the RAW stored index, not GetActiveFsr1Index — the latter is
+            // pinned during a probe, which would suppress real wheel switches and break the
+            // change log used to diagnose page-report spam.
+            int prev = RawActiveFsr1Index();
+            if (index == prev) return;
+            MozaLog.Info($"[AZOM] FSR1 wheel-reported page index {prev} → {index} (Param-6 follow)");
             SetActiveFsr1Index(index, sendToWheel: false);
         }
 
@@ -527,19 +545,26 @@ namespace MozaPlugin.Telemetry
             SetActiveCm1Index(index, sendToWheel: false);
         }
 
-        /// <summary>True once this dash is confirmed a CM1 (group-0x35). Persisted per
-        /// dash GUID so later boots skip the tier-def probe.</summary>
+        // True once THIS session's bus dash has been confirmed a CM1 (group-0x35)
+        // by the live discriminator. Deliberately SESSION-ONLY (in-memory): the
+        // CM1-vs-CM2 verdict is a statement about what's physically on the bus
+        // right now and MUST be re-derived each boot. It used to be persisted "so
+        // later boots skip the tier-def probe", keyed by the constant Cm1PageGuid —
+        // i.e. one global bit, not per-device — so a single mis-latch (e.g. a real
+        // CM2 whose cold-start was starved before the dual-bus start-gate fix)
+        // turned EVERY future bus dash into a CM1 permanently, across reboots and
+        // hardware swaps (CS Pro + bus CM2 bundle 2026-06-18: a real CM2 stuck on
+        // the CM1 driver — telemetry + dashboard tab dead, only LEDs alive). The
+        // discriminator re-latches a genuine CM1 within ~5 s via the 0x8E fast path,
+        // so re-deriving each boot is cheap and correct.
+        private volatile bool _dashIsCm1;
+
+        /// <summary>True once this session's bus dash is confirmed a CM1 (group-0x35).
+        /// Session-only — never persisted; re-derived each boot by the discriminator.</summary>
         internal bool DashIsCm1
         {
-            get => _plugin.Settings?.DashIsCm1ByGuid != null
-                   && _plugin.Settings.DashIsCm1ByGuid.TryGetValue(MozaPlugin.Cm1PageGuid, out var v) && v;
-            set
-            {
-                if (_plugin.Settings == null) return;
-                if (_plugin.Settings.DashIsCm1ByGuid == null)
-                    _plugin.Settings.DashIsCm1ByGuid = new Dictionary<Guid, bool>();
-                _plugin.Settings.DashIsCm1ByGuid[MozaPlugin.Cm1PageGuid] = value;
-            }
+            get => _dashIsCm1;
+            set => _dashIsCm1 = value;
         }
     }
 }

@@ -5,6 +5,7 @@ using System.Linq;
 using System.Threading;
 using BA63Driver.Interfaces;
 using BA63Driver.Mapper;
+using MozaPlugin.Protocol;
 using SerialDash;
 using SimHub.Plugins.OutputPlugins.GraphicalDash.LedModules;
 using SimHub.Plugins.OutputPlugins.GraphicalDash.PSE;
@@ -231,12 +232,22 @@ namespace MozaPlugin.Devices
             }
         }
 
-        public bool IsConnected()
+        public bool IsConnected() => IsModelConnected(MozaPlugin.Instance, ExpectedModelPrefix);
+
+        /// <summary>
+        /// Detection-based connection verdict for a wheel device extension whose
+        /// device-type resolved to <paramref name="expectedPrefix"/>. Reads only
+        /// plugin detection state (set at Init/probe), so it is valid even when no
+        /// virtual LED driver has been injected yet (the injected driver is created
+        /// lazily in the extension's DataUpdate). The settings-control connection
+        /// gate calls this directly so the tab reflects detection rather than the
+        /// LED-injection lifecycle.
+        /// </summary>
+        internal static bool IsModelConnected(MozaPlugin? p, string? expectedPrefix)
         {
-            if (ExpectedModelPrefix == null)
+            if (expectedPrefix == null)
                 return false;
 
-            var p = MozaPlugin.Instance;
             if (p == null)
                 return false;
 
@@ -245,7 +256,7 @@ namespace MozaPlugin.Devices
             // rim). An ES wheel resolves model "ES" from id 0x18 and is served by
             // its own model-specific device below, so the marker device steps
             // aside for it.
-            if (ExpectedModelPrefix == MozaDeviceConstants.OldProtocolMarker)
+            if (expectedPrefix == MozaDeviceConstants.OldProtocolMarker)
                 return p.IsOldWheelDetected && string.IsNullOrEmpty(p.Data.WheelModelName);
 
             // Any other device requires a detected wheel — new OR old protocol.
@@ -257,7 +268,7 @@ namespace MozaPlugin.Devices
             // Empty prefix = generic new-protocol fallback, matches any
             // new-protocol wheel UNLESS a model-specific device extension is
             // active for this wheel.
-            if (ExpectedModelPrefix.Length == 0)
+            if (expectedPrefix.Length == 0)
                 return p.IsNewWheelDetected
                     && !p.IsModelSpecificExtensionActive(p.Data.WheelModelName);
 
@@ -268,7 +279,7 @@ namespace MozaPlugin.Devices
             if (string.IsNullOrEmpty(modelName))
                 return false;
 
-            return modelName.StartsWith(ExpectedModelPrefix, StringComparison.OrdinalIgnoreCase);
+            return modelName.StartsWith(expectedPrefix, StringComparison.OrdinalIgnoreCase);
         }
 
         public string GetSerialNumber() => "MOZA-VIRTUAL";
@@ -508,6 +519,12 @@ namespace MozaPlugin.Devices
                             bitmask |= (1 << i);
                     }
 
+                    // RPM colours + bitmask ride the coalescing STREAM lane (latest-wins,
+                    // unthrottled) instead of the paced/throttled one-shot FIFO, so a
+                    // co-resident CM2 value stream on a shared bus can't starve them (the
+                    // measured 111->238ms rim-cadence regression). Colours are per-CHUNK
+                    // (5 LEDs/chunk) so each chunk coalesces independently — never
+                    // dropping later chunks. WheelRpmColor0..3 covers the widest rim.
                     if (isNewWheel && modelInfo?.UsesLegacyRpmTelemetry == true)
                     {
                         // PitHouse "old colour-capable rim" path (bare "CS"): per-LED
@@ -515,6 +532,12 @@ namespace MozaPlugin.Devices
                         // (0x1a) and the old-protocol bitmask (0x41 fd de) — PitHouse
                         // streams the 0x41 path heavily to this rim. (Colour-rate
                         // capping was tried and ruled out as the storm cause.)
+                        //
+                        // STAYS on the paced one-shot lane (NOT the stream lane): this
+                        // wireless rim drops unpaced bursts, and the 4ms inter-write
+                        // pacing is what spaces its chunk+bitmask writes. It's also a
+                        // single-display rim — never the bus-CM2 contention case the
+                        // stream lane exists for — so it gains nothing from streaming.
                         SendColorChunks(plugin, rpmColors, count, "wheel-telemetry-rpm-colors");
                         if (alwaysResendBitmask || bitmask != _lastRpmBitmask)
                         {
@@ -527,7 +550,8 @@ namespace MozaPlugin.Devices
                     }
                     else if (isNewWheel)
                     {
-                        SendColorChunks(plugin, rpmColors, count, "wheel-telemetry-rpm-colors");
+                        SendColorChunks(plugin, rpmColors, count, "wheel-telemetry-rpm-colors",
+                            streamBase: StreamKind.WheelRpmColor0, maxStreamChunks: 4);
 
                         if (alwaysResendBitmask || bitmask != _lastRpmBitmask)
                         {
@@ -536,14 +560,18 @@ namespace MozaPlugin.Devices
                             // captured (CS V2.1, CS Pro). window = the full RPM-LED set;
                             // the old 2-byte form (no window) left CS V2.1's first LED
                             // stuck lit. See docs/protocol/leds/color-commands.md.
-                            plugin.DeviceManager.WriteArray("wheel-send-rpm-telemetry",
-                                BuildWindowedBitmaskBytes(bitmask, (1 << rpmN) - 1));
+                            plugin.DeviceManager.WriteArrayStream("wheel-send-rpm-telemetry",
+                                BuildWindowedBitmaskBytes(bitmask, (1 << rpmN) - 1), StreamKind.WheelRpmBitmask);
                         }
                         anySent = true;
                     }
                     else if (isOldWheel)
                     {
-                        // ES wheels: can't set colors per-frame, just send bitmask
+                        // ES wheels: can't set colors per-frame, just send the bitmask.
+                        // Stays on the one-shot lane (same as the ES wake pulse above):
+                        // an ES rim is single-display, so it needs no stream-lane
+                        // protection, and lane parity keeps the wake-pulse OFF from
+                        // landing after the lit bitmask and blanking the rim.
                         if (alwaysResendBitmask || bitmask != _lastRpmBitmask)
                         {
                             _lastRpmBitmask = bitmask;
@@ -659,8 +687,8 @@ namespace MozaPlugin.Devices
                             // layouts (CS V2.1 → 0x034B; its firmware leaves buttons dark
                             // when window=0), and 0 for contiguous-button wheels — exactly
                             // what PitHouse sends per wheel. See WheelModelInfo.ButtonWindowMask.
-                            plugin.DeviceManager.WriteArray("wheel-send-buttons-telemetry",
-                                BuildWindowedBitmaskBytes(buttonBitmask, modelInfo.ButtonWindowMask));
+                            plugin.DeviceManager.WriteArrayStream("wheel-send-buttons-telemetry",
+                                BuildWindowedBitmaskBytes(buttonBitmask, modelInfo.ButtonWindowMask), StreamKind.WheelButtonBitmask);
                         }
                         anySent = true;
                     }
@@ -787,7 +815,7 @@ namespace MozaPlugin.Devices
                             // is carried by the COLOURS (black = off). Never active=0 or a partial
                             // mask — that reverts un-owned knobs to their EEPROM defaults.
                             _lastKnobBitmask = windowMask;
-                            plugin.DeviceManager.WriteArray("wheel-send-knob-telemetry", BuildWindowedBitmaskBytes(windowMask, windowMask));
+                            plugin.DeviceManager.WriteArrayStream("wheel-send-knob-telemetry", BuildWindowedBitmaskBytes(windowMask, windowMask), StreamKind.WheelKnobBitmask);
                             anySent = true;
                         }
                     }
@@ -835,14 +863,19 @@ namespace MozaPlugin.Devices
                 // each section independently.
                 var kaNow = DateTime.UtcNow;
                 int holdSec = plugin.Settings?.WheelKeepaliveTimeoutSec ?? (int)KeepaliveHoldSeconds;
-                if (_lastLeds != null && (AnyLit(_lastLeds) || WithinHold(kaNow, _rpmChangedUtc, holdSec))
+                // While a game is actively feeding telemetry, NEVER pause the keepalive —
+                // the wheel must stay live for the whole session (incl. menus/pauses) and
+                // only sleep once the game is closed. The lit/hold gate (which lets a
+                // steadily-black section time out) applies only when no game is active.
+                bool gameActive = plugin.IsGameActive;
+                if (_lastLeds != null && (gameActive || AnyLit(_lastLeds) || WithinHold(kaNow, _rpmChangedUtc, holdSec))
                     && (kaNow - _rpmFedUtc).TotalSeconds >= KeepaliveIntervalSeconds)
                 {
                     _rpmFedUtc = kaNow; _lastSendTime = kaNow;
                     ResendRpmFlags(plugin, isNewWheel, isOldWheel);
                     NoteLiveSend();
                 }
-                if (isNewWheel && _lastButtons != null && (AnyLit(_lastButtons) || WithinHold(kaNow, _btnChangedUtc, holdSec))
+                if (isNewWheel && _lastButtons != null && (gameActive || AnyLit(_lastButtons) || WithinHold(kaNow, _btnChangedUtc, holdSec))
                     && (kaNow - _btnFedUtc).TotalSeconds >= KeepaliveIntervalSeconds)
                 {
                     _btnFedUtc = kaNow; _lastSendTime = kaNow;
@@ -850,7 +883,7 @@ namespace MozaPlugin.Devices
                     NoteLiveSend();
                 }
                 if (isNewWheel && _lastKnobs != null && modelInfo?.KnobCount > 0
-                    && (AnyLit(_lastKnobs) || WithinHold(kaNow, _knobDrivenUtc, holdSec))
+                    && (gameActive || AnyLit(_lastKnobs) || WithinHold(kaNow, _knobDrivenUtc, holdSec))
                     && (kaNow - _knobFedUtc).TotalSeconds >= KeepaliveIntervalSeconds)
                 {
                     _knobFedUtc = kaNow; _lastSendTime = kaNow;
@@ -881,11 +914,15 @@ namespace MozaPlugin.Devices
 
             if (isNewWheel)
             {
-                SendColorChunks(plugin, _lastLeds, count, "wheel-telemetry-rpm-colors");
+                SendColorChunks(plugin, _lastLeds, count, "wheel-telemetry-rpm-colors",
+                    streamBase: StreamKind.WheelRpmColor0, maxStreamChunks: 4);
                 if (_lastRpmBitmask >= 0)
-                    plugin.DeviceManager.WriteArray("wheel-send-rpm-telemetry",
-                        BuildWindowedBitmaskBytes(_lastRpmBitmask, (1 << rpmN) - 1));
+                    plugin.DeviceManager.WriteArrayStream("wheel-send-rpm-telemetry",
+                        BuildWindowedBitmaskBytes(_lastRpmBitmask, (1 << rpmN) - 1), StreamKind.WheelRpmBitmask);
 
+                // Flag colours stay on the one-shot lane (low-rate, change-gated, and
+                // also driven by MozaDashLedDeviceManager — keep a single lane to avoid
+                // a two-driver desync).
                 if (modelInfo?.HasFlagLeds == true && plugin.IsDashDetected && _lastFlagColorsPrimed)
                     for (int i = 0; i < MozaDeviceConstants.FlagLedCount; i++)
                     {
@@ -909,8 +946,8 @@ namespace MozaPlugin.Devices
             int count = Math.Min(_lastButtons.Length, modelInfo.ButtonLedCount);
             SendColorChunks(plugin, _lastButtons, count, "wheel-telemetry-button-colors", modelInfo.ButtonLedMap);
             if (_lastButtonBitmask >= 0)
-                plugin.DeviceManager.WriteArray("wheel-send-buttons-telemetry",
-                    BuildWindowedBitmaskBytes(_lastButtonBitmask, modelInfo.ButtonWindowMask));
+                plugin.DeviceManager.WriteArrayStream("wheel-send-buttons-telemetry",
+                    BuildWindowedBitmaskBytes(_lastButtonBitmask, modelInfo.ButtonWindowMask), StreamKind.WheelButtonBitmask);
         }
 
         /// <summary>Re-feed the last knob frame — colour + bitmask (active=window, so an
@@ -921,8 +958,8 @@ namespace MozaPlugin.Devices
             int count = Math.Min(_lastKnobs.Length, modelInfo.KnobCount);
             SendColorChunks(plugin, _lastKnobs, count, "wheel-telemetry-knob-colors");
             if (_lastKnobBitmask >= 0)
-                plugin.DeviceManager.WriteArray("wheel-send-knob-telemetry",
-                    BuildWindowedBitmaskBytes(_lastKnobBitmask, (1 << modelInfo.KnobCount) - 1));
+                plugin.DeviceManager.WriteArrayStream("wheel-send-knob-telemetry",
+                    BuildWindowedBitmaskBytes(_lastKnobBitmask, (1 << modelInfo.KnobCount) - 1), StreamKind.WheelKnobBitmask);
         }
 
         /// <summary>
@@ -991,8 +1028,16 @@ namespace MozaPlugin.Devices
             return result;
         }
 
+        // When streamBase is set, each 20-byte chunk is sent to its OWN coalescing
+        // stream slot (streamBase + chunkIndex) instead of the throttled one-shot
+        // FIFO — so a co-resident value stream can't starve the colour stream. Each
+        // chunk coalesces INDEPENDENTLY (a new chunk-0 supersedes only the old
+        // chunk-0; later chunks are never dropped), which is why one slot PER CHUNK
+        // is required. maxStreamChunks bounds the slot range; any chunk beyond it
+        // falls back to the one-shot lane (defensive — no shipped model exceeds it).
         internal static void SendColorChunks(MozaPlugin plugin, Color[] colors, int count,
-            string command, int[]? indexMap = null)
+            string command, int[]? indexMap = null,
+            StreamKind? streamBase = null, int maxStreamChunks = 0)
         {
             int dataLen = count * 4;
             // Round up to next multiple of 20 for chunk alignment
@@ -1018,10 +1063,16 @@ namespace MozaPlugin.Devices
             // method returns, so overwriting `chunk` on the next iteration is
             // safe and saves N-1 allocations per LED update at 60Hz.
             var chunk = new byte[20];
+            int chunkIdx = 0;
             for (int pos = 0; pos < bufferLen; pos += 20)
             {
                 Array.Copy(colorData, pos, chunk, 0, 20);
-                plugin.DeviceManager.WriteArray(command, chunk);
+                if (streamBase.HasValue && chunkIdx < maxStreamChunks)
+                    plugin.DeviceManager.WriteArrayStream(
+                        command, chunk, (StreamKind)((int)streamBase.Value + chunkIdx));
+                else
+                    plugin.DeviceManager.WriteArray(command, chunk);
+                chunkIdx++;
             }
         }
 

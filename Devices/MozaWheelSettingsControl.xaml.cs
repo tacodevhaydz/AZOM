@@ -32,11 +32,13 @@ namespace MozaPlugin.Devices
         private readonly DispatcherTimer _refreshTimer;
 
         /// <summary>
-        /// The virtual LED driver for the device instance this control belongs to.
-        /// When set, connection status is derived from the driver's model-aware IsConnected().
-        /// When null (legacy), falls back to global plugin state.
+        /// Wheel model prefix this control's device instance represents (resolved
+        /// from the device-type GUID by the extension). Drives the model-aware
+        /// connection check via <see cref="MozaLedDeviceManager.IsModelConnected"/>
+        /// — detection-based, so the tab reflects detection regardless of whether
+        /// the virtual LED driver has been injected yet. Null = unknown device.
         /// </summary>
-        internal MozaLedDeviceManager? LinkedLedDriver { get; set; }
+        internal string? ExpectedModelPrefix { get; set; }
 
         // Color swatch references
         private readonly Border[] _wheelFlagColorSwatches = new Border[6];
@@ -778,12 +780,14 @@ skipReadByMode:
             if (!_swatchesBuilt)
                 BuildColorSwatches();
 
-            // Use the linked LED driver's model-aware connection check when available
-            bool wheelConnected = LinkedLedDriver?.IsConnected() ?? false;
+            // Model-aware connection check sourced from plugin detection state
+            // (not the lazily-injected LED driver) so the tab reflects detection
+            // even at the desktop before any DataUpdate injects the driver.
+            bool wheelConnected = MozaLedDeviceManager.IsModelConnected(_plugin, ExpectedModelPrefix);
             StatusDot.Fill = wheelConnected ? Brushes.LimeGreen : Brushes.Red;
             StatusText.Text = wheelConnected ? "Connected" : "Disconnected";
 
-            bool isOldProtoDevice = LinkedLedDriver?.ExpectedModelPrefix == MozaDeviceConstants.OldProtocolMarker;
+            bool isOldProtoDevice = ExpectedModelPrefix == MozaDeviceConstants.OldProtocolMarker;
             // IsConnected() already matched this device to the connected wheel, so
             // the global flag tells us its protocol. Covers both the generic
             // old-proto marker device and a model-specific old wheel (ES @ 0x18).
@@ -817,18 +821,15 @@ skipReadByMode:
                 // Tri-state display gate: known-display wheels (HasDisplay==true) show the
                 // dashboard tab immediately on connect; known-no-display wheels (false) never
                 // show it; unknown models defer to the runtime IsDisplayDetected probe.
-                // A CM2 behind the base owns the dashboard UI on its own device
-                // page, so hide it here; displayed wheels keep it.
-                // FSR V1 has its own screen (group-0x42 driver) and ALWAYS gets the
-                // Dashboard tab — independent of IsCm2BehindBaseCandidate, which is
-                // true for it when a CM2 dash shares the bus (the CM2 is driven
-                // concurrently by the tier-def sender). A normal tier-def wheel shows
-                // the tab only when it drives the dashboard and isn't the CM2-behind-
-                // base case (there the CM2's own device page owns the dashboard UI).
+                // DECOUPLED: the WHEEL's dashboard tab is shown iff the WHEEL drives its
+                // own screen — independent of any CM2. A CM2 has its OWN device page
+                // (MozaDashSettingsControl) driven by the dedicated _cm2Sender, so a
+                // display wheel + CM2 correctly shows BOTH tabs. FSR V1 (group-0x42
+                // driver) always has its own screen. (ShouldDriveDashboard already
+                // returns false for a screenless wheel + bus CM2.)
                 bool showTelemetry = newWheel
                                      && ((_plugin?.IsFsr1DisplayWheel ?? false)
-                                         || ((_plugin?.ShouldDriveDashboard() ?? false)
-                                             && !(_plugin?.IsCm2BehindBaseCandidate ?? false)));
+                                         || (_plugin?.ShouldDriveDashboard() ?? false));
                 bool showButtonsTab = newWheel && (modelInfoForTabs?.ButtonLedCount ?? 0) > 0;
                 bool showKnobsTab = newWheel && (modelInfoForTabs?.KnobCount ?? 0) > 0;
 

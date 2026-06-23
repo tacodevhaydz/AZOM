@@ -169,28 +169,56 @@ namespace MozaPlugin.Telemetry
             var sender = _plugin.TelemetrySender;
             if (sender == null) return;
 
-            // Standalone dashboard retarget: CM2 (no wheelbase) routes screen
-            // telemetry to dev=0x12 (CM2 bridge/main) instead of the wheel's
-            // dev=0x17. Inbound dispatcher widens its accepted device fan-in
-            // when this mode flag is set.
-            bool standaloneDashboard = _plugin.ShouldUseStandaloneDashboardTarget();
-            byte targetDeviceId = standaloneDashboard
-                ? _plugin.PreferredStandaloneDashboardTargetDeviceId
-                : MozaProtocol.DeviceWheel;
+            // DECOUPLED: the MAIN sender drives ONLY the wheel's own screen (dev 0x17)
+            // on the wheelbase connection — NEVER a CM2. A CM2 (bus or USB) is always
+            // driven by the dedicated _cm2Sender (DualDisplayCoordinator.EnsureCm2-
+            // Pipeline). This is the structural guarantee that the two senders never
+            // collide on a CM2 device: the main sender is never POINTED at 0x12/0x14.
+            byte targetDeviceId = MozaProtocol.DeviceWheel;
+            var desired = _plugin.Connection;
 
-            // Point the sender at the connection that owns the screen: the
-            // dedicated dashboard connection for a standalone-USB CM2, else the
-            // wheelbase connection (wheel-hosted 0x17 / base-bridged CM2 0x12).
-            // Rebinding requires Idle; if the sender is mid-session, defer to the
-            // next apply (a connection swap mid-stream isn't safe anyway).
-            var desired = _plugin.DashboardUsbConnected
-                ? _plugin.DashboardConnection
-                : _plugin.Connection;
+            // Move a mid-session sender to the wheelbase if it's on the WRONG
+            // connection (e.g. a persistent USB-CM2 sender reused across a plugin
+            // reload). Rebind requires Idle, so Stop() first — StartTelemetryIfReady
+            // restarts it on the right pipe.
+            if (desired != null
+                && !ReferenceEquals(desired, sender.ConnectionRef)
+                && !sender.StateIsIdle)
+            {
+                MozaLog.Info(
+                    "[AZOM] Main telemetry sender is on the wrong connection " +
+                    $"({sender.ConnectionRef?.CaptureLabel}); stopping to rebind to " +
+                    $"{desired.CaptureLabel}");
+                sender.Stop();
+                Interlocked.Exchange(ref _plugin._telemetryStartRequested, 0);
+            }
+            // Same connection but a stale CM2 device-id carried over from a pre-
+            // decoupling persistent sender: the connection-keyed Stop above MISSES it
+            // because a bus CM2 shares the wheelbase connection (only the dev-id
+            // differs, 0x14 vs 0x17). Force a clean Stop so the main sender never
+            // co-drives a CM2 device alongside _cm2Sender (the dual-driver collision
+            // the decoupling prevents). Builds the same Idle→Rebind→restart path.
+            else if (!sender.StateIsIdle
+                     && (sender.TargetDeviceId == MozaProtocol.DeviceMain
+                         || sender.TargetDeviceId == MozaProtocol.DeviceDash))
+            {
+                MozaLog.Info(
+                    "[AZOM] Main telemetry sender still targets a CM2 device " +
+                    $"(0x{sender.TargetDeviceId:X2}); stopping to rebind to the wheel (0x17)");
+                sender.Stop();
+                Interlocked.Exchange(ref _plugin._telemetryStartRequested, 0);
+            }
             if (desired != null && sender.StateIsIdle)
                 sender.Rebind(desired);
 
-            sender.StandaloneDashboardMode = standaloneDashboard;
+            // The wheel screen must NEVER get the standalone Enable (0x0F) frame (it
+            // blanks the RPM display) and uses normal (non-widened) inbound fan-in, so
+            // StandaloneDashboardMode is always false on the main sender. The
+            // _cm2Sender owns standalone mode + the CM2's page-GUID channel mappings.
+            sender.StandaloneDashboardMode = false;
             sender.TargetDeviceId = targetDeviceId;
+            sender.MappingPageGuid = null;
+            sender.MappingDashKeys = null;
             // The main sender always uses lane base 0. Its strict-inbound / shares-
             // connection flags (set when a co-resident _cm2Sender shares the bus) are
             // owned by MozaPlugin.EnsureCm2Pipeline, not reset here.
@@ -407,6 +435,20 @@ namespace MozaPlugin.Telemetry
             {
                 MozaLog.Debug("[AZOM] ApplyTelemetryDashboardFromProfile: already applied " +
                               key + " in this plugin instance — no-op");
+                return true;
+            }
+
+            // The synthetic catalog-only profile is persisted as "builtin:WheelCatalog"
+            // but is NOT a real switchable wheel dashboard — it just mirrors the wheel's
+            // advertised catalog, which the pipeline already serves. Binding it is a no-op;
+            // without this guard the builtin fallback below would Stop+Start the pipeline
+            // (the ~11 s silence gate) on every cold start / game-switch reload.
+            if (string.Equals(key, "builtin:" + TelemetrySender.CatalogProfileName,
+                              StringComparison.OrdinalIgnoreCase))
+            {
+                MozaLog.Debug("[AZOM] Profile dashboard is the catalog-only synthetic profile (" +
+                              key + "); pipeline already serves the catalog — no switch needed");
+                SetLastAppliedKey(key);
                 return true;
             }
 
@@ -760,25 +802,23 @@ namespace MozaPlugin.Telemetry
             var t = _plugin.TelemetrySender;
             if (t == null) return;
             if (!_plugin.ActiveTelemetryEnabled) return;
-            // A standalone-USB CM2 streams over its own connection while the
-            // wheelbase connection may be absent (no base), so accept either.
-            if (!_connection.IsConnected && !_plugin.DashboardUsbConnected) return;
-            // Standalone dashboard (CM2) drives the pipeline without any wheel
-            // attached. Allow start as long as either a wheel detected OR a
-            // standalone dashboard is the connection target.
-            bool standaloneDashboard = _plugin.ShouldUseStandaloneDashboardTarget();
+            // DECOUPLED: the MAIN sender drives only the wheel's own screen, so it
+            // requires the wheelbase connection AND a detected wheel. A CM2 (bus or
+            // USB) is driven by the dedicated _cm2Sender via EnsureCm2Pipeline (called
+            // every PollStatus tick), NOT here — so there is no "standalone dashboard
+            // without a wheel" start path on the main sender anymore.
+            if (!_connection.IsConnected) return;
             if (!_detectionState.NewWheelDetected
-                && !_detectionState.OldWheelDetected
-                && !standaloneDashboard) return;
+                && !_detectionState.OldWheelDetected) return;
 
             // FSR V1 (group-0x42 display push) is driven by the standalone
             // Telemetry/Fsr1DisplayDriver (started from MozaPlugin), NOT by this
             // tier-def sender — so it is not handled here at all.
 
             // Capability gate: known displayless wheels never get the dashboard
-            // pipeline; unknown models fall back to the runtime probe. CM2
-            // standalone is always a dashboard — skip the wheel-display gate.
-            if (!standaloneDashboard && !_plugin.ShouldDriveDashboard())
+            // pipeline; unknown models fall back to the runtime probe. A screenless
+            // wheel (even with a bus CM2) is NOT started here — its CM2 is _cm2Sender's.
+            if (!_plugin.ShouldDriveDashboard())
             {
                 MozaLog.Info(
                     $"[AZOM] Wheel '{_data?.WheelModelName}' has no display " +
@@ -798,9 +838,8 @@ namespace MozaPlugin.Telemetry
             // ~512) re-calls StartTelemetryIfReady once the probe completes,
             // and PollStatus re-probes every 5 s while the wheel is
             // detected but the display isn't — so deferring here is safe
-            // and self-recovering. Standalone CM2 dashboards skip this gate
-            // (they ARE the dashboard target, no separate sub-device boot).
-            if (!standaloneDashboard && !_plugin.IsDisplayDetected)
+            // and self-recovering.
+            if (!_plugin.IsDisplayDetected)
             {
                 MozaLog.Debug(
                     $"[AZOM] Display sub-device not yet detected " +

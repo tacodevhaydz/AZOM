@@ -157,6 +157,17 @@ namespace MozaPlugin
         // Whether to automatically apply profile settings on launch
         public bool AutoApplyProfileOnLaunch { get; set; } = true;
 
+        // When true, automatically put the wheelbase into Work Mode standby
+        // (main-set-work-mode=1) after the idle timeout elapses with no game
+        // running and no recent activity, and wake it (=0) the moment a game
+        // starts or the user interacts. Opt-in; default off.
+        public bool AutoStandbyWhenNoGame { get; set; } = false;
+
+        // Minutes of inactivity (no game, no wheel/pedal input, no UI use)
+        // before auto-standby engages. Only meaningful when AutoStandbyWhenNoGame
+        // is true. Selected from a preset combo in the UI.
+        public int AutoStandbyTimeoutMinutes { get; set; } = 10;
+
         // When true, only send LED updates to wheel when data actually changed (ignores SimHub forceRefresh).
         // Fixes flickering on some non-ES wheels. When false, respects SimHub's refresh cycle.
         public bool LimitWheelUpdates { get; set; } = false;
@@ -441,16 +452,13 @@ namespace MozaPlugin
         public Dictionary<Guid, int> Fsr1ActiveDashboardByWheelGuid { get; set; }
             = new Dictionary<Guid, int>();
 
-        /// <summary>
-        /// Latched per dash GUID: true once a base-bridged dash is confirmed to be a CM1
-        /// (group-0x35, no tier-def catalog) rather than a tier-def CM2. Lets subsequent
-        /// boots route straight to the CM1 driver instead of re-running the tier-def probe.
-        /// See <see cref="MozaPlugin.TickCm1Discriminator"/>.
-        /// </summary>
-        [Newtonsoft.Json.JsonProperty(NullValueHandling = Newtonsoft.Json.NullValueHandling.Ignore,
-            DefaultValueHandling = Newtonsoft.Json.DefaultValueHandling.Ignore)]
-        public Dictionary<Guid, bool> DashIsCm1ByGuid { get; set; }
-            = new Dictionary<Guid, bool>();
+        // NOTE: the CM1-vs-CM2 verdict is intentionally NOT persisted. It's a
+        // statement about what's physically on the bus right now and is re-derived
+        // each boot by the discriminator (see Fsr1Cm1MappingCoordinator.DashIsCm1).
+        // A prior persisted form (DashIsCm1ByGuid, keyed by the constant CM1 GUID)
+        // made a single mis-latch permanent and global; it has been removed. Any
+        // stale value left in an existing settings file is ignored and dropped on
+        // the next save.
 
         /// <summary>CM1 selected dashboard page index (1-based), per dash GUID. Set via the
         /// 0x32/0x81 select command and reported back by the dash's Param-6 log. Absent = 1.</summary>

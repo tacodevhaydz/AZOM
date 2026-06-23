@@ -59,8 +59,15 @@ Ack:   7E 00 9F 21 4B                 (bare group-0x1F write ack, no value echo)
 
 | PitHouse toggle | `value` | Frame |
 |---|---|---|
-| Shifter mode (default) | `0x00` | `7E 02 1F 12 5D 00 1B` |
-| Flight-sim mode | `0x01` | `7E 02 1F 12 5D 01 1C` |
+| Flight-sim mode | `0x00` | `7E 02 1F 12 5D 00 1B` |
+| Shifter mode (default) | `0x01` | `7E 02 1F 12 5D 01 1C` |
+
+> **Mode↔value mapping corrected 2026-06-17.** The 2026-06-14 table had the two
+> values backwards (`0x00`=Shifter, `0x01`=Flight-sim). Verified against hardware:
+> `0x00` puts the AB9 in **flight-sim** mode and `0x01` in **shifter** mode. The
+> captured frames themselves are unchanged — only which PitHouse UI mode each
+> corresponds to was mislabelled. Plugin `Ab9InputMode` enum, the input-mode
+> combo Tags, and `MozaCommandDatabase` comment were swapped to match.
 
 `0x5D` is the same cmd-id PitHouse reads on `Group 0x1E` as the device's online/ready flag (`7E 02 9E 21 5D 01 AA`, 1-byte value); here it is *written* on `0x1F` with a 2-byte payload to flip the mode.
 

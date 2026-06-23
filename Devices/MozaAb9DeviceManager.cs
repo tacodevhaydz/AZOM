@@ -28,8 +28,8 @@ namespace MozaPlugin.Devices
     /// </summary>
     public enum Ab9InputMode : byte
     {
-        Shifter   = 0x00,
-        FlightSim = 0x01,
+        FlightSim = 0x00,
+        Shifter   = 0x01,
     }
 
     /// <summary>

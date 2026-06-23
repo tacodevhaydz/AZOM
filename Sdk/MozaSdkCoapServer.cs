@@ -4,6 +4,7 @@ using System.Diagnostics;
 using System.Globalization;
 using System.Net;
 using System.Net.Sockets;
+using System.Text;
 using System.Threading;
 using MozaPlugin.Hardware;
 using MozaPlugin.Sdk.Coap;
@@ -96,6 +97,16 @@ namespace MozaPlugin.Sdk
             "HighFrequencyTorque",
         };
         private readonly Dictionary<string, int> _noisyCounters = new Dictionary<string, int>(StringComparer.Ordinal);
+
+        // iRacing POSTs /MOZARacing/SdkState as a near-continuous liveness probe
+        // (intentional 4.04 — see SdkStateResource). Treat it as a ping: log the
+        // first occurrence as proof the SDK client connected, then keep only a
+        // sparse heartbeat so substantive requests stay visible in the log.
+        private const int LivenessSampleEvery = 300;
+        private static readonly HashSet<string> LivenessUriTrailingSegments = new HashSet<string>(StringComparer.Ordinal)
+        {
+            "SdkState",
+        };
 
         /// <summary>
         /// Build a server bound to the fixed <see cref="CoapPort"/>.
@@ -505,7 +516,7 @@ namespace MozaPlugin.Sdk
 
             int durationMs = (int)sw.ElapsedMilliseconds;
             AppendRecent(new RecentRequest(DateTime.Now, verb, uriPath, resourceResponse.ResponseCode, durationMs));
-            LogRequest(verb, uriPath, propertyName, resourceResponse.ResponseCode, durationMs);
+            LogRequest(verb, uriPath, request.Payload, resourceResponse.ResponseCode, resourceResponse.Reason, durationMs);
         }
 
         private void TrySendInternalErrorFallback(UdpClient udp, IPEndPoint remote, byte[] datagram)
@@ -578,30 +589,95 @@ namespace MozaPlugin.Sdk
             }
         }
 
-        private void LogRequest(string verb, string uriPath, string? propertyName, byte responseCode, int durationMs)
+        private void LogRequest(string verb, string uriPath, byte[]? payload, byte responseCode, string? reason, int durationMs)
         {
-            bool isNoisy = propertyName != null && NoisyUriTrailingSegments.Contains(propertyName);
-            if (isNoisy)
+            string trailing = TrailingSegment(uriPath);
+
+            // Liveness probe (SdkState): first occurrence + a sparse heartbeat only.
+            if (LivenessUriTrailingSegments.Contains(trailing))
             {
-                int n;
-                lock (_noisyCounters)
-                {
-                    if (!_noisyCounters.TryGetValue(propertyName!, out n)) n = 0;
-                    n++;
-                    _noisyCounters[propertyName!] = n;
-                }
-                if ((n % NoisySampleEvery) != 1) return;
+                int n = BumpCounter(trailing);
+                if (n != 1 && (n % LivenessSampleEvery) != 0) return;
                 MozaLog.Debug(string.Format(
                     CultureInfo.InvariantCulture,
-                    "[Sdk] {0} {1} -> {2} ({3}ms) (sample 1/{4})",
-                    verb, uriPath, CoapCode.Format(responseCode), durationMs, NoisySampleEvery));
+                    "[Sdk] {0} {1} -> {2} ({3}ms) ({4})",
+                    verb, uriPath, CoapCode.Format(responseCode), durationMs,
+                    n == 1 ? "first" : $"liveness 1/{LivenessSampleEvery}"));
                 return;
             }
 
-            MozaLog.Debug(string.Format(
+            // High-rate motor telemetry writes (Feedforward etc.): sample 1/N.
+            if (NoisyUriTrailingSegments.Contains(trailing))
+            {
+                int n = BumpCounter(trailing);
+                if ((n % NoisySampleEvery) != 1) return;
+                MozaLog.Debug(string.Format(
+                    CultureInfo.InvariantCulture,
+                    "[Sdk] {0} {1}{2} -> {3} ({4}ms) (sample 1/{5})",
+                    verb, uriPath, DescribePayload(payload), CoapCode.Format(responseCode),
+                    durationMs, NoisySampleEvery));
+                return;
+            }
+
+            // Everything else: always log. POST writes/actions carry their value
+            // and surface at Info; rejected/failed requests (4.xx/5.xx) at Warn so
+            // a bad CoAP-driven command stands out; reads (GET) stay at Debug.
+            string line = string.Format(
                 CultureInfo.InvariantCulture,
-                "[Sdk] {0} {1} -> {2} ({3}ms)",
-                verb, uriPath, CoapCode.Format(responseCode), durationMs));
+                "[Sdk] {0} {1}{2} -> {3} ({4}ms){5}",
+                verb, uriPath, DescribePayload(payload), CoapCode.Format(responseCode), durationMs,
+                string.IsNullOrEmpty(reason) ? string.Empty : $" [{reason}]");
+
+            if (CoapCode.Class(responseCode) >= 4)
+                MozaLog.Warn(line);
+            else if (string.Equals(verb, "POST", StringComparison.Ordinal))
+                MozaLog.Info(line);
+            else
+                MozaLog.Debug(line);
+        }
+
+        /// <summary>Increment and return the per-key request counter (liveness/noisy sampling).</summary>
+        private int BumpCounter(string key)
+        {
+            lock (_noisyCounters)
+            {
+                _noisyCounters.TryGetValue(key, out int n);
+                n++;
+                _noisyCounters[key] = n;
+                return n;
+            }
+        }
+
+        /// <summary>Last path segment, e.g. ".../&lt;id&gt;/FfbReverse" → "FfbReverse".</summary>
+        private static string TrailingSegment(string uriPath)
+        {
+            if (string.IsNullOrEmpty(uriPath)) return string.Empty;
+            int slash = uriPath.LastIndexOf('/');
+            return (slash >= 0 && slash < uriPath.Length - 1) ? uriPath.Substring(slash + 1) : uriPath;
+        }
+
+        /// <summary>
+        /// Render a request body for the log: decoded 4-byte LE int32 when it
+        /// matches the motor/wheel scalar shape (e.g. " =1", " =540"), otherwise
+        /// short capped hex. Empty string when there is no body (e.g. GET).
+        /// </summary>
+        private static string DescribePayload(byte[]? payload)
+        {
+            if (payload == null || payload.Length == 0) return string.Empty;
+            if (PayloadCodec.TryDecodeScalarFromLittleEndian(payload, out int value))
+                return " =" + value.ToString(CultureInfo.InvariantCulture);
+
+            int cap = Math.Min(payload.Length, 16);
+            var sb = new StringBuilder(cap * 3 + 8);
+            sb.Append(" [");
+            for (int i = 0; i < cap; i++)
+            {
+                if (i > 0) sb.Append(' ');
+                sb.Append(payload[i].ToString("X2"));
+            }
+            if (payload.Length > cap) sb.Append(" …");
+            sb.Append(']');
+            return sb.ToString();
         }
 
         // must hold _stateGate

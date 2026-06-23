@@ -131,6 +131,7 @@ namespace MozaPlugin.Resources
         public static string Subtitle_HighSpeedDamping => Get("Subtitle_HighSpeedDamping");
         public static string SliderLabel_ForceFeedbackReversal => Get("SliderLabel_ForceFeedbackReversal");
         public static string SliderLabel_StandbyMode => Get("SliderLabel_StandbyMode");
+        public static string SliderLabel_AutoStandbyTimeout => Get("SliderLabel_AutoStandbyTimeout");
         public static string SliderLabel_BaseStatusLed => Get("SliderLabel_BaseStatusLed");
         public static string SliderLabel_Bluetooth => Get("SliderLabel_Bluetooth");
         public static string SliderLabel_DampingLevel => Get("SliderLabel_DampingLevel");

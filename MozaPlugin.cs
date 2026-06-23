@@ -40,6 +40,45 @@ namespace MozaPlugin
         // One-shot guard so the stale-instance DataUpdate fallback warns once.
         private bool _warnedStaleDataFeed;
 
+        // Auto-standby reconcile state (see ApplyAutoStandby). Work Mode standby
+        // fully powers down the wheel/display, so it must only engage after a
+        // genuine idle period — never immediately, never on startup, and never
+        // while the user is using the wheel or the plugin UI.
+        //
+        // DataUpdate stamps the feed timestamp + last GameRunning; a fresh feed
+        // with GameRunning means a game is active (DataUpdate goes quiet when no
+        // game runs, so a stale feed implies no game). _autoStandbyLastActivityTicks
+        // is the last-activity clock — bumped by a running game, by physical HID
+        // input (wheel/pedals/buttons past a deadband), and by UI interaction
+        // (NotifyUserActivity). Standby engages only once now-lastActivity exceeds
+        // the user's timeout AND no game is active. _autoStandbyApplied caches the
+        // last value written so the reconcile is idempotent (writes only on change).
+        private long _autoStandbyLastDataUpdateTicks;
+        private volatile bool _autoStandbyLastGameRunning;
+        private long _autoStandbyLastActivityTicks; // 0 until first reconcile (lazy baseline)
+        private volatile int _autoStandbyApplied = -1; // -1 unknown / 0 active / 1 standby
+        private const long AutoStandbyFeedStaleMs = 3000;
+
+        // True while a game is actively feeding telemetry: a fresh DataUpdate (within
+        // AutoStandbyFeedStaleMs) AND GameRunning. DataUpdate goes quiet when no game
+        // runs, so a stale feed means no game even if the last GameRunning we saw was
+        // true. GameRunning stays true through menus/pauses, so this spans the whole
+        // session. The LED keepalive reads this to never let the wheel sleep mid-game.
+        public bool IsGameActive
+        {
+            get
+            {
+                long lastFeed = Interlocked.Read(ref _autoStandbyLastDataUpdateTicks);
+                bool feedFresh = (DateTime.UtcNow.Ticks - lastFeed) <= AutoStandbyFeedStaleMs * TimeSpan.TicksPerMillisecond;
+                return feedFresh && _autoStandbyLastGameRunning;
+            }
+        }
+        // HID-activity baseline (last sampled positions; change past the deadband
+        // counts as physical use). _asHidBaselined gates the first sample so it
+        // seeds the baseline instead of registering as activity.
+        private bool _asHidBaselined;
+        private int _asSteer = -1, _asThrottle, _asBrake, _asClutch, _asHandbrake, _asLeftPaddle, _asRightPaddle, _asButtonHash;
+
         // CoAP stub child-process manager. Persistent for the same reason the
         // wire is: stopping and restarting the stub on every plugin reload is
         // wasted work (the stub is a long-lived "PitHouse impersonator" child
@@ -324,10 +363,10 @@ namespace MozaPlugin
         // tier-def _telemetrySender so an FSR1 screen + a CM2 dash run concurrently.
         internal Telemetry.Fsr1DisplayDriver? _fsr1Driver;
 
-        // Second tier-def sender for a CM2 dash driven CONCURRENTLY with a wheel that
-        // has its own screen (FSR1 or a tier-def display wheel). Targets dev 0x14 on
-        // the shared wheelbase connection (lane base 18) or dev 0x12 on the CM2's own
-        // USB connection (lane base 0). Null until such a dual-screen setup is seen.
+        // Dedicated tier-def sender that drives a CM2 dash whenever a CM2 is present —
+        // regardless of the wheel (display wheel, screenless wheel, or no wheel at all).
+        // Targets dev 0x14 on the shared wheelbase connection (lane base 18) or dev 0x12
+        // on the CM2's own USB connection (lane base 0). Null until a CM2 is detected.
         internal TelemetrySender? _cm2Sender;
 
         // Standalone CM1 base-bridged dash driver (group-0x35 → dev 0x14). Used instead
@@ -345,6 +384,11 @@ namespace MozaPlugin
 
         // AB9 host-rendered engine-vibration worker. See Devices/Ab9EngineVibrationWorker.cs.
         private Ab9EngineVibrationWorker? _ab9Worker;
+
+        // Keeps the process responsive in the background: opts out of EcoQoS
+        // throttling during active gameplay, and holds the 1 ms timer during gameplay
+        // (or whenever the FFB Lag Fix override is on). See ProcessResponsivenessManager.
+        private ProcessResponsivenessManager? _responsiveness;
 
         // Control Mapper IVariantProvider bridge — see ControlMapper/. Registration
         // is reflection-based against an internal SimHub API, so the bridge is wrapped
@@ -525,50 +569,39 @@ namespace MozaPlugin
             DetectionState.DashDetected || IsStandaloneDashboardUsbConnection;
 
         /// <summary>
-        /// A CM2 (external display) wired through the wheelbase: dash sub-device
-        /// present on a base bus whose attached wheel has no display of its own.
-        /// Drives the CM2 device profile + 0x12 screen-telemetry routing.
+        /// True when a CM2 is present at all — on its own USB cable OR bridged through
+        /// the wheelbase — independent of whether a wheel (and what kind) is attached.
+        /// This is the "a CM2 exists, so manage it" predicate, distinct from the
+        /// retired "should the MAIN sender drive the CM2" routing question: the CM2 is
+        /// always driven by the dedicated <see cref="_cm2Sender"/> now. Used for UI tab
+        /// visibility, CM2 meter-config gating, and diagnostics.
+        /// </summary>
+        internal bool IsCm2Present =>
+            DashboardUsbConnected
+            || (_connection?.IsConnected == true
+                && DetectionState.BaseDetected
+                && DetectionState.DashDetected);
+
+        /// <summary>
+        /// Wire dev_id of the CM2: a standalone-USB CM2 bridges as 0x12 (DeviceMain on
+        /// its own pipe); a CM2 behind the wheelbase is the meter at 0x14 (DeviceDash).
+        /// The <see cref="_cm2Sender"/>'s <c>TargetDeviceId</c> equals this; the CM2 LED
+        /// writes and meter-config commands route here.
+        /// </summary>
+        internal byte Cm2TargetDeviceId =>
+            DashboardUsbConnected ? MozaProtocol.DeviceMain : MozaProtocol.DeviceDash;
+
+        /// <summary>
+        /// A CM2 (external display) wired through the wheelbase bus (dash sub-device
+        /// at 0x14), as opposed to a standalone-USB CM2. DECOUPLED: this is now a pure
+        /// "bus CM2 present" predicate — independent of the wheel's screen — since the
+        /// CM2 is always driven by the dedicated <see cref="_cm2Sender"/> regardless of
+        /// the wheel. Used by detection (probe the dash at 0x14) and the CM2 meter-config
+        /// re-assert. Equivalent to <c>IsCm2Present &amp;&amp; !DashboardUsbConnected</c>.
         /// </summary>
         internal bool IsCm2BehindBaseCandidate =>
-            _connection?.IsConnected == true
-            && DetectionState.BaseDetected
-            && DetectionState.DashDetected
-            && !IsStandaloneDashboardUsbConnection
-            && WheelModelInfo?.HasDisplay != true
-            // IsCm2BehindBaseCandidate means "the MAIN sender should drive the CM2"
-            // — true only for a SCREENLESS wheel + CM2. A wheel WITH its own screen
-            // (FSR1, or a tier-def display wheel) keeps the main sender on the wheel
-            // (or idle for FSR1); its CM2 is driven by the dedicated _cm2Sender.
-            && !IsFsr1DisplayWheel;
+            IsCm2Present && !DashboardUsbConnected;
 
-        /// <summary>
-        /// True iff screen telemetry must target dev=0x12 (CM2 bridge/main)
-        /// rather than a wheel-hosted display at dev=0x17 — a standalone-USB CM2
-        /// or a CM2 wired through the wheelbase (<see cref="IsCm2BehindBaseCandidate"/>).
-        /// </summary>
-        internal bool ShouldUseStandaloneDashboardTarget()
-        {
-            // Standalone-USB CM2 on its own connection drives the dashboard
-            // target even when a wheel is also present on the base.
-            if (DashboardUsbConnected) return true;
-            // CM2 bridged through the base bus (screenless wheel) → dev 0x14.
-            if (IsCm2BehindBaseCandidate) return true;
-            return false;
-        }
-
-        /// <summary>
-        /// Target dev_id for screen telemetry / session-control frames. A
-        /// standalone-USB CM2 bridges as 0x12; a CM2 behind the wheelbase is the
-        /// meter at 0x14 (0x12 there is the base main, which never engages the
-        /// session layer), so target 0x14 in that topology. PitHouse cm2.pcapng
-        /// (bus CM2) runs the whole session + value stream on 0x14 — 0x14 answers
-        /// (b2h session chunks) and the firmware lights RPM/flag LEDs from the RPM
-        /// channel in that 0x14 stream. Collapsing this to "always 0x12" left the
-        /// behind-base CM2 talking to the silent base main, so neither the display
-        /// nor the LEDs came up.
-        /// </summary>
-        internal byte PreferredStandaloneDashboardTargetDeviceId =>
-            IsCm2BehindBaseCandidate ? MozaProtocol.DeviceDash : MozaProtocol.DeviceMain;
 
         /// <summary>
         /// Push the dashboard's live RPM LED bitmask (dash-send-telemetry,
@@ -581,14 +614,16 @@ namespace MozaPlugin
         /// </summary>
         internal bool WriteDashLedBitmask(int bitmask)
         {
+            // Stream lane (latest-wins, coalescing) — keep the per-frame CM2 LED
+            // bitmask off the throttled one-shot FIFO so a shared-bus value stream
+            // can't starve it. Idempotent end-state, safe to coalesce. Routed to the
+            // CM2's connection + device (Cm2TargetDeviceId: 0x12 USB / 0x14 bus) —
+            // the same place the dedicated _cm2Sender lives.
             if (DashboardUsbConnected)
-                return _dashboardManager.WriteSettingForDevice(
-                    "dash-send-telemetry", PreferredStandaloneDashboardTargetDeviceId, bitmask);
-
-            byte dev = ShouldUseStandaloneDashboardTarget()
-                ? PreferredStandaloneDashboardTargetDeviceId   // DeviceDash (0x14) behind base
-                : MozaProtocol.DeviceDash;                     // base-bridged dash (CM1) at 0x14
-            return _deviceManager.WriteSettingForDevice("dash-send-telemetry", dev, bitmask);
+                return _dashboardManager.WriteSettingForDeviceStream(
+                    "dash-send-telemetry", Cm2TargetDeviceId, bitmask, Protocol.StreamKind.DashRpmBitmask);
+            return _deviceManager.WriteSettingForDeviceStream(
+                "dash-send-telemetry", Cm2TargetDeviceId, bitmask, Protocol.StreamKind.DashRpmBitmask);
         }
 
         /// <summary>
@@ -602,13 +637,10 @@ namespace MozaPlugin
         internal bool WriteDashFlagColors(byte[] rgb18)
         {
             if (DashboardUsbConnected)
-                return _dashboardManager.WriteArrayForDevice(
-                    "dash-flag-colors", PreferredStandaloneDashboardTargetDeviceId, rgb18);
-
-            byte dev = ShouldUseStandaloneDashboardTarget()
-                ? PreferredStandaloneDashboardTargetDeviceId
-                : MozaProtocol.DeviceDash;
-            return _deviceManager.WriteArrayForDevice("dash-flag-colors", dev, rgb18);
+                return _dashboardManager.WriteArrayForDeviceStream(
+                    "dash-flag-colors", Cm2TargetDeviceId, rgb18, Protocol.StreamKind.DashFlagColors);
+            return _deviceManager.WriteArrayForDeviceStream(
+                "dash-flag-colors", Cm2TargetDeviceId, rgb18, Protocol.StreamKind.DashFlagColors);
         }
 
         /// <summary>
@@ -620,15 +652,41 @@ namespace MozaPlugin
         internal bool WriteDashRpmColor(int index, byte r, byte g, byte b)
         {
             var rgb = new byte[] { r, g, b };
+            // One coalescing stream slot per RPM index (DashRpmColor0..9) bounds the
+            // per-frame SyncRpmColors write-amplifier (up to 10 writes/frame) and
+            // keeps it off the throttled one-shot lane. index is 0-based, 0..9.
+            var slot = (Protocol.StreamKind)((int)Protocol.StreamKind.DashRpmColor0 + index);
+            bool inRange = index >= 0
+                && (int)slot <= (int)Protocol.StreamKind.DashRpmColor9;
             if (DashboardUsbConnected)
-                return _dashboardManager.WriteArrayForDevice(
-                    $"cm2-indicator-color{index + 1}", PreferredStandaloneDashboardTargetDeviceId, rgb);
+                return inRange
+                    ? _dashboardManager.WriteArrayForDeviceStream(
+                        $"cm2-indicator-color{index + 1}", Cm2TargetDeviceId, rgb, slot)
+                    : _dashboardManager.WriteArrayForDevice(
+                        $"cm2-indicator-color{index + 1}", Cm2TargetDeviceId, rgb);
 
-            byte dev = ShouldUseStandaloneDashboardTarget()
-                ? PreferredStandaloneDashboardTargetDeviceId
-                : MozaProtocol.DeviceDash;
-            return _deviceManager.WriteArrayForDevice($"dash-rpm-color{index + 1}", dev, rgb);
+            return inRange
+                ? _deviceManager.WriteArrayForDeviceStream($"dash-rpm-color{index + 1}", Cm2TargetDeviceId, rgb, slot)
+                : _deviceManager.WriteArrayForDevice($"dash-rpm-color{index + 1}", Cm2TargetDeviceId, rgb);
         }
+
+        /// <summary>
+        /// Route a one-shot CM2 meter-config write (group 0x32: modes, thresholds,
+        /// indicator brightness, stored idle colours) to the CM2's OWN pipe + device.
+        /// A standalone-USB CM2 lives on the dedicated _dashboardManager connection,
+        /// NOT the wheelbase _deviceManager — so a name-based _deviceManager.WriteSetting
+        /// would land on the wheelbase's own 0x12 (the base main, which drops group-0x32)
+        /// and never reach the USB CM2. These mirror the per-frame WriteDash* LED routing.
+        /// </summary>
+        internal bool WriteCm2Config(string commandName, int value) =>
+            DashboardUsbConnected
+                ? _dashboardManager.WriteSettingForDevice(commandName, Cm2TargetDeviceId, value)
+                : _deviceManager.WriteSettingForDevice(commandName, Cm2TargetDeviceId, value);
+
+        internal bool WriteCm2Config(string commandName, byte[] payload) =>
+            DashboardUsbConnected
+                ? _dashboardManager.WriteArrayForDevice(commandName, Cm2TargetDeviceId, payload)
+                : _deviceManager.WriteArrayForDevice(commandName, Cm2TargetDeviceId, payload);
 
         internal bool IsBaseAmbientLedSupported => DetectionState.BaseAmbientLedSupported;
         internal bool IsHandbrakeDetected => DetectionState.HandbrakeDetected;
@@ -736,12 +794,25 @@ namespace MozaPlugin
 
         internal bool ShouldDriveDashboard()
         {
-            // CM2 on the wheelbase bus drives a dashboard even on a screenless wheel.
-            if (IsCm2BehindBaseCandidate) return true;
+            // DECOUPLED: this gates ONLY the MAIN (wheel-screen) sender. A bus CM2 on a
+            // screenless wheel is driven by _cm2Sender, not the main sender, so the old
+            // `if (IsCm2BehindBaseCandidate) return true;` short-circuit is gone — the
+            // main sender must NOT start on a screenless wheel just because a CM2 is on
+            // the bus (that would put it on 0x17 with no screen, or collide on 0x14).
             bool? hasDisplay = WheelModelInfo?.HasDisplay;
             if (hasDisplay == false) return false;   // known no-display: never
             if (hasDisplay == true)  return true;    // known display: don't wait for probe
-            return IsDisplayDetected;                // unknown model: trust the probe
+            // Unknown model: trust the display probe — EXCEPT when a bus CM2 is present.
+            // That CM2's own display-identity probe (sent to 0x14) populates the SAME
+            // _data.Display* fields IsDisplayDetected reads, falsely implying the WHEEL
+            // has a screen. Treat an unknown wheel + bus CM2 as screenless: the CM2 is
+            // the display (driven by _cm2Sender at 0x14), and the main sender stays idle
+            // rather than co-reside on 0x17 with SharesConnection=false (whose Stop()
+            // would FlushPendingWrites and blank the CM2). A real display wheel resolves
+            // HasDisplay==true above. (A USB CM2 is on its own pipe and doesn't
+            // contaminate _data.Display*, so it's excluded here.)
+            if (IsCm2Present && !DashboardUsbConnected) return false;
+            return IsDisplayDetected;                // unknown model, no bus CM2: trust the probe
         }
 
         /// <summary>Display sub-device model name (e.g. "W18 Display"), or empty.</summary>
@@ -1307,6 +1378,11 @@ namespace MozaPlugin
                 // StartTelemetryIfReady() is called from DetectDevices() when the wheel
                 // is first detected, and from profile application callbacks.
 
+                // Background-responsiveness holder (EcoQoS opt-out + 1 ms timer).
+                // Constructed unconditionally (no device dependency); gated at apply-time
+                // by IsConnected && IsGameActive. Released in End()/CleanupPartialInit().
+                _responsiveness = new ProcessResponsivenessManager();
+
                 // Publish Instance only after all resources are wired so a partial-init
                 // throw can't leave a half-built plugin reachable from background callbacks.
                 Instance = this;
@@ -1370,6 +1446,8 @@ namespace MozaPlugin
 
             // Halt the AB9 engine-vib worker before disposing the AB9 manager.
             try { _ab9Worker?.Stop(); _ab9Worker = null; } catch { }
+            // Release the timer-resolution request + power-throttling opt-out.
+            try { _responsiveness?.Dispose(); _responsiveness = null; } catch { }
             // Dispose every mBooster controller — same reason: stop workers
             // before the connections they own get torn down.
             try { _mboosterRegistry?.Dispose(); _mboosterRegistry = null; } catch { }
@@ -1581,6 +1659,15 @@ namespace MozaPlugin
         public void DataUpdate(PluginManager pluginManager, ref GameData data)
         {
             if (IsShuttingDown) return;
+            // Stamp the game-data feed for the auto-standby reconcile (see
+            // ApplyAutoStandby). Done first so a stale-instance early-out below
+            // doesn't make the feed look quiet.
+            Interlocked.Exchange(ref _autoStandbyLastDataUpdateTicks, DateTime.UtcNow.Ticks);
+            _autoStandbyLastGameRunning = data.GameRunning;
+            // Keep the process responsive in the background (EcoQoS opt-out + 1 ms timer)
+            // the moment a game is active. Idempotent; the PollStatus backstop handles
+            // release if DataUpdate goes quiet on game exit.
+            ApplyResponsivenessState();
             // Persistent-wire reload guard. On a SimHub plugin reload, End()
             // keeps the telemetry sender alive in s_persistentTelemetrySender
             // (the next Init reuses it) but nulls the reloaded instance's
@@ -1684,6 +1771,138 @@ namespace MozaPlugin
                     avgWheelSpeedMs: avgWheelMs);
                 _mboosterRegistry.OnDataUpdate(snap);
             }
+
+            // Auto-standby: wake the base the instant a game starts; standby is
+            // deferred to the idle-timeout reconcile below.
+            ApplyAutoStandby();
+        }
+
+        /// <summary>
+        /// Mark the user as actively using the plugin (e.g. interacting with the
+        /// settings UI). Bumps the auto-standby activity clock so the wheel does
+        /// not power down mid-configuration. Cheap and safe to call regardless of
+        /// whether auto-standby is enabled.
+        /// </summary>
+        internal void NotifyUserActivity()
+        {
+            Interlocked.Exchange(ref _autoStandbyLastActivityTicks, DateTime.UtcNow.Ticks);
+        }
+
+        /// <summary>
+        /// Called when the user turns auto-standby off. If auto-standby had put
+        /// the base to sleep, wake it — disabling the feature should never leave
+        /// the wheel powered down. No-op if we didn't cause the standby.
+        /// </summary>
+        internal void CancelAutoStandby()
+        {
+            bool weStandbyed = _autoStandbyApplied == 1;
+            _autoStandbyApplied = -1;
+            if (!weStandbyed || !DetectionState.BaseDetected) return;
+            if (_data != null) _data.WorkMode = 0;
+            WriteIfBaseConnected("main-set-work-mode", 0);
+            MozaLog.Info("[AZOM] Auto-standby disabled — waking base");
+        }
+
+        /// <summary>
+        /// Opt-in auto-standby (see the field block above). With
+        /// <see cref="MozaPluginSettings.AutoStandbyWhenNoGame"/> enabled, send
+        /// <c>main-set-work-mode</c>=1 (standby) once the wheel has been idle for
+        /// <see cref="MozaPluginSettings.AutoStandbyTimeoutMinutes"/> with no game
+        /// and no activity, and =0 (active) the moment a game runs or the user
+        /// interacts. Idempotent — writes only when the desired value changes —
+        /// so it is safe to call every DataUpdate tick and from PollStatus.
+        /// Never standbys on the first reconcile (lazy activity baseline), so the
+        /// plugin never boots the wheel straight into standby. No-op without a
+        /// detected base.
+        /// </summary>
+        internal void ApplyAutoStandby()
+        {
+            if (IsShuttingDown) return;
+            var settings = _settings;
+            if (settings == null || !settings.AutoStandbyWhenNoGame) { _autoStandbyApplied = -1; return; }
+            if (!DetectionState.BaseDetected) { _autoStandbyApplied = -1; return; }
+
+            long now = DateTime.UtcNow.Ticks;
+            // Lazy baseline: the first reconcile after startup/reload seeds the
+            // activity clock so we can never standby immediately ("never start in
+            // standby") — the first write below is therefore always wake=0.
+            if (Interlocked.Read(ref _autoStandbyLastActivityTicks) == 0)
+                Interlocked.Exchange(ref _autoStandbyLastActivityTicks, now);
+
+            // A game is "active" only with a fresh data feed AND GameRunning —
+            // DataUpdate goes quiet when no game runs, so a stale feed means no
+            // game even if the last GameRunning we saw was true.
+            bool gameActive = IsGameActive;
+
+            if (gameActive)
+                Interlocked.Exchange(ref _autoStandbyLastActivityTicks, now); // running game keeps it awake
+            else
+                MaybeStampHidActivity(now); // physical wheel/pedal/button use keeps it awake
+
+            long idleMs = (now - Interlocked.Read(ref _autoStandbyLastActivityTicks)) / TimeSpan.TicksPerMillisecond;
+            int timeoutMin = settings.AutoStandbyTimeoutMinutes;
+            if (timeoutMin < 1) timeoutMin = 1;
+            long timeoutMs = (long)timeoutMin * 60_000L;
+
+            int desired = (!gameActive && idleMs >= timeoutMs) ? 1 : 0; // 1 = standby, 0 = active
+            if (_autoStandbyApplied == desired) return; // write only on change
+
+            _autoStandbyApplied = desired;
+            if (_data != null) _data.WorkMode = desired; // keep the UI toggle in sync
+            WriteIfBaseConnected("main-set-work-mode", desired);
+            MozaLog.Info($"[AZOM] Auto-standby: {(desired == 1 ? $"standby (idle {idleMs / 1000}s >= {timeoutMin}m)" : "wake (active)")}");
+        }
+
+        /// <summary>
+        /// Bump the activity clock when physical input (steering, pedals,
+        /// paddles, handbrake, or buttons) has changed past a small deadband
+        /// since the last sample. The HID reader runs continuously on its own
+        /// thread, so this works with no game and the settings pane closed. The
+        /// first sample only seeds the baseline (never counts as activity).
+        /// </summary>
+        private void MaybeStampHidActivity(long nowTicks)
+        {
+            var data = _data;
+            if (data == null || !data.IsHidConnected) return;
+
+            double steerD = _hidReader?.GetSteeringPositionPercent() ?? -1.0;
+            int steer = steerD < 0 ? -1 : (int)Math.Round(steerD);
+            int thr = data.ThrottlePosition, brk = data.BrakePosition, clu = data.ClutchPosition;
+            int hb = data.HandbrakePosition, lp = data.LeftPaddlePosition, rp = data.RightPaddlePosition;
+            int btnHash = ComputeButtonActivityHash(data);
+
+            if (!_asHidBaselined)
+            {
+                _asSteer = steer; _asThrottle = thr; _asBrake = brk; _asClutch = clu;
+                _asHandbrake = hb; _asLeftPaddle = lp; _asRightPaddle = rp; _asButtonHash = btnHash;
+                _asHidBaselined = true;
+                return;
+            }
+
+            const int Dead = 3; // percent units — above sensor jitter, below deliberate movement
+            bool active = false;
+            // Rebaseline per axis only when it moves past the deadband, so slow
+            // deliberate movement still registers (each Dead% of travel) while
+            // resting jitter never does.
+            if (steer >= 0 && (_asSteer < 0 || Math.Abs(steer - _asSteer) >= Dead)) { _asSteer = steer; active = true; }
+            if (Math.Abs(thr - _asThrottle) >= Dead) { _asThrottle = thr; active = true; }
+            if (Math.Abs(brk - _asBrake) >= Dead) { _asBrake = brk; active = true; }
+            if (Math.Abs(clu - _asClutch) >= Dead) { _asClutch = clu; active = true; }
+            if (Math.Abs(hb - _asHandbrake) >= Dead) { _asHandbrake = hb; active = true; }
+            if (Math.Abs(lp - _asLeftPaddle) >= Dead) { _asLeftPaddle = lp; active = true; }
+            if (Math.Abs(rp - _asRightPaddle) >= Dead) { _asRightPaddle = rp; active = true; }
+            if (btnHash != _asButtonHash) { _asButtonHash = btnHash; active = true; }
+
+            if (active) Interlocked.Exchange(ref _autoStandbyLastActivityTicks, nowTicks);
+        }
+
+        private static int ComputeButtonActivityHash(MozaData data)
+        {
+            int h = data.HandbrakeButtonPressed ? 1 : 0;
+            var b = data.ButtonStates;
+            for (int i = 0; i < b.Length; i++)
+                if (b[i]) h = (h * 31) + (i + 2);
+            return h;
         }
 
         /// <summary>
@@ -1795,6 +2014,9 @@ namespace MozaPlugin
             // are disposed; the tick gates on connection state but joining here
             // keeps shutdown deterministic.
             try { _ab9Worker?.Stop(); _ab9Worker = null; } catch { }
+            // Release the timer-resolution request + power-throttling opt-out on
+            // shutdown/reload so neither leaks past the plugin's lifetime.
+            try { _responsiveness?.Dispose(); _responsiveness = null; } catch { }
 
             // Remove the Control Mapper variant provider so a plugin reload
             // (game switch) doesn't leave a dead provider in VariantHelper's
@@ -2424,7 +2646,8 @@ namespace MozaPlugin
 
         internal TelemetrySender? TelemetrySender => _telemetrySender;
 
-        /// <summary>The secondary CM2-dash tier-def sender (dual-screen), or null.</summary>
+        /// <summary>The dedicated CM2-dash tier-def sender (drives any attached CM2, bus
+        /// or USB, independent of the wheel), or null when no CM2 is present.</summary>
         internal TelemetrySender? Cm2Sender => _cm2Sender;
 
         // "Send Test Pattern" toggle, shared across every display pipeline. The
@@ -2455,6 +2678,20 @@ namespace MozaPlugin
         // displayed value ÷ byte value). _fsr1ProbeStep is the global step index across the
         // active page's record(s); -1 = probe off. Volatile: UI writes, driver reads.
         private volatile int _fsr1ProbeStep = -1;
+
+        // Page index captured when the byte probe is armed. The wheel streams its
+        // "Table 7, Param 6 Written: N" page-report log continuously, which the plugin
+        // follows live (NoteFsr1WheelIndex) — so the active index can move WHILE the user
+        // steps the probe, scrambling the step→(record,byte) mapping every refresh. Freezing
+        // the index for the probe's lifetime keeps stepping stable and contiguous; -1 = no
+        // freeze (probe off). See GetActiveFsr1Index.
+        private volatile int _fsr1ProbeFrozenIndex = -1;
+
+        /// <summary>Page index the byte probe is locked to while armed, or -1 when the probe
+        /// is off — <see cref="Telemetry.Fsr1Cm1MappingCoordinator.GetActiveFsr1Index"/> returns
+        /// this (instead of the live, log-followed index) so a stepping sweep can't be
+        /// derailed by a mid-probe page-report.</summary>
+        internal int Fsr1ProbeFrozenIndex => _fsr1ProbeStep >= 0 ? _fsr1ProbeFrozenIndex : -1;
 
         /// <summary>True while EITHER FSR V1 probe diagnostic is active — the toolbar
         /// single-byte stepper or the row-driven field-span probe. The two are mutually
@@ -2521,8 +2758,20 @@ namespace MozaPlugin
         /// FSR1-only; mutually exclusive with the sweep test pattern.</summary>
         internal void SetFsr1Probe(bool on)
         {
-            _fsr1ProbeStep = on ? 0 : -1;
-            if (on) { _fsr1FieldProbe = null; SetDashboardTestPattern(false); } // exclusive with the field probe
+            if (on)
+            {
+                // Capture the live page BEFORE arming (step still -1, so GetActiveFsr1Index
+                // returns the real log-followed index, not a stale freeze), then lock to it.
+                _fsr1ProbeFrozenIndex = GetActiveFsr1Index();
+                _fsr1ProbeStep = 0;
+                _fsr1FieldProbe = null;            // exclusive with the field probe
+                SetDashboardTestPattern(false);
+            }
+            else
+            {
+                _fsr1ProbeStep = -1;
+                _fsr1ProbeFrozenIndex = -1;
+            }
         }
 
         /// <summary>Step the probe offset by <paramref name="delta"/>, wrapping within the
@@ -2617,17 +2866,13 @@ namespace MozaPlugin
         internal bool WheelUsesTierDefDisplaySender =>
             !IsFsr1DisplayWheel && (WheelModelInfo?.HasDisplay == true);
 
-        /// <summary>The sender that actually drives the CM2 dashboard. When the
-        /// wheel has its own screen (FSR1 / tier-def display) the dedicated
-        /// <see cref="Cm2Sender"/> lane drives the CM2 alongside the wheel; when
-        /// the wheel is SCREENLESS the CM2 is the only display, so the MAIN sender
-        /// is retargeted to it and <see cref="Cm2Sender"/> is never created
-        /// (EnsureCm2Pipeline gates on wheelHasOwnScreen). The CM2 dash UI must
-        /// read THIS sender's WheelState/ConfigJsonList — keying off Cm2Sender
-        /// alone left a screenless-wheel + base-CM2 setup with no dashboard
-        /// dropdown (dedicated sender null).</summary>
-        internal TelemetrySender? ActiveCm2Sender =>
-            (IsFsr1DisplayWheel || (WheelModelInfo?.HasDisplay == true)) ? _cm2Sender : _telemetrySender;
+        /// <summary>The sender that drives the CM2 dashboard. DECOUPLED: the CM2 is
+        /// ALWAYS driven by the dedicated <see cref="_cm2Sender"/> (created whenever a
+        /// CM2 is present, regardless of the wheel), so this is simply that sender —
+        /// null when no CM2 is attached. The CM2 dash UI reads its WheelState/
+        /// ConfigJsonList. (Previously this fell back to the MAIN sender for a
+        /// screenless wheel, because the main sender drove the CM2 then.)</summary>
+        internal TelemetrySender? ActiveCm2Sender => _cm2Sender;
 
         /// <summary>The CM2's selected dashboard name (independent of the wheel's).</summary>
         internal string ActiveCm2DashboardName
@@ -2978,9 +3223,35 @@ namespace MozaPlugin
             try { PendingResponses.Clear(); } catch { }
         }
 
+        // Background-responsiveness reconcile. Idempotent + thread-safe, so it is driven
+        // from DataUpdate (responsive raise), PollStatus (release backstop for when
+        // DataUpdate goes quiet on game exit), and the UI FFB-Lag-Fix toggle handler.
+        //
+        //  - EcoQoS execution-speed opt-out: ON only while a game is active (and a device
+        //    is connected), so mid-game control writes (e.g. RSF steering lock over UDP)
+        //    reach AND engage the base while SimHub is the background app. PitHouse does
+        //    the same — without it the base only adopts the change on alt-tab, when the
+        //    foreground lifts the Windows background throttle. Scoped to gameplay so we
+        //    never hold the process un-throttled while sitting idle on the desktop.
+        //  - 1 ms timer (kept honoured in the background): during active gameplay — the
+        //    legacy "FFB Lag Fix" (e.g. Forza/FH6 half-fps), now always-on when it matters.
+        internal void ApplyResponsivenessState()
+        {
+            var mgr = _responsiveness;
+            if (mgr == null) return;
+            bool wanted = !IsShuttingDown && _data != null && _data.IsConnected && IsGameActive;
+            mgr.SetExecutionThrottleOptOut(wanted);
+            mgr.SetTimerResolution(wanted);
+        }
+
         private void PollStatus(object sender, ElapsedEventArgs e)
         {
             if (IsShuttingDown) return;
+
+            // Responsiveness backstop: SimHub stops calling DataUpdate when a game
+            // exits, so the timer raise + EcoQoS opt-out can only be released here once
+            // IsGameActive goes false via feed-staleness (~3 s) — within one 5 s poll.
+            ApplyResponsivenessState();
 
             // The dedicated hub pipe is polled independently of the primary
             // (base) connection — a Universal Hub can be present with the base
@@ -2990,11 +3261,28 @@ namespace MozaPlugin
             // polled independently for base temps/state. No-op unless connected.
             _connectionCoordinator?.PollBaseAux();
 
-            if (!_connection.IsConnected) return;
-
+            // CM2 / dashboard-pipeline reconcile runs REGARDLESS of the wheelbase
+            // connection. DECOUPLED: a standalone-USB CM2 is driven by the dedicated
+            // _cm2Sender on its own pipe with no wheelbase, so gating these behind the
+            // wheelbase guard below would never service it. EnsureCm2Pipeline is the
+            // periodic reconcile (start when a CM2 appears, reconfigure, and complete
+            // the debounced teardown when the CM2 is gone) — it MUST run on a timer for
+            // the teardown dwell to elapse; the event-driven apply/detect callers alone
+            // can't advance it. Each call is a no-op / idempotent when nothing changed
+            // (the Start gate prevents restart churn; the CM1 discriminator early-returns
+            // for a non-bus CM2). For a bus CM2 the wheelbase IS connected so the guard
+            // below passes anyway — running them here only adds the USB-only case.
+            _dualDisplay?.EnsureCm2Pipeline();
             _dashboardBindingCoordinator?.TickPendingDashboardRetry();
             _dualDisplay?.TickCm2DashboardReassert();
             _dualDisplay?.TickCm1Discriminator();
+
+            if (!_connection.IsConnected) return;
+
+            // Auto-standby backstop: enters standby when idle (covers the case
+            // where SimHub stops calling DataUpdate with no game running) and
+            // re-applies the desired work mode after a base reconnect.
+            ApplyAutoStandby();
 
             // Hot-swap detection: track whether the locked wheel is still responding
             // and periodically verify the model name hasn't changed.

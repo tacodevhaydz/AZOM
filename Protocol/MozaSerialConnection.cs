@@ -41,6 +41,47 @@ namespace MozaPlugin.Protocol
         // emits one frame per ~20 ms tick across all four effects, so a
         // shared lane is sufficient — latest-wins on the writer-lag edge).
         MBoosterEffect = 17,
+
+        // ── LED lanes (absolute slots 29+) ───────────────────────────────────
+        // High-rate, latest-wins LED writes ride the coalescing stream lane
+        // instead of the paced/throttled one-shot FIFO, so a co-resident value
+        // stream (a CM2 sharing the wheelbase bus) can never starve them. These
+        // MUST start at 29 — absolute slots 18..28 are the CM2 second tier-def
+        // pipeline (StreamSlotBase 18 + logical 0..10, written via int-cast, not
+        // named members), so a named member at 18..28 would alias a CM2 value
+        // slot. See the slot-layout comment + StreamSlotCount below.
+        //
+        // Wheel RPM colours are sent 5 LEDs per 20-byte chunk under ONE command
+        // (SendColorChunks); each CHUNK gets its own slot so they coalesce
+        // independently (a new chunk-0 supersedes only the old chunk-0 — chunk-3
+        // is never dropped). 4 slots cover the widest rim (W18 = 18 LEDs).
+        WheelRpmColor0 = 29,
+        WheelRpmColor1 = 30,
+        WheelRpmColor2 = 31,
+        WheelRpmColor3 = 32,
+        WheelRpmBitmask = 33,     // wheel-send-rpm-telemetry (windowed bitmask)
+        WheelButtonBitmask = 34,  // wheel-send-buttons-telemetry
+        WheelKnobBitmask = 35,    // wheel-send-knob-telemetry
+        // (The old-protocol 0x41 FD DE bitmask — wheel-old-send-telemetry — is NOT
+        // here: it's only emitted by single-display legacy/ES rims that stay on the
+        // paced one-shot lane, and it shares the ES wake-pulse command.)
+        // CM2 per-LED RPM indicator colours (0B 00) — up to 10 discrete writes per
+        // frame (the SyncRpmColors amplifier); one slot each bounds them. Ordered
+        // BEFORE DashRpmBitmask so the write loop (drains slots in index order)
+        // emits colours before the lit-mask in the same pass — matching the
+        // manager's "never light an LED before its colour lands" sequencing.
+        DashRpmColor0 = 36,
+        DashRpmColor1 = 37,
+        DashRpmColor2 = 38,
+        DashRpmColor3 = 39,
+        DashRpmColor4 = 40,
+        DashRpmColor5 = 41,
+        DashRpmColor6 = 42,
+        DashRpmColor7 = 43,
+        DashRpmColor8 = 44,
+        DashRpmColor9 = 45,
+        DashRpmBitmask = 46,      // CM2 dash-send-telemetry (41 FD DE) — after colours
+        DashFlagColors = 47,      // CM2 dash-flag-colors (32 08 00, 18-byte array)
     }
 
     /// <summary>Device family targeted by the serial probe fallback (registry-empty case).</summary>
@@ -81,9 +122,30 @@ namespace MozaPlugin.Protocol
         //   11..17 — AB9 / mBooster (absolute, per StreamKind).
         //   18..28 — a SECOND tier-def pipeline at slot-base 18 (a bus-attached CM2
         //            dash sharing this connection). See TelemetrySender.StreamSlotBase.
+        //   29..47 — LED lanes (wheel RPM colour chunks + bitmasks, CM2 RPM/flag) —
+        //            high-rate latest-wins LED writes moved off the throttled one-shot
+        //            FIFO. See the LED StreamKind members.
         // A CM2 on its own USB connection runs at base 0 on THAT connection, so the
         // second block is only used when two pipelines share one connection.
-        private const int StreamSlotCount = 32;
+        // NOTE: keep this >= (highest LED StreamKind + 1). The static ctor below
+        // asserts the regions are disjoint and fit.
+        private const int StreamSlotCount = 48;
+
+        // Startup slot-layout invariant: the LED lanes (29+) must not alias the
+        // wheel value pipeline (0..10), AB9/mBooster (11..17), or the CM2 second
+        // tier-def pipeline (TelemetrySender.StreamSlotBase 18 + StreamBlockSize 11
+        // = 18..28), and the highest LED slot must fit StreamSlotCount. Wrong slot
+        // bases silently drop frames otherwise — fail loud in dev builds.
+        static MozaSerialConnection()
+        {
+            const int ledFirst = (int)StreamKind.WheelRpmColor0; // 29
+            const int ledLast = (int)StreamKind.DashFlagColors;  // 47 (highest LED slot)
+            const int cm2ValueLast = 18 + 11 - 1;                // CM2 base 18 + block 11
+            System.Diagnostics.Debug.Assert(ledFirst > cm2ValueLast,
+                "LED stream slots must start after the CM2 value pipeline (18..28)");
+            System.Diagnostics.Debug.Assert(ledLast < StreamSlotCount,
+                "StreamSlotCount too small for the LED stream slots");
+        }
 
         // Ports held by a live connection — probe path skips these (Wine pty
         // doesn't enforce O_EXCL, so a second Open would steal the device).
@@ -585,7 +647,17 @@ namespace MozaPlugin.Protocol
         {
             if (message == null) return;
             int idx = (int)kind;
-            if ((uint)idx >= (uint)_streamSlots.Length) return;
+            if ((uint)idx >= (uint)_streamSlots.Length)
+            {
+                // Out-of-range = an off-by-one slot base / a StreamKind added past
+                // StreamSlotCount. Silently dropping it looks like flaky hardware, so
+                // surface it loudly (debug-assert in dev, log otherwise) instead of
+                // returning quietly. See LedSlotLayout.Validate.
+                System.Diagnostics.Debug.Fail(
+                    $"SendStream slot {idx} >= StreamSlotCount {_streamSlots.Length} (kind={kind})");
+                MozaLog.Warn($"[AZOM] SendStream out-of-range slot {idx} (kind={kind}) — frame dropped");
+                return;
+            }
             Interlocked.Exchange(ref _streamSlots[idx], message);
         }
 

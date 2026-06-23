@@ -66,6 +66,7 @@
   <data name="Subtitle_HighSpeedDamping" xml:space="preserve"><value>// tôi không biết các tùy chọn này dùng để làm gì</value></data>
   <data name="SliderLabel_ForceFeedbackReversal" xml:space="preserve"><value>Đảo chiều phản hồi lực</value></data>
   <data name="SliderLabel_StandbyMode" xml:space="preserve"><value>Chế độ chờ</value></data>
+  <data name="SliderLabel_AutoStandbyTimeout" xml:space="preserve"><value>Chờ sau</value></data>
   <data name="SliderLabel_BaseStatusLed" xml:space="preserve"><value>LED trạng thái của đế</value></data>
   <data name="SliderLabel_Bluetooth" xml:space="preserve"><value>Bluetooth</value></data>
   <data name="SliderLabel_DampingLevel" xml:space="preserve"><value>Mức giảm chấn</value></data>

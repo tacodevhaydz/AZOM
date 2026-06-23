@@ -264,19 +264,15 @@ namespace MozaPlugin.Devices
                 _plugin.DeviceDefinitionDeployed = true;
             _plugin.ApplyDashToHardware(_plugin.Settings?.ProfileStore?.CurrentProfile);
             MozaLog.Info(cm2BehindBase
-                ? "[AZOM] Dashboard detected (CM2 on wheelbase bus — deployed CM2 profile, probing display identity at 0x12)"
+                ? "[AZOM] Dashboard detected (CM2 on wheelbase bus — deployed CM2 profile, probing display identity at 0x14)"
                 : "[AZOM] Dashboard detected");
 
-            // CM2-on-base: retarget screen telemetry to 0x12 and start it.
-            if (cm2BehindBase)
-            {
-                try { _plugin.ApplyTelemetrySettings(); _plugin.StartTelemetryIfReady(); }
-                catch (Exception ex) { MozaLog.Debug($"[AZOM] CM2-on-base telemetry start skipped: {ex.Message}"); }
-            }
-
-            // Dual-screen: a wheel that has its OWN screen (FSR1 / tier-def display wheel)
-            // plus a bus-bridged dash → ensure the concurrent dash pipeline spins up so the
-            // CM1 discriminator (or the tier-def CM2 sender) starts. Idempotent / gated.
+            // DECOUPLED: a bus CM2 is driven by the dedicated _cm2Sender, never the
+            // main sender — so EnsureCm2Pipeline below (not ApplyTelemetrySettings/
+            // StartTelemetryIfReady) brings it up. This holds for ANY wheel: a wheel
+            // with its own screen (main sender drives 0x17, _cm2Sender drives the CM2),
+            // a screenless wheel, or no wheel — _cm2Sender owns the CM2 in all cases,
+            // and the CM1 discriminator now runs unconditionally for a bus dash.
             try { _plugin.EnsureCm2Pipeline(); }
             catch (Exception ex) { MozaLog.Debug($"[AZOM] EnsureCm2Pipeline on dash-detect skipped: {ex.Message}"); }
         }
@@ -700,14 +696,16 @@ namespace MozaPlugin.Devices
                     if (!string.IsNullOrEmpty(_data.DisplayModelName))
                     {
                         MozaLog.Debug($"[AZOM] Display model: {_data.DisplayModelName}");
-                        // CM2-on-base confirmed by display identity — re-assert 0x12 routing.
+                        // CM2-on-base confirmed by display identity. The CM2 itself is
+                        // driven by the dedicated _cm2Sender at 0x14 (EnsureCm2Pipeline,
+                        // already running) — NOT the main sender. This block only
+                        // re-asserts the CM2 meter LED config now that the dash is
+                        // confirmed and the profile is loaded.
                         if (_plugin.IsCm2BehindBaseCandidate)
                         {
-                            MozaLog.Info($"[AZOM] CM2-on-base display confirmed: {_data.DisplayModelName} — routing screen telemetry to 0x12");
+                            MozaLog.Info($"[AZOM] CM2-on-base display confirmed: {_data.DisplayModelName} — re-asserting CM2 meter config");
                             if (DeviceDefinitionDeployer.DeployDashboard(_connection.DiscoveredPid))
                                 _plugin.DeviceDefinitionDeployed = true;
-                            try { _plugin.ApplyTelemetrySettings(); }
-                            catch (Exception ex) { MozaLog.Debug($"[AZOM] CM2-on-base ApplyTelemetrySettings skipped: {ex.Message}"); }
                             // Push the CM2 meter LED config (modes/thresholds/colors,
                             // group 0x32) now that the base-bridged CM2 is CONFIRMED.
                             // The earlier MarkDashDetected apply races ahead of this —
