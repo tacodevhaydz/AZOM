@@ -49,52 +49,35 @@ Download the profile that matches your wheel:
 
 ## 3 · Select your wheelbase / hub device
 
-On the **Product/Device Information** page, the **Vendor ID** is `346E` for all MOZA
-hardware. Set the **Product ID** to match the device your wheel actually connects through —
-this is what binds ATSR's input-driven effects to your MOZA hardware. The imported profile
-ships with a typical Product ID, so change it if your base or hub differs.
+On the **Product/Device Information** page, select your device from the **Detected Devices** dropdown list.
 
 ![The Product/Device Information page with Vendor ID 346E and the Product ID field](/docs/ATSR/Setup3.png)
 
-| Your MOZA base / hub | Product ID |
-|---|---|
-| R3 | `0005` |
-| R5 | `0004` |
-| R9 | `0002` (or `0012`) |
-| R12 / R12 V2 | `0006` (or `0016`) |
-| R16 / R21 | `0000` |
-| Universal Hub | `0020` |
-
-> **Through a hub?** If your wheel attaches to a MOZA Universal Hub, the host only sees the
-> hub — use `0020`, not your wheelbase's ID.
-
 ## 4 · Add the wheel
 
-Continue through the remaining wizard pages — ATSR walks you through which LED groups (RPM
-lights, buttons, knobs) to configure — and finish to add the wheel. It appears in ATSR's
-left navigation as its own device, where you can tune presets and per-element effects under
-**Effect Customization**.
+Continue through the remaining wizard pages, if you selected the correct profile you shouldn't need to make additional changes — click finish to add the wheel. It appears in ATSR's
+left navigation as its own device, where you can tune presets and per-element effects under **Effect Customization**.
 
 ## 5 · Export the LED profile
 
-Open your new ATSR device and, on the **Effect Customization** tab, click **Export
-Profile**. Save the exported LED profile somewhere you can find it — this is the file AZOM
-imports.
+Open your new ATSR device and, on the **Device Hub** tab, click **Export LED
+Profile**. Save the exported LED profile somewhere you can find it — you will need it for the next step.
 
-![The ATSR device Effect Customization tab with the Export Profile link](/docs/ATSR/Setup4.png)
+![The ATSR device Effect Customization tab with the Export LED Profile link](/docs/ATSR/Setup4.png)
 
 ## 6 · Import into AZOM's Individual LEDs
 
-Back in SimHub, go to **Devices**, open your MOZA wheel, and switch to the **LEDs** tab.
+In SimHub, go to **Devices**, open your MOZA wheel, and switch to the **LEDs** tab.
+
+Set **Individual leds profiles** to Individual or Combined to add a new profile:
+
+- **Individual profile only** — the profile *replaces* your other LED effects.
+- **Combined** — the profile is layered *on top* of your regular effects .
+- **Disabled** — turns the individual profile off without removing it.
+
 Under **Individual leds**, click **Import profile** and select the file you just exported.
 
 ![The MOZA wheel LEDs tab with the imported ATSR profile under Individual leds](/docs/ATSR/Setup5.png)
-
-Finally, set **Individual leds profiles** to match how you want it to play:
-
-- **Individual profile only** — the ATSR profile *replaces* your other LED effects.
-- **Combined** — the ATSR profile is layered *on top* of your regular effects .
-- **Disabled** — turns the individual profile off without removing it.
 
 That's it — ATSR now drives your wheel's individual LEDs through AZOM. Tweak the effects any
 time in ATSR, re-export, and re-import to update.

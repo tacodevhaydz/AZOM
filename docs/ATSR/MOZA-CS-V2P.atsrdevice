@@ -3,15 +3,15 @@
   "presetName": "",
   "version": "2.2.2.0",
   "deviceSettings": {
-    "ButtonCount": 2,
-    "ButtonOffset": 5,
+    "ButtonCount": 3,
+    "ButtonOffset": 4,
     "EncoderTopCount": 0,
     "EncoderBottomCount": 0,
     "TelemetryCount": 0,
     "RPMCount": 10,
     "SelectedIllustration": 1,
     "VID": "346E",
-    "PID": "0004",
+    "PID": "0002",
     "ElementInformation": {
       "Button": [
         {
@@ -66,14 +66,14 @@
         },
         {
           "Coordinates": [
-            0.0,
-            0.0
+            195.16555786132813,
+            160.58380126953125
           ],
           "Map_Coordinates": [
             0.0,
-            0.0
+            0.4
           ],
-          "Index": 0,
+          "Index": 12,
           "LEDCount": 1,
           "PositionCount": 1,
           "LedsPerDetent": 1,
@@ -83,8 +83,8 @@
             -1,
             -1
           ],
-          "SetupFlag": false,
-          "IsElement": false,
+          "SetupFlag": true,
+          "IsElement": true,
           "AntiClockwiseEncoder": false,
           "ReverseEncoderButtonIds": false,
           "Type": 1
@@ -198,7 +198,7 @@
             1.0,
             0.0
           ],
-          "Index": 13,
+          "Index": 15,
           "LEDCount": 1,
           "PositionCount": 1,
           "LedsPerDetent": 1,
@@ -223,7 +223,7 @@
             1.0,
             0.2
           ],
-          "Index": 12,
+          "Index": 14,
           "LEDCount": 1,
           "PositionCount": 1,
           "LedsPerDetent": 1,
@@ -241,14 +241,14 @@
         },
         {
           "Coordinates": [
-            0.0,
-            0.0
+            504.73129272460938,
+            160.95442199707031
           ],
           "Map_Coordinates": [
-            0.0,
-            0.0
+            1.0,
+            0.4
           ],
-          "Index": 0,
+          "Index": 13,
           "LEDCount": 1,
           "PositionCount": 1,
           "LedsPerDetent": 1,
@@ -258,8 +258,8 @@
             -1,
             -1
           ],
-          "SetupFlag": false,
-          "IsElement": false,
+          "SetupFlag": true,
+          "IsElement": true,
           "AntiClockwiseEncoder": false,
           "ReverseEncoderButtonIds": false,
           "Type": 1

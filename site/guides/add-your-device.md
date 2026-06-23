@@ -25,11 +25,11 @@ the **Pick a supported device** dialog. Your connected MOZA hardware shows up at
 under **Devices found on your system** — select it there rather than hunting through the
 full manual list.
 
+> If you **cannot find the MOZA device**, make sure you are on at least **v9.11+** of SimHub.
+
 ![SimHub's device picker with the MOZA CS Pro listed under devices found on your system](/docs/images/PickDevice.png)
 
 Choose your device and click **Ok**. Your MOZA wheel is now a first-class SimHub
 device — ready for the LED effects pipeline, LCD dashboard telemetry and onboard lighting.
 
-> **Don't see it?** Make sure the restarts from the
-> [install guide](/guides/install-the-plugin/) actually happened — device definitions are
-> only deployed and loaded on the launches *after* the hardware is first detected.
+> **Don't see it?** Make sure the restarts from the [install guide](/guides/install-the-plugin/) actually happened — device definitions are only deployed and loaded on the launches *after* the hardware is first detected.
