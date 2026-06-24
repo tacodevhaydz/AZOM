@@ -145,6 +145,19 @@ namespace MozaPlugin.Telemetry
         // gate flag in InitTickStateAndTransitionToStarting.
         private bool _coldStartGateLogged;
 
+        // Catalog-on-wrong-session wedge recovery. When the cold-start gate times
+        // out with the wheel's real catalog on the FLAG session (not the tier-def
+        // session), emitting the tier-def carries END=0 against a real END — the
+        // wheel either CLOSEs (REJECT) or silently ignores it (stuck Active + blank).
+        // The only fix that binds is the wheel re-advertising on the tier-def session,
+        // which a full cold re-provoke (Stop → ~11 s sess=0x09 settle → Start) re-rolls.
+        // _forceColdReprovoke (1) tells the next StartInner to take the cold path even
+        // on a warm restart; _coldStartReprovokeAttempts bounds the retry so a
+        // genuinely-stuck wheel still proceeds instead of looping forever.
+        private int _forceColdReprovoke;
+        private int _coldStartReprovokeAttempts;
+        private const int MaxColdStartReprovokes = 3;
+
 
         // Upload handshake state.
         internal int _mgmtAckSeq;
@@ -1433,6 +1446,17 @@ namespace MozaPlugin.Telemetry
             //      always wait the full 11 s).
             long preStopTicks = _silenceGate.LastStopUtcTicks;
             bool isFirstStartInProcess = (preStopTicks == 0);
+            // A wrong-session-wedge recovery (set by the cold-start gate) must take the
+            // full COLD re-provoke path — wide session close + the catalog-on-tier-def-
+            // session wait gate + the session re-cycle — even though it's a warm restart
+            // (the wheel stopped, so isFirstStartInProcess is false). This is what re-rolls
+            // the wheel's Form-A/B choice onto the tier-def session. The silence gate below
+            // still keys off isFirstStartInProcess (a warm restart honors the ~11 s settle —
+            // which is exactly the sess=0x09 timeout that makes the re-advertise land clean).
+            bool forceColdReprovoke = System.Threading.Interlocked.Exchange(ref _forceColdReprovoke, 0) == 1;
+            bool coldReprovoke = isFirstStartInProcess || forceColdReprovoke;
+            // Genuine new start (not a wedge retry) → fresh re-provoke budget.
+            if (!forceColdReprovoke) _coldStartReprovokeAttempts = 0;
             Stop();
 
             // Enforce minimum host silence since the last Stop() completion.
@@ -1484,11 +1508,11 @@ namespace MozaPlugin.Telemetry
             }
 
             InitTickStateAndTransitionToStarting();
-            // Cold start only: arm the sess=0x09-readiness preamble gate (see
-            // _coldStartWheelGatePending docs). Must be set AFTER the init
-            // method above, which clears it. Warm/game-switch reloads leave it
-            // false → no added preamble latency.
-            _coldStartWheelGatePending = isFirstStartInProcess;
+            // Arm the sess=0x09-readiness preamble gate (see _coldStartWheelGatePending
+            // docs) for a true cold start OR a forced wrong-session-wedge re-provoke.
+            // Must be set AFTER the init method above, which clears it. Plain warm/
+            // game-switch reloads leave it false → no added preamble latency.
+            _coldStartWheelGatePending = coldReprovoke;
             _frames.BuildCachedFrames();
 
             // Subscribe early so we catch fc:00 acks during port probing AND preamble
@@ -1498,12 +1522,12 @@ namespace MozaPlugin.Telemetry
             // background thread (dispatched by StartTelemetryIfReady) so the
             // serial read thread stays free to deliver fc:00 ack responses.
             //
-            // Pass through isFirstStartInProcess so cold starts get the wide
-            // session close (0x01..0x0a) that flushes any stale wheel-side
-            // session state from a prior SimHub process. Game-switch reloads
-            // skip the wide close to preserve the configJson handshake on
-            // the persistent wire.
-            _sessionLife.ProbeAndOpenSessions(isFirstStartInProcess, cancel);
+            // Pass through coldReprovoke so cold starts AND wrong-session-wedge
+            // re-provokes get the wide session close (0x01..0x0a) that flushes stale
+            // wheel-side session state and makes the wheel re-advertise its catalog
+            // from a clean slate. Plain game-switch reloads skip the wide close to
+            // preserve the configJson handshake on the persistent wire.
+            _sessionLife.ProbeAndOpenSessions(coldReprovoke, cancel);
             // Supersession gate: a new Start() arriving mid-probe cancels
             // our token. An external Stop() during the same window pushes
             // state to Idle — both signal "abandon this StartInner".
@@ -3441,10 +3465,42 @@ namespace MozaPlugin.Telemetry
                         }
                         return;
                     }
+                    // The gate timed out. Distinguish the WRONG-SESSION WEDGE from a
+                    // genuinely screenless / never-ready wheel:
+                    //   • WEDGE — the wheel advertised a real catalog+END on the FLAG
+                    //     session but NOT the tier-def session. Emitting the tier-def
+                    //     now carries END=0 against the wheel's real END: the wheel
+                    //     either CLOSEs the session (REJECT) or silently ignores it (no
+                    //     bind, no close → stuck Active + blank, no recovery trigger).
+                    //     Following the catalog to the flag session doesn't bind either
+                    //     (its advertisement is malformed in this state). The ONLY thing
+                    //     that binds is the wheel re-advertising on the tier-def session,
+                    //     which a full cold re-provoke (Stop → ~11 s sess=0x09 settle →
+                    //     Start, re-rolling the wheel's Form-A/B choice) forces. Re-provoke
+                    //     and RETRY, bounded, instead of emitting a doomed tier-def.
+                    //   • SCREENLESS / never-ready — no real catalog on the flag session
+                    //     either → proceed to Active (nothing to bind / re-provoke).
+                    byte flagSess = ResolveFfSession();
+                    bool catalogOnFlagSession = flagSess != gateMgmt
+                        && _catalogParser.HasRealCatalogOnSession(flagSess);
+                    if (catalogOnFlagSession && _coldStartReprovokeAttempts < MaxColdStartReprovokes)
+                    {
+                        _coldStartReprovokeAttempts++;
+                        MozaLog.Warn(
+                            $"[AZOM] Cold-start catalog WEDGE: real catalog on flag sess 0x{flagSess:X2} " +
+                            $"but not tier-def sess 0x{gateMgmt:X2}. Emitting END=0 here won't bind " +
+                            $"(and 0x{flagSess:X2} is malformed) — forcing a cold re-provoke so the wheel " +
+                            $"re-advertises on 0x{gateMgmt:X2} (attempt {_coldStartReprovokeAttempts}/{MaxColdStartReprovokes}).");
+                        System.Threading.Interlocked.Exchange(ref _forceColdReprovoke, 1);
+                        _coldStartWheelGatePending = false;   // re-armed by the re-provoked Start
+                        RestartForSwitch();
+                        return;   // do NOT proceed to Active / do NOT emit the doomed tier-def
+                    }
                     MozaLog.Warn(
                         $"[AZOM] Cold-start catalog wait exceeded {PreambleSess01CatalogWaitMaxMs} ms " +
-                        $"without a real catalog on tier-def session 0x{gateMgmt:X2} — proceeding to " +
-                        "Active anyway (screenless or slow wheel; watchdog will recover if binding fails).");
+                        $"without a real catalog on tier-def session 0x{gateMgmt:X2} " +
+                        $"({(catalogOnFlagSession ? $"re-provoke budget exhausted after {_coldStartReprovokeAttempts} attempts" : "screenless or slow wheel")}) " +
+                        "— proceeding to Active anyway (watchdog will recover if binding fails).");
                     // One-shot: don't re-hold if preamble is somehow re-entered.
                     _coldStartWheelGatePending = false;
                 }
