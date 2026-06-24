@@ -3186,14 +3186,22 @@ namespace MozaPlugin
         {
             MozaLog.Debug($"[AZOM] {reason}");
             _telemetrySender?.Stop();
-            // Preserve dash detection when this serial connection is a
-            // standalone dashboard (CM2). Wheel hot-swap shouldn't blank a
-            // CM2's detection — the dash is the connection, not a wheel
-            // peripheral. ResetWheel() clears DashDetected unconditionally,
-            // so re-assert it for standalone-USB dashboards.
-            bool preserveStandaloneDash = IsStandaloneDashboardUsbConnection;
+            // Preserve dash detection across a WHEEL-rim reset: the dash (CM2/CM1)
+            // is reached through the CONNECTION, not the wheel rim, so a hot-swap or
+            // presence-miss of the rim must NOT blank it. Two cases:
+            //   • standalone-USB dash — lives on its own pipe (IsStandaloneDashboardUsbConnection);
+            //   • base-bridged (bus) dash — lives on the still-live wheelbase connection.
+            // ResetWheel() clears DashDetected unconditionally; re-assert it for both.
+            // CRITICAL: a bus CM2 behind the base is independent of which rim is
+            // attached. Letting a rim miss clear DashDetected flips the dual-display
+            // `want` false, and the periodic EnsureCm2Pipeline reconcile then tears
+            // down a perfectly healthy CM2 dashboard (LEDs survive on a separate path,
+            // so the symptom is "CM2 dash dead, LEDs fine"). Only a real connection
+            // loss (Connection.IsConnected false) should drop a bus dash.
+            bool preserveDash = IsStandaloneDashboardUsbConnection
+                || (DetectionState.DashDetected && _connection?.IsConnected == true);
             DetectionState.ResetWheel();
-            if (preserveStandaloneDash)
+            if (preserveDash)
                 DetectionState.DashDetected = true;
             WheelModelInfo = null;
             _data.ClearWheelIdentity();

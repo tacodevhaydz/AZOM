@@ -34,7 +34,14 @@ namespace MozaPlugin.Telemetry
         // 64-bit DateTime could tear on 32-bit and yield a garbage elapsed interval.
         // 0 = want is currently true (no pending teardown).
         private long _wantFalseSinceUtcTicks;
-        private const int TeardownDwellMs = 3000;
+        // MUST exceed a couple of PollStatus intervals (~5 s each): EnsureCm2Pipeline
+        // is reconciled periodically from PollStatus, so a dwell shorter than the poll
+        // let a SINGLE transient want=false tick arm the dwell and the very NEXT poll
+        // complete the teardown — Stopping a healthy CM2 on one wheel-presence blip
+        // (the "CM2 dash dies on a CS-Pro rim glitch" regression). 12 s ⇒ a teardown
+        // requires want=false sustained across ~3 polls (a real CM2/connection loss),
+        // not a transient. Paired with the ResetWheelDetection dash-preserve fix.
+        private const int TeardownDwellMs = 12000;
 
         /// <summary>Start the FSR V1 group-0x42 display driver when an FSR1 wheel is
         /// connected; stop it if the wheel is no longer FSR1 (hot-swap). Telemetry-
