@@ -182,6 +182,12 @@ namespace MozaPlugin
         private Timer _pollTimer = null!;
         private Timer _retryTimer = null!;
         private Timer _reconnectTimer = null!;
+        // 1 once SystemEvents.PowerModeChanged is subscribed, so End()/
+        // CleanupPartialInit unsubscribe exactly once. PowerModeChanged is a
+        // STATIC event — a live subscription leaks this plugin instance (and
+        // double-fires the resume handler) across the game-switch reload if not
+        // detached. See OnPowerModeChanged.
+        private int _powerModeHooked;
         // Hub detection belongs ONLY to the dedicated hub connection (_hubManager),
         // which probes for a Universal Hub on the hub's OWN port and skips the
         // wheelbase port. The base/wheelbase connection must NEVER emit hub calls
@@ -1093,6 +1099,27 @@ namespace MozaPlugin
                 _baseManager.MessageReceived += OnBaseMessageReceived;
                 _baseManager.Connection.Disconnected += OnBaseDisconnected;
 
+                // System sleep/resume recovery. On resume the wheel firmware has
+                // power-cycled and silently dropped its display/telemetry sessions,
+                // but the host serial tty can stay .IsOpen==true (half-open) — or
+                // the wheel resumes talking before the connection's ~30 s half-open
+                // detector fires — so neither the reconnect timer nor the dead-tty
+                // detector would rebuild the session and the display stays blank.
+                // The resume handler forces a clean reconnect to rebuild it. Static
+                // event ⇒ unsubscribe in End()/CleanupPartialInit (see _powerModeHooked).
+                try
+                {
+                    Microsoft.Win32.SystemEvents.PowerModeChanged += OnPowerModeChanged;
+                    Interlocked.Exchange(ref _powerModeHooked, 1);
+                }
+                catch (Exception ex)
+                {
+                    // SystemEvents needs a message pump; under Wine/Proton it can be
+                    // absent. Harmless — a Linux host's sleep doesn't raise Windows
+                    // power events anyway.
+                    MozaLog.Debug($"[AZOM] PowerModeChanged hook unavailable: {ex.Message}");
+                }
+
                 // AB9 engine-vibration worker — tick gates on connection/detection state.
                 _ab9Worker = new Ab9EngineVibrationWorker(
                     _ab9Manager,
@@ -1431,6 +1458,7 @@ namespace MozaPlugin
         /// </summary>
         private void CleanupPartialInit()
         {
+            UnhookPowerMode();
             try { _pollTimer?.Stop(); } catch { }
             try { _retryTimer?.Stop(); } catch { }
             try { _reconnectTimer?.Stop(); } catch { }
@@ -2121,6 +2149,9 @@ namespace MozaPlugin
 
             // 3. Detach event subscriptions so any in-flight callback from a still-running
             //    background thread (HID/serial reader) cannot reach the plugin during teardown.
+            //    PowerModeChanged is static — detach first so a resume mid-teardown can't
+            //    schedule a ForceReconnect against tearing-down state.
+            UnhookPowerMode();
             try
             {
                 if (_connection != null)
@@ -3149,6 +3180,46 @@ namespace MozaPlugin
         // and reset wheel detection right now rather than waiting for the
         // next reconnect-timer tick — otherwise the sender keeps firing and
         // accumulating ack waiters / catalog state for ~5 s.
+        // System power-state notification (sleep/resume). Fires on the dedicated
+        // SystemEvents notification thread — keep it non-blocking. Only Resume is
+        // handled: after sleep the wheel power-cycles and drops its display/
+        // telemetry sessions while the host tty can stay half-open, so we force a
+        // clean reconnect on the display-bearing pipes (primary wheel + standalone
+        // CM2). ForceReconnect raises Disconnected → OnSerialDisconnected /
+        // OnDashboardDisconnected, which reset detection + Stop the sender; the
+        // reconnect timer then reopens a fresh port and the session pipeline
+        // rebuilds. Config-only lanes (hub/base-aux/AB9/peripherals) self-heal via
+        // the connection's ~30 s half-open detector — a stale config lane is benign.
+        private void OnPowerModeChanged(object? sender, Microsoft.Win32.PowerModeChangedEventArgs e)
+        {
+            if (IsShuttingDown) return;
+            if (e.Mode != Microsoft.Win32.PowerModes.Resume) return;
+            MozaLog.Info("[AZOM] System resume — forcing reconnect to rebuild display sessions");
+            // ForceReconnect can take a beat (raises the full detection/telemetry
+            // reset chain); get off the SystemEvents thread so we don't stall other
+            // power-event subscribers.
+            ThreadPool.QueueUserWorkItem(_ =>
+            {
+                if (IsShuttingDown) return;
+                try { _connection?.ForceReconnect("System resume"); }
+                catch (Exception ex) { MozaLog.Warn($"[AZOM] Resume reconnect (primary): {ex.Message}"); }
+                try { _dashboardManager?.Connection?.ForceReconnect("System resume"); }
+                catch (Exception ex) { MozaLog.Warn($"[AZOM] Resume reconnect (dashboard): {ex.Message}"); }
+            });
+        }
+
+        // Detach the static PowerModeChanged subscription exactly once. Safe to
+        // call from both End() and CleanupPartialInit (the Interlocked.Exchange
+        // gate makes the second call a no-op).
+        private void UnhookPowerMode()
+        {
+            if (Interlocked.Exchange(ref _powerModeHooked, 0) == 1)
+            {
+                try { Microsoft.Win32.SystemEvents.PowerModeChanged -= OnPowerModeChanged; }
+                catch (Exception ex) { MozaLog.Debug($"[AZOM] PowerModeChanged unhook: {ex.Message}"); }
+            }
+        }
+
         private void OnSerialDisconnected()
         {
             if (IsShuttingDown) return;
