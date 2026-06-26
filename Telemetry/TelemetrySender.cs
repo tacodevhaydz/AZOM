@@ -1522,6 +1522,21 @@ namespace MozaPlugin.Telemetry
             // background thread (dispatched by StartTelemetryIfReady) so the
             // serial read thread stays free to deliver fc:00 ack responses.
             //
+            // On coldReprovoke the wide session close below makes the wheel
+            // re-advertise its catalog from a clean slate, so the catalog parser must
+            // reset to match. Without this the fresh advertisement UNIONs onto the
+            // stale catalog — CommitLiveSet treats it as a same-arm-count continuation
+            // batch (a re-provoke is not a dashboard switch, so the arm count doesn't
+            // bump), and _catalog accumulates idxs across re-provoke cycles. The
+            // emitted tier-def then balloons every cycle (END marker 77→154→…→497,
+            // channel idx/compression garbled — observed on R5 when 4314db0's wedge
+            // recovery re-provokes), and the wheel can never bind it → telemetry
+            // "runs" but no channel ever updates. Warm game-switch reloads
+            // (coldReprovoke=false) keep the catalog for the persistent-wire fast
+            // path. (_catalogParser.Reset() was previously dead code.)
+            if (coldReprovoke)
+                _catalogParser.Reset();
+
             // Pass through coldReprovoke so cold starts AND wrong-session-wedge
             // re-provokes get the wide session close (0x01..0x0a) that flushes stale
             // wheel-side session state and makes the wheel re-advertise its catalog
@@ -2211,17 +2226,30 @@ namespace MozaPlugin.Telemetry
         internal byte ResolveTierDefSession()
         {
             byte mgmt = _mgmtPort != 0 ? _mgmtPort : (byte)0x01;
+            // Prefer mgmt (0x01) whenever it carries the wheel's real catalog+END.
+            // A Form-A wheel (CS-Pro) binds the subscription there, and after a
+            // power cycle the cold-start catalog-on-flag is coaxed back onto mgmt
+            // by the StartInner re-request loop, so mgmt is usually ready by the
+            // time we emit.
             if (_catalogParser.HasRealCatalogOnSession(mgmt)) return mgmt;
-            // Keep the tier-def on mgmt (0x01) regardless of which session the
-            // cold-start catalog arrived on. A wheel (Form A — CS-Pro) binds the
-            // subscription on mgmt; after a power cycle its first catalog can land
-            // on the flag session (0x02), but echoing the tier-def there left the
-            // wheel unbound — host kind=4 ignored, test mode dead — until a
-            // watchdog recovery nudged the catalog back to 0x01 (verified
-            // 2026-06-07: tier-def 0x02 → no bind; 0x01 → binds). The parser still
-            // ingests the catalog from whichever session carried it, and
-            // ResolveFfSession keeps FF on the opposite (flag) session per the
-            // Form-A pairing.
+            // Dynamic session follow (re-enabled 2026-06-25). Some wheels (this
+            // W17 on a CS-Pro base) route their real catalog+END to the flag
+            // session (0x02) and NEVER mirror it onto mgmt — the re-request loop
+            // can't coax it over. Pinning the tier-def to mgmt then emits END=0
+            // there while the wheel's END lives on 0x02; the wheel acks, then
+            // CLOSEs 0x01, and DisplayWatchdog spins a futile restart loop
+            // forever (catalog-on-wrong-session wedge, diag bundle 2026-06-25).
+            // Follow the catalog to wherever its END actually lives: the emitter
+            // echoes GetEndMarkerForSession(thisSession) so the END matches, and
+            // ResolveFfSession mirrors FF/kind=4 onto the opposite session, so
+            // binding stays consistent on whichever we pick. Only follows once
+            // mgmt has demonstrably failed to carry the catalog, so the Form-A
+            // coax-to-0x01 path above is unaffected.
+            byte flag = FlagByte != 0 ? FlagByte : (byte)0x02;
+            if (flag != mgmt && _catalogParser.HasRealCatalogOnSession(flag))
+                return flag;
+            // True cold start — neither session has committed a catalog yet.
+            // Fall back to mgmt, matching the PitHouse Form-A default.
             return mgmt;
         }
 
