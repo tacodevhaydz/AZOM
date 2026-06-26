@@ -2637,7 +2637,7 @@
       "default_value": "",
       "compression": "string",
       "is_visible": false,
-      "simhub_property": "DataCorePlugin.GameData.TrackName"
+      "simhub_property": "@internal/TrackName"
     },
     {
       "name": "DisplayMapName",

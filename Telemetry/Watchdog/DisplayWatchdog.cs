@@ -424,7 +424,26 @@ namespace MozaPlugin.Telemetry.Watchdog
             if (_sender.CatalogCount <= 0)
                 return (true, $"no channel catalog past {EngagementGraceMs} ms grace");
             if (!_sender.ConfigJsonHasLastState)
-                return (true, "no configJson device-init/state past grace");
+            {
+                // The catalog is present (checked above): the display has already
+                // bound the channel/tier-def catalog and is rendering the current
+                // dashboard. The configJson device-init/state push (sess=0x09) is
+                // SUPPLEMENTARY — it carries the dashboard LIST for switching — and
+                // lags badly for slow-to-establish dashboards (radar/track-map). The
+                // watchdog nudges it every tick (RetryS09IfNotEstablished /
+                // DriveConfigJsonGapRetransmit), so it arrives without a restart.
+                //
+                // Force-restarting a BOUND display over a late state repeatedly broke
+                // the working radar (2026-06-25, W17/CS-Pro): boundComplete + slot
+                // rendering, state not yet pushed (and WheelReportedSlot can still be
+                // -1 mid-bind, so a slot check alone doesn't save it) — and the
+                // restart was the ONLY thing provoking the state, so patience + the
+                // nudges get there without the damage. A late state on a
+                // catalog-bound display is not a restart-worthy failure: genuine
+                // non-establishment is the no-catalog check above, and genuine
+                // rejection is the wheel-CLOSE-storm backstop.
+                return (false, "");
+            }
 
             // Context B — slot round-trip is POSITIVE confirmation only, never a
             // restart trigger. The wheel's reported slot is AUTHORITATIVE: any

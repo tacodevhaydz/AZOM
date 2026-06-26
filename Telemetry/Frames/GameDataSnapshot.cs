@@ -1,6 +1,8 @@
 using System;
+using System.Collections.Generic;
 using System.Reflection;
 using GameReaderCommon;
+using MozaPlugin.Diagnostics;
 using MozaPlugin.Telemetry.Dashboard;
 
 namespace MozaPlugin.Telemetry.Frames
@@ -30,20 +32,33 @@ namespace MozaPlugin.Telemetry.Frames
         public double TyreWearRearRight;
         public double CurrentLap;       // lap counter (1+)
 
-        // Track-map (patch/Location*) per-car ground-plane positions. Each
-        // entry feeds one 64-bit location_t slot, packed by
-        // TelemetryFrameBuilder as two little-endian float32 (X, Z) — the
-        // wire format reverse-engineered from the PitHouse FSR2 capture.
-        // CarLocations is indexed by SimHub Opponents[] order; PlayerLocation
-        // is the local car. Null/default when there's no game or no opponents.
-        // Source: Opponent.Coordinates / StatusDataBase.CarCoordinates, which
-        // are double[X,Y,Z] — the ground plane is indices 0 (X) and 2 (Z);
-        // index 1 (Y) is elevation and unused by the 2-D map.
-        public (float X, float Y)[]? CarLocations;
-        public (float X, float Y) PlayerLocation;
+        // Track-map (patch/Location*) per-car WORLD position (X, Y=elevation, Z).
+        // Each entry feeds one 64-bit location_t slot, packed by
+        // TelemetryFrameBuilder as PitHouse's fixed-point layout
+        // [u16 Y | u24 Z | u24 X] — reverse-engineered + verified to <0.3 m
+        // against AC ground truth on Imola+Spa (see
+        // docs/protocol/telemetry/track-map.md). NOT two float32 (the prior
+        // guess). CarLocations is indexed by SimHub Opponents[] order;
+        // PlayerLocation is the local car. (0,0,0) marks an empty slot.
+        // Source: Opponent.Coordinates / StatusDataBase.CarCoordinates
+        // (double[X,Y,Z]); index 0=X, 1=Y elevation, 2=Z.
+        public (float X, float Y, float Z)[]? CarLocations;
+        public (float X, float Y, float Z) PlayerLocation;
         // Index of the local car within CarLocations (= the IsPlayer opponent),
         // so the wheel can highlight "you" on the track map. 0 when unknown.
         public int PlayerIndex;
+
+        // Track folder name (AC: content/tracks/<name>, e.g. "ks_zandvoort"),
+        // used as the per-track cache key for the map bounds / transform.
+        public string? TrackFolderName;
+
+        // World bounding box of the track, from SimHub's recorded track map
+        // (PersistantTracker), in metres. Feeds TrackMapTransform.FromBounds to
+        // pick the per-track world→field transform for the location_t channels —
+        // SimHub-specific + game-agnostic. Invalid until SimHub has a recorded
+        // map for the track (then the builder upgrades off the Imola fallback).
+        public bool MapBoundsValid;
+        public double MapMinX, MapMaxX, MapMinZ, MapMaxZ;
 
         // Per-car position RELATIVE to the player (already rotated into the
         // player's frame by SimHub), for the radar (patch/ri*) channels. Each
@@ -85,13 +100,36 @@ namespace MozaPlugin.Telemetry.Frames
                 CurrentLap             = data.CurrentLap,
             };
             if (includeCarPositions)
+            {
+                snap.TrackFolderName = ResolveTrackFolder(data);
                 PopulateCarLocations(data, ref snap);
+            }
             return snap;
         }
 
-        // Ground-plane (X, Z) for the local car and every opponent, for the
-        // track-map location_t channels. Defensive against null/short arrays
-        // (games that don't expose coordinates leave them null).
+        // The track's content-folder name. AC's raw Static.track is the
+        // authoritative source (the content/tracks/<folder> id); SimHub's
+        // TrackId is the fallback. Reflection-only (no compile-time game ref).
+        private static string? ResolveTrackFolder(StatusDataBase data)
+        {
+            try
+            {
+                object? raw = data.GetRawDataObject();
+                object? st = raw?.GetType().GetProperty("Static")?.GetValue(raw);
+                if (st != null)
+                {
+                    var t = (st.GetType().GetField("track")?.GetValue(st) as string)
+                          ?? (st.GetType().GetProperty("Track")?.GetValue(st) as string);
+                    if (!string.IsNullOrEmpty(t)) return t;
+                }
+            }
+            catch { /* not AC, or shape changed — fall back to SimHub's id */ }
+            try { return data.TrackId; } catch { return null; }
+        }
+
+        // World position (X, Y=elevation, Z) for the local car and every
+        // opponent, for the track-map location_t channels. Defensive against
+        // null/short arrays (games that don't expose coordinates leave them null).
         private static void PopulateCarLocations(StatusDataBase data, ref GameDataSnapshot snap)
         {
             // SimHub's recorded per-track map (PersistantTrackerPlugin) converts
@@ -101,12 +139,22 @@ namespace MozaPlugin.Telemetry.Frames
             // SimHub.Plugins compile-time dependency.
             var map = TryGetMapRecord();
 
+            // World bounding box of the track from SimHub's recorded map points,
+            // for the per-track location_t transform (cached per track).
+            var bounds = GetMapBounds(map, snap.TrackFolderName);
+            if (bounds.HasValue)
+            {
+                snap.MapBoundsValid = true;
+                snap.MapMinX = bounds.Value.minX; snap.MapMaxX = bounds.Value.maxX;
+                snap.MapMinZ = bounds.Value.minZ; snap.MapMaxZ = bounds.Value.maxZ;
+            }
+
             var pc = data.CarCoordinates;
-            float px = 0f, pz = 0f; bool havePlayer = false;
+            float px = 0f, py = 0f, pz = 0f; bool havePlayer = false;
             if (pc != null && pc.Length >= 3)
             {
-                (px, pz) = ToGroundPlane(map, pc); havePlayer = true;
-                snap.PlayerLocation = (px, pz);
+                (px, py, pz) = ToWorldXyz(map, pc); havePlayer = true;
+                snap.PlayerLocation = (px, py, pz);
             }
 
             var opps = data.Opponents;
@@ -132,7 +180,7 @@ namespace MozaPlugin.Telemetry.Frames
             // deferred.
             float[]? raw = TryReadRawCarCoordinates(data);
 
-            var locs = new (float X, float Y)[count];
+            var locs = new (float X, float Y, float Z)[count];
             var rels = new (float X, float Y)[count];
             int playerIdx = 0;
             double bestD = double.MaxValue;
@@ -140,13 +188,13 @@ namespace MozaPlugin.Telemetry.Frames
             for (int i = 0; i < count; i++)
             {
                 var opp = opps[i];
-                (float X, float Y) abs;
+                (float X, float Y, float Z) abs;
                 bool haveAbs = false;
 
                 if (raw != null && i * 3 + 2 < raw.Length
                     && (raw[i * 3] != 0f || raw[i * 3 + 2] != 0f))
                 {
-                    abs = (raw[i * 3], raw[i * 3 + 2]); // ground plane = X, Z
+                    abs = (raw[i * 3], raw[i * 3 + 1], raw[i * 3 + 2]); // world X, Y(elev), Z
                     haveAbs = true;
                 }
                 else
@@ -154,20 +202,20 @@ namespace MozaPlugin.Telemetry.Frames
                     var c = opp?.Coordinates;
                     if (c != null && c.Length >= 3 && (c[0] != 0.0 || c[2] != 0.0))
                     {
-                        abs = ToGroundPlane(map, c);
+                        abs = ToWorldXyz(map, c);
                         haveAbs = true;
                     }
                     else
                     {
-                        abs = (0f, 0f);
+                        abs = (0f, 0f, 0f);
                     }
                 }
 
                 locs[i] = abs;
                 if (haveAbs && havePlayer)
                 {
-                    rels[i] = (abs.X - px, abs.Y - pz);
-                    double d = (abs.X - px) * (abs.X - px) + (abs.Y - pz) * (abs.Y - pz);
+                    rels[i] = (abs.X - px, abs.Z - pz);
+                    double d = (abs.X - px) * (abs.X - px) + (abs.Z - pz) * (abs.Z - pz);
                     if (d < bestD) { bestD = d; playerIdx = i; playerByDist = true; }
                 }
                 else
@@ -234,24 +282,142 @@ namespace MozaPlugin.Telemetry.Frames
             }
         }
 
-        // Project a car's coordinate array to ground-plane (X, Z). When a track
-        // map is recorded for a lap-relative-coordinate game, route through
+        // ── Track world bounding box (from SimHub's recorded map) ─────────────
+        // SimHub's PersistantTracker records each track's path as
+        // DataRecord.CarCoordinates; its min/max give the world bounding box that
+        // TrackMapTransform maps into the wheel's field window. SimHub-specific
+        // and game-agnostic (no per-game files). Cached per track; recomputed
+        // while unavailable (map not yet recorded) and cached once valid.
+        private static string? s_boundsTrack;
+        private static (double minX, double maxX, double minZ, double maxZ)? s_boundsCache;
+        private static bool s_boundsDiag;
+
+        private static (double minX, double maxX, double minZ, double maxZ)? GetMapBounds(
+            DataRecordBase? map, string? trackKey)
+        {
+            if (map == null) return null;
+            if (trackKey == s_boundsTrack && s_boundsCache.HasValue) return s_boundsCache;
+            var b = ComputeMapBounds(map);
+            s_boundsTrack = trackKey;
+            s_boundsCache = b;
+            if (b.HasValue)
+                MozaLog.Info($"[AZOM] track map bounds '{trackKey}': X {b.Value.minX:F0}..{b.Value.maxX:F0} " +
+                    $"Z {b.Value.minZ:F0}..{b.Value.maxZ:F0} " +
+                    $"({(int)(b.Value.maxX - b.Value.minX)}×{(int)(b.Value.maxZ - b.Value.minZ)} m, SimHub recorded map)");
+            return b;
+        }
+
+        // Fraction trimmed off each end of each axis to drop pit-lane / off-track
+        // excursions — sparse spatial tails that inflate the raw min/max but aren't
+        // part of the drawn track surface (e.g. Imola's recorded X runs to 879 in
+        // the pit lane vs the track's 331). Percentiles, so it's robust to however
+        // many outlier points there are, up to this fraction.
+        private const double BoundsTrimPct = 1.0;
+
+        private static double Percentile(List<double> sorted, double pct)
+        {
+            if (sorted.Count == 0) return 0.0;
+            int i = (int)Math.Round(pct / 100.0 * (sorted.Count - 1));
+            if (i < 0) i = 0; else if (i >= sorted.Count) i = sorted.Count - 1;
+            return sorted[i];
+        }
+
+        private static (double minX, double maxX, double minZ, double maxZ)? ComputeMapBounds(DataRecordBase map)
+        {
+            try
+            {
+                var coords = map.GetType().GetProperty("CarCoordinates")?.GetValue(map)
+                    as System.Collections.IEnumerable;
+                if (coords == null) return null;
+                bool relative = false;
+                try { relative = (map.GetType().GetProperty("HasRelativeCarCoordinates")?.GetValue(map) as bool?) ?? false; }
+                catch { }
+
+                var xs = new List<double>(2048);
+                var zs = new List<double>(2048);
+                foreach (var pt in coords)
+                {
+                    if (pt == null || !TryPointXZ(pt, out double x, out double z)) continue;
+                    if (relative)
+                    {
+                        try { var a = map.ToAbsoluteCoordinates(new[] { x, 0.0, z }); if (a != null && a.Length >= 3) { x = a[0]; z = a[2]; } }
+                        catch { }
+                    }
+                    xs.Add(x); zs.Add(z);
+                }
+                if (xs.Count < 20) return null;
+                xs.Sort(); zs.Sort();
+
+                double p = BoundsTrimPct;
+                double minX = Percentile(xs, p), maxX = Percentile(xs, 100 - p);
+                double minZ = Percentile(zs, p), maxZ = Percentile(zs, 100 - p);
+
+                if (!s_boundsDiag)
+                {
+                    s_boundsDiag = true;
+                    MozaLog.Info($"[AZOM] map bounds DIAG: n={xs.Count} trim={p}% | " +
+                        $"X raw[{xs[0]:F0}..{xs[xs.Count - 1]:F0}] p0.5[{Percentile(xs, 0.5):F0}..{Percentile(xs, 99.5):F0}] " +
+                        $"p1[{Percentile(xs, 1):F0}..{Percentile(xs, 99):F0}] p2[{Percentile(xs, 2):F0}..{Percentile(xs, 98):F0}] " +
+                        $"p5[{Percentile(xs, 5):F0}..{Percentile(xs, 95):F0}] | " +
+                        $"Z raw[{zs[0]:F0}..{zs[zs.Count - 1]:F0}] p1[{Percentile(zs, 1):F0}..{Percentile(zs, 99):F0}] " +
+                        $"p2[{Percentile(zs, 2):F0}..{Percentile(zs, 98):F0}] p5[{Percentile(zs, 5):F0}..{Percentile(zs, 95):F0}]");
+                }
+                if (maxX - minX < 10.0 || maxZ - minZ < 10.0) return null;
+                return (minX, maxX, minZ, maxZ);
+            }
+            catch { return null; }
+        }
+
+        // Extract (X, Z) from a recorded coordinate, however SimHub shapes it
+        // (double[]/float[] [x,y,z], or a point type with X/Z members).
+        private static bool TryPointXZ(object pt, out double x, out double z)
+        {
+            x = 0; z = 0;
+            if (pt is double[] da && da.Length >= 3) { x = da[0]; z = da[2]; return true; }
+            if (pt is float[] fa && fa.Length >= 3) { x = fa[0]; z = fa[2]; return true; }
+            try
+            {
+                var ty = pt.GetType();
+                // SimHub recorded-map point (GameReaderCommon.PositionItem): the
+                // world coordinate lives in .Value as double[3] { X, Y, Z }.
+                var vf = ty.GetField("Value");
+                if (vf != null)
+                {
+                    var val = vf.GetValue(pt);
+                    if (val is double[] vd && vd.Length >= 3) { x = vd[0]; z = vd[2]; return true; }
+                    if (val is float[] vff && vff.Length >= 3) { x = vff[0]; z = vff[2]; return true; }
+                }
+                var px = ty.GetProperty("X") ?? ty.GetProperty("x");
+                var pz = ty.GetProperty("Z") ?? ty.GetProperty("z");
+                if (px != null && pz != null)
+                { x = Convert.ToDouble(px.GetValue(pt)); z = Convert.ToDouble(pz.GetValue(pt)); return true; }
+                var fx = ty.GetField("X") ?? ty.GetField("x");
+                var fz = ty.GetField("Z") ?? ty.GetField("z");
+                if (fx != null && fz != null)
+                { x = Convert.ToDouble(fx.GetValue(pt)); z = Convert.ToDouble(fz.GetValue(pt)); return true; }
+            }
+            catch { }
+            return false;
+        }
+
+        // Project a car's coordinate array to world (X, Y=elevation, Z). When a
+        // track map is recorded for a lap-relative-coordinate game, route through
         // DataRecordBase.ToAbsoluteCoordinates (→ world space); a passthrough for
         // world-coordinate games. Mirrors RadarItem.UpdateData. Defensive: any
-        // failure or short result keeps the raw [0],[2].
-        private static (float X, float Y) ToGroundPlane(DataRecordBase? map, double[] c)
+        // failure or short result keeps the raw [0],[1],[2].
+        private static (float X, float Y, float Z) ToWorldXyz(DataRecordBase? map, double[] c)
         {
-            double x = c[0], z = c.Length > 2 ? c[2] : 0.0;
+            double x = c[0], y = c.Length > 1 ? c[1] : 0.0, z = c.Length > 2 ? c[2] : 0.0;
             if (map != null)
             {
                 try
                 {
                     double[]? a = map.ToAbsoluteCoordinates(c);
-                    if (a != null && a.Length >= 3) { x = a[0]; z = a[2]; }
+                    if (a != null && a.Length >= 3) { x = a[0]; y = a[1]; z = a[2]; }
                 }
-                catch { /* keep raw [0],[2] */ }
+                catch { /* keep raw [0],[1],[2] */ }
             }
-            return ((float)x, (float)z);
+            return ((float)x, (float)y, (float)z);
         }
 
         private static double ParseGear(string? gear)

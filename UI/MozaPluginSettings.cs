@@ -221,7 +221,7 @@ namespace MozaPlugin
         // (no tier-def enable-handshake change — that broke binding); set back to
         // false before shipping until the feature is verified.
         [Newtonsoft.Json.JsonIgnore]
-        public bool EnableRadarTrackMapChannels { get; set; } = false;
+        public bool EnableRadarTrackMapChannels { get; set; } = true;
 
         [Newtonsoft.Json.JsonIgnore]
         public bool EnableAutoTestOnConnect { get; set; } = false;

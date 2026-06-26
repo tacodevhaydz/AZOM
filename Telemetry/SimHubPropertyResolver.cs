@@ -20,6 +20,7 @@ namespace MozaPlugin.Telemetry
         private readonly MozaHidReader _hidReader;
         private readonly NCalcExpressionEvaluator _formula = new NCalcExpressionEvaluator();
         private bool _allPropertiesNamesWarned;
+        private static bool s_trackNameLogged;
 
         public SimHubPropertyResolver(PluginManager pluginManager, MozaData data, MozaHidReader hidReader)
         {
@@ -153,6 +154,26 @@ namespace MozaPlugin.Telemetry
                     try { game = _pluginManager?.GameName; }
                     catch { /* older SimHub / not yet running a game */ }
                     return Dashboard.GameNameMap.Resolve(game);
+                }
+                case "@internal/TrackName":
+                {
+                    // The wheel's track-map MAP KEY "<gameprefix>/<track>"
+                    // (e.g. "ac/imola"), not a display string — without the
+                    // game prefix the wheel can't locate the map and the
+                    // track-map widget renders blank.
+                    string? game = null; object? track = null, propGame = null;
+                    try { game = _pluginManager?.GameName; } catch { }
+                    try { propGame = _pluginManager?.GetPropertyValue("DataCorePlugin.GameName"); } catch { }
+                    try { track = _pluginManager?.GetPropertyValue("DataCorePlugin.GameData.TrackName"); }
+                    catch { /* unresolvable → empty track name */ }
+                    string result = Dashboard.GameNameMap.TrackPath(game, track?.ToString());
+                    if (!s_trackNameLogged)
+                    {
+                        s_trackNameLogged = true;
+                        MozaLog.Info($"[AZOM] @internal/TrackName resolve: GameName={game ?? "<null>"} " +
+                            $"prop.GameName={propGame ?? "<null>"} TrackName={track ?? "<null>"} -> '{result}'");
+                    }
+                    return result;
                 }
                 default:
                     return null;
