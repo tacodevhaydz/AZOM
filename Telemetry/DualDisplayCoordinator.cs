@@ -210,7 +210,13 @@ namespace MozaPlugin.Telemetry
                 && ReferenceEquals(mainSender.ConnectionRef, conn)
                 && mainSender.TargetDeviceId == dev;
 
-            if (cm2.FramesSent == 0 && cm2.StateIsIdle && !mainHoldsThisDevice)
+            // StartInProgress (not just StateIsIdle): a sender waiting out its pre-open
+            // silence gate is still _state==Idle, so gating on StateIsIdle alone let this
+            // ~5 s reconcile supersede the in-progress start every poll — re-stamping the
+            // ~11 s gate so it never elapsed and the CM2 cold-start livelocked (CS-Pro +
+            // bus CM2: _cm2Sender stuck Idle/frames=0, CM2 screen dark while its LEDs ran).
+            // Leave a start that's already in flight alone so it can finish the gate once.
+            if (cm2.FramesSent == 0 && cm2.StateIsIdle && !cm2.StartInProgress && !mainHoldsThisDevice)
             {
                 // Fresh start: allow the saved-dashboard re-assert to fire once the
                 // CM2 advertises its dashboard list (PollStatus → TickCm2DashboardReassert).

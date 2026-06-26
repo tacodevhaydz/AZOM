@@ -1832,6 +1832,11 @@ namespace MozaPlugin.Telemetry
 
         public void Stop()
         {
+            // Was anything actually open on the wire? Sessions are only opened once a
+            // Start gets past its silence wait into Starting/Preamble/Active; an Idle
+            // sender has nothing open. Captured BEFORE the transition below so the gate
+            // stamp at the end can skip a no-op close.
+            bool hadLiveSessions = _state != TelemetryState.Idle;
             // Capture the call chain that led here — Stop()→Idle is the cooldown
             // path; several watchdogs and the device-detection/reconnect logic can
             // all reach it, and the bare "Stop()" reason didn't say which. The
@@ -1927,13 +1932,21 @@ namespace MozaPlugin.Telemetry
             // Reset so StartTelemetryIfReady() won't skip us on re-enable
             _framesSent = 0;
 
-            // Arm the StartInner silence gate. Every Stop — user disable,
-            // shutdown, cold-start reset inside StartInner, RestartForSwitch
-            // — must precede the next reopen by ~11 s or the wheel never
-            // completes its sess=0x09 device-init. This is the host's only
-            // lever on that interlock; the wheel does not signal when its
-            // internal state is settled.
-            _silenceGate.MarkStopped(System.DateTime.UtcNow.Ticks);
+            // Arm the StartInner silence gate — but ONLY when this Stop actually
+            // closed live sessions. The ~11 s gate exists so the wheel's sess=0x09
+            // device-init can settle after we tear down a real session; a Stop() from
+            // Idle (StartInner's own pre-open Stop on a fresh cold start, or a start
+            // superseded before it opened anything) closed nothing on the wire, so
+            // there is no interlock to wait out. Stamping unconditionally armed the
+            // gate on a healthy cold start: one superseded no-op start left a "prior
+            // Stop", so every subsequent start then honoured the full gate — and on a
+            // shared bus the ~5 s EnsureCm2Pipeline reconcile kept superseding the
+            // waiting start, re-stamping the gate so it never elapsed (CS-Pro + bus
+            // CM2 livelock: _cm2Sender stuck Idle/frames=0, CM2 screen dark). A real
+            // Active/Preamble→Stop (recovery, dashboard-switch restart, End()) still
+            // stamps and still honours the gate.
+            if (hadLiveSessions)
+                _silenceGate.MarkStopped(System.DateTime.UtcNow.Ticks);
         }
 
         public void UpdateGameData(StatusDataBase? data)
@@ -2152,6 +2165,21 @@ namespace MozaPlugin.Telemetry
 
         // ===== Internal accessors for DisplayWatchdog =====
         internal bool StateIsIdle => _state == TelemetryState.Idle;
+        /// <summary>
+        /// True while a <see cref="Start"/> is queued or executing — including the
+        /// pre-open silence-gate wait, during which <see cref="_state"/> is deliberately
+        /// still <c>Idle</c> (StartInner Stop()s before sleeping). Callers that poll
+        /// "is it Idle? then (re)Start it" MUST also check this: a periodic reconcile
+        /// (PollStatus → EnsureCm2Pipeline, ~5 s) would otherwise supersede an in-progress
+        /// start every poll, re-stamping the ~11 s silence gate each time so it never
+        /// elapses — livelocking the CM2 cold-start (CS-Pro + bus CM2: sender stuck Idle,
+        /// CM2 screen dark while its LEDs work). _startCts is non-null for the whole
+        /// Start()/StartInner span and nulled in its finally.
+        /// </summary>
+        internal bool StartInProgress
+        {
+            get { lock (_startCtsLock) return _startCts != null; }
+        }
         internal bool StateIsActive => _state == TelemetryState.Active;
         internal bool ConnectionIsConnected => _connection.IsConnected;
         // Live connection reference for collaborators — never capture this:
