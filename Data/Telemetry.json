@@ -2351,7 +2351,7 @@
       "default_value": 0,
       "compression": "tyre_temp_1",
       "is_visible": true,
-      "simhub_property": "DataCorePlugin.GameData.OrientationYawWorld"
+      "simhub_property": "DataCorePlugin.GameData.OrientationYaw"
     },
     {
       "name": "Pitch",
@@ -3320,7 +3320,7 @@
       "package_level": 2000,
       "default_value": 0,
       "compression": "int8_t",
-      "simhub_property": "DataCorePlugin.GameData.OpponentsCount",
+      "simhub_property": "[DataCorePlugin.GameData.OpponentsCount] - 1",
       "is_visible": true
     },
     {

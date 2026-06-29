@@ -303,6 +303,22 @@ namespace MozaPlugin.Telemetry
         // worked. Re-synthesise when this signature changes too.
         private string _catalogSignatureAtSynthesis = "";
 
+        // Catalog-stability debounce. The wheel advertises its catalog
+        // PROGRESSIVELY at startup / dashboard switch (END 6→80→97 over ~3 s,
+        // with URL back-refs corrected in place), so the count/signature change
+        // many times in a burst. Synthesising + emitting a tier-def on every one
+        // of those steps "storms" the wheel — it re-binds the dashboard dozens of
+        // times while trying to render, which freezes/garbles widgets (e.g. the
+        // radar). PitHouse emits ONE tier-def. We mirror that: when the catalog
+        // changes we record it and wait until it has held steady for
+        // CatalogDebounceTicks before synthesising, collapsing the burst into a
+        // single emit. force=true (explicit swap / hot-switch) bypasses this.
+        private string _pendingCatalogSignature = "";
+        private int _pendingCatalogCount = -1;
+        private long _pendingCatalogSinceTicks;
+        private static readonly long CatalogDebounceTicks =
+            TimeSpan.FromMilliseconds(750).Ticks;
+
         // CRC32 reject counters for catalog (sess=0x01/FlagByte) and tile-server
         // (sess=0x03/0x0b) chunks. Surfaced via diagnostics for link-quality.
         private int _catalogCrcRejects;
@@ -1010,9 +1026,21 @@ namespace MozaPlugin.Telemetry
                 {
                     var tier = value.Tiers[i];
                     int tickInterval = Math.Max(1, tier.PackageLevel / _baseTickMs);
+                    // Lowest per-car radar/track-map slot in this tier (0 if none) —
+                    // gates dynamic per-grid emission below. A tier whose lowest slot
+                    // is above the live car count carries only absent cars this frame.
+                    int minRadarSlot = 0;
+                    bool tierHasSlots = false;
+                    foreach (var ch in tier.Channels)
+                    {
+                        int s = Dashboard.DashboardProfileStore.RadarTrackMapSlotIndex(ch.Url);
+                        if (s < 0) continue;
+                        if (!tierHasSlots || s < minRadarSlot) { minRadarSlot = s; tierHasSlots = true; }
+                    }
                     tierDiag.Append($" | t[{i}]={tier.Name} {tier.Channels.Count}ch pkg={tier.PackageLevel} bits={tier.TotalBits} bytes={tier.TotalBytes}");
                     _tiers[i] = new TierState
                     {
+                        MinRadarSlot = tierHasSlots ? minRadarSlot : 0,
                         // PitHouse capture 2026-04-29 in-game shows N=14 (legacy
                         // convention 8+data) on this firmware, NOT Type02 N=16.
                         // Hardcoding type02NConvention=false until per-firmware
@@ -1581,7 +1609,21 @@ namespace MozaPlugin.Telemetry
             // it is NOT sufficient — we explicitly wait for HasRealCatalogOnSession.
             // Bounded so a screenless / never-cataloging wheel still proceeds.
             {
-                const int CatalogWaitMaxMs = 5000;
+                // Base wait for an ordinary (small) catalog. A radar/track-map
+                // dashboard advertises a HUGE catalog (observed 223 channels: 184 ri +
+                // Location*) that streams at ~12 idx/s, so it needs ~19 s to arrive —
+                // far past the base budget. Cutting it short re-cycles mid-burst and
+                // restarts from idx 0, so it never completes (the cold-start wedge: in
+                // one run only 60/223 idx arrived before the 5 s cut). So when radar
+                // channels are enabled, allow a much larger cap AND keep waiting as
+                // long as new chunks are still arriving (progress-based) — only give
+                // up once it's STALLED (no new chunk for CatalogStallMs past the base),
+                // which is the genuinely-truncated case worth a re-cycle.
+                const int CatalogWaitBaseMs = 5000;
+                int CatalogWaitMaxMs =
+                    (MozaPlugin.Instance?.Settings?.EnableRadarTrackMapChannels ?? false)
+                        ? 30000 : CatalogWaitBaseMs;
+                const int CatalogStallMs = 3000;
                 const int CatalogWaitSliceMs = 100;
                 // The cold-start catalog can arrive with dropped/truncated
                 // chunks under Wine: mid-burst session-data frames are lost
@@ -1597,7 +1639,18 @@ namespace MozaPlugin.Telemetry
                 // full catalog. Bounded; a wheel that pushed no END at all
                 // (screenless / no dash bound) has nothing to re-request and just
                 // proceeds.
-                const int MaxCatalogRequests = 3; // 1 initial + 2 re-requests
+                // The big radar/track-map catalog (223 ch, ri channels LAST at idx
+                // 72+) drops below the Wine USB-CDC layer mid-burst, intermittently
+                // and at a VARYING point (observed 60/86/110/244 ch across sessions —
+                // probabilistic, not deterministic). The wheel does not self-resend
+                // the dropped tail. A manual telemetry off/on recovers it because the
+                // re-cycle re-pushes and sometimes lands a clean burst — so AUTOMATE
+                // that: with radar enabled, retry the re-cycle many more times so a
+                // clean catalog is caught without user intervention. Each attempt
+                // exits early the instant a real catalog commits.
+                int MaxCatalogRequests =
+                    (MozaPlugin.Instance?.Settings?.EnableRadarTrackMapChannels ?? false)
+                        ? 6 : 3;
                 byte mgmt = _mgmtPort != 0 ? _mgmtPort : (byte)0x01;
                 byte flag = FlagByte;
                 int totalWaited = 0;
@@ -1605,7 +1658,6 @@ namespace MozaPlugin.Telemetry
                 for (int attempt = 1; attempt <= MaxCatalogRequests; attempt++)
                 {
                     int waited = 0;
-                    bool catalogOnWrongSession = false;
                     while (waited < CatalogWaitMaxMs)
                     {
                         _catalogParser.TryParse();
@@ -1629,15 +1681,29 @@ namespace MozaPlugin.Telemetry
                         if (flag != 0 && flag != mgmt
                             && _catalogParser.HasRealCatalogOnSession(flag))
                         {
-                            // Full catalog present, but on the flag session only.
-                            // No point waiting out the slice budget — go straight
-                            // to the re-cycle so the wheel re-pushes it on the
-                            // tier-def session while 0x02 is still healthy.
-                            catalogOnWrongSession = true;
+                            // Dynamic session follow (2026-06-25): the wheel committed
+                            // its catalog on the flag session (Form B — this W17 on a
+                            // CS-Pro base routes its catalog+END to 0x02 and NEVER
+                            // mirrors it to mgmt). ResolveTierDefSession() now follows
+                            // the catalog there and ResolveFfSession() mirrors FF/kind=4
+                            // to mgmt, so the binding is consistent on 0x02. ACCEPT it
+                            // and proceed — do NOT re-cycle to force it back to mgmt.
+                            // The force path could never move the catalog, so the cold
+                            // start wedged and only a manual telemetry off/on (a warm
+                            // re-cycle that re-lands the catalog) recovered it.
+                            haveCatalog = true;
                             break;
                         }
                         if (cancel.IsCancellationRequested
                             || _state == TelemetryState.Idle || !_connection.IsConnected) return;
+                        // Progress-based: a large radar catalog is still streaming, so
+                        // keep waiting past the base budget as long as chunks keep
+                        // arriving. Only stop early (to re-cycle) once we're past the
+                        // base budget AND no new chunk has landed for CatalogStallMs —
+                        // i.e. genuinely stalled/truncated, not merely slow.
+                        int sinceChunkMs = unchecked(Environment.TickCount - _catalogParser.LastActivityMs);
+                        if (waited >= CatalogWaitBaseMs && sinceChunkMs > CatalogStallMs)
+                            break;
                         try { System.Threading.Thread.Sleep(CatalogWaitSliceMs); } catch { }
                         waited += CatalogWaitSliceMs;
                     }
@@ -1652,27 +1718,47 @@ namespace MozaPlugin.Telemetry
                     // Both are fixed by wiping the buffer and re-cycling the catalog
                     // sessions so the wheel re-advertises. "No catalog at all" (no
                     // END ever — screenless / nothing bound) has nothing to ask for.
-                    bool sawEnd = _catalogParser.GetEndMarkerForSession(mgmt) != 0
+                    // No REAL catalog committed on either session (a complete
+                    // catalog-on-flag was already followed + accepted above). What's
+                    // left is an INCOMPLETE advertisement: a partial/truncated burst
+                    // (dropped chunks under Wine — the large Radar catalog is the worst
+                    // case) or URLs with no committed END. The wheel won't self-resend,
+                    // so re-cycle the sessions to re-provoke a full re-advertisement.
+                    // This is the re-provoke the old force path provided; removing it
+                    // (when the swap path was added) was the cold-start wedge — a
+                    // partial catalog had nothing kicking it to retry, so the pipeline
+                    // never engaged and the display hung. Bounded by MaxCatalogRequests
+                    // so a genuinely screenless / never-advertising wheel still proceeds.
+                    bool sawAnyCatalog =
+                        _catalogParser.GetEndMarkerForSession(mgmt) != 0
                         || (flag != 0 && _catalogParser.GetEndMarkerForSession(flag) != 0)
-                        || _catalogParser.LastWheelEndMarker != 0;
-                    if ((!catalogOnWrongSession && !sawEnd) || attempt == MaxCatalogRequests)
+                        || _catalogParser.LastWheelEndMarker != 0
+                        || (_catalogParser.LiveCatalog?.Count ?? 0) > 0
+                        || (_catalogParser.Catalog?.Count ?? 0) > 0;
+                    if (!sawAnyCatalog || attempt == MaxCatalogRequests)
                         break;
 
                     MozaLog.Warn(
-                        $"[AZOM] Catalog not on tier-def session 0x{mgmt:X2} after {waited}ms " +
-                        $"({(catalogOnWrongSession ? $"landed on flag session 0x{flag:X2} instead" : "END seen, 0 valid channels — dropped/truncated chunks")}); " +
-                        $"re-requesting via session re-cycle (attempt {attempt}/{MaxCatalogRequests - 1}).");
+                        $"[AZOM] No real catalog committed on 0x{mgmt:X2}/0x{flag:X2} after {waited}ms " +
+                        $"(incomplete/partial advertisement); re-requesting via " +
+                        $"session re-cycle (attempt {attempt}/{MaxCatalogRequests - 1}). " +
+                        $"parser: {_catalogParser.DescribeSession(mgmt)} {_catalogParser.DescribeSession(flag)}");
+                    // Re-provoke the catalog by re-cycling ONLY the catalog sessions
+                    // (0x01 mgmt + 0x02 telemetry). Do NOT touch 0x03 — that's the
+                    // tile-server / display-content session, and closing+reopening it
+                    // on every retry reboots the wheel display (the radar-cold-start
+                    // instability: a big catalog needs several re-provokes, and each
+                    // 0x03 cycle flickered/rebooted the screen). 0x03 stays open from
+                    // the initial cold-start open; the catalog doesn't ride it.
                     _catalogParser.ClearBuffer();
                     try { _sessionLife.TryCloseSession(0x01, 300); } catch { }
                     try { _sessionLife.TryCloseSession(0x02, 300); } catch { }
-                    try { _sessionLife.TryCloseSession(0x03, 300); } catch { }
                     try { System.Threading.Thread.Sleep(250); } catch { }
                     if (cancel.IsCancellationRequested
                         || _state == TelemetryState.Idle || !_connection.IsConnected) return;
                     _sessionLife.TryOpenSession(0x01, 500);
                     if (_state == TelemetryState.Idle || !_connection.IsConnected) return;
                     _sessionLife.TryOpenSession(0x02, 500);
-                    _sessionLife.SendSessionOpen(0x03, 0x03);
                 }
                 MozaLog.Debug(
                     $"[AZOM] Pre-init catalog wait: {totalWaited}ms — tier-def session resolved to " +
@@ -2841,6 +2927,28 @@ namespace MozaPlugin.Telemetry
                 && !force)
                 return;
 
+            // Debounce the progressive catalog burst into a single emit (see the
+            // field comment). The catalog differs from the last synthesis; hold
+            // off until it has stopped changing for CatalogDebounceTicks. Each
+            // change restarts the timer; once quiet, fall through and synthesise
+            // once. force bypasses (explicit swap / hot-switch must act now).
+            if (!force)
+            {
+                long nowTicks = DateTime.UtcNow.Ticks;
+                if (_pendingCatalogCount != catalog.Count
+                    || _pendingCatalogSignature != catalogSignature)
+                {
+                    // Catalog just changed (or changed again mid-burst) — (re)arm.
+                    _pendingCatalogCount = catalog.Count;
+                    _pendingCatalogSignature = catalogSignature;
+                    _pendingCatalogSinceTicks = nowTicks;
+                    return;
+                }
+                if (nowTicks - _pendingCatalogSinceTicks < CatalogDebounceTicks)
+                    return;   // still settling — wait for the burst to finish
+                // Quiet long enough: fall through and synthesise this catalog once.
+            }
+
             var store = MozaPlugin.Instance?.DashProfileStore;
             if (store == null)
                 return;
@@ -3502,12 +3610,25 @@ namespace MozaPlugin.Telemetry
                 // (no dead latency); the cap only bites a screenless / never-ready
                 // wheel or one that wouldn't re-advertise after the re-requests.
                 byte gateMgmt = _mgmtPort != 0 ? _mgmtPort : (byte)0x01;
+                // Dynamic session follow: gate on whichever session the tier-def will
+                // actually ride. ResolveTierDefSession() follows the catalog to the flag
+                // session when the wheel committed it there (Form B), so a flag-only
+                // catalog now PASSES the gate and we proceed to Active on 0x02 instead
+                // of re-provoking/giving up (which wedged the cold start until a manual
+                // telemetry toggle). Falls back to mgmt only when neither session has a
+                // real catalog yet (true cold start / screenless).
                 bool tierDefSessionCatalogReady =
-                    _catalogParser.HasRealCatalogOnSession(gateMgmt);
+                    _catalogParser.HasRealCatalogOnSession(ResolveTierDefSession());
                 if (_coldStartWheelGatePending && !tierDefSessionCatalogReady)
                 {
+                    // Radar/track-map dashboards advertise a huge catalog (~223 ch,
+                    // ~19 s to stream), so the preamble hold must wait far longer than
+                    // the ordinary 6 s or it cuts the catalog off and wedges.
+                    int catalogWaitMs =
+                        (MozaPlugin.Instance?.Settings?.EnableRadarTrackMapChannels ?? false)
+                            ? 30000 : PreambleSess01CatalogWaitMaxMs;
                     int catalogCap = Math.Max(_preambleTickTarget,
-                        PreambleSess01CatalogWaitMaxMs / Math.Max(1, _baseTickMs));
+                        catalogWaitMs / Math.Max(1, _baseTickMs));
                     if (_tickCounter < catalogCap)
                     {
                         if (!_coldStartGateLogged)
@@ -3556,9 +3677,27 @@ namespace MozaPlugin.Telemetry
                         $"[AZOM] Cold-start catalog wait exceeded {PreambleSess01CatalogWaitMaxMs} ms " +
                         $"without a real catalog on tier-def session 0x{gateMgmt:X2} " +
                         $"({(catalogOnFlagSession ? $"re-provoke budget exhausted after {_coldStartReprovokeAttempts} attempts" : "screenless or slow wheel")}) " +
-                        "— proceeding to Active anyway (watchdog will recover if binding fails).");
+                        $"— proceeding to Active anyway (watchdog will recover if binding fails). " +
+                        $"parser: {_catalogParser.DescribeSession(gateMgmt)} {_catalogParser.DescribeSession(flagSess)}");
                     // One-shot: don't re-hold if preamble is somehow re-entered.
                     _coldStartWheelGatePending = false;
+
+                    // Stale-profile guard. Without a real catalog this session, a
+                    // synthesised profile still loaded is from a PRIOR session/dashboard
+                    // (the persistent wire survives reload) or older code — emitting it
+                    // streams wrong-channel values and, for a pre-fix all-ri-at-pkg-30
+                    // tiering, floods the link (the off-the-rails regression). Drop it so
+                    // value frames hold until the wheel re-advertises a catalog and
+                    // MaybeSwapProfileForCatalog rebuilds a profile that matches. A
+                    // user-loaded mzdash profile (Name != CatalogProfileName) is left intact.
+                    if (_profile != null && _profile.Name == CatalogProfileName)
+                    {
+                        MozaLog.Info(
+                            "[AZOM] Cold-start gave up without a real catalog — dropping the stale " +
+                            "synthesised profile so value frames hold until the wheel re-advertises " +
+                            "(prevents emitting a prior/degenerate tiering).");
+                        Profile = null;
+                    }
                 }
 
                 TransitionTo(TelemetryState.Active, "preamble countdown elapsed");
@@ -3632,6 +3771,73 @@ namespace MozaPlugin.Telemetry
         /// idle-silent (PitHouse stays quiet on sess=02 at idle); V2 always
         /// emits (BuildTestFrame vs BuildFrameFromSnapshot differentiates
         /// test/live within the loop).</summary>
+        // Serial-budget governor. The wheel link is 115200 8N1 (~11520 B/s usable);
+        // value frames must never exceed it or the write queue backs up, acks stall,
+        // and the session goes off the rails (observed: a stale/degenerate profile or
+        // a full-grid track-map ran the link to 161% of ceiling). Reserve headroom for
+        // the LED/poll/string/retransmit/tier-def traffic and cap value frames here.
+        // When a rolling 1 s total would exceed the budget, the lowest-priority
+        // (slowest, highest package_level) tiers are shed for the rest of that second.
+        // The emit loop runs fastest-tier-first, so the near-radar fast tier and
+        // normal fast channels are always sent; the radar overflow and track-map
+        // (the big, optional, variable load) shed first under pressure.
+        // The link is 115200 8N1 (~11520 B/s). ~9 kB/s for value frames leaves
+        // ~2.5 kB/s for the LED/parity-poll, string, retransmit and tier-def traffic
+        // that shares it — most of the link is usable, this isn't a tight cap. It's a
+        // backstop: the radar slot cap + dynamic per-grid emission below keep a normal
+        // radar dashboard's value frames well under this, so it only engages on a
+        // pathological channel set, shedding the slow/big tiers first.
+        private const int ValueFrameBudgetBytesPerSec = 9000;
+        // A tier whose package level is at/above this is sheddable under budget
+        // pressure (radar overflow 132, track-map 500, 2000-ms slow channels). The
+        // radar fast tier (66) and normal fast channels (30) are always sent.
+        private const int SheddableTierMinPackageLevel = 120;
+        private int _vfBudgetWindowStartMs;
+        private int _vfBudgetBytesThisWindow;
+        private int _vfSheddedFramesThisWindow;
+        private int _vfSheddingLastLogMs;
+
+        // Dynamic radar/track-map emission. The wheel advertises a huge fixed slot
+        // array (ri0..ri183 + Location_N) but only the cars actually on track exist;
+        // an empty slot's tier is pure wire waste. Each tick we track the highest
+        // live car slot and skip any radar/track-map sub-tier whose lowest slot is
+        // above it — so emission scales with the grid (a 1v1 sends a couple of slots,
+        // a full grid sends them all). High-water with a hold so a car momentarily
+        // dropping to (0,0) for a frame doesn't blink its tier; releases when the grid
+        // genuinely shrinks (session/track change). The wheel masks vacated slots via
+        // OpponentCount, so skipping leaves no ghost car.
+        private int _radarActiveSlotHighWater = -1;
+        private int _radarActiveSlotHoldStartMs;
+        private const int RadarActiveSlotHoldMs = 3000;
+
+        // Highest live car slot this frame (max CarLocations index with a non-zero
+        // position), smoothed: rises instantly when a car appears at a higher slot,
+        // and only falls RadarActiveSlotHoldMs after the grid genuinely shrinks
+        // (session/track change, cars retiring). Returns -1 when there is no per-car
+        // data — harmless, as such profiles carry no slot tiers to gate.
+        private int ComputeRadarActiveSlotHighWater(in GameDataSnapshot snapshot, int nowMs)
+        {
+            var locs = snapshot.CarLocations;
+            int raw = -1;
+            if (locs != null)
+            {
+                for (int k = 0; k < locs.Length; k++)
+                    if (locs[k].X != 0f || locs[k].Z != 0f) raw = k;
+            }
+            if (raw >= _radarActiveSlotHighWater)
+            {
+                _radarActiveSlotHighWater = raw;
+                _radarActiveSlotHoldStartMs = nowMs;
+            }
+            else if (unchecked(nowMs - _radarActiveSlotHoldStartMs) > RadarActiveSlotHoldMs
+                     || unchecked(nowMs - _radarActiveSlotHoldStartMs) < 0)
+            {
+                _radarActiveSlotHighWater = raw;   // grid shrank for real — release
+                _radarActiveSlotHoldStartMs = nowMs;
+            }
+            return _radarActiveSlotHighWater;
+        }
+
         private void TickEmitValueFrames(TierState[] tiers)
         {
             // Only build the per-car track-map/radar arrays when an active tier
@@ -3683,9 +3889,41 @@ namespace MozaPlugin.Telemetry
             }
 
             byte subFlagBase = _activeSubscription?.FlagBase ?? 0;
+
+            // Governor window roll: reset the per-second value-frame byte tally and
+            // emit a throttled note if any tiers were shed in the window just closed.
+            int vfNowMs = Environment.TickCount;
+            if (_vfBudgetWindowStartMs == 0
+                || unchecked(vfNowMs - _vfBudgetWindowStartMs) >= 1000
+                || unchecked(vfNowMs - _vfBudgetWindowStartMs) < 0)
+            {
+                if (_vfSheddedFramesThisWindow > 0
+                    && unchecked(vfNowMs - _vfSheddingLastLogMs) >= 5000)
+                {
+                    MozaLog.Debug(
+                        $"[AZOM] value-frame governor: shed {_vfSheddedFramesThisWindow} low-priority " +
+                        $"tier frame(s) last window to stay under {ValueFrameBudgetBytesPerSec} B/s " +
+                        $"(link ~11520 B/s). Fast/near-radar channels unaffected.");
+                    _vfSheddingLastLogMs = vfNowMs;
+                }
+                _vfBudgetWindowStartMs = vfNowMs;
+                _vfBudgetBytesThisWindow = 0;
+                _vfSheddedFramesThisWindow = 0;
+            }
+
+            // Dynamic per-grid radar slot ceiling: the highest live car slot this
+            // frame, held briefly so a one-frame dropout doesn't blink a tier and
+            // released when the grid shrinks. Radar/track-map tiers whose lowest slot
+            // is above this carry only absent cars and are skipped below.
+            int radarActiveSlot = ComputeRadarActiveSlotHighWater(in snapshot, vfNowMs);
+
             for (int i = 0; i < tiers.Length; i++)
             {
                 var tier = tiers[i];
+                // Skip a radar/track-map sub-tier when no live car reaches its slot
+                // range (MinRadarSlot == 0 => normal or slot-0 tier, always emitted).
+                if (tier.MinRadarSlot > 0 && tier.MinRadarSlot > radarActiveSlot)
+                    continue;
                 // Phase each tier by its index within its emit window so tiers
                 // sharing a package_level don't all fire on the same tick. A
                 // track-map dashboard splits its 63 location_t channels into ~11
@@ -3698,6 +3936,23 @@ namespace MozaPlugin.Telemetry
                 // TickInterval), only its phase shifts.
                 if (_tickCounter % tier.TickInterval != i % tier.TickInterval)
                     continue;
+
+                // Serial-budget governor: once the rolling per-second value-frame
+                // budget is exhausted, shed low-priority (slow/big) tiers — radar
+                // overflow + track-map — for the rest of the window so no profile can
+                // overrun the link. Fast tiers (radar fast, normal) are never shed;
+                // the loop is fastest-first so they consume budget before the
+                // sheddable ones are reached.
+                var prof = tier.Builder.Profile;
+                if (prof != null && prof.PackageLevel >= SheddableTierMinPackageLevel)
+                {
+                    int estBytes = prof.TotalBytes + 15;   // tier data + vf header + framing
+                    if (_vfBudgetBytesThisWindow + estBytes > ValueFrameBudgetBytesPerSec)
+                    {
+                        _vfSheddedFramesThisWindow++;
+                        continue;
+                    }
+                }
 
                 // Match flag byte to the tier-def we last sent: each tier-def
                 // claims `flagBase + tierIdx` (BuildTierDefinitionMessage). Wheel
@@ -3727,6 +3982,11 @@ namespace MozaPlugin.Telemetry
                     SendStreamSlot((int)StreamKind.TierDash0 + i, frame);
                 else
                     _connection.Send(frame);
+
+                // Count toward the per-second governor budget (essential tiers count
+                // too, so they reserve their share and the sheddable tiers shed once
+                // the link's value-frame budget is spent).
+                _vfBudgetBytesThisWindow += frame.Length;
 
                 if (i == 0)
                 {
@@ -5014,6 +5274,12 @@ namespace MozaPlugin.Telemetry
             // Pristine TotalBits/TotalBytes paired with OriginalChannels.
             public int OriginalTotalBits;
             public int OriginalTotalBytes;
+            // Lowest radar/track-map per-car slot index this tier carries (ri{N} /
+            // Location_{N}), or 0 if the tier has none (normal channels / the radar
+            // fast tier's slot-0 set). Used to skip emitting overflow / high
+            // track-map sub-tiers per-tick when no live car reaches their slot range
+            // (dynamic, grid-sized emission). 0 => always emitted.
+            public int MinRadarSlot;
         }
     }
 }

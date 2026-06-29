@@ -215,6 +215,25 @@ namespace MozaPlugin.Telemetry.Frames
                     && _endMarkerBySession.ContainsKey(session);
         }
 
+        /// <summary>One-line cold-start wedge triage: why is (or isn't)
+        /// HasRealCatalogOnSession satisfied for this session — does it have valid
+        /// URL records parsed, an END marker recorded, and how much is buffered /
+        /// committed. Logged from the cold-start catalog wait so a wedge is
+        /// diagnosable from SimHub.txt alone (no wire trace needed).</summary>
+        public string DescribeSession(byte session)
+        {
+            lock (_bufferLock)
+            {
+                bool urls = _sessionsWithValidUrls.Contains(session);
+                bool hasEnd = _endMarkerBySession.TryGetValue(session, out var ev);
+                int bufBytes = _buffersBySession.TryGetValue(session, out var b) ? b.Count : 0;
+                int nonEmpty = 0;
+                if (_catalog != null) foreach (var u in _catalog) if (!string.IsNullOrEmpty(u)) nonEmpty++;
+                return $"0x{session:X2}[validUrls={urls} end={(hasEnd ? ev.ToString() : "NONE")} "
+                     + $"buf={bufBytes}B catalog={nonEmpty}/{_catalog?.Count ?? 0} live={_liveCatalog?.Count ?? 0}]";
+            }
+        }
+
         /// <summary>Latest parsed catalog (idx-1 positional, "" for unannounced
         /// gaps). Null until the first parse succeeds. Reads are volatile.
         /// Contains URLs from every dashboard the wheel has ever loaded in

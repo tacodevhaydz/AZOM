@@ -197,6 +197,8 @@ namespace MozaPlugin
         private PluginManager _pluginManager = null!;
         private SimHubPropertyResolver _propertyResolver = null!;
         internal SimHubPropertyResolver PropertyResolver => _propertyResolver;
+        private int _headProbeTick;   // diagnostic heading-probe pacing
+        private int _headProbeCount;
         private HardwareApplier _hardwareApplier = null!;
         internal HardwareApplier HardwareApplier => _hardwareApplier;
         private DeviceProber _deviceProber = null!;
@@ -907,6 +909,11 @@ namespace MozaPlugin
                 MozaProfile.UnpackColorsInto(_settings.DashRpmBlinkColors, _data.DashRpmBlinkColors);
 
                 MozaLog.Info("[AZOM] Initializing plugin");
+                // Build marker so we can confirm WHICH DLL SimHub actually loaded
+                // (plugin DLLs load only at SimHub process start; a telemetry toggle /
+                // game switch re-runs Init on the already-loaded assembly). Bump on
+                // each radar build so a restart is verifiable from the log.
+                MozaLog.Info("[AZOM] BUILD radar-2026-06-28i: display-stability (re-cycle leaves 0x03/display alone, retry 6) + ri lateral fix");
 
                 // Bridge-format JSONL wire trace at SimHub/Logs/moza-wire-*.jsonl.
                 // Opt-in via _settings.EnableWireTraceFileSink. Fresh file per launch.
@@ -1692,6 +1699,15 @@ namespace MozaPlugin
             // doesn't make the feed look quiet.
             Interlocked.Exchange(ref _autoStandbyLastDataUpdateTicks, DateTime.UtcNow.Ticks);
             _autoStandbyLastGameRunning = data.GameRunning;
+            // Heading probe (diagnostic): dump SimHub heading/radar/spotter props a
+            // handful of times while a game runs so we can identify AC's live heading
+            // source for the radar preamble. Self-limits to ~20 logs (~once/sec).
+            if (data.GameRunning && _headProbeCount < 20 && ++_headProbeTick >= 60)
+            {
+                _headProbeTick = 0;
+                _headProbeCount++;
+                try { _propertyResolver?.LogHeadingProbe(); } catch { }
+            }
             // Keep the process responsive in the background (EcoQoS opt-out + 1 ms timer)
             // the moment a game is active. Idempotent; the PollStatus backstop handles
             // release if DataUpdate goes quiet on game exit.

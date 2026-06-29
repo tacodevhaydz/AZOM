@@ -43,25 +43,6 @@ namespace MozaPlugin.Telemetry.Frames
         /// per-opponent allocation entirely when no channel consumes them
         /// (the shipped default, with radar/track-map channels disabled).</summary>
         public bool NeedsCarPositions { get; private set; }
-        // Radar (patch/ri*) encoding. Reverse-engineered against frame-exact
-        // (lap-time-aligned) PitHouse AC captures: a ri slot's uint32 is the
-        // IEEE-754 bits of a float32 = the car's heading RELATIVE to the player,
-        // in radians (circular correlation 0.97 vs ground truth). It is NOT two
-        // packed int16s — the earlier (lo16=lateral, hi16=heading) reading was
-        // an artefact of slicing a float's high/low halves. The radar widget
-        // rotates each car's rectangle by this; the car's POSITION comes from
-        // the patch/Location* channels (the same ones driving the track map),
-        // not from ri. The player's own slot is 0 (you face "up", others rotate
-        // relative to you).
-        //
-        // Minimum per-car motion (metres) before re-deriving its heading from
-        // position deltas; below this the last good heading persists so a
-        // momentarily-stationary car keeps its rectangle orientation. Set above
-        // launch-crawl quantisation so the heading is derived over enough travel
-        // to be clean — a small value let the low-speed race-start launch spike
-        // noisy headings past the deadzone (the brief left-to-right "static").
-        private const float RadarMotionEps    = 0.30f;
-
         // Track-map location_t packing. The 64-bit slot is, little-endian,
         //   [u16 Y(elev) | u24 Z | u24 X]
         // where each field = clamp(center + round(scale * worldMetres)).
@@ -79,28 +60,34 @@ namespace MozaPlugin.Telemetry.Frames
         private readonly byte[] _frameBuffer;
         private readonly TelemetryBitWriter? _bitWriter;
 
-        // Frame-to-frame radar heading state. No game exposes opponent heading
-        // directly, so we derive each car's heading from its world-position
-        // delta (atan2 of motion). Per-car spatial threshold (RadarMotionEps)
-        // means repeated within-tick reads don't corrupt the heading and
-        // parked cars keep their last orientation. Indexed by CarLocations[].
+        // Frame-to-frame radar heading state. The radar ri field packs an
+        // opponent's POSITION (relZ) in its low 20 bits and its ORIENTATION (the
+        // car's heading relative to the player) in its high 12 bits — VERIFIED
+        // against PitHouse AC captures (high12 = 0x167 + round(carHeadingDeg -
+        // playerHeadingDeg), R^2 0.99). No game exposes opponent heading, so we
+        // derive each car's heading from its world-position delta (atan2 of
+        // motion); the player's too, so the relative angle is convention-free.
+        // Indexed by CarLocations[].
         private (float X, float Z) _radarPrevPlayer;
         private (float X, float Z) _radarPlayerVel;   // EMA-smoothed unit motion dir
         private float _radarPlayerHeading;
         private bool _radarHavePlayerHeading;
         private (float X, float Z)[]? _radarPrevCars;
-        private (float X, float Z)[]? _radarCarVel;   // EMA-smoothed unit motion dir
+        private (float X, float Z)[]? _radarCarVel;    // EMA-smoothed unit motion dir
         private float[]? _radarCarHeadings;
         private bool[]? _radarHaveCarHeading;
-        // EMA weight for the motion-direction smoothing (opponents expose no
-        // heading/velocity in AC, so headings are derived from position deltas;
-        // a raw single-frame delta is too noisy for parallel cars to cancel to
-        // ~0 as PitHouse's do — smoothing the direction fixes that).
+        // Minimum per-car motion (metres) before re-deriving its heading from a
+        // position delta; below this the last good heading persists so a
+        // momentarily-stationary car keeps its orientation (and a parked grid car
+        // stays at its default "aligned" 0x167).
+        private const float RadarMotionEps = 0.30f;
+        // EMA weight for motion-direction smoothing (opponents expose no heading
+        // in AC, so a raw single-frame delta is too noisy; smoothing the unit
+        // direction keeps the derived heading stable).
         private const float RadarVelSmooth = 0.08f;
-        // Deadzone (radians): relative headings smaller than this emit exactly 0,
-        // matching PitHouse — whose ri sits at ~0 for every car almost always
-        // (derivation noise otherwise jitters every rectangle = the "static").
-        private const float RadarHeadingDeadzone = 0.20f;
+        // A per-tick position jump beyond this (metres) is a teleport/reset, not
+        // motion — never derive a heading from it (see UpdateRadarHeadings).
+        private const float RadarTeleportEps = 40f;
 
         public TelemetryFrameBuilder(DashboardProfile profile)
             : this(profile, propertyResolver: null, type02NConvention: false,
@@ -362,39 +349,129 @@ namespace MozaPlugin.Telemetry.Frames
                 : NotLocation;
         }
 
-        // Write one radar slot: the IEEE-754 bits of a float32 = the car's
-        // heading relative to the player, in radians (the wheel rotates the
-        // car's rectangle by it; position comes from patch/Location*). The
-        // player's own slot and cars with no derived heading send 0.0f.
-        private void WriteRadarPair(int carIndex, in GameDataSnapshot snap)
+        // Write one radar slot. The radar tier is BIT-PACKED: a 131-bit preamble
+        // (CurrentLapTime f32, Gear, Heading, Rpm, player Location) then ri0..riN
+        // at bit 131+32k, one uint32 each (the wheel decodes ri BY URL but expects
+        // them co-packed behind that preamble — see DashboardProfileStore, ri* must
+        // keep its pkg-30 fast tier, NOT be isolated). Each ri<N> packs TWO fields
+        // for the car with carId N (== CarLocations[N]); ri0 is the magic header:
+        //   LOW 20 bits = POSITION: signed world relZ gap (oppZ - playerZ, metres)
+        //                 low20 = (0x80000 + round(21630 * relZ)) mod 2^20.
+        //                 Wraps at 2^20 (~+/-24.2 m), so we only emit cars inside
+        //                 that window — a car beyond it would wrap and teleport
+        //                 across the view (this matches PitHouse's sparse near-set,
+        //                 which never sends the whole field).
+        //   HIGH 12 bits = ORIENTATION: the car's heading relative to the player,
+        //                 in degrees, high12 = (0x167 + round(carHeadDeg -
+        //                 playerHeadDeg)) mod 2^12. 0x167 is "aligned with the
+        //                 player" (NOT a magic constant — it's the field centre;
+        //                 it merely looks constant when cars run parallel to you).
+        // VERIFIED against PitHouse AC captures: position RMS 0.27 m, orientation
+        // R^2 0.99 (radar4 carId1/5/7). Headings are derived from world motion
+        // (UpdateRadarHeadings); a stationary car keeps its last heading, and a
+        // never-moved (parked grid) car defaults to aligned (0x167). The player's
+        // own slot is skipped. There is NO lateral here — left/right is the
+        // separate ATSR / SpotterCar* spotter signal.
+        private const uint RadarMagic = 0x1687FDFFu;   // ri0 header, constant
+        // ri (low 20 bits) packs TWO signed 10-bit position fields, NOT one relZ:
+        //   bits 10-19 = FORWARD  (world relZ gap)
+        //   bits  0-9  = LATERAL  (world relX gap)
+        // each centred at 0x200 (512), scale 512/24 units/m, +/-24 m window.
+        // The wheel rotates the (relX,relZ) vector by the preamble Heading so the
+        // player's forward points "up". Verified against PitHouse (regression on
+        // matched cars): LATERAL = 21.33*relX + 511, FORWARD = 21.30*relZ + 512.
+        // The old code wrote relZ across all 20 bits, so the lateral field decoded
+        // to (scale*relZ) mod 1024 = garbage — that is the "cars sliding sideways /
+        // scatter" defect.
+        private const int RadarPosFieldCenter = 0x200;       // 512: 10-bit axis centre (rel = 0)
+        private const double RadarPosFieldScale = 512.0 / 24.0; // 21.333 units/m per axis (+/-24 m)
+        private const int RadarHeadCenter = 0x167;     // high 12 bits at relHeading = 0 (aligned)
+        // Only emit a car whose |relZ| is inside the low-20 wrap window; beyond it
+        // the position wraps and the dot teleports. 2^19 / 21630 = 24.24 m; gate
+        // just inside so we never sit on the wrap seam.
+        private const float RadarRelZRange = 24.0f;
+        // ...AND within ~30 m in 2-D. relZ carries no lateral, so a car far across
+        // the track on a parallel section can share the player's world-Z and would
+        // otherwise plot as a phantom (wrong spot, ~180° heading). PitHouse's shown
+        // cars are 100% within 30 m 2-D (0% beyond) — this gate matches that.
+        private const float RadarRange2DSq = 30f * 30f;
+        private const double RadToDeg = 180.0 / Math.PI;
+
+        private void WriteRadarPair(int slot, in GameDataSnapshot snap)
         {
-            float ri = 0f;
-            if (carIndex >= 0 && carIndex != snap.PlayerIndex
-                && _radarHavePlayerHeading
-                && _radarHaveCarHeading != null && carIndex < _radarHaveCarHeading.Length
-                && _radarHaveCarHeading[carIndex])
+            uint packed;
+            if (slot == 0)
             {
-                // Both headings derived from world motion (same convention), so
-                // the relative angle is convention-independent. Sign/offset
-                // verified on-wheel (flip if rectangles mirror/point backwards).
-                double rel = NormalizeRad(_radarPlayerHeading - _radarCarHeadings![carIndex]);
-                ri = Math.Abs(rel) < RadarHeadingDeadzone ? 0f : (float)rel;
+                packed = RadarMagic;                   // ri0 = magic header, always
             }
-            _bitWriter!.WriteBits(BitConverter.ToUInt32(BitConverter.GetBytes(ri), 0), 32);
+            else
+            {
+                packed = 0u;                           // unused slot beyond the in-range set = 0
+                // ri1,ri2,... = the in-range opponents PACKED in carId order (see
+                // GameDataSnapshot.RadarSlotCarIds) — matching PitHouse, which emits
+                // only the near set so the nearest cars fill the fast tier. (Earlier
+                // ri_k = carId k put near high-carId cars in the slow overflow tier
+                // and emitted far phantom cars the wheel scattered.) The selection
+                // (~24 m 2-D) is done in the snapshot, so |relZ| < 24 m here — no wrap.
+                var slots = snap.RadarSlotCarIds;
+                var locs = snap.CarLocations;
+                int idx = (slots != null && slot < slots.Length) ? slots[slot] : -1;
+                if (idx >= 0 && locs != null && idx < locs.Length)
+                {
+                    var c = locs[idx];
+                    float relz = c.Z - snap.PlayerLocation.Z;   // world forward gap
+                    float relx = c.X - snap.PlayerLocation.X;   // world lateral gap
+                    int fwdField = RadarPosFieldCenter + (int)Math.Round(RadarPosFieldScale * relz);
+                    int latField = RadarPosFieldCenter + (int)Math.Round(RadarPosFieldScale * relx);
+                    if (fwdField < 0) fwdField = 0; else if (fwdField > 0x3FF) fwdField = 0x3FF;
+                    if (latField < 0) latField = 0; else if (latField > 0x3FF) latField = 0x3FF;
+                    int posField = (fwdField << 10) | latField;  // bits10-19 fwd, bits0-9 lat
+                    // Orientation: relative heading (car - player) in degrees, centred
+                    // on 0x167. Headings are derived from world motion (heading state is
+                    // carId-indexed, so look it up by idx, not by slot); default aligned
+                    // when a car or the player has no derived heading yet.
+                    int headField = RadarHeadCenter;
+                    if (_radarHavePlayerHeading
+                        && _radarHaveCarHeading != null && idx < _radarHaveCarHeading.Length
+                        && _radarHaveCarHeading[idx])
+                    {
+                        double relDeg = NormalizeRad(
+                            _radarCarHeadings![idx] - _radarPlayerHeading) * RadToDeg;
+                        headField = (RadarHeadCenter + (int)Math.Round(relDeg)) & 0xFFF;
+                    }
+                    packed = ((uint)headField << 20) | (uint)posField;
+                }
+            }
+            _bitWriter!.WriteBits(packed, 32);
         }
 
-        // Derive player + opponent headings from world-position deltas. Each car
-        // updates its heading only once it has moved RadarMotionEps since its
-        // last update, so repeated within-tick reads (Δ=0) are ignored and
+        // Derive player + opponent headings from world-position deltas, once per
+        // frame, feeding the radar's high-12-bit relative-orientation field. Each
+        // car updates its heading only after it has moved RadarMotionEps since its
+        // last update, so repeated within-tick reads (delta=0) are ignored and
         // stationary cars keep their last good heading.
         private void UpdateRadarHeadings(in GameDataSnapshot snap)
         {
             const float eps2 = RadarMotionEps * RadarMotionEps;
+            // A frame-to-frame jump larger than any real car could travel in one
+            // tick is a teleport/reset (a replay loop restart, a session/teleport-
+            // to-pit, or a car popping in at a new position). Deriving a "heading"
+            // from that jump produces a bogus orientation that then sticks while
+            // the car sits still (e.g. the whole grid pointing one wrong way at a
+            // standing start). Treat it as a discontinuity: drop the heading and
+            // re-baseline, so a just-teleported/parked car renders aligned until
+            // it actually moves.
+            const float teleport2 = RadarTeleportEps * RadarTeleportEps;
 
             float pdx = snap.PlayerLocation.X - _radarPrevPlayer.X;
             float pdz = snap.PlayerLocation.Z - _radarPrevPlayer.Z;
             float pd2 = pdx * pdx + pdz * pdz;
-            if (pd2 >= eps2)
+            if (pd2 >= teleport2)
+            {
+                _radarHavePlayerHeading = false;           // discontinuity: re-baseline
+                _radarPrevPlayer = (snap.PlayerLocation.X, snap.PlayerLocation.Z);
+            }
+            else if (pd2 >= eps2)
             {
                 float inv = 1f / (float)Math.Sqrt(pd2);
                 SmoothDir(ref _radarPlayerVel, pdx * inv, pdz * inv, _radarHavePlayerHeading);
@@ -419,7 +496,12 @@ namespace MozaPlugin.Telemetry.Frames
                 float dx = locs[i].X - _radarPrevCars![i].X;
                 float dz = locs[i].Z - _radarPrevCars[i].Z;
                 float d2 = dx * dx + dz * dz;
-                if (d2 >= eps2)
+                if (d2 >= teleport2)
+                {
+                    _radarHaveCarHeading![i] = false;       // discontinuity: re-baseline
+                    _radarPrevCars[i] = (locs[i].X, locs[i].Z);
+                }
+                else if (d2 >= eps2)
                 {
                     float inv = 1f / (float)Math.Sqrt(d2);
                     var v = _radarCarVel![i];
@@ -488,6 +570,9 @@ namespace MozaPlugin.Telemetry.Frames
             if (_bitWriter != null)
             {
                 _bitWriter.Reset();
+
+                // Refresh per-car headings from motion before writing radar slots
+                // (feeds the ri high-12-bit relative-orientation field).
                 UpdateRadarHeadings(in snapshot);
 
                 // Pick the per-track world→field transform for the location_t

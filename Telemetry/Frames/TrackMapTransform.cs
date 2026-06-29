@@ -80,6 +80,19 @@ namespace MozaPlugin.Telemetry.Frames
         public static TrackMapTransform Resolve(string? trackFolder)
         {
             if (string.IsNullOrEmpty(trackFolder)) return Fallback();
+            // TEST (temporary): exact PitHouse-fitted transform for ks_zandvoort
+            // (R^2 ~1.0 against the radar6 capture). Confirms whether the radar's
+            // static is the Location transform before generalising the formula.
+            if (trackFolder == "ks_zandvoort")
+            {
+                MozaLog.Info("[AZOM] track transform 'ks_zandvoort': using PitHouse-fitted test values");
+                return new TrackMapTransform
+                {
+                    ScaleX = 1201.95f, ScaleZ = 19220.4f, ScaleY = 1204.35f,
+                    CenterX = 4884363, CenterZ = 8540005, CenterY = 34180,
+                    Source = "pithouse-fit:ks_zandvoort",
+                };
+            }
             try
             {
                 string? ini = FindMapIni(trackFolder!);

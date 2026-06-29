@@ -48,6 +48,15 @@ namespace MozaPlugin.Telemetry.Frames
         // so the wheel can highlight "you" on the track map. 0 when unknown.
         public int PlayerIndex;
 
+        // Slot-indexed map ri-slot -> CarLocations index (carId) for the radar, or
+        // -1 for an empty slot. Index 0 is unused (ri0 is the magic header). PitHouse
+        // gives each car a STABLE slot it keeps while relevant and emits ONLY the
+        // in-range cars (~24 m 2-D); a car entering/leaving range never reshuffles the
+        // others (re-packing every frame made the radar go wild the instant cars
+        // moved and crossed the range boundary). Built by AssignStableRadarSlots.
+        // Null when car positions weren't requested.
+        public int[]? RadarSlotCarIds;
+
         // Track folder name (AC: content/tracks/<name>, e.g. "ks_zandvoort"),
         // used as the per-track cache key for the map bounds / transform.
         public string? TrackFolderName;
@@ -180,56 +189,173 @@ namespace MozaPlugin.Telemetry.Frames
             // deferred.
             float[]? raw = TryReadRawCarCoordinates(data);
 
-            var locs = new (float X, float Y, float Z)[count];
-            var rels = new (float X, float Y)[count];
+            // The radar (patch/ri*) and track-map (patch/Location*) channels need
+            // each car to keep a STABLE slot frame-to-frame (a car that jumps slots
+            // streaks across the wheel's radar and corrupts its per-slot heading
+            // history). SimHub's Opponents list is sorted by RACE POSITION, so the
+            // list index is NOT stable. Two stable indexings, by data source:
+            //
+            //  • Live AC exposes the raw Graphics.CarCoordinates array, which is
+            //    indexed by AC carId (slot i = the car with carId i) — so locs[i]
+            //    is carId-indexed and slot i == carId i, matching PitHouse exactly.
+            //  • A SimHub replay only records the player's CarCoordinates (raw is
+            //    too short), and exposes opponents only as a position-sorted list
+            //    with a stable driver Id (no carId). We map Id -> a fixed slot
+            //    (player -> 0, others first-seen) so the slot stays put; the slot
+            //    numbers differ from live carIds but each car renders correctly.
+            bool rawCarIdIndexed = raw != null && raw.Length >= count * 3;
+
+            (float X, float Y, float Z)[] locs;
+            (float X, float Y)[] rels;
             int playerIdx = 0;
-            double bestD = double.MaxValue;
-            bool playerByDist = false;
-            for (int i = 0; i < count; i++)
+
+            if (rawCarIdIndexed)
             {
-                var opp = opps[i];
-                (float X, float Y, float Z) abs;
-                bool haveAbs = false;
-
-                if (raw != null && i * 3 + 2 < raw.Length
-                    && (raw[i * 3] != 0f || raw[i * 3 + 2] != 0f))
+                locs = new (float X, float Y, float Z)[count];
+                rels = new (float X, float Y)[count];
+                double bestD = double.MaxValue;
+                bool playerByDist = false;
+                for (int i = 0; i < count; i++)             // i == carId
                 {
-                    abs = (raw[i * 3], raw[i * 3 + 1], raw[i * 3 + 2]); // world X, Y(elev), Z
-                    haveAbs = true;
-                }
-                else
-                {
-                    var c = opp?.Coordinates;
-                    if (c != null && c.Length >= 3 && (c[0] != 0.0 || c[2] != 0.0))
+                    (float X, float Y, float Z) abs = (raw![i * 3] != 0f || raw[i * 3 + 2] != 0f)
+                        ? (raw[i * 3], raw[i * 3 + 1], raw[i * 3 + 2])
+                        : (0f, 0f, 0f);
+                    locs[i] = abs;
+                    if (havePlayer && (abs.X != 0f || abs.Z != 0f))
                     {
-                        abs = ToWorldXyz(map, c);
-                        haveAbs = true;
+                        rels[i] = (abs.X - px, abs.Z - pz);
+                        double d = (abs.X - px) * (abs.X - px) + (abs.Z - pz) * (abs.Z - pz);
+                        if (d < bestD) { bestD = d; playerIdx = i; playerByDist = true; }
                     }
-                    else
-                    {
-                        abs = (0f, 0f, 0f);
-                    }
+                    var opp = opps[i];
+                    if (!playerByDist && opp != null && opp.IsPlayer) playerIdx = i;
                 }
-
-                locs[i] = abs;
-                if (haveAbs && havePlayer)
-                {
-                    rels[i] = (abs.X - px, abs.Z - pz);
-                    double d = (abs.X - px) * (abs.X - px) + (abs.Z - pz) * (abs.Z - pz);
-                    if (d < bestD) { bestD = d; playerIdx = i; playerByDist = true; }
-                }
-                else
-                {
-                    var rc = opp?.RelativeCoordinatesToPlayer;
-                    rels[i] = rc.HasValue ? (rc.Value.X, rc.Value.Y) : (0f, 0f);
-                }
-
-                if (!playerByDist && opp != null && opp.IsPlayer)
-                    playerIdx = i;
             }
+            else
+            {
+                int[] slotOf = new int[count];
+                int maxSlot = 0;
+                for (int i = 0; i < count; i++)
+                {
+                    var opp = opps[i];
+                    slotOf[i] = StableOpponentSlot(opp?.Id, opp?.IsPlayer ?? false, snap.TrackFolderName);
+                    if (slotOf[i] > maxSlot) maxSlot = slotOf[i];
+                }
+                locs = new (float X, float Y, float Z)[maxSlot + 1];
+                rels = new (float X, float Y)[maxSlot + 1];
+                for (int i = 0; i < count; i++)
+                {
+                    int s = slotOf[i];
+                    if (s < 0) continue;
+                    var opp = opps[i];
+                    var c = opp?.Coordinates;
+                    (float X, float Y, float Z) abs = (c != null && c.Length >= 3 && (c[0] != 0.0 || c[2] != 0.0))
+                        ? ToWorldXyz(map, c)
+                        : (0f, 0f, 0f);
+                    locs[s] = abs;
+                    if (havePlayer && (abs.X != 0f || abs.Z != 0f))
+                        rels[s] = (abs.X - px, abs.Z - pz);
+                    if (opp?.IsPlayer ?? false) playerIdx = s;
+                }
+            }
+
             snap.CarLocations = locs;
             snap.CarRelative = rels;
             snap.PlayerIndex = playerIdx;
+
+            snap.RadarSlotCarIds = havePlayer
+                ? AssignStableRadarSlots(locs, playerIdx, px, pz, snap.TrackFolderName)
+                : null;
+        }
+
+        // Radar selection range (PitHouse shows opponents within ~24 m 2-D). 24 m
+        // also bounds |relZ| < 24 m so the wrapping ri field stays in its principal
+        // window — no un-wrap dependency for the shown set.
+        private const float RadarSelectRange2DSq = 24f * 24f;
+        private const int RadarMaxSlots = Dashboard.DashboardProfileStore.MaxRadarSlotIndex;   // ri1..ri47
+        // Keep a car's slot for this long after it drops out of range, so brief
+        // range-boundary flicker doesn't free+reassign (and reshuffle) slots.
+        private const int RadarSlotHoldMs = 2000;
+        private static readonly System.Collections.Generic.Dictionary<int, int> _radarSlotOf
+            = new System.Collections.Generic.Dictionary<int, int>();        // carId -> slot
+        private static readonly System.Collections.Generic.Dictionary<int, int> _radarLastInRangeMs
+            = new System.Collections.Generic.Dictionary<int, int>();        // carId -> last in-range tick
+        private static string? _radarSlotTrack;
+
+        // Assign each in-range opponent a STABLE ri slot (matches PitHouse). A car
+        // keeps its slot while it stays relevant, so one car entering/leaving radar
+        // range never moves the others — the fix for the radar going wild the moment
+        // cars started moving (re-packing every frame shuffled every slot). First car
+        // into range takes the lowest free slot and holds it; the slot frees only
+        // after RadarSlotHoldMs out of range. Returns slot->carId (-1 = empty); a
+        // held-but-currently-out-of-range car emits 0 (its slot stays reserved).
+        private static int[] AssignStableRadarSlots(
+            (float X, float Y, float Z)[] locs, int playerIdx, float px, float pz, string? track)
+        {
+            if (track != _radarSlotTrack)
+            {
+                _radarSlotOf.Clear(); _radarLastInRangeMs.Clear(); _radarSlotTrack = track;
+            }
+            int now = Environment.TickCount;
+            var slotUsed = new bool[RadarMaxSlots + 1];
+            foreach (var s in _radarSlotOf.Values) if (s >= 1 && s <= RadarMaxSlots) slotUsed[s] = true;
+
+            var inRange = new System.Collections.Generic.HashSet<int>();
+            for (int idx = 0; idx < locs.Length; idx++)
+            {
+                if (idx == playerIdx) continue;
+                var c = locs[idx];
+                if ((c.X == 0f && c.Z == 0f) || float.IsNaN(c.X) || float.IsNaN(c.Z)) continue;
+                float rx = c.X - px, rz = c.Z - pz;
+                if (rx * rx + rz * rz > RadarSelectRange2DSq) continue;
+                inRange.Add(idx);
+                _radarLastInRangeMs[idx] = now;
+                if (!_radarSlotOf.ContainsKey(idx))
+                    for (int s = 1; s <= RadarMaxSlots; s++)
+                        if (!slotUsed[s]) { _radarSlotOf[idx] = s; slotUsed[s] = true; break; }
+            }
+
+            System.Collections.Generic.List<int>? toFree = null;
+            foreach (var kv in _radarSlotOf)
+                if (!inRange.Contains(kv.Key)
+                    && (!_radarLastInRangeMs.TryGetValue(kv.Key, out int t)
+                        || unchecked(now - t) > RadarSlotHoldMs))
+                    (toFree ??= new System.Collections.Generic.List<int>()).Add(kv.Key);
+            if (toFree != null)
+                foreach (var cid in toFree) { _radarSlotOf.Remove(cid); _radarLastInRangeMs.Remove(cid); }
+
+            var arr = new int[RadarMaxSlots + 1];
+            for (int i = 0; i < arr.Length; i++) arr[i] = -1;
+            foreach (var kv in _radarSlotOf)
+                if (inRange.Contains(kv.Key) && kv.Value >= 1 && kv.Value <= RadarMaxSlots)
+                    arr[kv.Value] = kv.Key;   // emit only in-range cars; held-out slots stay empty (0)
+            return arr;
+        }
+
+        // Stable per-car radar/track-map slot. SimHub sorts Opponents by race
+        // position, so the list index churns; we pin each stable driver Id to a
+        // fixed slot (player -> 0, the ri0 magic-header slot that's skipped;
+        // others first-seen 1..N). Cleared on track change so a fresh session
+        // re-packs from slot 1. Single-threaded (telemetry tick), so no lock.
+        private static readonly Dictionary<string, int> _oppSlotById = new Dictionary<string, int>();
+        private static string? _oppSlotTrack;
+        private static int _oppSlotNext = 1;
+        private static int StableOpponentSlot(string? id, bool isPlayer, string? track)
+        {
+            if (track != _oppSlotTrack)
+            {
+                _oppSlotById.Clear();
+                _oppSlotNext = 1;
+                _oppSlotTrack = track;
+            }
+            if (isPlayer) return 0;
+            if (string.IsNullOrEmpty(id)) return -1;
+            if (!_oppSlotById.TryGetValue(id!, out int s))
+            {
+                s = _oppSlotNext++;
+                _oppSlotById[id!] = s;
+            }
+            return s;
         }
 
         // Per-car absolute ground coordinates from the raw game struct, when the
