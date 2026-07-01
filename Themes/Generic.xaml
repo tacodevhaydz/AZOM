@@ -196,6 +196,19 @@
     </Style>
 
     <!-- ============================================================ -->
+    <!-- MozaRangeSlider                                               -->
+    <!-- ============================================================ -->
+    <!-- Shared template lives in MozaTheme.xaml (same split as
+         MozaCurveEditor above) — this is just the unkeyed default style
+         WPF auto-applies to every MozaRangeSlider instance. -->
+
+    <Style TargetType="{x:Type controls:MozaRangeSlider}">
+        <Setter Property="MinHeight" Value="90"/>
+        <Setter Property="AccentBrush" Value="{StaticResource AmberBrush}"/>
+        <Setter Property="Template" Value="{StaticResource MozaRangeSliderTemplate}"/>
+    </Style>
+
+    <!-- ============================================================ -->
     <!-- SteeringArc                                                   -->
     <!-- ============================================================ -->
 

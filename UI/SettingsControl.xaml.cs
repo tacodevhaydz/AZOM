@@ -260,12 +260,33 @@ namespace MozaPlugin
 
             UpdateActiveButtons(connected);
             UpdateHandbrakeButtonStatus(connected);
+            UpdateMBoosterCurveMarkers();
 
             // Phase 6: fan out live HID data to the per-device wheel control's
             // Inputs sub-tab so its paddle bars + active-button text update at
             // the same 30 Hz cadence as the (now hidden) plugin-pane controls.
             try { global::MozaPlugin.Devices.MozaWheelSettingsControl.Instance?.PushInputsLiveData(_data); }
             catch { }
+        }
+
+        // Live position markers on the mBooster tab's two curve editors,
+        // driven by the currently selected device's latest HID position.
+        // Runs at the same 30 Hz cadence as the standard pedal bars above
+        // instead of the 500ms general refresh — that felt sluggish for
+        // direct pedal feedback.
+        private void UpdateMBoosterCurveMarkers()
+        {
+            if (MBoosterDevicePanel.Visibility != Visibility.Visible) return;
+            var selected = _plugin?.MBoosterRegistry?.FindByIdentity(_mboosterSelectedIdentity ?? "");
+            if (selected == null) return;
+            int pct = (int)Math.Round(selected.LastHidPosition * 100);
+            if (pct < 0) pct = 0; if (pct > 100) pct = 100;
+
+            // Input Curve sees the pre-shaping value (what it actually
+            // receives); the output curve sees the post-Pedal-Feel value
+            // (what's effectively sent onward).
+            MBoosterInputCurveEditor.LiveX = selected.LastRawPercentPreCurve;
+            MBoosterCurveEditor.LiveX = pct;
         }
 
         private void UpdateActiveButtons(bool connected)
@@ -2469,25 +2490,16 @@ namespace MozaPlugin
             var selected = registry.FindByIdentity(_mboosterSelectedIdentity ?? "");
             if (selected == null)
             {
-                MBoosterStatusDot.Fill = Brushes.Gray;
-                MBoosterStatusLabel.Text = Strings.Status_NoMBoosterSelected;
                 MBoosterDevicePanel.Visibility = Visibility.Collapsed;
                 return;
             }
 
-            MBoosterStatusDot.Fill = selected.Detected
-                ? Brushes.LimeGreen
-                : (selected.IsConnected ? Brushes.Goldenrod : Brushes.Gray);
-            MBoosterStatusLabel.Text = selected.Detected
-                ? $"Connected ({MBoosterDeviceController.ShortIdentity(selected.Identity)})"
-                : (selected.IsConnected ? "Probing…" : "Disconnected");
             MBoosterDevicePanel.Visibility = Visibility.Visible;
 
-            // Live position bar — driven by the controller's latest HID position.
-            int pct = (int)Math.Round(selected.LastHidPosition * 100);
-            if (pct < 0) pct = 0; if (pct > 100) pct = 100;
-            MBoosterPositionBar.Value = pct;
-            MBoosterPositionLabel.Text = pct + " %";
+            // Live position marker (on the curve editors) is updated at
+            // 30 Hz from UpdateHidInputDisplays (UpdateMBoosterCurveMarkers)
+            // instead of here — this 500ms pass felt sluggish for direct
+            // pedal feedback.
 
             if (_mboosterUiSeeded) return;
             // Seed slider/checkbox values from the profile entry. _plugin is
@@ -2514,6 +2526,34 @@ namespace MozaPlugin
                 SetValueText(MBoosterMinValue, MBoosterMinSlider.Value.ToString("F0"));
                 MBoosterMaxSlider.Value = s.Max >= 0 ? s.Max : 0;
                 SetValueText(MBoosterMaxValue, MBoosterMaxSlider.Value.ToString("F0"));
+                var curve = (s.CurveY != null && s.CurveY.Length == 5) ? s.CurveY : MBoosterDefaultCurve;
+                MBoosterY1Slider.Value = curve[0]; SetValueText(MBoosterY1Value, curve[0].ToString("F0"));
+                MBoosterY2Slider.Value = curve[1]; SetValueText(MBoosterY2Value, curve[1].ToString("F0"));
+                MBoosterY3Slider.Value = curve[2]; SetValueText(MBoosterY3Value, curve[2].ToString("F0"));
+                MBoosterY4Slider.Value = curve[3]; SetValueText(MBoosterY4Value, curve[3].ToString("F0"));
+                MBoosterY5Slider.Value = curve[4]; SetValueText(MBoosterY5Value, curve[4].ToString("F0"));
+                var curveX = (s.CurveX != null && s.CurveX.Length == 5) ? s.CurveX : MBoosterDefaultCurve;
+                MBoosterX1Slider.Value = curveX[0]; SetValueText(MBoosterX1Value, curveX[0].ToString("F0"));
+                MBoosterX2Slider.Value = curveX[1]; SetValueText(MBoosterX2Value, curveX[1].ToString("F0"));
+                MBoosterX3Slider.Value = curveX[2]; SetValueText(MBoosterX3Value, curveX[2].ToString("F0"));
+                MBoosterX4Slider.Value = curveX[3]; SetValueText(MBoosterX4Value, curveX[3].ToString("F0"));
+                MBoosterX5Slider.Value = curveX[4]; SetValueText(MBoosterX5Value, curveX[4].ToString("F0"));
+                MBoosterRatioSlider.Value = s.SensorOutputRatioPct >= 0 ? s.SensorOutputRatioPct : 0;
+                SetValueText(MBoosterRatioValue, $"{MBoosterRatioSlider.Value:F0}%");
+                MBoosterMaxThresholdSlider.Value = s.MaxThresholdKg >= 0 ? s.MaxThresholdKg : 100;
+                SetValueText(MBoosterMaxThresholdValue, MBoosterMaxThresholdSlider.Value.ToString("F0"));
+                var inputCurve = (s.InputCurveY != null && s.InputCurveY.Length == 5) ? s.InputCurveY : MBoosterDefaultCurve;
+                MBoosterInputY1Slider.Value = inputCurve[0]; SetValueText(MBoosterInputY1Value, inputCurve[0].ToString("F0"));
+                MBoosterInputY2Slider.Value = inputCurve[1]; SetValueText(MBoosterInputY2Value, inputCurve[1].ToString("F0"));
+                MBoosterInputY3Slider.Value = inputCurve[2]; SetValueText(MBoosterInputY3Value, inputCurve[2].ToString("F0"));
+                MBoosterInputY4Slider.Value = inputCurve[3]; SetValueText(MBoosterInputY4Value, inputCurve[3].ToString("F0"));
+                MBoosterInputY5Slider.Value = inputCurve[4]; SetValueText(MBoosterInputY5Value, inputCurve[4].ToString("F0"));
+                MBoosterTravelRangeSlider.LowValue = s.TravelStartMm;
+                MBoosterTravelRangeSlider.HighValue = s.TravelEndMm;
+                MBoosterDeadzoneSlider.Value = s.DeadzoneKg;
+                SetValueText(MBoosterDeadzoneValue, s.DeadzoneKg.ToString("F1"));
+                MBoosterMaxForceSlider.Value = s.MaxForceKg;
+                SetValueText(MBoosterMaxForceValue, s.MaxForceKg.ToString("F0"));
             }
             _mboosterUiSeeded = true;
         }
@@ -2691,6 +2731,210 @@ namespace MozaPlugin
             s.Max = v;
             _plugin.SaveSettings();
         }
+
+        private static readonly float[] MBoosterDefaultCurve = { 20, 40, 60, 80, 100 };
+
+        // Output curve (5-point, mirrors the wheelbase pedal Y curves). The
+        // mBooster's single physical axis always writes through the
+        // "throttle" command slot regardless of assigned role — same
+        // convention as Direction/Min/Max above (see ApplyMBoosterToHardware).
+        //
+        // Nodes are also draggable horizontally (AllowHorizontalDrag on the
+        // editor) so "100% output before 100% input" works without a
+        // (nonexistent) hardware X-breakpoint command: every Y or X change
+        // resamples the whole (CurveX, CurveY) shape at the fixed
+        // 20/40/60/80/100 breakpoints the wire protocol actually supports
+        // and pushes all 5 through the existing y1-y5 commands, instead of
+        // pushing just the one changed value. When CurveX is still the
+        // default, resampling is the identity, so this is a no-op change in
+        // behavior for anyone who never drags a node sideways.
+        private void SetMBoosterCurveY(int index, int v)
+        {
+            var s = CurrentMBoosterSettings();
+            if (s == null) return;
+            if (s.CurveY == null || s.CurveY.Length != 5) s.CurveY = (float[])MBoosterDefaultCurve.Clone();
+            s.CurveY[index] = v;
+            PushResampledMBoosterCurve(s);
+        }
+
+        private void SetMBoosterCurveX(int index, int v)
+        {
+            var s = CurrentMBoosterSettings();
+            if (s == null) return;
+            if (s.CurveX == null || s.CurveX.Length != 5) s.CurveX = (float[])MBoosterDefaultCurve.Clone();
+            if (s.CurveY == null || s.CurveY.Length != 5) s.CurveY = (float[])MBoosterDefaultCurve.Clone();
+            s.CurveX[index] = v;
+            PushResampledMBoosterCurve(s);
+        }
+
+        private void PushResampledMBoosterCurve(MBoosterDeviceSettings s)
+        {
+            if (s.CurveY == null || s.CurveY.Length != 5) return;
+            var controller = CurrentMBoosterController();
+            if (controller == null) return;
+            var resampled = global::MozaPlugin.Devices.MozaMBoosterRegistry.ResampleCurveAtFixedBreakpoints(s.CurveX, s.CurveY);
+            for (int i = 0; i < 5; i++)
+                controller.SendFloatWrite($"mbooster-throttle-y{i + 1}", resampled[i]);
+        }
+
+        private void MBoosterY1Slider_ValueChanged(object s, RoutedPropertyChangedEventArgs<double> e) => OnIntSliderChanged(e.NewValue, MBoosterY1Value, "", v => SetMBoosterCurveY(0, v));
+        private void MBoosterY2Slider_ValueChanged(object s, RoutedPropertyChangedEventArgs<double> e) => OnIntSliderChanged(e.NewValue, MBoosterY2Value, "", v => SetMBoosterCurveY(1, v));
+        private void MBoosterY3Slider_ValueChanged(object s, RoutedPropertyChangedEventArgs<double> e) => OnIntSliderChanged(e.NewValue, MBoosterY3Value, "", v => SetMBoosterCurveY(2, v));
+        private void MBoosterY4Slider_ValueChanged(object s, RoutedPropertyChangedEventArgs<double> e) => OnIntSliderChanged(e.NewValue, MBoosterY4Value, "", v => SetMBoosterCurveY(3, v));
+        private void MBoosterY5Slider_ValueChanged(object s, RoutedPropertyChangedEventArgs<double> e) => OnIntSliderChanged(e.NewValue, MBoosterY5Value, "", v => SetMBoosterCurveY(4, v));
+
+        private void MBoosterX1Slider_ValueChanged(object s, RoutedPropertyChangedEventArgs<double> e) => OnIntSliderChanged(e.NewValue, MBoosterX1Value, "", v => SetMBoosterCurveX(0, v));
+        private void MBoosterX2Slider_ValueChanged(object s, RoutedPropertyChangedEventArgs<double> e) => OnIntSliderChanged(e.NewValue, MBoosterX2Value, "", v => SetMBoosterCurveX(1, v));
+        private void MBoosterX3Slider_ValueChanged(object s, RoutedPropertyChangedEventArgs<double> e) => OnIntSliderChanged(e.NewValue, MBoosterX3Value, "", v => SetMBoosterCurveX(2, v));
+        private void MBoosterX4Slider_ValueChanged(object s, RoutedPropertyChangedEventArgs<double> e) => OnIntSliderChanged(e.NewValue, MBoosterX4Value, "", v => SetMBoosterCurveX(3, v));
+        private void MBoosterX5Slider_ValueChanged(object s, RoutedPropertyChangedEventArgs<double> e) => OnIntSliderChanged(e.NewValue, MBoosterX5Value, "", v => SetMBoosterCurveX(4, v));
+
+        private void ApplyMBoosterCurvePreset(int[] curve)
+        {
+            var s = CurrentMBoosterSettings();
+            if (s == null) return;
+            if (s.CurveY == null || s.CurveY.Length != 5) s.CurveY = new float[5];
+            // Presets are a clean, standard shape — reset any dragged X
+            // positions back to the fixed breakpoints too.
+            s.CurveX = null;
+            using (_suppressor.Begin())
+            {
+                MBoosterY1Slider.Value = curve[0]; SetValueText(MBoosterY1Value, curve[0].ToString());
+                MBoosterY2Slider.Value = curve[1]; SetValueText(MBoosterY2Value, curve[1].ToString());
+                MBoosterY3Slider.Value = curve[2]; SetValueText(MBoosterY3Value, curve[2].ToString());
+                MBoosterY4Slider.Value = curve[3]; SetValueText(MBoosterY4Value, curve[3].ToString());
+                MBoosterY5Slider.Value = curve[4]; SetValueText(MBoosterY5Value, curve[4].ToString());
+                MBoosterX1Slider.Value = MBoosterDefaultCurve[0]; SetValueText(MBoosterX1Value, MBoosterDefaultCurve[0].ToString("F0"));
+                MBoosterX2Slider.Value = MBoosterDefaultCurve[1]; SetValueText(MBoosterX2Value, MBoosterDefaultCurve[1].ToString("F0"));
+                MBoosterX3Slider.Value = MBoosterDefaultCurve[2]; SetValueText(MBoosterX3Value, MBoosterDefaultCurve[2].ToString("F0"));
+                MBoosterX4Slider.Value = MBoosterDefaultCurve[3]; SetValueText(MBoosterX4Value, MBoosterDefaultCurve[3].ToString("F0"));
+                MBoosterX5Slider.Value = MBoosterDefaultCurve[4]; SetValueText(MBoosterX5Value, MBoosterDefaultCurve[4].ToString("F0"));
+            }
+            for (int i = 0; i < 5; i++)
+                s.CurveY[i] = curve[i];
+            PushResampledMBoosterCurve(s);
+            _plugin.SaveSettings();
+        }
+
+        private void MBoosterCurvePreset_Linear(object s, RoutedEventArgs e)      => ApplyMBoosterCurvePreset(PedalCurvePresets[0]);
+        private void MBoosterCurvePreset_SCurve(object s, RoutedEventArgs e)      => ApplyMBoosterCurvePreset(PedalCurvePresets[1]);
+        private void MBoosterCurvePreset_Exponential(object s, RoutedEventArgs e) => ApplyMBoosterCurvePreset(PedalCurvePresets[2]);
+        private void MBoosterCurvePreset_Parabolic(object s, RoutedEventArgs e)   => ApplyMBoosterCurvePreset(PedalCurvePresets[3]);
+
+        // Pedal Feel input curve (host-side only — see MozaMBoosterRegistry.
+        // EvaluateInputCurve). Reshapes the reported HID position before it
+        // reaches the game or the Sim Input Mapping output curve above;
+        // never writes to the device, unlike SetMBoosterCurveY.
+        private void SetMBoosterInputCurveY(int index, int v)
+        {
+            var s = CurrentMBoosterSettings();
+            if (s == null) return;
+            if (s.InputCurveY == null || s.InputCurveY.Length != 5) s.InputCurveY = (float[])MBoosterDefaultCurve.Clone();
+            s.InputCurveY[index] = v;
+        }
+
+        private void MBoosterInputY1Slider_ValueChanged(object s, RoutedPropertyChangedEventArgs<double> e) => OnIntSliderChanged(e.NewValue, MBoosterInputY1Value, "", v => SetMBoosterInputCurveY(0, v));
+        private void MBoosterInputY2Slider_ValueChanged(object s, RoutedPropertyChangedEventArgs<double> e) => OnIntSliderChanged(e.NewValue, MBoosterInputY2Value, "", v => SetMBoosterInputCurveY(1, v));
+        private void MBoosterInputY3Slider_ValueChanged(object s, RoutedPropertyChangedEventArgs<double> e) => OnIntSliderChanged(e.NewValue, MBoosterInputY3Value, "", v => SetMBoosterInputCurveY(2, v));
+        private void MBoosterInputY4Slider_ValueChanged(object s, RoutedPropertyChangedEventArgs<double> e) => OnIntSliderChanged(e.NewValue, MBoosterInputY4Value, "", v => SetMBoosterInputCurveY(3, v));
+        private void MBoosterInputY5Slider_ValueChanged(object s, RoutedPropertyChangedEventArgs<double> e) => OnIntSliderChanged(e.NewValue, MBoosterInputY5Value, "", v => SetMBoosterInputCurveY(4, v));
+
+        private void ApplyMBoosterInputCurvePreset(int[] curve)
+        {
+            var s = CurrentMBoosterSettings();
+            if (s == null) return;
+            if (s.InputCurveY == null || s.InputCurveY.Length != 5) s.InputCurveY = new float[5];
+            using (_suppressor.Begin())
+            {
+                MBoosterInputY1Slider.Value = curve[0]; SetValueText(MBoosterInputY1Value, curve[0].ToString());
+                MBoosterInputY2Slider.Value = curve[1]; SetValueText(MBoosterInputY2Value, curve[1].ToString());
+                MBoosterInputY3Slider.Value = curve[2]; SetValueText(MBoosterInputY3Value, curve[2].ToString());
+                MBoosterInputY4Slider.Value = curve[3]; SetValueText(MBoosterInputY4Value, curve[3].ToString());
+                MBoosterInputY5Slider.Value = curve[4]; SetValueText(MBoosterInputY5Value, curve[4].ToString());
+            }
+            for (int i = 0; i < 5; i++)
+                s.InputCurveY[i] = curve[i];
+            _plugin.SaveSettings();
+        }
+
+        private void MBoosterInputCurvePreset_Linear(object s, RoutedEventArgs e)      => ApplyMBoosterInputCurvePreset(PedalCurvePresets[0]);
+        private void MBoosterInputCurvePreset_SCurve(object s, RoutedEventArgs e)      => ApplyMBoosterInputCurvePreset(PedalCurvePresets[1]);
+        private void MBoosterInputCurvePreset_Exponential(object s, RoutedEventArgs e) => ApplyMBoosterInputCurvePreset(PedalCurvePresets[2]);
+        private void MBoosterInputCurvePreset_Parabolic(object s, RoutedEventArgs e)   => ApplyMBoosterInputCurvePreset(PedalCurvePresets[3]);
+
+        // Start/End of pedal travel (mm, host-side only — see
+        // MozaMBoosterRegistry.ApplyTravelRangeMm). MozaRangeSlider has no
+        // built-in "changed" CLR event (its Low/HighValue are plain DPs),
+        // so it raises RangeChanged instead of the ValueChanged the other
+        // mBooster sliders use.
+        private void MBoosterTravelRangeSlider_RangeChanged(object sender, EventArgs e)
+        {
+            if (_suppressEvents) return;
+            var s = CurrentMBoosterSettings();
+            if (s == null) return;
+            s.TravelStartMm = (float)MBoosterTravelRangeSlider.LowValue;
+            s.TravelEndMm = (float)MBoosterTravelRangeSlider.HighValue;
+            _plugin.SaveSettings();
+        }
+
+        // Deadzone at the start of pedal travel (0..40kg, host-side only —
+        // see MozaMBoosterRegistry.ApplyDeadzoneAndMaxForce). Decimal
+        // precision (0.1kg ticks), so this doesn't reuse OnIntSliderChanged
+        // (which rounds to whole numbers like the other mBooster sliders).
+        private void MBoosterDeadzoneSlider_ValueChanged(object sender, RoutedPropertyChangedEventArgs<double> e)
+        {
+            if (_suppressEvents) return;
+            double v = Math.Round(e.NewValue, 1);
+            SetValueText(MBoosterDeadzoneValue, v.ToString("F1"));
+            var s = CurrentMBoosterSettings();
+            if (s == null) return;
+            s.DeadzoneKg = (float)v;
+            _plugin.SaveSettings();
+        }
+
+        // Max Force (0..200kg, host-side only, default 200 = off) — the
+        // force at which the Pedal Feel input curve's X-axis reaches 100%.
+        // See MozaMBoosterRegistry.ApplyDeadzoneAndMaxForce.
+        private void MBoosterMaxForceSlider_ValueChanged(object sender, RoutedPropertyChangedEventArgs<double> e) =>
+            OnIntSliderChanged(e.NewValue, MBoosterMaxForceValue, "", v =>
+            {
+                var s = CurrentMBoosterSettings();
+                if (s == null) return;
+                s.MaxForceKg = v;
+            });
+
+        // Sensor Output Ratio — blend between the mBooster's angle sensor
+        // (0%) and its load cell (100%). Live-pushes on every drag, same as
+        // the wheelbase Brake tab's BrakeAngleRatioSlider (pedals-brake-angle-ratio) —
+        // this is the mBooster-side twin of that control (mbooster-brake-angle-ratio).
+        private void MBoosterRatioSlider_ValueChanged(object sender, RoutedPropertyChangedEventArgs<double> e)
+        {
+            if (_suppressEvents) return;
+            int v = (int)Math.Round(e.NewValue);
+            SetValueText(MBoosterRatioValue, $"{v}%");
+            var s = CurrentMBoosterSettings();
+            if (s == null) return;
+            s.SensorOutputRatioPct = v;
+            CurrentMBoosterController()?.SendFloatWrite("mbooster-brake-angle-ratio", v);
+            _plugin.SaveSettings();
+        }
+
+        // Max Threshold (kg) — Pit House's load-cell-force-for-100%-output
+        // setting. Reverse-engineered from a real capture: wire command
+        // mbooster-brake-threshold (cmdId 0xB3), a 4-byte big-endian raw
+        // uint (NOT a float) on a fixed 0-200kg scale — see
+        // MozaMBoosterProtocol.EncodeThresholdKg and
+        // docs/protocol/devices/mbooster.md "Sim Input Mapping".
+        private void MBoosterMaxThresholdSlider_ValueChanged(object sender, RoutedPropertyChangedEventArgs<double> e) =>
+            OnIntSliderChanged(e.NewValue, MBoosterMaxThresholdValue, "", v =>
+            {
+                var s = CurrentMBoosterSettings();
+                if (s == null) return;
+                s.MaxThresholdKg = v;
+                CurrentMBoosterController()?.SendIntWrite("mbooster-brake-threshold",
+                    global::MozaPlugin.Protocol.MozaMBoosterProtocol.EncodeThresholdKg(v));
+            });
+
         private void MBoosterReadCalButton_Click(object sender, RoutedEventArgs e)
         {
             CurrentMBoosterController()?.RequestCalibrationReads();

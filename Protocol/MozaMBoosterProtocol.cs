@@ -166,6 +166,32 @@ namespace MozaPlugin.Protocol
         }
 
         /// <summary>
+        /// Pit House "Max Threshold (kg)" encoding — reverse-engineered from a
+        /// real capture (wire command <c>mbooster-brake-threshold</c>, cmdId
+        /// 0xB3; see docs/protocol/devices/mbooster.md "Sim Input Mapping").
+        /// Same 0..200 → u16-range pattern as <see cref="EncodeFreq"/>:
+        /// <c>raw = round(kg * 65536 / 200)</c>. Verified against two capture
+        /// data points: 4 kg → 1311 exactly, and an unlabeled capture whose
+        /// raw value decoded to ~126 kg, matching an independently-reported
+        /// real Pit House setting of ~125 kg.
+        /// </summary>
+        public static int EncodeThresholdKg(double kg)
+        {
+            if (double.IsNaN(kg) || kg <= 0) return 0;
+            double raw = Math.Round(kg * 65536.0 / 200.0);
+            if (raw <= 0) return 0;
+            if (raw >= int.MaxValue) return int.MaxValue;
+            return (int)raw;
+        }
+
+        /// <summary>Inverse of <see cref="EncodeThresholdKg"/>.</summary>
+        public static double DecodeThresholdKg(int raw)
+        {
+            if (raw <= 0) return 0;
+            return raw * 200.0 / 65536.0;
+        }
+
+        /// <summary>
         /// Look up the ParamK constant for an effect (used by <see cref="ComputeParam1"/>).
         /// </summary>
         public static double ParamKFor(MBoosterEffectId effect)

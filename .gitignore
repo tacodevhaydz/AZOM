@@ -1,3 +1,8 @@
+## Captures/logs from dev
+KS-Pro*.zip
+serialcapture.txt
+*.pcapng
+
 ## Build output
 bin/
 obj/

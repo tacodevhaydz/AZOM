@@ -500,6 +500,16 @@ namespace MozaPlugin.Protocol
             AddCommand("mbooster-clutch-min",   "mbooster", 35, 36, new byte[] { 8 }, 2, "int");
             AddCommand("mbooster-clutch-max",   "mbooster", 35, 36, new byte[] { 9 }, 2, "int");
             AddCommand("mbooster-brake-angle-ratio", "mbooster", 35, 36, new byte[] { 26 }, 4, "float");
+            // Pit House "Max Threshold (kg)" — reverse-engineered from a real
+            // capture (not in the protocol note): cmdId 0xB3, 4-byte BIG-ENDIAN
+            // UNSIGNED INT (not a float, unlike the other 4-byte commands above)
+            // encoding kg on a fixed 0-200kg scale over the same 0-65535 range
+            // as the raw Min/Max calibration: raw = round(kg * 65535 / 200).
+            // Two capture data points confirmed this: 4kg -> 1311 exactly, and
+            // an unlabeled capture decoded to 125.9998kg matching the user's
+            // independently-reported real Pit House setting of ~125kg. See
+            // docs/protocol/devices/mbooster.md "Sim Input Mapping".
+            AddCommand("mbooster-brake-threshold", "mbooster", 35, 36, new byte[] { 0xB3 }, 4, "int");
             // 5-point output curves per pedal (4-byte float, read 35 / write 36)
             AddCommand("mbooster-throttle-y1", "mbooster", 35, 36, new byte[] { 14 }, 4, "float");
             AddCommand("mbooster-throttle-y2", "mbooster", 35, 36, new byte[] { 15 }, 4, "float");

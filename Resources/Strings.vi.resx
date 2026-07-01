@@ -155,13 +155,24 @@
   <data name="Section_MBoosterPedals" xml:space="preserve"><value>BÀN ĐẠP MBOOSTER</value></data>
   <data name="Subtitle_MBoosterPedals" xml:space="preserve"><value>// hiệu ứng do máy chủ tạo · vai trò + vị trí theo từng thiết bị</value></data>
   <data name="SliderLabel_Device" xml:space="preserve"><value>Thiết bị</value></data>
-  <data name="Status_NoMBooster" xml:space="preserve"><value>Không có mBooster nào được kết nối</value></data>
-  <data name="Section_PedalRole" xml:space="preserve"><value>VAI TRÒ BÀN ĐẠP</value></data>
   <data name="SliderLabel_Role" xml:space="preserve"><value>Vai trò</value></data>
   <data name="Option_Disabled" xml:space="preserve"><value>Đã tắt</value></data>
   <data name="Option_Throttle" xml:space="preserve"><value>Ga</value></data>
   <data name="Option_Brake" xml:space="preserve"><value>Phanh</value></data>
   <data name="Option_Clutch" xml:space="preserve"><value>Côn</value></data>
+  <data name="Section_PedalFeel" xml:space="preserve"><value>CẢM GIÁC BÀN ĐẠP</value></data>
+  <data name="Subtitle_PedalFeel" xml:space="preserve"><value>// quyết định cảm giác của bàn đạp, độc lập với đường cong đầu ra bên dưới</value></data>
+  <data name="SliderLabel_DeadzoneKg" xml:space="preserve"><value>Vùng chết (kg)</value></data>
+  <data name="SliderLabel_MaxForceKg" xml:space="preserve"><value>Lực tối đa (kg)</value></data>
+  <data name="Hint_DeadzoneScaleAssumption" xml:space="preserve"><value>Chỉ xử lý ở phía phần mềm. Cả Vùng chết và Lực tối đa đều giả định thang đo cố định 0-200kg cho 0-100% hành trình bàn đạp, vì tín hiệu bàn đạp thô không có hiệu chỉnh lực riêng. Lực tối đa xác định vị trí đường cong đầu vào bên dưới đạt 100%.</value></data>
+  <data name="SliderLabel_TravelRangeMm" xml:space="preserve"><value>Bắt đầu / Kết thúc Hành trình (mm)</value></data>
+  <data name="Hint_TravelRangeMm" xml:space="preserve"><value>Chỉ xử lý ở phía phần mềm. Coi 0-100% hành trình bàn đạp là toàn bộ phạm vi hiển thị ở đây — kéo hai nút để cắt và điều chỉnh lại theo hành trình vật lý bạn thực sự sử dụng.</value></data>
+  <data name="Hint_InputCurveHostOnly" xml:space="preserve"><value>Chỉ xử lý ở phía phần mềm: định hình lại vị trí bàn đạp được báo cáo trước khi nó đến game (và đường cong đầu ra trong Ánh xạ đầu vào Sim bên dưới). Không có gì được ghi vào thiết bị.</value></data>
+  <data name="Section_SimInputMapping" xml:space="preserve"><value>ÁNH XẠ ĐẦU VÀO SIM</value></data>
+  <data name="Subtitle_SimInputMapping" xml:space="preserve"><value>// ánh xạ tín hiệu loadcell/bàn đạp vào game, theo kiểu Pit House</value></data>
+  <data name="SliderLabel_MaxThresholdKg" xml:space="preserve"><value>Ngưỡng tối đa (kg)</value></data>
+  <data name="Hint_MaxThresholdReverseEngineered" xml:space="preserve"><value>Được dịch ngược từ một bản ghi Pit House (cmdId 0xB3) — chưa được Moza xác nhận. Vui lòng kiểm tra xem nó hoạt động đúng trên phần cứng của bạn hay không.</value></data>
+  <data name="Hint_OutputCurveDragX" xml:space="preserve"><value>Kéo một nút sang ngang để di chuyển vị trí của nó trên trục đầu vào — ví dụ kéo nút cuối sang trái để đạt 100% đầu ra trước khi đạt 100% đầu vào.</value></data>
   <data name="Section_Effects" xml:space="preserve"><value>HIỆU ỨNG</value></data>
   <data name="Subtitle_EffectsTriggers" xml:space="preserve"><value>// kích hoạt: ABS theo tín hiệu game · Khóa bánh khi phanh&gt;0.8 · Ngưỡng theo sườn xung · Động cơ liên tục</value></data>
   <data name="Section_Abs" xml:space="preserve"><value>ABS</value></data>
@@ -542,7 +553,6 @@
   <data name="Status_TelemetrySenderUnavailableInit" xml:space="preserve"><value>Bộ gửi telemetry không khả dụng (plugin chưa khởi tạo).</value></data>
   <data name="Status_PickMzdashFirst" xml:space="preserve"><value>Trước tiên hãy chọn một tệp .mzdash hoặc một mục thư viện.</value></data>
   <data name="Status_NoConfigJsonState" xml:space="preserve"><value>(chưa nhận được trạng thái configJson)</value></data>
-  <data name="Status_NoMBoosterSelected" xml:space="preserve"><value>Chưa chọn mBooster</value></data>
   <data name="Status_PluginNotLoaded" xml:space="preserve"><value>Plugin chưa được tải</value></data>
   <data name="Upload_CannotResolveBytes" xml:space="preserve"><value>Không thể lấy dữ liệu byte cho "{0}" — hãy chọn một tệp cục bộ.</value></data>
   <data name="Upload_FolderPrefix" xml:space="preserve"><value>Thư mục: {0}</value></data>

@@ -42,9 +42,17 @@ namespace MozaPlugin.Devices
         public bool IsConnected => _connection.IsConnected;
         public MozaSerialConnection Connection => _connection;
 
-        // Latest HID axis value (0..1). Updated by MozaHidReader via the
+        // Latest HID axis value (0..1), AFTER Pedal Feel shaping (deadzone,
+        // max force, input curve). Updated by MozaHidReader via the
         // registry; published as a property so the UI panel can show the bar.
         public double LastHidPosition { get; internal set; }
+
+        // Same signal, but BEFORE the input curve (i.e. after deadzone/max
+        // force only) — 0..100. Lets the UI place a live position marker on
+        // the Pedal Feel input curve showing exactly what it receives, since
+        // LastHidPosition is already past that point. See
+        // MozaMBoosterRegistry.OnHidAxisUpdate.
+        public double LastRawPercentPreCurve { get; internal set; }
 
         /// <summary>Latest per-identity settings (role, display name, calibration).
         /// Thin pass-through to the registry's settings lookup — returns null if no
@@ -157,6 +165,14 @@ namespace MozaPlugin.Devices
             {
                 MozaLog.Info($"[AZOM/mBooster] Connected ({ShortIdentity(Identity)} on {_connection.LastPortName})");
                 _worker.Start();
+                // Nothing else proactively elicits a response from this device:
+                // motor frames and the keepalive are write-only, and with all
+                // effects disabled (the default for a fresh device) the worker
+                // sends nothing else at all. Without this, MarkDetected() never
+                // fires and the UI sits at "Probing…" until the user manually
+                // clicks "Read from device" in the Calibration section — fire
+                // the same read burst here so detection latches on its own.
+                RequestCalibrationReads();
             }
             return ok;
         }
@@ -261,9 +277,12 @@ namespace MozaPlugin.Devices
 
         /// <summary>
         /// Issue a one-time burst of calibration reads (direction / min / max
-        /// per pedal + 5-point curves). Mirrors the wheelbase pedal seed; runs
-        /// once per detection edge so the UI can populate from device state.
-        /// Experimental: may produce no responses on mBooster firmware.
+        /// per pedal + 5-point curves). Mirrors the wheelbase pedal seed.
+        /// Called from <see cref="TryConnect"/> (it's also the only thing
+        /// that elicits a response a fresh connection can latch detection
+        /// on), from the rising-edge handler, and from the UI's "Read from
+        /// device" button. Experimental: may produce no responses on
+        /// mBooster firmware.
         /// </summary>
         public void RequestCalibrationReads()
         {
@@ -276,6 +295,7 @@ namespace MozaPlugin.Devices
                 "mbooster-throttle-y1", "mbooster-throttle-y2", "mbooster-throttle-y3", "mbooster-throttle-y4", "mbooster-throttle-y5",
                 "mbooster-brake-y1", "mbooster-brake-y2", "mbooster-brake-y3", "mbooster-brake-y4", "mbooster-brake-y5",
                 "mbooster-clutch-y1", "mbooster-clutch-y2", "mbooster-clutch-y3", "mbooster-clutch-y4", "mbooster-clutch-y5",
+                "mbooster-brake-angle-ratio", "mbooster-brake-threshold",
             })
             {
                 SendRead(name);

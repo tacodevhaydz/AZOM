@@ -155,13 +155,24 @@
   <data name="Section_MBoosterPedals" xml:space="preserve"><value>MBOOSTER-PEDALE</value></data>
   <data name="Subtitle_MBoosterPedals" xml:space="preserve"><value>// vom Host gerenderte Effekte · Rolle + Position pro Gerät</value></data>
   <data name="SliderLabel_Device" xml:space="preserve"><value>Gerät</value></data>
-  <data name="Status_NoMBooster" xml:space="preserve"><value>Kein mBooster verbunden</value></data>
-  <data name="Section_PedalRole" xml:space="preserve"><value>PEDALROLLE</value></data>
   <data name="SliderLabel_Role" xml:space="preserve"><value>Rolle</value></data>
   <data name="Option_Disabled" xml:space="preserve"><value>Deaktiviert</value></data>
   <data name="Option_Throttle" xml:space="preserve"><value>Gas</value></data>
   <data name="Option_Brake" xml:space="preserve"><value>Bremse</value></data>
   <data name="Option_Clutch" xml:space="preserve"><value>Kupplung</value></data>
+  <data name="Section_PedalFeel" xml:space="preserve"><value>PEDALGEFÜHL</value></data>
+  <data name="Subtitle_PedalFeel" xml:space="preserve"><value>// bestimmt, wie sich das Pedal anfühlt, unabhängig von der Ausgabekurve unten</value></data>
+  <data name="SliderLabel_DeadzoneKg" xml:space="preserve"><value>Totzone (kg)</value></data>
+  <data name="SliderLabel_MaxForceKg" xml:space="preserve"><value>Max. Kraft (kg)</value></data>
+  <data name="Hint_DeadzoneScaleAssumption" xml:space="preserve"><value>Nur softwareseitig. Totzone und Max. Kraft gehen beide von einer festen 0-200-kg-Vollskala für 0-100 % Pedalweg aus, da das rohe Pedalsignal keine eigene Kraftkalibrierung besitzt. Max. Kraft legt fest, wo die Eingabekurve unten 100 % erreicht.</value></data>
+  <data name="SliderLabel_TravelRangeMm" xml:space="preserve"><value>Start / Ende des Pedalwegs (mm)</value></data>
+  <data name="Hint_TravelRangeMm" xml:space="preserve"><value>Nur softwareseitig. Behandelt 0-100 % Pedalweg als den hier gezeigten vollen Bereich — ziehen Sie die beiden Knoten, um auf den tatsächlich genutzten physischen Hub zuzuschneiden und neu zu skalieren.</value></data>
+  <data name="Hint_InputCurveHostOnly" xml:space="preserve"><value>Nur softwareseitig: formt die gemeldete Pedalposition um, bevor sie das Spiel (und die Ausgabekurve unter „Sim-Eingabezuordnung") erreicht. Es wird nichts an das Gerät gesendet.</value></data>
+  <data name="Section_SimInputMapping" xml:space="preserve"><value>SIM-EINGABEZUORDNUNG</value></data>
+  <data name="Subtitle_SimInputMapping" xml:space="preserve"><value>// Lastzellen-/Pedalsignal wie in Pit House auf das Spiel abbilden</value></data>
+  <data name="SliderLabel_MaxThresholdKg" xml:space="preserve"><value>Max. Schwellenwert (kg)</value></data>
+  <data name="Hint_MaxThresholdReverseEngineered" xml:space="preserve"><value>Durch Reverse-Engineering eines Pit-House-Mitschnitts ermittelt (cmdId 0xB3) — von Moza nicht bestätigt. Bitte überprüfen, ob es auf Ihrer Hardware korrekt funktioniert.</value></data>
+  <data name="Hint_OutputCurveDragX" xml:space="preserve"><value>Ziehen Sie einen Knoten seitwärts, um seine Position auf der Eingabeachse zu verschieben — z. B. den letzten Knoten nach links ziehen, damit 100 % Ausgabe schon vor 100 % Eingabe erreicht werden.</value></data>
   <data name="Section_Effects" xml:space="preserve"><value>EFFEKTE</value></data>
   <data name="Subtitle_EffectsTriggers" xml:space="preserve"><value>// Auslöser: ABS bei Spielsignal · Lockup bei Bremse &gt; 0,8 · Threshold an der Flanke · Engine durchgehend</value></data>
   <data name="Section_Abs" xml:space="preserve"><value>ABS</value></data>
@@ -542,7 +553,6 @@
   <data name="Status_TelemetrySenderUnavailableInit" xml:space="preserve"><value>Telemetrie-Sender nicht verfügbar (Plugin nicht initialisiert).</value></data>
   <data name="Status_PickMzdashFirst" xml:space="preserve"><value>Wählen Sie zuerst eine .mzdash-Datei oder einen Bibliothekseintrag.</value></data>
   <data name="Status_NoConfigJsonState" xml:space="preserve"><value>(noch kein configJson-Status empfangen)</value></data>
-  <data name="Status_NoMBoosterSelected" xml:space="preserve"><value>Kein mBooster ausgewählt</value></data>
   <data name="Status_PluginNotLoaded" xml:space="preserve"><value>Plugin nicht geladen</value></data>
   <data name="Upload_CannotResolveBytes" xml:space="preserve"><value>Rohdaten für „{0}“ können nicht aufgelöst werden – wählen Sie stattdessen eine lokale Datei.</value></data>
   <data name="Upload_FolderPrefix" xml:space="preserve"><value>Ordner: {0}</value></data>

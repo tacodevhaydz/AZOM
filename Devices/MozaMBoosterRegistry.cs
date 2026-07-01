@@ -235,8 +235,57 @@ namespace MozaPlugin.Devices
 
             MBoosterDeviceController? c;
             lock (_lock)
-                _byIdentity.TryGetValue(identity, out c);
+            {
+                if (!_byIdentity.TryGetValue(identity, out c))
+                {
+                    c = FindByInstancePrefixLocked(identity);
+                    if (c == null && _byIdentity.Count == 1)
+                    {
+                        // Real-hardware logs show the HID and CDC interfaces of
+                        // the same physical mBooster can get entirely unrelated
+                        // Windows instance IDs (not just a differing trailing
+                        // segment — see docs/protocol/devices/mbooster.md), so
+                        // prefix matching can't always pair them. With exactly
+                        // one mBooster registered there's no ambiguity: it must
+                        // be this one.
+                        using (var e = _byIdentity.GetEnumerator())
+                        {
+                            e.MoveNext();
+                            c = e.Current.Value;
+                        }
+                        LogSingleDeviceFallbackOnceLocked(identity, c.Identity);
+                    }
+                    if (c == null) LogUnmatchedHidIdentityOnceLocked(identity);
+                }
+            }
             if (c == null) return;
+
+            // Pedal Feel — host-side shaping of the raw HID position,
+            // applied here so every downstream consumer (position bar,
+            // MergePositions -> game telemetry, the effect worker's
+            // brake-position fallback) sees the same shaped value. Does not
+            // touch CurveY (still written to the device's own output-curve
+            // command unchanged) — see docs/protocol/devices/mbooster.md
+            // "Pedal Feel". Order: Start/End of Travel (mm) first — the
+            // most fundamental physical/sensor characteristic — then
+            // Deadzone + Max Force (force), then the input curve shapes
+            // whatever's left, not the raw signal.
+            var settings = _settingsLookup(c.Identity);
+            double posPct = pos01 * 100.0;
+            if (settings != null &&
+                (settings.TravelStartMm > MBoosterUiConstants.TravelMinMm ||
+                 settings.TravelEndMm < MBoosterUiConstants.TravelMaxMm))
+            {
+                posPct = ApplyTravelRangeMm(posPct, settings.TravelStartMm, settings.TravelEndMm,
+                    MBoosterUiConstants.TravelMinMm, MBoosterUiConstants.TravelMaxMm);
+            }
+            if (settings != null && (settings.DeadzoneKg > 0 || settings.MaxForceKg < 200))
+                posPct = ApplyDeadzoneAndMaxForce(posPct, settings.DeadzoneKg, settings.MaxForceKg);
+            c.LastRawPercentPreCurve = posPct;
+            if (settings?.InputCurveY != null && settings.InputCurveY.Length == 5)
+                posPct = EvaluateInputCurve(settings.InputCurveY, posPct);
+            pos01 = posPct / 100.0;
+
             c.LastHidPosition = pos01;
 
             // Merge step: re-compute the active positions across all devices
@@ -245,11 +294,288 @@ namespace MozaPlugin.Devices
         }
 
         /// <summary>
+        /// Deadzone + Max Force, in kg of force — both host-side only, both
+        /// operate in the same fixed 0-200kg theoretical full-scale as
+        /// <c>MaxThresholdKg</c>/<c>EncodeThresholdKg</c> (the raw HID axis
+        /// has no independent force calibration of its own, so 0-100% raw
+        /// travel is treated as 0-200kg). Combined into one kg-space remap
+        /// rather than two independent percent-space steps:
+        /// <list type="number">
+        /// <item>Deadzone (0..40kg): force below this clamps to 0.</item>
+        /// <item>Max Force (0..200kg, default 200 = off): the force at
+        /// which the <em>input curve's</em> X-axis reaches 100% — lets a
+        /// user who never presses past, say, 100kg use the curve's full
+        /// 0-100% range instead of only ever reaching its midpoint.</item>
+        /// </list>
+        /// Everything between the two rescales linearly. See
+        /// docs/protocol/devices/mbooster.md "Pedal Feel".
+        /// </summary>
+        internal static double ApplyDeadzoneAndMaxForce(double xPercent, double deadzoneKg, double maxForceKg)
+        {
+            // 0-100% raw travel == 0-200kg, so kg -> percent is kg / 2.
+            double loPercent = Math.Max(0, Math.Min(200, deadzoneKg)) / 2.0;
+            double hiPercent = Math.Max(0, Math.Min(200, maxForceKg)) / 2.0;
+            return ClipAndRescale(xPercent, loPercent, hiPercent);
+        }
+
+        /// <summary>
+        /// Start/End of pedal travel, in mm — host-side only, same shape as
+        /// <see cref="ApplyDeadzoneAndMaxForce"/> but in mm instead of kg:
+        /// raw 0-100% travel is treated as spanning the full
+        /// [<paramref name="minMm"/>, <paramref name="maxMm"/>] physical
+        /// range (again, no independent calibration exists on the raw HID
+        /// axis), positions outside [<paramref name="startMm"/>,
+        /// <paramref name="endMm"/>] clip to 0/100, everything between
+        /// rescales linearly. See docs/protocol/devices/mbooster.md
+        /// "Pedal Feel".
+        /// </summary>
+        internal static double ApplyTravelRangeMm(double xPercent, double startMm, double endMm, double minMm, double maxMm)
+        {
+            double span = maxMm - minMm;
+            if (span <= 0) return xPercent;
+            double loPercent = (startMm - minMm) / span * 100.0;
+            double hiPercent = (endMm - minMm) / span * 100.0;
+            return ClipAndRescale(xPercent, loPercent, hiPercent);
+        }
+
+        /// <summary>
+        /// Shared clip-and-rescale: positions at or below
+        /// <paramref name="loPercent"/> clip to 0, positions at or above
+        /// <paramref name="hiPercent"/> clip to 100, everything between
+        /// rescales linearly to the full 0-100 range.
+        /// </summary>
+        private static double ClipAndRescale(double xPercent, double loPercent, double hiPercent)
+        {
+            xPercent = Math.Max(0, Math.Min(100, xPercent));
+            loPercent = Math.Max(0, Math.Min(100, loPercent));
+            hiPercent = Math.Max(0, Math.Min(100, hiPercent));
+
+            double effective = Math.Max(0, xPercent - loPercent);
+            double range = hiPercent - loPercent;
+            if (range <= 0) return effective > 0 ? 100 : 0;
+
+            double result = effective / range * 100.0;
+            if (result < 0) return 0;
+            if (result > 100) return 100;
+            return result;
+        }
+
+        /// <summary>
+        /// Evaluate a 5-point Pedal Feel curve at a given X (0..100),
+        /// reproducing <see cref="MozaControls.MozaCurveEditor"/>'s
+        /// Catmull-Rom rendering exactly (same 1/6-tangent formula, anchored
+        /// at the origin) so the applied shaping matches what the user sees
+        /// drawn. <paramref name="y"/> holds the 5 node Y-values for
+        /// X=20,40,60,80,100; X=0 is an implicit (0,0) anchor. The control
+        /// points this formula produces always fall between their segment's
+        /// endpoints in X, so the segment's X(t) is monotonic — bisection
+        /// reliably inverts it to find t for the requested X.
+        /// </summary>
+        internal static double EvaluateInputCurve(float[] y, double x)
+        {
+            if (y == null || y.Length != 5) return x;
+            x = Math.Max(0, Math.Min(100, x));
+
+            var xs = new double[] { 0, 20, 40, 60, 80, 100, 100 };
+            var ys = new double[] { 0, y[0], y[1], y[2], y[3], y[4], y[4] };
+
+            int i = (int)Math.Min(4, Math.Floor(x / 20.0));
+            int p0i = i == 0 ? 0 : i - 1;
+            int p2i = i + 1;
+            int p3i = (i + 2 >= xs.Length) ? i + 1 : i + 2;
+
+            double p0x = xs[p0i], p0y = ys[p0i];
+            double p1x = xs[i], p1y = ys[i];
+            double p2x = xs[p2i], p2y = ys[p2i];
+            double p3x = xs[p3i], p3y = ys[p3i];
+
+            double c1x = p1x + (p2x - p0x) / 6.0, c1y = p1y + (p2y - p0y) / 6.0;
+            double c2x = p2x - (p3x - p1x) / 6.0, c2y = p2y - (p3y - p1y) / 6.0;
+
+            double lo = 0, hi = 1;
+            for (int iter = 0; iter < 24; iter++)
+            {
+                double t = (lo + hi) / 2.0;
+                double bx = CubicBezier(p1x, c1x, c2x, p2x, t);
+                if (bx < x) lo = t; else hi = t;
+            }
+            double result = CubicBezier(p1y, c1y, c2y, p2y, (lo + hi) / 2.0);
+            if (result < 0) result = 0;
+            if (result > 100) result = 100;
+            return result;
+        }
+
+        private static double CubicBezier(double p0, double c1, double c2, double p1, double t)
+        {
+            double mt = 1 - t;
+            return mt * mt * mt * p0 + 3 * mt * mt * t * c1 + 3 * mt * t * t * c2 + t * t * t * p1;
+        }
+
+        /// <summary>
+        /// Same Catmull-Rom evaluation as <see cref="EvaluateInputCurve"/>,
+        /// generalized to arbitrary (draggable) node X positions instead of
+        /// the fixed 20/40/60/80/100 — used for the Sim Input Mapping output
+        /// curve's horizontal node drag (<c>MBoosterDeviceSettings.CurveX</c>).
+        /// Beyond the last node's X, returns that node's Y (flat plateau) —
+        /// this is what makes "100% output before 100% input" work: drag the
+        /// last node left and everything past it just stays at that Y.
+        /// </summary>
+        internal static double EvaluateCurveArbitraryX(float[] xs, float[] ys, double x)
+        {
+            if (xs == null || ys == null || xs.Length != 5 || ys.Length != 5) return x;
+
+            var px = new double[] { 0, xs[0], xs[1], xs[2], xs[3], xs[4], xs[4] };
+            var py = new double[] { 0, ys[0], ys[1], ys[2], ys[3], ys[4], ys[4] };
+
+            if (x <= 0) return 0;
+            if (x >= px[5]) return py[5];
+
+            int i = 0;
+            for (int k = 0; k < 5; k++)
+            {
+                if (x >= px[k] && x <= px[k + 1]) { i = k; break; }
+            }
+            int p0i = i == 0 ? 0 : i - 1;
+            int p2i = i + 1;
+            int p3i = (i + 2 >= px.Length) ? i + 1 : i + 2;
+
+            double p0x = px[p0i], p0y = py[p0i];
+            double p1x = px[i], p1y = py[i];
+            double p2x = px[p2i], p2y = py[p2i];
+            double p3x = px[p3i], p3y = py[p3i];
+            if (p2x <= p1x) return p1y; // degenerate (equal X) — shouldn't happen given drag clamping
+
+            double c1x = p1x + (p2x - p0x) / 6.0, c1y = p1y + (p2y - p0y) / 6.0;
+            double c2x = p2x - (p3x - p1x) / 6.0, c2y = p2y - (p3y - p1y) / 6.0;
+
+            double lo = 0, hi = 1;
+            for (int iter = 0; iter < 24; iter++)
+            {
+                double t = (lo + hi) / 2.0;
+                double bx = CubicBezier(p1x, c1x, c2x, p2x, t);
+                if (bx < x) lo = t; else hi = t;
+            }
+            return CubicBezier(p1y, c1y, c2y, p2y, (lo + hi) / 2.0);
+        }
+
+        private static readonly float[] DefaultCurveX = { 20, 40, 60, 80, 100 };
+
+        /// <summary>
+        /// Resample a (possibly horizontally-dragged) output curve at the
+        /// fixed 20/40/60/80/100 breakpoints the wire protocol actually
+        /// supports. When <paramref name="curveX"/> is null (node never
+        /// dragged), this is the identity — sampling
+        /// <see cref="EvaluateCurveArbitraryX"/> exactly at a node's own X
+        /// returns that node's own Y — so callers can always resample
+        /// unconditionally without a "has the user customized X" branch.
+        /// </summary>
+        internal static float[] ResampleCurveAtFixedBreakpoints(float[]? curveX, float[] curveY)
+        {
+            var xs = (curveX != null && curveX.Length == 5) ? curveX : DefaultCurveX;
+            var result = new float[5];
+            for (int i = 0; i < 5; i++)
+                result[i] = (float)EvaluateCurveArbitraryX(xs, curveY, DefaultCurveX[i]);
+            return result;
+        }
+
+        /// <summary>
+        /// Fallback pairing for <see cref="OnHidAxisUpdate"/> when the HID
+        /// identity doesn't exactly match a known CDC identity. Per
+        /// docs/protocol/devices/mbooster.md "HID identity reconciliation",
+        /// the two instance IDs come from different USB interfaces of the
+        /// same composite device and share every segment except the trailing
+        /// interface-index one (e.g. CDC <c>a&amp;399b951f&amp;0&amp;0000</c> vs
+        /// HID <c>a&amp;399b951f&amp;0&amp;0002</c>) — strip that last
+        /// "&amp;NNNN" segment from both sides and match on what remains.
+        /// Must be called with <see cref="_lock"/> already held.
+        /// </summary>
+        private MBoosterDeviceController? FindByInstancePrefixLocked(string hidIdentity)
+        {
+            string prefix = InstancePrefix(hidIdentity);
+            if (prefix.Length == 0) return null;
+            foreach (var kvp in _byIdentity)
+            {
+                if (string.Equals(InstancePrefix(kvp.Key), prefix, StringComparison.OrdinalIgnoreCase))
+                {
+                    LogPrefixPairingOnce(hidIdentity, kvp.Key);
+                    return kvp.Value;
+                }
+            }
+            return null;
+        }
+
+        private static string InstancePrefix(string id)
+        {
+            if (string.IsNullOrEmpty(id)) return "";
+            int lastAmp = id.LastIndexOf('&');
+            return lastAmp > 0 ? id.Substring(0, lastAmp) : "";
+        }
+
+        private readonly HashSet<string> _prefixPairingsLogged =
+            new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+
+        private void LogPrefixPairingOnce(string hidIdentity, string cdcIdentity)
+        {
+            bool isNew;
+            lock (_prefixPairingsLogged)
+                isNew = _prefixPairingsLogged.Add(hidIdentity);
+            if (isNew)
+            {
+                MozaLog.Info(
+                    $"[AZOM/mBooster] Paired HID axis identity '{hidIdentity}' to CDC device " +
+                    $"'{MBoosterDeviceController.ShortIdentity(cdcIdentity)}' via instance-prefix fallback " +
+                    "(exact identity match failed — see docs/protocol/devices/mbooster.md).");
+            }
+        }
+
+        private readonly HashSet<string> _singleDeviceFallbacksLogged =
+            new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+
+        private void LogSingleDeviceFallbackOnceLocked(string hidIdentity, string cdcIdentity)
+        {
+            bool isNew;
+            lock (_singleDeviceFallbacksLogged)
+                isNew = _singleDeviceFallbacksLogged.Add(hidIdentity);
+            if (isNew)
+            {
+                MozaLog.Info(
+                    $"[AZOM/mBooster] Paired HID axis identity '{hidIdentity}' to CDC device " +
+                    $"'{MBoosterDeviceController.ShortIdentity(cdcIdentity)}' via single-device fallback " +
+                    "(exact and prefix identity matches both failed, but only one mBooster is registered " +
+                    "so there's no ambiguity — see docs/protocol/devices/mbooster.md).");
+            }
+        }
+
+        /// <summary>
         /// Walk all devices in enumeration order and assign each device's
         /// position to the matching <c>MozaData</c> field if its role is set.
         /// First-wins on collision (later devices with the same role are
         /// ignored). Devices with Role=Disabled contribute nothing.
         /// </summary>
+        private readonly HashSet<string> _unmatchedHidLogged =
+            new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+
+        /// <summary>
+        /// One-time-per-identity Warn (so it's visible in SimHub's regular
+        /// log, not just the support bundle) when a HID axis identity
+        /// matches no known CDC device by either exact or prefix match.
+        /// Logs full, untruncated identities — needed to actually diagnose
+        /// the HID/CDC reconciliation gap rather than guess at it again.
+        /// Must be called with <see cref="_lock"/> already held.
+        /// </summary>
+        private void LogUnmatchedHidIdentityOnceLocked(string hidIdentity)
+        {
+            bool isNew;
+            lock (_unmatchedHidLogged)
+                isNew = _unmatchedHidLogged.Add(hidIdentity);
+            if (!isNew) return;
+            string known = _byIdentity.Count == 0 ? "(none)" : string.Join(", ", _byIdentity.Keys);
+            MozaLog.Warn(
+                $"[AZOM/mBooster] HID axis identity '{hidIdentity}' matched no known CDC device " +
+                $"(known CDC identities: [{known}]) — position will not update for this device. " +
+                "See docs/protocol/devices/mbooster.md \"HID identity reconciliation\".");
+        }
+
         private void MergePositions()
         {
             bool throttleSet = false, brakeSet = false, clutchSet = false;

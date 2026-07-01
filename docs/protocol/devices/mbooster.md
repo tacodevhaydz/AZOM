@@ -95,6 +95,16 @@ Emitted every ~500 ms from `MBoosterEffectWorker` regardless of
 effect state. Stops being sent → motor eventually drops connection
 state and may stop responding to writes.
 
+**Detection note:** the keepalive and motor frames are write-only —
+the device never replies to either. With all effects disabled (the
+default for a freshly-detected device) the worker sends nothing else,
+so nothing would ever elicit a parseable response for
+`MBoosterDeviceController.MarkDetected` to latch onto. `TryConnect`
+fires `RequestCalibrationReads()` immediately after the port opens for
+exactly this reason — without it the UI sits at "Probing…"
+indefinitely until something (previously, only the user manually
+clicking "Read from device") prompts a response.
+
 ### Disable
 
 Same opcode with `enable = 0` and all params zeroed.
@@ -142,8 +152,176 @@ read, group 36 write) as "likely but unverified" on mBooster firmware.
 The plugin ships the full surface in
 [`MozaCommandDatabase.cs`](../../../Protocol/MozaCommandDatabase.cs)
 under the `mbooster-*` prefix anyway — the user opted in. The UI's
-Calibration expander surfaces this as experimental with a yellow
-warning.
+Calibration card (Direction / Min Raw / Max Raw / Read from device /
+Apply) surfaces this as experimental with a yellow warning.
+
+## Sim Input Mapping
+
+## Pedal Feel (host-side only)
+
+A card above Sim Input Mapping holds a second 5-point curve,
+`InputCurveY` on `MBoosterDeviceSettings`. Unlike `CurveY`, this one has
+**no wire command at all** — it's pure host-side shaping, applied in
+`MozaMBoosterRegistry.OnHidAxisUpdate` to the raw HID axis position
+before it becomes `c.LastHidPosition`, i.e. before it reaches
+`MozaData.{Throttle,Brake,Clutch}Position` (game telemetry) *and*
+before the effect worker's brake-position test-pulse fallback. `CurveY`
+is completely unaffected — it still writes to the device's own
+output-curve command exactly as before.
+
+`MozaMBoosterRegistry.EvaluateInputCurve` reproduces
+`MozaControls.MozaCurveEditor`'s Catmull-Rom rendering exactly (same
+1/6-tangent formula, anchored at the origin), inverted via bisection to
+solve X(t)=x for the requested input X — so the applied shaping always
+matches what's drawn on screen. Verified: the Linear preset is an exact
+identity function (not just at the 5 breakpoints), and the S-Curve
+preset interpolates smoothly through all 5 breakpoints. `null` (the
+default) means no shaping — existing profiles are unaffected until a
+user opens this section.
+
+The same card also has a **Start/End of Travel (mm)** control —
+`TravelStartMm`/`TravelEndMm` on `MBoosterDeviceSettings`, applied in
+`MozaMBoosterRegistry.ApplyTravelRangeMm`, which runs *first* in the
+pipeline (physical travel bounds are the most fundamental sensor
+characteristic — the load cell/pedal's actual usable stroke — so
+everything else shapes what's left of the signal, not the raw one).
+This is a genuine dual-thumb range slider (`MozaControls.MozaRangeSlider`,
+`UI/Controls/MozaRangeSlider.cs`) — no dual-thumb control existed
+anywhere in this app before; every other "linked min/max" pair
+(Handbrake, Throttle, Brake, Clutch, mBooster's own raw Min/Max
+calibration) is two separate `Slider` controls with mutual clamping
+via the shared `OnMinMaxSliderChanged` helper. The two thumbs
+(`LowValue`/`HighValue`) are bounded to `[3.8mm, 49.7mm]`
+(`MBoosterUiConstants.TravelMinMm`/`TravelMaxMm`) and clamped against
+each other so their gap always stays within `[4mm, 32.5mm]`
+(`TravelMinGapMm`/`TravelMaxGapMm`) — dragging one thumb simply can't
+push the gap outside that range. Defaults anchor at the slider's
+minimum with the maximum allowed gap (`3.8` / `36.3`) so a fresh
+profile starts with the widest usable window. Like the kg-based
+controls below, raw 0–100% travel is treated as spanning the full
+`[TravelMinMm, TravelMaxMm]` range (no independent mm calibration
+exists on the raw HID axis either), clipped to `[TravelStartMm,
+TravelEndMm]` and rescaled back to 0–100%.
+
+The same card also has two force-based sliders, both host-side only and
+both applied in `MozaMBoosterRegistry.ApplyDeadzoneAndMaxForce`, which
+runs *after* Start/End of Travel and *before* `EvaluateInputCurve`:
+
+- **Deadzone** (`DeadzoneKg`, 0–40kg, default 0 = off) — force below
+  this clamps to 0.
+- **Max Force** (`MaxForceKg`, 0–200kg, default 200 = off) — the force
+  at which the *input curve's* X-axis reaches 100%. Lets a user who
+  never presses past, say, 100kg use the curve's full 0–100% range
+  instead of only ever reaching its midpoint.
+
+All three clip-and-rescale stages (mm, then kg, then the input curve)
+share one `ClipAndRescale(xPercent, loPercent, hiPercent)` primitive —
+`ApplyTravelRangeMm` and `ApplyDeadzoneAndMaxForce` just convert their
+own units to percent first, then call it. Verified numerically:
+`ApplyDeadzoneAndMaxForce`'s behavior is byte-for-byte unchanged after
+this refactor (defaults are an exact identity; `maxForce=100kg` still
+makes raw 50% map to exactly 100%), and the mm version behaves the
+same shape with the new unit.
+
+Both are combined into one kg-space remap rather than two independent
+percent-space steps: raw 0–100% travel is first treated as 0–200kg
+(the raw HID axis has no independent force calibration of its own —
+same assumption `MaxThresholdKg`/`EncodeThresholdKg` makes), force
+below the deadzone clamps to 0, and everything between the deadzone
+and Max Force rescales linearly to 0–100%. This is stated plainly in
+the UI hint (`Hint_DeadzoneScaleAssumption`) since it's an assumption,
+not a measurement. Verified numerically: with defaults (dz=0,
+maxForce=200) the remap is an exact identity; with maxForce=100kg, raw
+50% (=100kg on the fixed scale) maps to exactly 100%.
+
+### Live position indicator on the curves
+
+Both the Pedal Feel input curve and the Sim Input Mapping output curve
+show a live dot on the spline (plus a dashed guide line down to the
+X axis) tracking the pedal as it's pressed, at 30Hz
+(`SettingsControl.UpdateMBoosterCurveMarkers`, which sets
+`MozaCurveEditor.LiveX` on both editors — this used to also drive a
+standalone position bar in the Pedal Role card, since removed in favor
+of these two curve markers).
+
+`MozaCurveEditor.LiveX` is a data-space X (0–100, same domain as
+`XAxisLabels`); `NaN` (default) hides the indicator. `Recompute()`
+maps it to a pixel X via the same `XAxisLabels`/`XLabelFractions`
+correspondence used for tick labels (linear interpolation between
+whichever two labels bracket it), locates which cached Bezier segment
+contains that pixel X, then inverts that segment's X(t) via bisection
+— the same approach as `EvaluateInputCurve`, just in pixel space — to
+read off the exact point ON the spline. The two editors get different
+values so each shows what it actually receives:
+
+- **Input Curve**: `LastRawPercentPreCurve` — post deadzone/max-force,
+  pre-`InputCurveY` (what this curve's evaluator receives).
+- **Output Curve**: `LastHidPosition * 100` (post-`InputCurveY`, i.e.
+  what's sent onward to game telemetry) — an approximation of what the
+  device's own firmware curve sees, since that runs on the device's
+  own raw sensor reading, a separate signal path we don't otherwise
+  observe.
+
+A separate card (Pit House calls this class of setting "input
+mapping") holds the Pit House-parity controls, all still under
+`MBoosterDeviceSettings`:
+
+- **Sensor Output Ratio** (`SensorOutputRatioPct`, 0–100%) — blend
+  between the mBooster's angle sensor (0%) and its load cell (100%).
+  Wired to `mbooster-brake-angle-ratio` (cmdId 26) — the mBooster-side
+  twin of the wheelbase Brake tab's own "Sensor Ratio" slider
+  (`pedals-brake-angle-ratio`). Live-pushes on every drag.
+- **Max Threshold (kg)** (`MaxThresholdKg`) — Pit House's "load cell
+  force at which output reaches 100%" setting. **Reverse-engineered
+  from two real Pit House USB captures** (not in any protocol note —
+  see below). Wire command `mbooster-brake-threshold`, cmdId `0xB3`,
+  group 35 read / 36 write, 4 bytes — but unlike every other 4-byte
+  mbooster command, this one is a **big-endian unsigned int, not an
+  IEEE-754 float**. It encodes kg on a fixed 0–200kg scale over the
+  same 0–65535 range used elsewhere, mirroring the exact
+  `EncodeFreq`/`ComputeParam1` "value × 65536 / 200" pattern already
+  used for the motor effects in this same file:
+  `raw = round(kg × 65536 / 200)`. See
+  `MozaMBoosterProtocol.EncodeThresholdKg`/`DecodeThresholdKg`.
+
+  **Evidence**: a capture isolating a drag to exactly 4kg produced
+  `7e 05 24 12 b3 00 00 05 1f 61` → raw `1311`, and
+  `round(4 × 65536 / 200) = 1311` exactly. A second, earlier capture
+  (target value not recorded) produced raw `41287`, which decodes to
+  `125.9998kg` — matching an independently-reported real Pit House
+  setting of ~125kg to within rounding error. Two independent
+  confirmations is about as solid as unofficial reverse-engineering
+  gets, but it's still unconfirmed by Moza — the in-UI warning says so.
+- **Output curve** (`CurveY`, 5-point) — moved here from Calibration.
+  `MozaCurveEditor`-driven, mirrors the wheelbase pedal Y curves.
+  Like Direction/Min/Max, always writes through the
+  `mbooster-throttle-y1..y5` slot regardless of the device's assigned
+  role — the mBooster is a single physical axis, so role-specific
+  slots are reserved for symmetry with the wheelbase's three-pedal
+  command surface but unlikely to matter on real hardware (see
+  `SetMBoosterCurveY` in `SettingsControl.xaml.cs`).
+
+  Unlike every other curve in the app, this one's nodes are also
+  **draggable horizontally** (`MozaCurveEditor.AllowHorizontalDrag`,
+  set only on this instance), so a node can be moved to a lower X and
+  "100% output" reached before "100% input" — the same idea as Pedal
+  Feel's Max Force slider, applied to the output side instead. The
+  wheelbase's own FFB curve has real `base-ffb-curve-x1..x4` write
+  commands for this; **no equivalent exists for the mbooster y-curve**
+  (nothing found in captures or the command table), so this is
+  implemented purely host-side: `MBoosterDeviceSettings.CurveX` stores
+  each node's dragged X (null = untouched, fixed 20/40/60/80/100), and
+  `MozaMBoosterRegistry.ResampleCurveAtFixedBreakpoints` — via the new
+  `EvaluateCurveArbitraryX`, the same Catmull-Rom/bisection approach as
+  `EvaluateInputCurve` but generalized to non-fixed node X — resamples
+  the whole (CurveX, CurveY) shape at the wire protocol's actual fixed
+  breakpoints before every push (`PushResampledMBoosterCurve` in
+  `SettingsControl.xaml.cs`, called on every X or Y change, plus
+  `ApplyMBoosterToHardware` on detect). Beyond the last dragged node,
+  the resample returns that node's Y (flat plateau) — verified
+  numerically: with `CurveX` untouched, resampling is the exact
+  identity; dragging the last node from X=100 to X=60 (Y unchanged)
+  makes breakpoints 60/80/100 all resample to that node's Y.
 
 | Command                       | Group (R/W) | CmdId | Bytes | Type  |
 |-------------------------------|-------------|-------|-------|-------|
@@ -161,8 +339,6 @@ disambiguates from wheelbase Main / AB9 Main via the
 
 ## HID identity reconciliation
 
-Open hardware question — first-launch behaviour will tell us:
-
 The registry walk in [`MozaPortDiscovery`](../../../Protocol/MozaPortDiscovery.cs)
 surfaces an `InstanceId` per CDC composite (e.g. `a&399b951f&0&0000`).
 HidSharp's `HidDevice.DevicePath` contains a similar parent-USB
@@ -171,11 +347,46 @@ instance segment between the second and third `#` separators (e.g.
 The plugin's `MozaHidReader.ExtractUsbParentInstance` extracts that
 segment as the HID-side identity.
 
-If on real hardware these two identities don't match for the same
-physical device, per-device settings won't pair correctly across the
-HID and CDC stacks. The fallback path is port-name proximity (CDC's
-COM port + HID's parent instance share a registry parent). Logs at
-detect time show both identities so the user can report a mismatch.
+**Resolved by real-hardware logs** (a support bundle showing the
+position bar stuck at 0 despite the device showing "Connected"): the
+"shared prefix, differing only in trailing interface index" theory
+above is **wrong**. A real capture showed:
+
+```
+HID: 9&1bd82a3a&0&0000
+CDC: 8&1709245b&0&0000
+```
+
+No shared segment at all — Windows assigned the HID and CDC
+interfaces of the same physical device completely unrelated instance
+IDs (different hash, not just a different trailing index). An
+exact-match lookup in `MozaMBoosterRegistry.OnHidAxisUpdate` never
+pairs these, so the position bar never updates even though the CDC
+side detects fine, and no amount of prefix-stripping can fix it for
+this device.
+
+`MozaMBoosterRegistry.OnHidAxisUpdate` tries three things in order:
+
+1. **Exact match** — works if Windows ever does assign the same
+   instance ID to both interfaces (kept for hardware/driver versions
+   where it might).
+2. **`FindByInstancePrefixLocked`** — strips the trailing `&NNNN`
+   segment from both sides and matches on the remainder. Kept as a
+   fallback for the case the original theory *did* describe, even
+   though it's now known not to be the common case.
+3. **Single-device fallback** — if neither match and exactly one
+   mBooster is registered, pair the HID identity to it unconditionally;
+   there's no ambiguity with only one device. This is what actually
+   fixes the common single-mBooster case given the finding above.
+
+Each path logs once per HID identity at Info level so a support-bundle
+log confirms which one resolved the device (`"...via instance-prefix
+fallback..."` / `"...via single-device fallback..."`). With two or
+more mBoosters that never exact- or prefix-match, there is currently
+no way to disambiguate which HID stream belongs to which CDC device —
+`LogUnmatchedHidIdentityOnceLocked` logs a Warn (visible in SimHub's
+regular log, not just the bundle) so that gap is at least visible
+rather than silent.
 
 ## Source-of-truth files in this repo
 

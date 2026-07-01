@@ -155,13 +155,24 @@
   <data name="Section_MBoosterPedals" xml:space="preserve"><value>ПЕДАЛИ MBOOSTER</value></data>
   <data name="Subtitle_MBoosterPedals" xml:space="preserve"><value>// эффекты формируются хостом · роль и положение по устройству</value></data>
   <data name="SliderLabel_Device" xml:space="preserve"><value>Устройство</value></data>
-  <data name="Status_NoMBooster" xml:space="preserve"><value>mBooster не подключён</value></data>
-  <data name="Section_PedalRole" xml:space="preserve"><value>РОЛЬ ПЕДАЛИ</value></data>
   <data name="SliderLabel_Role" xml:space="preserve"><value>Роль</value></data>
   <data name="Option_Disabled" xml:space="preserve"><value>Отключено</value></data>
   <data name="Option_Throttle" xml:space="preserve"><value>Газ</value></data>
   <data name="Option_Brake" xml:space="preserve"><value>Тормоз</value></data>
   <data name="Option_Clutch" xml:space="preserve"><value>Сцепление</value></data>
+  <data name="Section_PedalFeel" xml:space="preserve"><value>ОЩУЩЕНИЕ ПЕДАЛИ</value></data>
+  <data name="Subtitle_PedalFeel" xml:space="preserve"><value>// определяет ощущение педали, независимо от кривой вывода ниже</value></data>
+  <data name="SliderLabel_DeadzoneKg" xml:space="preserve"><value>Мёртвая зона (кг)</value></data>
+  <data name="SliderLabel_MaxForceKg" xml:space="preserve"><value>Макс. усилие (кг)</value></data>
+  <data name="Hint_DeadzoneScaleAssumption" xml:space="preserve"><value>Только на стороне ПО. Мёртвая зона и Макс. усилие используют одну и ту же фиксированную полную шкалу 0-200 кг для 0-100% хода педали, поскольку необработанный сигнал педали не имеет собственной калибровки по силе. Макс. усилие задаёт, где кривая ввода ниже достигает 100%.</value></data>
+  <data name="SliderLabel_TravelRangeMm" xml:space="preserve"><value>Начало / Конец хода (мм)</value></data>
+  <data name="Hint_TravelRangeMm" xml:space="preserve"><value>Только на стороне ПО. Рассматривает 0-100% хода педали как весь диапазон, показанный здесь — перетащите два узла, чтобы обрезать и масштабировать до реально используемого физического хода.</value></data>
+  <data name="Hint_InputCurveHostOnly" xml:space="preserve"><value>Только на стороне ПО: преобразует сообщаемое положение педали до того, как оно попадёт в игру (и в кривую вывода в разделе «Сопоставление ввода симулятора» ниже). На устройство ничего не записывается.</value></data>
+  <data name="Section_SimInputMapping" xml:space="preserve"><value>СОПОСТАВЛЕНИЕ ВВОДА СИМУЛЯТОРА</value></data>
+  <data name="Subtitle_SimInputMapping" xml:space="preserve"><value>// сопоставление сигнала тензодатчика/педали с игрой, в стиле Pit House</value></data>
+  <data name="SliderLabel_MaxThresholdKg" xml:space="preserve"><value>Макс. порог (кг)</value></data>
+  <data name="Hint_MaxThresholdReverseEngineered" xml:space="preserve"><value>Определено с помощью обратной разработки на основе захвата трафика Pit House (cmdId 0xB3) — не подтверждено Moza. Пожалуйста, проверьте корректную работу на вашем оборудовании.</value></data>
+  <data name="Hint_OutputCurveDragX" xml:space="preserve"><value>Перетащите узел в сторону, чтобы изменить его положение на оси ввода — например, перетащите последний узел влево, чтобы 100% выхода достигалось раньше 100% входа.</value></data>
   <data name="Section_Effects" xml:space="preserve"><value>ЭФФЕКТЫ</value></data>
   <data name="Subtitle_EffectsTriggers" xml:space="preserve"><value>// триггеры: ABS по сигналу игры · Блокировка при тормозе&gt;0,8 · Порог по фронту · Двигатель непрерывно</value></data>
   <data name="Section_Abs" xml:space="preserve"><value>ABS</value></data>
@@ -542,7 +553,6 @@
   <data name="Status_TelemetrySenderUnavailableInit" xml:space="preserve"><value>Отправитель телеметрии недоступен (плагин не инициализирован).</value></data>
   <data name="Status_PickMzdashFirst" xml:space="preserve"><value>Сначала выберите файл .mzdash или запись из библиотеки.</value></data>
   <data name="Status_NoConfigJsonState" xml:space="preserve"><value>(состояние configJson ещё не получено)</value></data>
-  <data name="Status_NoMBoosterSelected" xml:space="preserve"><value>mBooster не выбран</value></data>
   <data name="Status_PluginNotLoaded" xml:space="preserve"><value>Плагин не загружен</value></data>
   <data name="Upload_CannotResolveBytes" xml:space="preserve"><value>Не удаётся получить байты для «{0}» — выберите локальный файл.</value></data>
   <data name="Upload_FolderPrefix" xml:space="preserve"><value>Папка: {0}</value></data>

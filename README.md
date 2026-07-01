@@ -188,9 +188,18 @@ Full configuration support for the MOZA AB9 active shifter, surfaced under its o
 
 MOZA mBooster pedal haptics get their own **mBooster** tab when one or more units are connected. Each unit is assigned a role (Throttle, Brake, or Clutch), and the plugin renders pedal haptic effects host-side from live telemetry:
 
+- **ABS** — pulses on ABS activation.
+- **Lockup** — ramps in when a wheel locks under heavy braking.
+- **Threshold** — pulsed envelope on the braking threshold.
 - **Engine Vibration** — RPM-driven continuous vibration.
 
-An experimental calibration section is also available per device.
+A **Pedal Feel** section holds a Start/End of Travel slider (a real dual-thumb range slider, 3.8–49.7mm, with the gap between the two ends constrained to 4–32.5mm), a Deadzone slider (0–40kg at the start of pedal travel), a Max Force slider (0–200kg — sets where the input curve's 100% point sits, for pedals that never get pressed all the way to their theoretical max), and a second draggable 5-point curve — an **input curve** that reshapes how the pedal feels. All of these are host-side only, applied before anything else sees the pedal's position, and don't touch the output curve below.
+
+Both the input curve and the output curve show a live dot on the spline (with a guide line down to the axis) tracking the pedal as it's pressed.
+
+A **Sim Input Mapping** section (Pit House-style) holds a Sensor Output Ratio slider (blends the mBooster's angle sensor and load cell readings), a Max Threshold (kg) slider (the load-cell force at which output reaches 100%, reverse-engineered from real Pit House USB captures — unconfirmed by Moza), and the output curve (with Linear/S-Curve/Exponential/Parabolic presets, same as Pedal Feel) that shapes what's actually sent to the game. Unlike every other curve in the plugin, this one's nodes can also be dragged **horizontally** — drag the last node left to reach 100% output before 100% input, without needing the hardware breakpoint command that doesn't exist for this curve (the plugin resamples the shape at the fixed breakpoints the real wire commands support instead).
+
+An experimental calibration section is also available per device, with direction/min/max raw range plus read/apply buttons.
 
 ### Diagnostics & Serial Capture
 

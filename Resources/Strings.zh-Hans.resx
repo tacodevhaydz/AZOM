@@ -155,13 +155,24 @@
   <data name="Section_MBoosterPedals" xml:space="preserve"><value>MBOOSTER 踏板</value></data>
   <data name="Subtitle_MBoosterPedals" xml:space="preserve"><value>// 主机渲染的效果 · 每个设备的角色与位置</value></data>
   <data name="SliderLabel_Device" xml:space="preserve"><value>设备</value></data>
-  <data name="Status_NoMBooster" xml:space="preserve"><value>未连接 mBooster</value></data>
-  <data name="Section_PedalRole" xml:space="preserve"><value>踏板角色</value></data>
   <data name="SliderLabel_Role" xml:space="preserve"><value>角色</value></data>
   <data name="Option_Disabled" xml:space="preserve"><value>已禁用</value></data>
   <data name="Option_Throttle" xml:space="preserve"><value>油门</value></data>
   <data name="Option_Brake" xml:space="preserve"><value>刹车</value></data>
   <data name="Option_Clutch" xml:space="preserve"><value>离合</value></data>
+  <data name="Section_PedalFeel" xml:space="preserve"><value>踏板手感</value></data>
+  <data name="Subtitle_PedalFeel" xml:space="preserve"><value>// 决定踏板的手感,与下方的输出曲线无关</value></data>
+  <data name="SliderLabel_DeadzoneKg" xml:space="preserve"><value>死区(kg)</value></data>
+  <data name="SliderLabel_MaxForceKg" xml:space="preserve"><value>最大力值(kg)</value></data>
+  <data name="Hint_DeadzoneScaleAssumption" xml:space="preserve"><value>仅在软件端处理。死区和最大力值均假定踏板行程 0-100% 对应固定的 0-200kg 满量程,因为原始踏板信号本身没有独立的力值校准。最大力值决定下方输入曲线在何处达到 100%。</value></data>
+  <data name="SliderLabel_TravelRangeMm" xml:space="preserve"><value>行程起点 / 终点(mm)</value></data>
+  <data name="Hint_TravelRangeMm" xml:space="preserve"><value>仅在软件端处理。将踏板行程 0-100% 视为此处显示的完整范围 — 拖动两个节点即可裁剪并重新缩放到你实际使用的物理行程。</value></data>
+  <data name="Hint_InputCurveHostOnly" xml:space="preserve"><value>仅在软件端处理:在踏板位置到达游戏(以及下方"模拟输入映射"的输出曲线)之前对其进行重新塑形。不会写入设备。</value></data>
+  <data name="Section_SimInputMapping" xml:space="preserve"><value>模拟输入映射</value></data>
+  <data name="Subtitle_SimInputMapping" xml:space="preserve"><value>// 将传感器/踏板信号映射到游戏,Pit House 风格</value></data>
+  <data name="SliderLabel_MaxThresholdKg" xml:space="preserve"><value>最大阈值(kg)</value></data>
+  <data name="Hint_MaxThresholdReverseEngineered" xml:space="preserve"><value>通过对 Pit House 抓包逆向分析得出(cmdId 0xB3)— 未经 Moza 官方确认。请自行验证在你的硬件上是否正常工作。</value></data>
+  <data name="Hint_OutputCurveDragX" xml:space="preserve"><value>横向拖动节点可移动其在输入轴上的位置 — 例如将最后一个节点向左拖动,可使输出提前在未达到 100% 输入时就到达 100%。</value></data>
   <data name="Section_Effects" xml:space="preserve"><value>效果</value></data>
   <data name="Subtitle_EffectsTriggers" xml:space="preserve"><value>// 触发条件:ABS 由游戏信号 · Lockup 在刹车 &gt; 0.8 · Threshold 在边沿 · Engine 连续</value></data>
   <data name="Section_Abs" xml:space="preserve"><value>ABS</value></data>
@@ -542,7 +553,6 @@
   <data name="Status_TelemetrySenderUnavailableInit" xml:space="preserve"><value>遥测发送器不可用（插件未初始化）。</value></data>
   <data name="Status_PickMzdashFirst" xml:space="preserve"><value>请先选择一个 .mzdash 文件或库条目。</value></data>
   <data name="Status_NoConfigJsonState" xml:space="preserve"><value>（尚未收到 configJson 状态）</value></data>
-  <data name="Status_NoMBoosterSelected" xml:space="preserve"><value>未选择 mBooster</value></data>
   <data name="Status_PluginNotLoaded" xml:space="preserve"><value>插件未加载</value></data>
   <data name="Upload_CannotResolveBytes" xml:space="preserve"><value>无法解析 “{0}” 的原始字节——请改为选择本地文件。</value></data>
   <data name="Upload_FolderPrefix" xml:space="preserve"><value>文件夹：{0}</value></data>

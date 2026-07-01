@@ -89,6 +89,21 @@ namespace MozaPlugin
                     ClutchY1Slider, ClutchY2Slider, ClutchY3Slider,
                     ClutchY4Slider, ClutchY5Slider
                 });
+                BindEditorToSliders(MBoosterCurveEditor, new[]
+                {
+                    MBoosterY1Slider, MBoosterY2Slider, MBoosterY3Slider,
+                    MBoosterY4Slider, MBoosterY5Slider
+                });
+                BindEditorXToSliders(MBoosterCurveEditor, new[]
+                {
+                    MBoosterX1Slider, MBoosterX2Slider, MBoosterX3Slider,
+                    MBoosterX4Slider, MBoosterX5Slider
+                });
+                BindEditorToSliders(MBoosterInputCurveEditor, new[]
+                {
+                    MBoosterInputY1Slider, MBoosterInputY2Slider, MBoosterInputY3Slider,
+                    MBoosterInputY4Slider, MBoosterInputY5Slider
+                });
 
                 // Two-way bindings: CurveEditor.YN ↔ EqNSlider.Value (FFB EQ
                 // now uses the same line-graph control as the output curves,
@@ -191,6 +206,30 @@ namespace MozaPlugin
                     UpdateSourceTrigger = UpdateSourceTrigger.PropertyChanged,
                 };
                 BindingOperations.SetBinding(editor, ys[i], b);
+            }
+        }
+
+        // Two-way bind a MozaCurveEditor's X1..X5 dependency properties to
+        // sliders — only meaningful when the editor has
+        // AllowHorizontalDrag="True" (currently just the Sim Input Mapping
+        // output curve). 5 slots only, unlike BindEditorToSliders — no X6,
+        // since horizontal drag isn't offered on the 6-band EQ.
+        private void BindEditorXToSliders(MozaControls.MozaCurveEditor editor, Slider[] sliders)
+        {
+            if (editor == null || sliders == null || sliders.Length < 5) return;
+            var xs = new[] {
+                MozaControls.MozaCurveEditor.X1Property, MozaControls.MozaCurveEditor.X2Property,
+                MozaControls.MozaCurveEditor.X3Property, MozaControls.MozaCurveEditor.X4Property,
+                MozaControls.MozaCurveEditor.X5Property };
+            for (int i = 0; i < xs.Length; i++)
+            {
+                var b = new Binding(nameof(Slider.Value))
+                {
+                    Source = sliders[i],
+                    Mode = BindingMode.TwoWay,
+                    UpdateSourceTrigger = UpdateSourceTrigger.PropertyChanged,
+                };
+                BindingOperations.SetBinding(editor, xs[i], b);
             }
         }
 

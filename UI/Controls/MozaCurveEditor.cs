@@ -54,6 +54,43 @@ namespace MozaControls
         public double Y5 { get => (double)GetValue(Y5Property); set => SetValue(Y5Property, value); }
         public double Y6 { get => (double)GetValue(Y6Property); set => SetValue(Y6Property, value); }
 
+        // -------- X values (data-space 0..100, only meaningful when
+        // AllowHorizontalDrag is true — 5-node curves only, no X6). Defaults
+        // match the fixed 20/40/60/80/100 breakpoints every other curve in
+        // this app uses, so a fresh instance renders identically to one
+        // driven by NodeXFractions until the user actually drags a node
+        // sideways. --------
+        public static readonly DependencyProperty X1Property = RegisterX(nameof(X1), 20);
+        public static readonly DependencyProperty X2Property = RegisterX(nameof(X2), 40);
+        public static readonly DependencyProperty X3Property = RegisterX(nameof(X3), 60);
+        public static readonly DependencyProperty X4Property = RegisterX(nameof(X4), 80);
+        public static readonly DependencyProperty X5Property = RegisterX(nameof(X5), 100);
+
+        private static DependencyProperty RegisterX(string name, double dflt)
+            => DependencyProperty.Register(name, typeof(double), typeof(MozaCurveEditor),
+                new FrameworkPropertyMetadata(dflt,
+                    FrameworkPropertyMetadataOptions.BindsTwoWayByDefault | FrameworkPropertyMetadataOptions.AffectsRender,
+                    (d, e) => ((MozaCurveEditor)d).Recompute()));
+
+        public double X1 { get => (double)GetValue(X1Property); set => SetValue(X1Property, value); }
+        public double X2 { get => (double)GetValue(X2Property); set => SetValue(X2Property, value); }
+        public double X3 { get => (double)GetValue(X3Property); set => SetValue(X3Property, value); }
+        public double X4 { get => (double)GetValue(X4Property); set => SetValue(X4Property, value); }
+        public double X5 { get => (double)GetValue(X5Property); set => SetValue(X5Property, value); }
+
+        // When true, nodes can be dragged horizontally (within their
+        // neighbours' bounds) as well as vertically — used only by the
+        // Sim Input Mapping output curve, so a moved node means "100%
+        // output is reached before 100% input" without needing a
+        // (nonexistent) hardware X-breakpoint command. Off by default so
+        // every other curve in the app (FFB, Handbrake, Pedals, Pedal Feel)
+        // keeps its existing fixed-X behaviour unchanged.
+        public static readonly DependencyProperty AllowHorizontalDragProperty =
+            DependencyProperty.Register(nameof(AllowHorizontalDrag), typeof(bool), typeof(MozaCurveEditor),
+                new FrameworkPropertyMetadata(false, FrameworkPropertyMetadataOptions.AffectsRender,
+                    (d, e) => ((MozaCurveEditor)d).Recompute()));
+        public bool AllowHorizontalDrag { get => (bool)GetValue(AllowHorizontalDragProperty); set => SetValue(AllowHorizontalDragProperty, value); }
+
         // -------- Configuration DPs --------
 
         public static readonly DependencyProperty NodeCountProperty =
@@ -133,6 +170,18 @@ namespace MozaControls
                 new PropertyMetadata(null));
         public Brush? AccentBrush { get => (Brush?)GetValue(AccentBrushProperty); set => SetValue(AccentBrushProperty, value); }
 
+        // Live position indicator — a dot drawn ON the spline at the given
+        // data-space X (same domain as XAxisLabels, e.g. 0..100), showing
+        // where the pedal currently is exactly like the position bar does,
+        // plus what the curve currently outputs for that input. NaN (default)
+        // hides it. The caller (SettingsControl) is responsible for pushing
+        // live values in at the same cadence as the position bar.
+        public static readonly DependencyProperty LiveXProperty =
+            DependencyProperty.Register(nameof(LiveX), typeof(double), typeof(MozaCurveEditor),
+                new FrameworkPropertyMetadata(double.NaN, FrameworkPropertyMetadataOptions.AffectsRender,
+                    (d, e) => ((MozaCurveEditor)d).Recompute()));
+        public double LiveX { get => (double)GetValue(LiveXProperty); set => SetValue(LiveXProperty, value); }
+
         // -------- Read-only geometry / node positions surfaced to template --------
 
         private static readonly DependencyPropertyKey CurveGeometryKey =
@@ -158,6 +207,30 @@ namespace MozaControls
                 typeof(MozaCurveEditor), new PropertyMetadata(null));
         public static readonly DependencyProperty IdentityLineGeometryProperty = IdentityLineGeometryKey.DependencyProperty;
         public Geometry? IdentityLineGeometry => (Geometry?)GetValue(IdentityLineGeometryProperty);
+
+        private static readonly DependencyPropertyKey LiveGuideLineGeometryKey =
+            DependencyProperty.RegisterReadOnly(nameof(LiveGuideLineGeometry), typeof(Geometry),
+                typeof(MozaCurveEditor), new PropertyMetadata(null));
+        public static readonly DependencyProperty LiveGuideLineGeometryProperty = LiveGuideLineGeometryKey.DependencyProperty;
+        public Geometry? LiveGuideLineGeometry => (Geometry?)GetValue(LiveGuideLineGeometryProperty);
+
+        private static readonly DependencyPropertyKey LiveMarkerVisibleKey =
+            DependencyProperty.RegisterReadOnly(nameof(LiveMarkerVisible), typeof(Visibility),
+                typeof(MozaCurveEditor), new PropertyMetadata(Visibility.Collapsed));
+        public static readonly DependencyProperty LiveMarkerVisibleProperty = LiveMarkerVisibleKey.DependencyProperty;
+        public Visibility LiveMarkerVisible => (Visibility)GetValue(LiveMarkerVisibleProperty);
+
+        private static readonly DependencyPropertyKey LiveMarkerLeftKey =
+            DependencyProperty.RegisterReadOnly(nameof(LiveMarkerLeft), typeof(double),
+                typeof(MozaCurveEditor), new PropertyMetadata(-10000.0));
+        public static readonly DependencyProperty LiveMarkerLeftProperty = LiveMarkerLeftKey.DependencyProperty;
+        public double LiveMarkerLeft => (double)GetValue(LiveMarkerLeftProperty);
+
+        private static readonly DependencyPropertyKey LiveMarkerTopKey =
+            DependencyProperty.RegisterReadOnly(nameof(LiveMarkerTop), typeof(double),
+                typeof(MozaCurveEditor), new PropertyMetadata(-10000.0));
+        public static readonly DependencyProperty LiveMarkerTopProperty = LiveMarkerTopKey.DependencyProperty;
+        public double LiveMarkerTop => (double)GetValue(LiveMarkerTopProperty);
 
         // 6 node centre positions exposed individually for Canvas-positioned ellipses
         private static readonly DependencyPropertyKey[] NodeXKeys = new DependencyPropertyKey[6];
@@ -302,6 +375,11 @@ namespace MozaControls
         private const double NodeSize = 28;
         private const double NodeHalf = NodeSize / 2.0;
 
+        // Live position marker — deliberately smaller than the draggable
+        // nodes so it doesn't visually compete with them.
+        private const double LiveMarkerSize = 10;
+        private const double LiveMarkerHalf = LiveMarkerSize / 2.0;
+
         // The visual X axis is uniformly compressed by 0.98 so the 28-px node
         // circle (plus its glow) on the last node clears the outer Border's
         // rounded corner. Every node is shifted by the same scale factor —
@@ -398,6 +476,25 @@ namespace MozaControls
             double range = Math.Max(1, YMax - YMin);
             double v = Math.Max(YMin, Math.Min(YMax, Math.Round(YMin + y01 * range)));
             SetY(_dragNode, v);
+
+            // Horizontal drag (output curve only — see AllowHorizontalDrag).
+            // Clamped between immediate neighbours (min 1-unit gap) so nodes
+            // can never cross, which would make the curve's X non-monotonic
+            // and the Bezier-inversion evaluators (EvaluateInputCurve-style)
+            // ill-defined.
+            if (AllowHorizontalDrag && _dragNode >= 0 && _dragNode < 5)
+            {
+                double w = _canvas?.ActualWidth ?? ActualWidth;
+                double plotW = Math.Max(1, w - PadLeft - PadRight);
+                double x01 = (p.X - PadLeft) / (0.98 * plotW);
+                double dataX = x01 * 100.0;
+
+                double lo = _dragNode == 0 ? 1.0 : GetX(_dragNode - 1) + 1.0;
+                double hi = _dragNode == 4 ? 100.0 : GetX(_dragNode + 1) - 1.0;
+                if (hi < lo) hi = lo;
+                dataX = Math.Max(lo, Math.Min(hi, dataX));
+                SetX(_dragNode, Math.Round(dataX));
+            }
         }
 
         private void SetY(int i, double v)
@@ -410,6 +507,31 @@ namespace MozaControls
                 case 3: Y4 = v; break;
                 case 4: Y5 = v; break;
                 case 5: Y6 = v; break;
+            }
+        }
+
+        private double GetX(int i)
+        {
+            switch (i)
+            {
+                case 0: return X1;
+                case 1: return X2;
+                case 2: return X3;
+                case 3: return X4;
+                case 4: return X5;
+                default: return 0;
+            }
+        }
+
+        private void SetX(int i, double v)
+        {
+            switch (i)
+            {
+                case 0: X1 = v; break;
+                case 1: X2 = v; break;
+                case 2: X3 = v; break;
+                case 3: X4 = v; break;
+                case 4: X5 = v; break;
             }
         }
 
@@ -455,13 +577,28 @@ namespace MozaControls
             int nodeCount = ClampedNodeCount();
 
             // ---- Node X fractions / Y values ----
-            double[] nodeFracs = ParseFractions(NodeXFractions, Default5NodeFractions);
-            if (nodeFracs.Length < nodeCount)
+            double[] nodeFracs;
+            if (AllowHorizontalDrag && nodeCount <= 5)
             {
-                // Caller didn't supply enough fractions; fall back to evenly
-                // spaced column centres so we render something sensible.
+                // Nodes are user-draggable in X (see ApplyDrag) — derive
+                // fractions from X1..X5 instead of the fixed NodeXFractions
+                // string. Same 0.98 compression as Default5NodeFractions so
+                // a never-dragged node lands exactly where it always has.
+                double[] xs = { X1, X2, X3, X4, X5 };
                 nodeFracs = new double[nodeCount];
-                for (int i = 0; i < nodeCount; i++) nodeFracs[i] = (2.0 * i + 1) / (2.0 * nodeCount);
+                for (int i = 0; i < nodeCount; i++)
+                    nodeFracs[i] = Math.Max(0, Math.Min(1, (xs[i] / 100.0) * 0.98));
+            }
+            else
+            {
+                nodeFracs = ParseFractions(NodeXFractions, Default5NodeFractions);
+                if (nodeFracs.Length < nodeCount)
+                {
+                    // Caller didn't supply enough fractions; fall back to evenly
+                    // spaced column centres so we render something sensible.
+                    nodeFracs = new double[nodeCount];
+                    for (int i = 0; i < nodeCount; i++) nodeFracs[i] = (2.0 * i + 1) / (2.0 * nodeCount);
+                }
             }
             double[] ys = { Y1, Y2, Y3, Y4, Y5, Y6 };
             double range = Math.Max(1, YMax - YMin);
@@ -518,6 +655,11 @@ namespace MozaControls
             // p3 for the LAST visible segment's tangent computation.
             int firstSeg = anchor ? 0 : 1;
             int lastSeg = nodeCount;
+            // Cached alongside geometry construction so the live-position
+            // marker (below) can locate the exact pixel point ON the spline
+            // for a given data-space X, without re-deriving the Catmull-Rom
+            // tangents a second time.
+            var segments = new (Point p1, Point c1, Point c2, Point p2)[lastSeg - firstSeg];
             for (int i = firstSeg; i < lastSeg; i++)
             {
                 Point p0 = i == 0 ? allPts[0] : allPts[i - 1];
@@ -527,11 +669,14 @@ namespace MozaControls
                 Point c1 = new Point(p1.X + (p2.X - p0.X) / 6.0, p1.Y + (p2.Y - p0.Y) / 6.0);
                 Point c2 = new Point(p2.X - (p3.X - p1.X) / 6.0, p2.Y - (p3.Y - p1.Y) / 6.0);
                 fig.Segments.Add(new BezierSegment(c1, c2, p2, true));
+                segments[i - firstSeg] = (p1, c1, c2, p2);
             }
             var geom = new PathGeometry();
             geom.Figures.Add(fig);
             geom.Freeze();
             SetValue(CurveGeometryKey, geom);
+
+            UpdateLiveMarker(segments, plotW, PadTop + plotH);
 
             // ---- Background grid (4 interior horizontal + 4 vertical lines) ----
             // Vertical lines scale with the rightmost node fraction so they
@@ -620,6 +765,87 @@ namespace MozaControls
                 SetValue(YAxisLabelKeys[i], i < yLabels.Length ? yLabels[i] : string.Empty);
             }
             SetValue(YLabelCanvasLeftKey, 6.0); // matches existing left padding of 6
+        }
+
+        /// <summary>
+        /// Position the live indicator (see <see cref="LiveX"/>) exactly ON
+        /// the already-built spline: map the data-space X to a pixel X via
+        /// the same XAxisLabels/XLabelFractions correspondence used for tick
+        /// labels, find which segment contains it, then invert that
+        /// segment's Bezier X(t) via bisection (same approach as
+        /// MozaMBoosterRegistry.EvaluateInputCurve) to read off both the
+        /// pixel X and Y at that point.
+        /// </summary>
+        private void UpdateLiveMarker((Point p1, Point c1, Point c2, Point p2)[] segments, double plotW, double axisBottomY)
+        {
+            double liveX = LiveX;
+            bool placed = false;
+
+            if (!double.IsNaN(liveX) && segments.Length > 0)
+            {
+                double[] fracs = ParseFractions(XLabelFractions, new[] { 0.0, 0.2, 0.4, 0.6, 0.8, 1.0 });
+                string[] rawLabels = ParseLabels(XAxisLabels);
+                int n = Math.Min(fracs.Length, rawLabels.Length);
+                var values = new double[n];
+                bool parsedOk = n >= 2;
+                for (int i = 0; parsedOk && i < n; i++)
+                    parsedOk = double.TryParse(rawLabels[i], NumberStyles.Float, CultureInfo.InvariantCulture, out values[i]);
+
+                if (parsedOk)
+                {
+                    double clampedX = Math.Max(values[0], Math.Min(values[n - 1], liveX));
+                    int lo = 0;
+                    for (int i = 0; i < n - 1; i++)
+                    {
+                        if (clampedX >= values[i] && clampedX <= values[i + 1]) { lo = i; break; }
+                    }
+                    double t0 = values[lo], t1 = values[lo + 1];
+                    double f0 = fracs[lo], f1 = fracs[lo + 1];
+                    double frac = t1 > t0 ? f0 + (clampedX - t0) / (t1 - t0) * (f1 - f0) : f0;
+                    double targetPixelX = PadLeft + Math.Max(0, Math.Min(1, frac)) * plotW;
+
+                    int segIdx = segments.Length - 1;
+                    for (int i = 0; i < segments.Length; i++)
+                    {
+                        if (targetPixelX <= segments[i].p2.X) { segIdx = i; break; }
+                    }
+                    var seg = segments[segIdx];
+
+                    double loT = 0, hiT = 1;
+                    for (int iter = 0; iter < 24; iter++)
+                    {
+                        double tm = (loT + hiT) / 2.0;
+                        double bx = CubicBezierPoint(seg.p1.X, seg.c1.X, seg.c2.X, seg.p2.X, tm);
+                        if (bx < targetPixelX) loT = tm; else hiT = tm;
+                    }
+                    double finalT = (loT + hiT) / 2.0;
+                    double markerX = CubicBezierPoint(seg.p1.X, seg.c1.X, seg.c2.X, seg.p2.X, finalT);
+                    double markerY = CubicBezierPoint(seg.p1.Y, seg.c1.Y, seg.c2.Y, seg.p2.Y, finalT);
+
+                    SetValue(LiveMarkerVisibleKey, Visibility.Visible);
+                    SetValue(LiveMarkerLeftKey, markerX - LiveMarkerHalf);
+                    SetValue(LiveMarkerTopKey, markerY - LiveMarkerHalf);
+
+                    var guide = new LineGeometry(new Point(markerX, axisBottomY), new Point(markerX, markerY));
+                    guide.Freeze();
+                    SetValue(LiveGuideLineGeometryKey, guide);
+                    placed = true;
+                }
+            }
+
+            if (!placed)
+            {
+                SetValue(LiveMarkerVisibleKey, Visibility.Collapsed);
+                SetValue(LiveMarkerLeftKey, -10000.0);
+                SetValue(LiveMarkerTopKey, -10000.0);
+                SetValue(LiveGuideLineGeometryKey, null);
+            }
+        }
+
+        private static double CubicBezierPoint(double p0, double c1, double c2, double p1, double t)
+        {
+            double mt = 1 - t;
+            return mt * mt * mt * p0 + 3 * mt * mt * t * c1 + 3 * mt * t * t * c2 + t * t * t * p1;
         }
     }
 }

@@ -155,13 +155,24 @@
   <data name="Section_MBoosterPedals" xml:space="preserve"><value>PÉDALES MBOOSTER</value></data>
   <data name="Subtitle_MBoosterPedals" xml:space="preserve"><value>// effets générés par l'hôte · rôle + position par périphérique</value></data>
   <data name="SliderLabel_Device" xml:space="preserve"><value>Périphérique</value></data>
-  <data name="Status_NoMBooster" xml:space="preserve"><value>Aucun mBooster connecté</value></data>
-  <data name="Section_PedalRole" xml:space="preserve"><value>RÔLE DE LA PÉDALE</value></data>
   <data name="SliderLabel_Role" xml:space="preserve"><value>Rôle</value></data>
   <data name="Option_Disabled" xml:space="preserve"><value>Désactivé</value></data>
   <data name="Option_Throttle" xml:space="preserve"><value>Accélérateur</value></data>
   <data name="Option_Brake" xml:space="preserve"><value>Frein</value></data>
   <data name="Option_Clutch" xml:space="preserve"><value>Embrayage</value></data>
+  <data name="Section_PedalFeel" xml:space="preserve"><value>RESSENTI DE LA PÉDALE</value></data>
+  <data name="Subtitle_PedalFeel" xml:space="preserve"><value>// détermine le ressenti de la pédale, indépendamment de la courbe de sortie ci-dessous</value></data>
+  <data name="SliderLabel_DeadzoneKg" xml:space="preserve"><value>Zone morte (kg)</value></data>
+  <data name="SliderLabel_MaxForceKg" xml:space="preserve"><value>Force maximale (kg)</value></data>
+  <data name="Hint_DeadzoneScaleAssumption" xml:space="preserve"><value>Uniquement côté logiciel. La Zone morte et la Force maximale supposent toutes deux une échelle fixe de 0 à 200 kg pour 0-100 % de la course de la pédale, car le signal brut de la pédale n'a pas d'étalonnage de force propre. Force maximale définit où la courbe d'entrée ci-dessous atteint 100 %.</value></data>
+  <data name="SliderLabel_TravelRangeMm" xml:space="preserve"><value>Début / Fin de Course (mm)</value></data>
+  <data name="Hint_TravelRangeMm" xml:space="preserve"><value>Uniquement côté logiciel. Traite 0-100 % de la course de la pédale comme la plage complète indiquée ici — faites glisser les deux nœuds pour recadrer et redimensionner selon la course physique que vous utilisez réellement.</value></data>
+  <data name="Hint_InputCurveHostOnly" xml:space="preserve"><value>Uniquement côté logiciel : remodèle la position de pédale signalée avant qu'elle n'atteigne le jeu (et la courbe de sortie de Mappage d'entrée Sim ci-dessous). Rien n'est envoyé à l'appareil.</value></data>
+  <data name="Section_SimInputMapping" xml:space="preserve"><value>MAPPAGE D'ENTRÉE SIM</value></data>
+  <data name="Subtitle_SimInputMapping" xml:space="preserve"><value>// mappe le signal de la cellule de charge/pédale vers le jeu, à la manière de Pit House</value></data>
+  <data name="SliderLabel_MaxThresholdKg" xml:space="preserve"><value>Seuil maximal (kg)</value></data>
+  <data name="Hint_MaxThresholdReverseEngineered" xml:space="preserve"><value>Rétro-ingénierie à partir d'une capture Pit House (cmdId 0xB3) — non confirmé par Moza. Merci de vérifier que cela fonctionne correctement sur votre matériel.</value></data>
+  <data name="Hint_OutputCurveDragX" xml:space="preserve"><value>Faites glisser un nœud latéralement pour déplacer sa position sur l'axe d'entrée — par exemple, faites glisser le dernier nœud vers la gauche pour atteindre 100 % de sortie avant 100 % d'entrée.</value></data>
   <data name="Section_Effects" xml:space="preserve"><value>EFFETS</value></data>
   <data name="Subtitle_EffectsTriggers" xml:space="preserve"><value>// déclencheurs : ABS sur signal du jeu · Blocage au frein&gt;0,8 · Seuil sur front · Moteur continu</value></data>
   <data name="Section_Abs" xml:space="preserve"><value>ABS</value></data>
@@ -542,7 +553,6 @@
   <data name="Status_TelemetrySenderUnavailableInit" xml:space="preserve"><value>Émetteur de télémétrie indisponible (plugin non initialisé).</value></data>
   <data name="Status_PickMzdashFirst" xml:space="preserve"><value>Sélectionnez d'abord un fichier .mzdash ou une entrée de bibliothèque.</value></data>
   <data name="Status_NoConfigJsonState" xml:space="preserve"><value>(aucun état configJson reçu pour l'instant)</value></data>
-  <data name="Status_NoMBoosterSelected" xml:space="preserve"><value>Aucun mBooster sélectionné</value></data>
   <data name="Status_PluginNotLoaded" xml:space="preserve"><value>Plugin non chargé</value></data>
   <data name="Upload_CannotResolveBytes" xml:space="preserve"><value>Impossible de résoudre les octets bruts pour « {0} » — choisissez plutôt un fichier local.</value></data>
   <data name="Upload_FolderPrefix" xml:space="preserve"><value>Dossier : {0}</value></data>

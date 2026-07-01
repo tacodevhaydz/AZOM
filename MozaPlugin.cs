@@ -1972,12 +1972,23 @@ namespace MozaPlugin
             if (s.Max >= 0) controller.SendIntWrite("mbooster-throttle-max", s.Max);
             if (s.CurveY != null && s.CurveY.Length == 5)
             {
-                controller.SendFloatWrite("mbooster-throttle-y1", s.CurveY[0]);
-                controller.SendFloatWrite("mbooster-throttle-y2", s.CurveY[1]);
-                controller.SendFloatWrite("mbooster-throttle-y3", s.CurveY[2]);
-                controller.SendFloatWrite("mbooster-throttle-y4", s.CurveY[3]);
-                controller.SendFloatWrite("mbooster-throttle-y5", s.CurveY[4]);
+                // Resample at the fixed 20/40/60/80/100 breakpoints in case
+                // CurveX has been horizontally dragged (see
+                // MozaMBoosterRegistry.ResampleCurveAtFixedBreakpoints) —
+                // identity when it hasn't.
+                var resampled = global::MozaPlugin.Devices.MozaMBoosterRegistry.ResampleCurveAtFixedBreakpoints(s.CurveX, s.CurveY);
+                controller.SendFloatWrite("mbooster-throttle-y1", resampled[0]);
+                controller.SendFloatWrite("mbooster-throttle-y2", resampled[1]);
+                controller.SendFloatWrite("mbooster-throttle-y3", resampled[2]);
+                controller.SendFloatWrite("mbooster-throttle-y4", resampled[3]);
+                controller.SendFloatWrite("mbooster-throttle-y5", resampled[4]);
             }
+            // Sim Input Mapping (Pit House-style).
+            if (s.SensorOutputRatioPct >= 0)
+                controller.SendFloatWrite("mbooster-brake-angle-ratio", s.SensorOutputRatioPct);
+            if (s.MaxThresholdKg >= 0)
+                controller.SendIntWrite("mbooster-brake-threshold",
+                    global::MozaPlugin.Protocol.MozaMBoosterProtocol.EncodeThresholdKg(s.MaxThresholdKg));
         }
 
         // Resolve a dashboard name to its parsed MultiStreamProfile without firing
