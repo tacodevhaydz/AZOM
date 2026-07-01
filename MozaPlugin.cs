@@ -1761,6 +1761,11 @@ namespace MozaPlugin
                 double vehicleMs = (nd?.SpeedKmh ?? 0.0) / 3.6;
                 double avgWheelMs = 0.0;
                 double idleRpm = 800.0;
+                // No generic suspension-travel telemetry exists in SimHub;
+                // AccelerationHeave (vertical G) is the closest proxy for
+                // road-surface roughness. Nullable — 0 for games that don't
+                // report it, same fail-soft style as the rest of this block.
+                double suspensionHeaveG = nd?.AccelerationHeave ?? 0.0;
                 var snap = new MBoosterTelemetrySnapshot(
                     gameRunning: data.GameRunning,
                     rpm: rpm,
@@ -1768,7 +1773,8 @@ namespace MozaPlugin
                     brake: brake01,
                     absActive: absActive,
                     vehicleSpeedMs: vehicleMs,
-                    avgWheelSpeedMs: avgWheelMs);
+                    avgWheelSpeedMs: avgWheelMs,
+                    suspensionHeaveG: suspensionHeaveG);
                 _mboosterRegistry.OnDataUpdate(snap);
             }
 

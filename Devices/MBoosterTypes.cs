@@ -15,6 +15,28 @@ namespace MozaPlugin.Devices
         public const float TravelMaxMm = 49.7f;
         public const float TravelMinGapMm = 3.8f;
         public const float TravelMaxGapMm = 32.1f;
+
+        // Engine Vibration's fixed frequency slider bounds — see
+        // MBoosterEffectSettings.FrequencyHz and MBoosterEffectWorker.
+        public const float EngineFreqMinHz = 60f;
+        public const float EngineFreqMaxHz = 200f;
+
+        // ABS's fixed frequency slider bounds — same field, different range.
+        public const float AbsFreqMinHz = 5f;
+        public const float AbsFreqMaxHz = 30f;
+
+        // Lockup's fixed frequency slider bounds — same field, different range.
+        public const float LockupFreqMinHz = 10f;
+        public const float LockupFreqMaxHz = 100f;
+
+        // Threshold's fixed frequency slider bounds — same field, different range.
+        public const float ThresholdFreqMinHz = 5f;
+        public const float ThresholdFreqMaxHz = 100f;
+
+        // Threshold's Trigger Input Level slider bounds. See
+        // MBoosterEffectSettings.TriggerLevelPct.
+        public const float ThresholdTriggerMinPct = 50f;
+        public const float ThresholdTriggerMaxPct = 100f;
     }
 
     /// <summary>
@@ -32,21 +54,70 @@ namespace MozaPlugin.Devices
     }
 
     /// <summary>
-    /// Per-effect knobs the user can tweak. Frequency is computed at runtime
-    /// per protocol note § 4 telemetry pseudocode — only enable + intensity
-    /// are surfaced in the UI. Each effect's user 0..100 % maps to scale
-    /// 0..ScaleMax at apply time (protocol note § 4 suggested defaults:
-    /// ABS / Threshold = 0.10, Lockup = 0.15, Engine = 0.10 — engine runs
-    /// continuously and would dominate the others without this cap). The
-    /// caps live on <c>MBoosterEffectWorker</c>.
+    /// Per-effect knobs the user can tweak. Originally frequency was computed
+    /// at runtime per protocol note § 4 telemetry pseudocode with only
+    /// enable + intensity surfaced in the UI — Engine, ABS, Lockup, and
+    /// Threshold have since all been rebuilt with a fixed, user-set
+    /// Frequency slider instead (see <see cref="FrequencyHz"/>). Each
+    /// effect's user 0..100 % Intensity maps to scale 0..ScaleMax at apply
+    /// time (protocol note § 4 suggested defaults: ABS / Threshold = 0.10,
+    /// Lockup = 0.15, Engine = 0.10 — engine runs continuously and would
+    /// dominate the others without this cap). The caps live on
+    /// <c>MBoosterEffectWorker</c>.
     /// </summary>
     public sealed class MBoosterEffectSettings
     {
         public bool Enabled { get; set; } = false;
         public int IntensityPct { get; set; } = 50; // 0..100
 
+        // Fixed vibration frequency, in Hz. Consumed by Engine (60-200Hz),
+        // ABS (5-30Hz), Lockup (10-100Hz), and Threshold (5-100Hz) — see
+        // MBoosterUiConstants for each effect's *FreqMinHz/MaxHz bounds.
+        // All four used to derive their frequency from telemetry (Engine:
+        // RPM; ABS: activation depth; Lockup/Threshold: brake position);
+        // all four mappings were replaced with this user-set fixed value as
+        // each effect was rebuilt.
+        public float FrequencyHz { get; set; } = 100;
+
+        // Pulse modulation depth, ABS-only for now, 0..100. Controls the
+        // depth of the sine ripple in MBoosterEffectSynthesizer.SynthesizeAbs:
+        // 100 (default) reproduces the exact original verified formula
+        // (0.9 + 0.1*sin, depth 0.1 — "do not modify without verifying
+        // against the protocol document"); 0 widens it to a full 0..1 swing
+        // (0.5 + 0.5*sin, matching Engine's shape) for a sharper, choppier
+        // pulse. Values between are a host-side interpolation, not from the
+        // protocol note. Default 100 preserves pre-existing behavior for
+        // profiles that predate this slider.
+        public int SmoothnessPct { get; set; } = 100;
+
+        // Threshold-only, 50..100 (MBoosterUiConstants.ThresholdTriggerMinPct/
+        // MaxPct) — the brake position (%) at which the rising-edge trigger
+        // fires. The falling/release threshold stays a fixed 30 points
+        // below this (same hysteresis gap the original fixed 0.6/0.3
+        // thresholds had) rather than being independently configurable.
+        // Default 60 exactly reproduces the original verified trigger
+        // point. See MBoosterEffectWorker.UpdateThresholdRequest.
+        public int TriggerLevelPct { get; set; } = 60;
+
+        // Threshold-only, 0..100 — how much the pulse fades after its
+        // initial burst. Generalizes MBoosterEffectSynthesizer
+        // .SynthesizeThreshold's fixed "20ms full + 120ms @ 80% + 60ms gap"
+        // envelope: sustain level = 1 - decay/100, so 20 (default) exactly
+        // reproduces the original verified 80% sustain; 0 sustains at full
+        // strength for the whole 120ms (barely decays), 100 drops to
+        // silence immediately after the burst (a short, sharp tick).
+        public int DecayPct { get; set; } = 20;
+
         public MBoosterEffectSettings Clone() =>
-            new MBoosterEffectSettings { Enabled = Enabled, IntensityPct = IntensityPct };
+            new MBoosterEffectSettings
+            {
+                Enabled = Enabled,
+                IntensityPct = IntensityPct,
+                FrequencyHz = FrequencyHz,
+                SmoothnessPct = SmoothnessPct,
+                TriggerLevelPct = TriggerLevelPct,
+                DecayPct = DecayPct,
+            };
     }
 
     /// <summary>
@@ -59,10 +130,27 @@ namespace MozaPlugin.Devices
     {
         public MBoosterRole Role { get; set; } = MBoosterRole.Disabled;
 
-        public MBoosterEffectSettings Abs       { get; set; } = new MBoosterEffectSettings();
-        public MBoosterEffectSettings Lockup    { get; set; } = new MBoosterEffectSettings();
-        public MBoosterEffectSettings Threshold { get; set; } = new MBoosterEffectSettings();
-        public MBoosterEffectSettings Engine    { get; set; } = new MBoosterEffectSettings { IntensityPct = 50 };
+        // FrequencyHz defaults to 22 — the exact value from the "known-good"
+        // real Pit House capture (docs/protocol/devices/mbooster.md: "ABS on,
+        // 22Hz, amp=0x08e8").
+        public MBoosterEffectSettings Abs       { get; set; } = new MBoosterEffectSettings { FrequencyHz = 22 };
+        // FrequencyHz defaults to 55 — the exact value from the "known-good"
+        // real Pit House capture (docs/protocol/devices/mbooster.md:
+        // "Lockup on, 55 Hz, start of ramp").
+        public MBoosterEffectSettings Lockup    { get; set; } = new MBoosterEffectSettings { FrequencyHz = 55 };
+        // FrequencyHz defaults to 70 — the exact value from the
+        // "known-good" ComputeParam1 reference (docs/protocol/devices/
+        // mbooster.md: "Threshold @ 70 Hz -> 44"). TriggerLevelPct/DecayPct
+        // default to 60/20, exactly reproducing the original verified
+        // 0.6-brake trigger and 80% sustain.
+        public MBoosterEffectSettings Threshold { get; set; } = new MBoosterEffectSettings { FrequencyHz = 70, TriggerLevelPct = 60, DecayPct = 20 };
+        public MBoosterEffectSettings Engine    { get; set; } = new MBoosterEffectSettings { IntensityPct = 50, FrequencyHz = 100 };
+
+        // Road Texture (effect type 9) reuses IntensityPct and SmoothnessPct
+        // — both are sent to the device as raw percentages (see
+        // MozaMBoosterProtocol.EncodeRoadTextureLevel); it has no
+        // FrequencyHz of its own, unlike Abs/Engine.
+        public MBoosterEffectSettings RoadTexture { get; set; } = new MBoosterEffectSettings { IntensityPct = 50, SmoothnessPct = 50 };
 
         // Calibration (experimental per protocol note § 6). -1 = "not yet
         // read / no override"; the worker treats -1 as "do not write".
@@ -172,6 +260,7 @@ namespace MozaPlugin.Devices
                 Lockup = Lockup?.Clone() ?? new MBoosterEffectSettings(),
                 Threshold = Threshold?.Clone() ?? new MBoosterEffectSettings(),
                 Engine = Engine?.Clone() ?? new MBoosterEffectSettings(),
+                RoadTexture = RoadTexture?.Clone() ?? new MBoosterEffectSettings(),
                 Direction = Direction,
                 Min = Min,
                 Max = Max,
@@ -207,10 +296,17 @@ namespace MozaPlugin.Devices
         public readonly bool   AbsActive;
         public readonly double VehicleSpeedMs;
         public readonly double AvgWheelSpeedMs;
+        // Vertical chassis acceleration, in G — SimHub's StatusDataBase.
+        // AccelerationHeave (nullable; 0 when a game doesn't report it).
+        // There's no generic suspension-travel telemetry in SimHub at all
+        // (StatusDataBase has no Suspension*/Damper*/RideHeight fields);
+        // this is a proxy for road-surface roughness used by Road Texture.
+        // See docs/protocol/devices/mbooster.md "Road Texture".
+        public readonly double SuspensionHeaveG;
 
         public MBoosterTelemetrySnapshot(
             bool gameRunning, double rpm, double idleRpm, double brake, bool absActive,
-            double vehicleSpeedMs, double avgWheelSpeedMs)
+            double vehicleSpeedMs, double avgWheelSpeedMs, double suspensionHeaveG)
         {
             GameRunning = gameRunning;
             Rpm = rpm;
@@ -219,9 +315,10 @@ namespace MozaPlugin.Devices
             AbsActive = absActive;
             VehicleSpeedMs = vehicleSpeedMs;
             AvgWheelSpeedMs = avgWheelSpeedMs;
+            SuspensionHeaveG = suspensionHeaveG;
         }
 
         public static readonly MBoosterTelemetrySnapshot Empty =
-            new MBoosterTelemetrySnapshot(false, 0, 800, 0, false, 0, 0);
+            new MBoosterTelemetrySnapshot(false, 0, 800, 0, false, 0, 0, 0);
     }
 }

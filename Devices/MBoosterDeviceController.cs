@@ -302,7 +302,7 @@ namespace MozaPlugin.Devices
             }
         }
 
-        /// <summary>Fire all four disable frames; called on disconnect / shutdown.</summary>
+        /// <summary>Fire all five disable frames; called on disconnect / shutdown.</summary>
         public void SendAllDisableFrames()
         {
             if (!_connection.IsConnected) return;
@@ -311,31 +311,80 @@ namespace MozaPlugin.Devices
             SendOneShot(MozaMBoosterProtocol.BuildDisableFrame(MBoosterEffectId.Lockup));
             SendOneShot(MozaMBoosterProtocol.BuildDisableFrame(MBoosterEffectId.Threshold));
             SendOneShot(MozaMBoosterProtocol.BuildDisableFrame(MBoosterEffectId.Engine));
+            SendOneShot(MozaMBoosterProtocol.BuildDisableFrame(MBoosterEffectId.RoadTexture));
         }
 
         /// <summary>
-        /// Fire a single effect for ~1 s, used by the per-effect "Test" buttons
-        /// in the UI. The worker handles per-effect scale caps and brake
-        /// modulation (ABS / Lockup / Threshold track live brake; Engine uses
-        /// its reference frequency at the configured intensity). The raw 0..1
-        /// user setting is passed through unchanged.
+        /// Continuously runs the Engine effect at its currently configured
+        /// Frequency/Intensity while <paramref name="on"/> is true — the
+        /// Engine card's Test toggle. Both sliders are tracked live by
+        /// the worker, not snapshotted at toggle-on time. Turning off is
+        /// always allowed (even if disconnected) so a stuck toggle can
+        /// always be cleared; turning on requires a live connection.
         /// </summary>
-        public void FireEffectTest(MBoosterEffectId effect)
+        public void SetEngineTestActive(bool on)
         {
-            var settings = _settingsLookup();
-            if (settings == null || !_connection.IsConnected) return;
+            if (on && !_connection.IsConnected) return;
+            _worker.SetEngineTestSustained(on);
+        }
 
-            var es = effect switch
-            {
-                MBoosterEffectId.Abs       => settings.Abs,
-                MBoosterEffectId.Lockup    => settings.Lockup,
-                MBoosterEffectId.Threshold => settings.Threshold,
-                MBoosterEffectId.Engine    => settings.Engine,
-                _ => settings.Abs,
-            };
+        /// <summary>
+        /// Continuously runs the ABS effect — substituting live brake
+        /// position for absActive, same as the old 1s test pulse did — at
+        /// its currently configured Frequency/Intensity/Smoothness while
+        /// <paramref name="on"/> is true. See <see cref="SetEngineTestActive"/>
+        /// for the analogous Engine toggle; same live-tracking and
+        /// always-allow-off semantics apply here.
+        /// </summary>
+        public void SetAbsTestActive(bool on)
+        {
+            if (on && !_connection.IsConnected) return;
+            _worker.SetAbsTestSustained(on);
+        }
 
-            double intensity = (es?.IntensityPct ?? 50) / 100.0;
-            _worker.FireTestPulse(effect, intensity);
+        /// <summary>
+        /// Continuously runs Road Texture at its currently configured
+        /// Intensity/Smoothness while <paramref name="on"/> is true,
+        /// bypassing Enabled and the game-running/speed gate entirely —
+        /// there's no live "how rough is the road" signal to preview
+        /// against outside a real drive. See <see cref="SetEngineTestActive"/>
+        /// for the analogous Engine toggle; same live-tracking and
+        /// always-allow-off semantics apply here.
+        /// </summary>
+        public void SetRoadTextureTestActive(bool on)
+        {
+            if (on && !_connection.IsConnected) return;
+            _worker.SetRoadTextureTestSustained(on);
+        }
+
+        /// <summary>
+        /// Continuously runs Lockup — substituting live brake position for
+        /// the wheel-slip detection heuristic (which needs vehicle speed),
+        /// same as the old 1s test pulse did — at its currently configured
+        /// Frequency/Intensity while <paramref name="on"/> is true. See
+        /// <see cref="SetEngineTestActive"/> for the analogous Engine
+        /// toggle; same live-tracking and always-allow-off semantics apply
+        /// here.
+        /// </summary>
+        public void SetLockupTestActive(bool on)
+        {
+            if (on && !_connection.IsConnected) return;
+            _worker.SetLockupTestSustained(on);
+        }
+
+        /// <summary>
+        /// Continuously runs Threshold — skipping the rising-edge hysteresis
+        /// entirely, substituting live brake position for it (same
+        /// substitution the old 1s test pulse used) — at its currently
+        /// configured Frequency/Intensity/Decay while <paramref name="on"/>
+        /// is true. See <see cref="SetEngineTestActive"/> for the analogous
+        /// Engine toggle; same live-tracking and always-allow-off semantics
+        /// apply here.
+        /// </summary>
+        public void SetThresholdTestActive(bool on)
+        {
+            if (on && !_connection.IsConnected) return;
+            _worker.SetThresholdTestSustained(on);
         }
 
         public void Dispose()

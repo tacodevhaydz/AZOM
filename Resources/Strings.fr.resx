@@ -179,11 +179,18 @@
   <data name="Section_Effects" xml:space="preserve"><value>EFFETS</value></data>
   <data name="Subtitle_EffectsTriggers" xml:space="preserve"><value>// déclencheurs : ABS sur signal du jeu · Blocage au frein&gt;0,8 · Seuil sur front · Moteur continu</value></data>
   <data name="Section_Abs" xml:space="preserve"><value>ABS</value></data>
+  <data name="Section_RoadTexture" xml:space="preserve"><value>Texture de la route</value></data>
   <data name="Label_Enable" xml:space="preserve"><value>Activer</value></data>
   <data name="Button_Test1s" xml:space="preserve"><value>Tester 1 s</value></data>
+  <data name="Label_Test" xml:space="preserve"><value>Tester</value></data>
   <data name="Section_Lockup" xml:space="preserve"><value>Blocage</value></data>
   <data name="Section_Threshold" xml:space="preserve"><value>Seuil</value></data>
-  <data name="Section_EngineContinuous" xml:space="preserve"><value>Moteur (continu — limité automatiquement à 10 %)</value></data>
+  <data name="Section_EngineContinuous" xml:space="preserve"><value>Vibration moteur</value></data>
+  <data name="SliderLabel_FrequencyHz" xml:space="preserve"><value>Fréquence (Hz)</value></data>
+  <data name="SliderLabel_Smoothness" xml:space="preserve"><value>Douceur</value></data>
+  <data name="SliderLabel_TriggerLevel" xml:space="preserve"><value>Niveau de déclenchement</value></data>
+  <data name="SliderLabel_VibrationDecay" xml:space="preserve"><value>Décroissance de la vibration</value></data>
+  <data name="Label_PedalTrace" xml:space="preserve"><value>Trace de la pédale (5 dernières s)</value></data>
   <data name="Subtitle_CalibrationExperimental" xml:space="preserve"><value>// expérimental — peut ne pas être pris en compte par le firmware du mBooster</value></data>
   <data name="Label_ReversedDirection" xml:space="preserve"><value>Direction inversée</value></data>
   <data name="SliderLabel_MinRaw" xml:space="preserve"><value>Min (brut)</value></data>

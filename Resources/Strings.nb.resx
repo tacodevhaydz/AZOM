@@ -184,11 +184,18 @@
   <data name="Section_Effects" xml:space="preserve"><value>EFFEKTER</value></data>
   <data name="Subtitle_EffectsTriggers" xml:space="preserve"><value>// utløsere: ABS på spillsignal · lockup på brems&gt;0,8 · terskel på flanke · motor kontinuerlig</value></data>
   <data name="Section_Abs" xml:space="preserve"><value>ABS</value></data>
+  <data name="Section_RoadTexture" xml:space="preserve"><value>Veitekstur</value></data>
   <data name="Label_Enable" xml:space="preserve"><value>Aktiver</value></data>
   <data name="Button_Test1s" xml:space="preserve"><value>Test 1s</value></data>
+  <data name="Label_Test" xml:space="preserve"><value>Test</value></data>
   <data name="Section_Lockup" xml:space="preserve"><value>Lockup</value></data>
   <data name="Section_Threshold" xml:space="preserve"><value>Terskel</value></data>
-  <data name="Section_EngineContinuous" xml:space="preserve"><value>Motor (kontinuerlig — auto-begrenset til 10 %)</value></data>
+  <data name="Section_EngineContinuous" xml:space="preserve"><value>Motorvibrasjon</value></data>
+  <data name="SliderLabel_FrequencyHz" xml:space="preserve"><value>Frekvens (Hz)</value></data>
+  <data name="SliderLabel_Smoothness" xml:space="preserve"><value>Glatthet</value></data>
+  <data name="SliderLabel_TriggerLevel" xml:space="preserve"><value>Utløsernivå</value></data>
+  <data name="SliderLabel_VibrationDecay" xml:space="preserve"><value>Vibrasjonsavklinging</value></data>
+  <data name="Label_PedalTrace" xml:space="preserve"><value>Pedalspor (siste 5s)</value></data>
   <data name="Subtitle_CalibrationExperimental" xml:space="preserve"><value>// eksperimentelt — kanskje ikke respektert av mBooster-firmware</value></data>
   <data name="Label_ReversedDirection" xml:space="preserve"><value>Reversert retning</value></data>
   <data name="SliderLabel_MinRaw" xml:space="preserve"><value>Min (rå)</value></data>

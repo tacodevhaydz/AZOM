@@ -184,11 +184,18 @@
   <data name="Section_Effects" xml:space="preserve"><value>EFECTOS</value></data>
   <data name="Subtitle_EffectsTriggers" xml:space="preserve"><value>// disparadores: ABS por señal del juego · Bloqueo con freno&gt;0,8 · Umbral en el borde · Motor continuo</value></data>
   <data name="Section_Abs" xml:space="preserve"><value>ABS</value></data>
+  <data name="Section_RoadTexture" xml:space="preserve"><value>Textura de la carretera</value></data>
   <data name="Label_Enable" xml:space="preserve"><value>Activar</value></data>
   <data name="Button_Test1s" xml:space="preserve"><value>Probar 1s</value></data>
+  <data name="Label_Test" xml:space="preserve"><value>Probar</value></data>
   <data name="Section_Lockup" xml:space="preserve"><value>Bloqueo</value></data>
   <data name="Section_Threshold" xml:space="preserve"><value>Umbral</value></data>
-  <data name="Section_EngineContinuous" xml:space="preserve"><value>Motor (continuo — limitado automáticamente al 10%)</value></data>
+  <data name="Section_EngineContinuous" xml:space="preserve"><value>Vibración del motor</value></data>
+  <data name="SliderLabel_FrequencyHz" xml:space="preserve"><value>Frecuencia (Hz)</value></data>
+  <data name="SliderLabel_Smoothness" xml:space="preserve"><value>Suavidad</value></data>
+  <data name="SliderLabel_TriggerLevel" xml:space="preserve"><value>Nivel de activación</value></data>
+  <data name="SliderLabel_VibrationDecay" xml:space="preserve"><value>Decaimiento de la vibración</value></data>
+  <data name="Label_PedalTrace" xml:space="preserve"><value>Traza del pedal (últimos 5s)</value></data>
   <data name="Subtitle_CalibrationExperimental" xml:space="preserve"><value>// experimental — puede que el firmware del mBooster lo ignore</value></data>
   <data name="Label_ReversedDirection" xml:space="preserve"><value>Dirección invertida</value></data>
   <data name="SliderLabel_MinRaw" xml:space="preserve"><value>Mín (bruto)</value></data>

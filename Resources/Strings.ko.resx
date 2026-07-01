@@ -179,11 +179,18 @@
   <data name="Section_Effects" xml:space="preserve"><value>효과</value></data>
   <data name="Subtitle_EffectsTriggers" xml:space="preserve"><value>// 트리거: ABS는 게임 신호 · 락업은 브레이크&gt;0.8 · 임계값은 에지 · 엔진은 연속</value></data>
   <data name="Section_Abs" xml:space="preserve"><value>ABS</value></data>
+  <data name="Section_RoadTexture" xml:space="preserve"><value>노면 질감</value></data>
   <data name="Label_Enable" xml:space="preserve"><value>사용</value></data>
   <data name="Button_Test1s" xml:space="preserve"><value>1초 테스트</value></data>
+  <data name="Label_Test" xml:space="preserve"><value>테스트</value></data>
   <data name="Section_Lockup" xml:space="preserve"><value>락업</value></data>
   <data name="Section_Threshold" xml:space="preserve"><value>임계값</value></data>
-  <data name="Section_EngineContinuous" xml:space="preserve"><value>엔진 (연속 — 10%로 자동 제한)</value></data>
+  <data name="Section_EngineContinuous" xml:space="preserve"><value>엔진 진동</value></data>
+  <data name="SliderLabel_FrequencyHz" xml:space="preserve"><value>주파수 (Hz)</value></data>
+  <data name="SliderLabel_Smoothness" xml:space="preserve"><value>부드러움</value></data>
+  <data name="SliderLabel_TriggerLevel" xml:space="preserve"><value>트리거 입력 레벨</value></data>
+  <data name="SliderLabel_VibrationDecay" xml:space="preserve"><value>진동 감쇠</value></data>
+  <data name="Label_PedalTrace" xml:space="preserve"><value>페달 궤적 (최근 5초)</value></data>
   <data name="Subtitle_CalibrationExperimental" xml:space="preserve"><value>// 실험적 기능 — mBooster 펌웨어가 적용하지 않을 수 있음</value></data>
   <data name="Label_ReversedDirection" xml:space="preserve"><value>방향 반전</value></data>
   <data name="SliderLabel_MinRaw" xml:space="preserve"><value>최소 (원시값)</value></data>

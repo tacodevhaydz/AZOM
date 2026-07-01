@@ -55,6 +55,15 @@ namespace MozaPlugin
         private int _mosfetTempMaxRaw = -1;
         private int _motorTempMaxRaw = -1;
 
+        // ---- mBooster Effects card pedal-trace sparkline. Pushed from
+        // UpdateMBoosterCurveMarkers, which already runs at 30 Hz (same
+        // cadence as the curve editors' live position dot) — 150 samples ×
+        // 1/30s = 5 seconds of rolling history for the currently selected
+        // device. Cleared on device switch so the trace doesn't show a
+        // discontinuous mix of two different pedals' history. ----
+        private const int MBoosterPedalTraceSamples = 150;
+        private readonly ObservableCollection<double> _mboosterPedalTraceSamples = new ObservableCollection<double>();
+
         /// <summary>
         /// Called from the existing constructor after InitializeComponent runs.
         /// Wires the new controls' bindings + initial values. Safe to invoke
@@ -143,6 +152,14 @@ namespace MozaPlugin
                     _mosfetTempSamples.Add(0);
                     _motorTempSamples.Add(0);
                 }
+
+                // mBooster Effects card pedal trace: single series, fixed
+                // 0-100% scale (MaxValue set in XAML) — OutSamples stays
+                // unbound.
+                if (MBoosterPedalTraceViz != null)
+                    MBoosterPedalTraceViz.InSamples = _mboosterPedalTraceSamples;
+                for (int i = 0; i < MBoosterPedalTraceSamples; i++)
+                    _mboosterPedalTraceSamples.Add(0);
 
                 _bandwidthTimer = new DispatcherTimer { Interval = TimeSpan.FromMilliseconds(500) };
                 _bandwidthTimer.Tick += OnBandwidthTick;

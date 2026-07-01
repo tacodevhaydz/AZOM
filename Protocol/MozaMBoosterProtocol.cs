@@ -13,6 +13,13 @@ namespace MozaPlugin.Protocol
         Lockup    = 2,
         Threshold = 3,
         Engine    = 4,
+        // Reverse-engineered from two real Pit House USB captures (see
+        // docs/protocol/devices/mbooster.md "Effects card UI") — previously
+        // unverified (only 1-4 were confirmed from earlier captures), now
+        // confirmed real: the firmware accepted and held sustained frames
+        // with this effect type. Uses a materially different payload shape
+        // from the other four — see BuildRoadTextureFrame.
+        RoadTexture = 9,
     }
 
     /// <summary>
@@ -96,10 +103,59 @@ namespace MozaPlugin.Protocol
         /// Build a disable frame for one effect: same opcode with enable=0 and all
         /// params zeroed. Per protocol note § 3 "Disable" — must be sent at every
         /// effect-deactivate edge AND for all four effects on shutdown, otherwise
-        /// the last-active waveform can latch.
+        /// the last-active waveform can latch. Also correct for Road Texture's
+        /// different payload shape (see <see cref="BuildRoadTextureFrame"/>) —
+        /// zeroing every field produces the exact same bytes either way, and
+        /// this matches the real disable frame observed in capture.
         /// </summary>
         public static byte[] BuildDisableFrame(MBoosterEffectId effect)
             => BuildMotorFrame(effect, enable: false, param1: 0, freqU16: 0, ampU16: 0);
+
+        /// <summary>
+        /// Build the motor-write frame for Road Texture (effect type 9) — a
+        /// different payload shape from the other four effects, reverse-
+        /// engineered from two real Pit House USB captures, each isolating a
+        /// stepped 0/25/50/75/100% drag of one control (see
+        /// docs/protocol/devices/mbooster.md "Effects card UI"). Unlike
+        /// ABS/Lockup/Threshold/Engine — where the pad byte is always 0x00
+        /// and param1 is a per-cycle scaling factor derived from ParamK/freq
+        /// — Road Texture repurposes those two bytes as the high/low bytes
+        /// of a 16-bit Smoothness value, and the "freq" slot carries a live
+        /// noise sample rather than a fixed Hz:
+        /// <pre>
+        /// 7e  09  24  12   b1  09  EN   SH   SL   NH  NL   IH   IL   CK
+        ///                  │   │   │    └─┴─smoothness u16 BE  └─┴─intensity u16 BE
+        ///                  │   │   └ enable (0 = off, 1 = on)
+        ///                  │   └ effect type (9 = Road Texture)
+        ///                  └ cmd id (0xb1)
+        /// </pre>
+        /// <paramref name="noiseRaw"/> (NH,NL) is host-generated and sent raw/
+        /// unscaled every tick — confirmed from capture that neither the
+        /// noise signal's amplitude range nor its oscillation rate changed
+        /// across 4 different Intensity/Smoothness values, meaning the
+        /// firmware applies both parameters to the noise internally rather
+        /// than Pit House pre-scaling it. See
+        /// <see cref="MBoosterEffectSynthesizer.SynthesizeRoadTextureNoise"/>.
+        /// </summary>
+        public static byte[] BuildRoadTextureFrame(bool enable, ushort intensityRaw, ushort smoothnessRaw, ushort noiseRaw)
+        {
+            var frame = new byte[14];
+            frame[0]  = MozaProtocol.MessageStart;
+            frame[1]  = MotorPayloadLen;
+            frame[2]  = GroupMotorWrite;
+            frame[3]  = DeviceMotor;
+            frame[4]  = CmdMotorWrite;
+            frame[5]  = (byte)MBoosterEffectId.RoadTexture;
+            frame[6]  = enable ? (byte)1 : (byte)0;
+            frame[7]  = (byte)(smoothnessRaw >> 8);
+            frame[8]  = (byte)(smoothnessRaw & 0xFF);
+            frame[9]  = (byte)(noiseRaw >> 8);
+            frame[10] = (byte)(noiseRaw & 0xFF);
+            frame[11] = (byte)(intensityRaw >> 8);
+            frame[12] = (byte)(intensityRaw & 0xFF);
+            frame[13] = MozaProtocol.CalculateWireChecksum(frame, 13);
+            return frame;
+        }
 
         /// <summary>
         /// Degenerate 0-payload frame targeting the motor — <c>7e 00 00 12 9d</c>.
@@ -247,6 +303,27 @@ namespace MozaPlugin.Protocol
         {
             if (raw <= 0) return 0;
             return raw * 10.0 / 65535.0;
+        }
+
+        /// <summary>
+        /// Pit House Road Texture Intensity/Smoothness encoding — reverse-
+        /// engineered from two real Pit House USB captures, one per
+        /// parameter (each isolating stepped drags to 25/50/75/100%). Both
+        /// parameters use the identical formula, a "count-1" full-scale
+        /// pattern rather than the "* 65535" / "* 65536 / fullscale" pattern
+        /// every other reverse-engineered mbooster value uses:
+        /// <c>raw = round(pct / 100 * 65536) - 1</c>, clamped to 0 at
+        /// <c>pct &lt;= 0</c>. Verified exactly against all 8 capture data
+        /// points (4 per parameter): 25% -&gt; 0x3fff, 50% -&gt; 0x7fff,
+        /// 75% -&gt; 0xbfff, 100% -&gt; 0xffff.
+        /// </summary>
+        public static ushort EncodeRoadTextureLevel(double pct)
+        {
+            if (double.IsNaN(pct) || pct <= 0) return 0;
+            double raw = Math.Round(pct / 100.0 * 65536.0) - 1;
+            if (raw <= 0) return 0;
+            if (raw >= 0xFFFF) return 0xFFFF;
+            return (ushort)raw;
         }
 
         /// <summary>

@@ -179,11 +179,18 @@
   <data name="Section_Effects" xml:space="preserve"><value>HIỆU ỨNG</value></data>
   <data name="Subtitle_EffectsTriggers" xml:space="preserve"><value>// kích hoạt: ABS theo tín hiệu game · Khóa bánh khi phanh&gt;0.8 · Ngưỡng theo sườn xung · Động cơ liên tục</value></data>
   <data name="Section_Abs" xml:space="preserve"><value>ABS</value></data>
+  <data name="Section_RoadTexture" xml:space="preserve"><value>Kết cấu mặt đường</value></data>
   <data name="Label_Enable" xml:space="preserve"><value>Bật</value></data>
   <data name="Button_Test1s" xml:space="preserve"><value>Thử 1 giây</value></data>
+  <data name="Label_Test" xml:space="preserve"><value>Thử</value></data>
   <data name="Section_Lockup" xml:space="preserve"><value>Khóa bánh</value></data>
   <data name="Section_Threshold" xml:space="preserve"><value>Ngưỡng</value></data>
-  <data name="Section_EngineContinuous" xml:space="preserve"><value>Động cơ (liên tục — tự động giới hạn ở 10%)</value></data>
+  <data name="Section_EngineContinuous" xml:space="preserve"><value>Rung động cơ</value></data>
+  <data name="SliderLabel_FrequencyHz" xml:space="preserve"><value>Tần số (Hz)</value></data>
+  <data name="SliderLabel_Smoothness" xml:space="preserve"><value>Độ mượt</value></data>
+  <data name="SliderLabel_TriggerLevel" xml:space="preserve"><value>Mức kích hoạt đầu vào</value></data>
+  <data name="SliderLabel_VibrationDecay" xml:space="preserve"><value>Độ suy giảm rung</value></data>
+  <data name="Label_PedalTrace" xml:space="preserve"><value>Đường di chuyển bàn đạp (5 giây gần nhất)</value></data>
   <data name="Subtitle_CalibrationExperimental" xml:space="preserve"><value>// thử nghiệm — có thể không được firmware mBooster áp dụng</value></data>
   <data name="Label_ReversedDirection" xml:space="preserve"><value>Chiều đảo ngược</value></data>
   <data name="SliderLabel_MinRaw" xml:space="preserve"><value>Min (thô)</value></data>
