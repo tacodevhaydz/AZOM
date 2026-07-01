@@ -180,11 +180,24 @@ default) means no shaping — existing profiles are unaffected until a
 user opens this section.
 
 The same card also has a **Start/End of Travel (mm)** control —
-`TravelStartMm`/`TravelEndMm` on `MBoosterDeviceSettings`, applied in
-`MozaMBoosterRegistry.ApplyTravelRangeMm`, which runs *first* in the
-pipeline (physical travel bounds are the most fundamental sensor
-characteristic — the load cell/pedal's actual usable stroke — so
-everything else shapes what's left of the signal, not the raw one).
+`TravelStartMm`/`TravelEndMm` on `MBoosterDeviceSettings`. Unlike every
+other control in this section, this one is a **real hardware
+calibration write, not host-side shaping** — it was originally built
+host-side (see git history), but the user confirmed this exact control
+exists in Pit House itself, and two real Pit House USB captures
+(isolating a drag of just the Start thumb to 10/20/30mm, then just the
+End thumb to 40/30mm) turned up two previously-undocumented wire
+commands: `mbooster-brake-travel-start` (cmdId `0x84`) and
+`mbooster-brake-travel-end` (cmdId `0x85`), group 35 read / 36 write,
+2-byte ints — same shape as the raw Min/Max calibration commands.
+Encoding mirrors `MaxThresholdKg`'s pattern on a fixed 0–53.5mm scale
+(53.5 = `TravelMinMm` 3.8 + `TravelMaxMm` 49.7, i.e. the slider's own
+bounds) over the 0–65535 range: `raw = round(mm * 65536 / 53.5)`. All 4
+capture data points matched within 1 raw unit (~0.001mm), and the
+shared 30mm target hit the identical raw value (`0x8f8d`) via both
+cmdIds — as solid a cross-check as the `MaxThresholdKg` evidence had.
+See `MozaMBoosterProtocol.EncodeTravelMm`/`DecodeTravelMm`.
+
 This is a genuine dual-thumb range slider (`MozaControls.MozaRangeSlider`,
 `UI/Controls/MozaRangeSlider.cs`) — no dual-thumb control existed
 anywhere in this app before; every other "linked min/max" pair
@@ -193,19 +206,38 @@ calibration) is two separate `Slider` controls with mutual clamping
 via the shared `OnMinMaxSliderChanged` helper. The two thumbs
 (`LowValue`/`HighValue`) are bounded to `[3.8mm, 49.7mm]`
 (`MBoosterUiConstants.TravelMinMm`/`TravelMaxMm`) and clamped against
-each other so their gap always stays within `[4mm, 32.5mm]`
+each other so their gap always stays within `[3.8mm, 32.1mm]`
 (`TravelMinGapMm`/`TravelMaxGapMm`) — dragging one thumb simply can't
-push the gap outside that range. Defaults anchor at the slider's
-minimum with the maximum allowed gap (`3.8` / `36.3`) so a fresh
-profile starts with the widest usable window. Like the kg-based
-controls below, raw 0–100% travel is treated as spanning the full
-`[TravelMinMm, TravelMaxMm]` range (no independent mm calibration
-exists on the raw HID axis either), clipped to `[TravelStartMm,
-TravelEndMm]` and rescaled back to 0–100%.
+push the gap outside that range. `TravelStartMm`/`TravelEndMm` default
+to `-1` (same "not yet set / no override" sentinel as
+Direction/Min/Max/`MaxThresholdKg`) so a fresh profile never overwrites
+whatever calibration is already on the device; the UI seeds the
+slider's displayed position at `[3.8, 35.9]` (the widest allowed
+window) when the sentinel is unset, without writing anything until the
+user actually drags a thumb.
+
+Right below it are two more real hardware writes: **End Stop Stiffness**
+(`EndstopFrontStiffness`/`EndstopEndStiffness`, 1–10 each, labeled "Front
+Limit Stiffness"/"End Limit Stiffness" — how hard the pedal feels when it
+hits the start/end of its physical travel). Reverse-engineered from two
+real Pit House USB captures, each sweeping one slider through all 10
+values. Unlike every other mbooster command (one cmdId per field), these
+two **share a single cmdId (`0xB2`)** with a fixed `0x00` byte and a
+selector byte (`0x00` = front, `0x01` = end) ahead of the 2-byte value —
+`mbooster-brake-endstop-front`/`-end` in the command database encode this
+as a 3-byte `CommandId` (`{0xB2, 0x00, 0x00}`/`{0xB2, 0x00, 0x01}`), the
+same "prefix bytes then payload" shape `main-set-spring-gain` already
+uses elsewhere. Fixed 1–10 scale over 0–65535: `raw = round(value * 65535
+/ 10)`. All 18 capture points (9 per slider, values 2–10) matched exactly
+— including two points that landed on an exact `.5` tie and rounded up,
+which is why `EncodeEndstopStiffness` explicitly uses
+`MidpointRounding.AwayFromZero` instead of the C# default (round-to-even)
+that every other `Encode*` helper here implicitly relies on. Same `-1`
+sentinel convention as `TravelStartMm`/`TravelEndMm`.
 
 The same card also has two force-based sliders, both host-side only and
 both applied in `MozaMBoosterRegistry.ApplyDeadzoneAndMaxForce`, which
-runs *after* Start/End of Travel and *before* `EvaluateInputCurve`:
+runs *before* `EvaluateInputCurve`:
 
 - **Deadzone** (`DeadzoneKg`, 0–40kg, default 0 = off) — force below
   this clamps to 0.
@@ -213,15 +245,6 @@ runs *after* Start/End of Travel and *before* `EvaluateInputCurve`:
   at which the *input curve's* X-axis reaches 100%. Lets a user who
   never presses past, say, 100kg use the curve's full 0–100% range
   instead of only ever reaching its midpoint.
-
-All three clip-and-rescale stages (mm, then kg, then the input curve)
-share one `ClipAndRescale(xPercent, loPercent, hiPercent)` primitive —
-`ApplyTravelRangeMm` and `ApplyDeadzoneAndMaxForce` just convert their
-own units to percent first, then call it. Verified numerically:
-`ApplyDeadzoneAndMaxForce`'s behavior is byte-for-byte unchanged after
-this refactor (defaults are an exact identity; `maxForce=100kg` still
-makes raw 50% map to exactly 100%), and the mm version behaves the
-same shape with the new unit.
 
 Both are combined into one kg-space remap rather than two independent
 percent-space steps: raw 0–100% travel is first treated as 0–200kg

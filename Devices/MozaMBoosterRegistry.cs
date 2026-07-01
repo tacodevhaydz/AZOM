@@ -266,19 +266,12 @@ namespace MozaPlugin.Devices
             // brake-position fallback) sees the same shaped value. Does not
             // touch CurveY (still written to the device's own output-curve
             // command unchanged) — see docs/protocol/devices/mbooster.md
-            // "Pedal Feel". Order: Start/End of Travel (mm) first — the
-            // most fundamental physical/sensor characteristic — then
-            // Deadzone + Max Force (force), then the input curve shapes
-            // whatever's left, not the raw signal.
+            // "Pedal Feel". Start/End of Travel (mm) is NOT shaped here —
+            // it's a real hardware calibration write (mbooster-brake-travel-
+            // start/end); the device's own firmware already clips/rescales
+            // the raw signal before this HID read ever sees it.
             var settings = _settingsLookup(c.Identity);
             double posPct = pos01 * 100.0;
-            if (settings != null &&
-                (settings.TravelStartMm > MBoosterUiConstants.TravelMinMm ||
-                 settings.TravelEndMm < MBoosterUiConstants.TravelMaxMm))
-            {
-                posPct = ApplyTravelRangeMm(posPct, settings.TravelStartMm, settings.TravelEndMm,
-                    MBoosterUiConstants.TravelMinMm, MBoosterUiConstants.TravelMaxMm);
-            }
             if (settings != null && (settings.DeadzoneKg > 0 || settings.MaxForceKg < 200))
                 posPct = ApplyDeadzoneAndMaxForce(posPct, settings.DeadzoneKg, settings.MaxForceKg);
             c.LastRawPercentPreCurve = posPct;
@@ -315,26 +308,6 @@ namespace MozaPlugin.Devices
             // 0-100% raw travel == 0-200kg, so kg -> percent is kg / 2.
             double loPercent = Math.Max(0, Math.Min(200, deadzoneKg)) / 2.0;
             double hiPercent = Math.Max(0, Math.Min(200, maxForceKg)) / 2.0;
-            return ClipAndRescale(xPercent, loPercent, hiPercent);
-        }
-
-        /// <summary>
-        /// Start/End of pedal travel, in mm — host-side only, same shape as
-        /// <see cref="ApplyDeadzoneAndMaxForce"/> but in mm instead of kg:
-        /// raw 0-100% travel is treated as spanning the full
-        /// [<paramref name="minMm"/>, <paramref name="maxMm"/>] physical
-        /// range (again, no independent calibration exists on the raw HID
-        /// axis), positions outside [<paramref name="startMm"/>,
-        /// <paramref name="endMm"/>] clip to 0/100, everything between
-        /// rescales linearly. See docs/protocol/devices/mbooster.md
-        /// "Pedal Feel".
-        /// </summary>
-        internal static double ApplyTravelRangeMm(double xPercent, double startMm, double endMm, double minMm, double maxMm)
-        {
-            double span = maxMm - minMm;
-            if (span <= 0) return xPercent;
-            double loPercent = (startMm - minMm) / span * 100.0;
-            double hiPercent = (endMm - minMm) / span * 100.0;
             return ClipAndRescale(xPercent, loPercent, hiPercent);
         }
 

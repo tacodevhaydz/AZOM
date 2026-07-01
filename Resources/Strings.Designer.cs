@@ -232,6 +232,9 @@ namespace MozaPlugin.Resources
         public static string Hint_DeadzoneScaleAssumption => Get("Hint_DeadzoneScaleAssumption");
         public static string SliderLabel_TravelRangeMm => Get("SliderLabel_TravelRangeMm");
         public static string Hint_TravelRangeMm => Get("Hint_TravelRangeMm");
+        public static string SliderLabel_EndstopFrontStiffness => Get("SliderLabel_EndstopFrontStiffness");
+        public static string SliderLabel_EndstopEndStiffness => Get("SliderLabel_EndstopEndStiffness");
+        public static string Hint_EndstopStiffness => Get("Hint_EndstopStiffness");
         public static string Hint_InputCurveHostOnly => Get("Hint_InputCurveHostOnly");
         public static string Section_SimInputMapping => Get("Section_SimInputMapping");
         public static string Subtitle_SimInputMapping => Get("Subtitle_SimInputMapping");

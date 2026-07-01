@@ -2548,8 +2548,12 @@ namespace MozaPlugin
                 MBoosterInputY3Slider.Value = inputCurve[2]; SetValueText(MBoosterInputY3Value, inputCurve[2].ToString("F0"));
                 MBoosterInputY4Slider.Value = inputCurve[3]; SetValueText(MBoosterInputY4Value, inputCurve[3].ToString("F0"));
                 MBoosterInputY5Slider.Value = inputCurve[4]; SetValueText(MBoosterInputY5Value, inputCurve[4].ToString("F0"));
-                MBoosterTravelRangeSlider.LowValue = s.TravelStartMm;
-                MBoosterTravelRangeSlider.HighValue = s.TravelEndMm;
+                MBoosterTravelRangeSlider.LowValue = s.TravelStartMm >= 0 ? s.TravelStartMm : MBoosterUiConstants.TravelMinMm;
+                MBoosterTravelRangeSlider.HighValue = s.TravelEndMm >= 0 ? s.TravelEndMm : MBoosterUiConstants.TravelMinMm + MBoosterUiConstants.TravelMaxGapMm;
+                MBoosterEndstopFrontSlider.Value = s.EndstopFrontStiffness >= 0 ? s.EndstopFrontStiffness : 1;
+                SetValueText(MBoosterEndstopFrontValue, MBoosterEndstopFrontSlider.Value.ToString("F0"));
+                MBoosterEndstopEndSlider.Value = s.EndstopEndStiffness >= 0 ? s.EndstopEndStiffness : 1;
+                SetValueText(MBoosterEndstopEndValue, MBoosterEndstopEndSlider.Value.ToString("F0"));
                 MBoosterDeadzoneSlider.Value = s.DeadzoneKg;
                 SetValueText(MBoosterDeadzoneValue, s.DeadzoneKg.ToString("F1"));
                 MBoosterMaxForceSlider.Value = s.MaxForceKg;
@@ -2862,11 +2866,15 @@ namespace MozaPlugin
         private void MBoosterInputCurvePreset_Exponential(object s, RoutedEventArgs e) => ApplyMBoosterInputCurvePreset(PedalCurvePresets[2]);
         private void MBoosterInputCurvePreset_Parabolic(object s, RoutedEventArgs e)   => ApplyMBoosterInputCurvePreset(PedalCurvePresets[3]);
 
-        // Start/End of pedal travel (mm, host-side only — see
-        // MozaMBoosterRegistry.ApplyTravelRangeMm). MozaRangeSlider has no
-        // built-in "changed" CLR event (its Low/HighValue are plain DPs),
-        // so it raises RangeChanged instead of the ValueChanged the other
-        // mBooster sliders use.
+        // Start/End of pedal travel (mm) — a real hardware calibration
+        // write, reverse-engineered from two real Pit House USB captures:
+        // wire commands mbooster-brake-travel-start/-end (cmdIds 0x84/0x85),
+        // 2-byte ints, same shape as Min/Max. See
+        // MozaMBoosterProtocol.EncodeTravelMm and
+        // docs/protocol/devices/mbooster.md "Pedal Feel". MozaRangeSlider
+        // has no built-in "changed" CLR event (its Low/HighValue are plain
+        // DPs), so it raises RangeChanged instead of the ValueChanged the
+        // other mBooster sliders use.
         private void MBoosterTravelRangeSlider_RangeChanged(object sender, EventArgs e)
         {
             if (_suppressEvents) return;
@@ -2874,6 +2882,11 @@ namespace MozaPlugin
             if (s == null) return;
             s.TravelStartMm = (float)MBoosterTravelRangeSlider.LowValue;
             s.TravelEndMm = (float)MBoosterTravelRangeSlider.HighValue;
+            var controller = CurrentMBoosterController();
+            controller?.SendIntWrite("mbooster-brake-travel-start",
+                global::MozaPlugin.Protocol.MozaMBoosterProtocol.EncodeTravelMm(s.TravelStartMm));
+            controller?.SendIntWrite("mbooster-brake-travel-end",
+                global::MozaPlugin.Protocol.MozaMBoosterProtocol.EncodeTravelMm(s.TravelEndMm));
             _plugin.SaveSettings();
         }
 
@@ -2933,6 +2946,32 @@ namespace MozaPlugin
                 s.MaxThresholdKg = v;
                 CurrentMBoosterController()?.SendIntWrite("mbooster-brake-threshold",
                     global::MozaPlugin.Protocol.MozaMBoosterProtocol.EncodeThresholdKg(v));
+            });
+
+        // End Stop Stiffness (Front Limit / End Limit), 1-10 — Pit House's
+        // own hardware calibration. Reverse-engineered from two real
+        // captures: both share wire command cmdId 0xB2 with a selector byte
+        // (mbooster-brake-endstop-front/-end), 2-byte int on a fixed 1-10
+        // scale — see MozaMBoosterProtocol.EncodeEndstopStiffness and
+        // docs/protocol/devices/mbooster.md "Pedal Feel".
+        private void MBoosterEndstopFrontSlider_ValueChanged(object sender, RoutedPropertyChangedEventArgs<double> e) =>
+            OnIntSliderChanged(e.NewValue, MBoosterEndstopFrontValue, "", v =>
+            {
+                var s = CurrentMBoosterSettings();
+                if (s == null) return;
+                s.EndstopFrontStiffness = v;
+                CurrentMBoosterController()?.SendIntWrite("mbooster-brake-endstop-front",
+                    global::MozaPlugin.Protocol.MozaMBoosterProtocol.EncodeEndstopStiffness(v));
+            });
+
+        private void MBoosterEndstopEndSlider_ValueChanged(object sender, RoutedPropertyChangedEventArgs<double> e) =>
+            OnIntSliderChanged(e.NewValue, MBoosterEndstopEndValue, "", v =>
+            {
+                var s = CurrentMBoosterSettings();
+                if (s == null) return;
+                s.EndstopEndStiffness = v;
+                CurrentMBoosterController()?.SendIntWrite("mbooster-brake-endstop-end",
+                    global::MozaPlugin.Protocol.MozaMBoosterProtocol.EncodeEndstopStiffness(v));
             });
 
         private void MBoosterReadCalButton_Click(object sender, RoutedEventArgs e)

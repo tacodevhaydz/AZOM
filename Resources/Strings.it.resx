@@ -169,7 +169,10 @@
   <data name="SliderLabel_MaxForceKg" xml:space="preserve"><value>Forza massima (kg)</value></data>
   <data name="Hint_DeadzoneScaleAssumption" xml:space="preserve"><value>Solo lato software. Zona morta e Forza massima presuppongono entrambe una scala fissa 0-200kg per lo 0-100% della corsa del pedale, poiché il segnale grezzo non ha una propria calibrazione della forza. Forza massima definisce dove la curva di input sotto raggiunge il 100%.</value></data>
   <data name="SliderLabel_TravelRangeMm" xml:space="preserve"><value>Inizio / Fine Corsa (mm)</value></data>
-  <data name="Hint_TravelRangeMm" xml:space="preserve"><value>Solo lato software. Considera lo 0-100% della corsa del pedale come l'intero intervallo mostrato qui — trascina i due nodi per ritagliare e ridimensionare alla corsa fisica effettivamente utilizzata.</value></data>
+  <data name="Hint_TravelRangeMm" xml:space="preserve"><value>Scrive una calibrazione hardware reale (cmdId 0x84/0x85) — decodificato tramite reverse engineering da catture di Pit House, non confermato da Moza. Trascina i due nodi per impostare l'inizio/fine fisico della corsa del pedale, poi verifica che funzioni correttamente sul tuo hardware.</value></data>
+  <data name="SliderLabel_EndstopFrontStiffness" xml:space="preserve"><value>Rigidità limite anteriore</value></data>
+  <data name="SliderLabel_EndstopEndStiffness" xml:space="preserve"><value>Rigidità limite finale</value></data>
+  <data name="Hint_EndstopStiffness" xml:space="preserve"><value>Scrive una calibrazione hardware reale (cmdId 0xB2) — decodificato tramite reverse engineering da catture di Pit House, non confermato da Moza. Imposta quanto risulta rigido il pedale quando raggiunge l'inizio/fine della sua corsa fisica.</value></data>
   <data name="Hint_InputCurveHostOnly" xml:space="preserve"><value>Solo lato software: rimodella la posizione del pedale segnalata prima che raggiunga il gioco (e la curva di output di Mappatura Input Sim sotto). Non viene scritto nulla sul dispositivo.</value></data>
   <data name="Section_SimInputMapping" xml:space="preserve"><value>MAPPATURA INPUT SIM</value></data>
   <data name="Subtitle_SimInputMapping" xml:space="preserve"><value>// mappa il segnale della cella di carico/pedale al gioco, in stile Pit House</value></data>

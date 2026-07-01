@@ -166,7 +166,10 @@
   <data name="SliderLabel_MaxForceKg" xml:space="preserve"><value>Max. Kraft (kg)</value></data>
   <data name="Hint_DeadzoneScaleAssumption" xml:space="preserve"><value>Nur softwareseitig. Totzone und Max. Kraft gehen beide von einer festen 0-200-kg-Vollskala für 0-100 % Pedalweg aus, da das rohe Pedalsignal keine eigene Kraftkalibrierung besitzt. Max. Kraft legt fest, wo die Eingabekurve unten 100 % erreicht.</value></data>
   <data name="SliderLabel_TravelRangeMm" xml:space="preserve"><value>Start / Ende des Pedalwegs (mm)</value></data>
-  <data name="Hint_TravelRangeMm" xml:space="preserve"><value>Nur softwareseitig. Behandelt 0-100 % Pedalweg als den hier gezeigten vollen Bereich — ziehen Sie die beiden Knoten, um auf den tatsächlich genutzten physischen Hub zuzuschneiden und neu zu skalieren.</value></data>
+  <data name="Hint_TravelRangeMm" xml:space="preserve"><value>Schreibt eine echte Hardware-Kalibrierung (cmdId 0x84/0x85) — durch Reverse-Engineering von Pit-House-Mitschnitten ermittelt, von Moza nicht bestätigt. Ziehen Sie die beiden Knoten, um den physischen Start-/Endpunkt des Pedalwegs festzulegen, und überprüfen Sie anschließend, ob es auf Ihrer Hardware korrekt funktioniert.</value></data>
+  <data name="SliderLabel_EndstopFrontStiffness" xml:space="preserve"><value>Steifigkeit vorderer Anschlag</value></data>
+  <data name="SliderLabel_EndstopEndStiffness" xml:space="preserve"><value>Steifigkeit hinterer Anschlag</value></data>
+  <data name="Hint_EndstopStiffness" xml:space="preserve"><value>Schreibt eine echte Hardware-Kalibrierung (cmdId 0xB2) — durch Reverse-Engineering von Pit-House-Mitschnitten ermittelt, von Moza nicht bestätigt. Legt fest, wie hart sich das Pedal anfühlt, wenn es den Anfang/das Ende seines physischen Wegs erreicht.</value></data>
   <data name="Hint_InputCurveHostOnly" xml:space="preserve"><value>Nur softwareseitig: formt die gemeldete Pedalposition um, bevor sie das Spiel (und die Ausgabekurve unter „Sim-Eingabezuordnung") erreicht. Es wird nichts an das Gerät gesendet.</value></data>
   <data name="Section_SimInputMapping" xml:space="preserve"><value>SIM-EINGABEZUORDNUNG</value></data>
   <data name="Subtitle_SimInputMapping" xml:space="preserve"><value>// Lastzellen-/Pedalsignal wie in Pit House auf das Spiel abbilden</value></data>

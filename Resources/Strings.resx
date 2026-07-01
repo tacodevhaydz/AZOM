@@ -173,7 +173,10 @@
   <data name="SliderLabel_MaxForceKg" xml:space="preserve"><value>Max Force (kg)</value></data>
   <data name="Hint_DeadzoneScaleAssumption" xml:space="preserve"><value>Host-side only. Deadzone and Max Force both treat raw 0-100% pedal travel as 0-200kg — the raw pedal signal has no independent force calibration of its own. Max Force sets where the input curve below reaches 100%.</value></data>
   <data name="SliderLabel_TravelRangeMm" xml:space="preserve"><value>Start / End of Travel (mm)</value></data>
-  <data name="Hint_TravelRangeMm" xml:space="preserve"><value>Host-side only. Treats raw 0-100% pedal travel as spanning the full range shown here — drag the two nodes to clip and rescale to the physical stroke you actually use.</value></data>
+  <data name="Hint_TravelRangeMm" xml:space="preserve"><value>Writes real hardware calibration (cmdIds 0x84/0x85) — reverse-engineered from Pit House captures, not confirmed by Moza. Drag the two nodes to set the physical start/end of pedal travel, then verify it behaves correctly on your hardware.</value></data>
+  <data name="SliderLabel_EndstopFrontStiffness" xml:space="preserve"><value>Front Limit Stiffness</value></data>
+  <data name="SliderLabel_EndstopEndStiffness" xml:space="preserve"><value>End Limit Stiffness</value></data>
+  <data name="Hint_EndstopStiffness" xml:space="preserve"><value>Writes real hardware calibration (cmdId 0xB2) — reverse-engineered from Pit House captures, not confirmed by Moza. Sets how hard the pedal feels when it hits the start/end of its physical travel.</value></data>
   <data name="Hint_InputCurveHostOnly" xml:space="preserve"><value>Host-side only: reshapes the reported pedal position before it reaches the game (and before the Sim Input Mapping output curve below). Nothing is written to the device.</value></data>
   <data name="Section_SimInputMapping" xml:space="preserve"><value>SIM INPUT MAPPING</value></data>
   <data name="Subtitle_SimInputMapping" xml:space="preserve"><value>// map the load cell / pedal signal to the game, Pit House-style</value></data>

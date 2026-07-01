@@ -171,7 +171,10 @@
   <data name="SliderLabel_MaxForceKg" xml:space="preserve"><value>Maks kraft (kg)</value></data>
   <data name="Hint_DeadzoneScaleAssumption" xml:space="preserve"><value>Bare programvareside. Dødsone og Maks kraft forutsetter begge en fast 0-200kg fullskala for 0-100% pedalbevegelse, siden det rå pedalsignalet ikke har egen kraftkalibrering. Maks kraft angir hvor inngangskurven under når 100%.</value></data>
   <data name="SliderLabel_TravelRangeMm" xml:space="preserve"><value>Start / Slutt på Bevegelse (mm)</value></data>
-  <data name="Hint_TravelRangeMm" xml:space="preserve"><value>Bare programvareside. Behandler 0-100% pedalbevegelse som hele området vist her — dra de to nodene for å klippe og skalere til den fysiske bevegelsen du faktisk bruker.</value></data>
+  <data name="Hint_TravelRangeMm" xml:space="preserve"><value>Skriver ekte maskinvarekalibrering (cmdId 0x84/0x85) — reverse-engineert fra Pit House-opptak, ikke bekreftet av Moza. Dra de to nodene for å angi det fysiske start-/sluttpunktet for pedalbevegelsen, og bekreft deretter at dette fungerer korrekt på din maskinvare.</value></data>
+  <data name="SliderLabel_EndstopFrontStiffness" xml:space="preserve"><value>Frontgrense-stivhet</value></data>
+  <data name="SliderLabel_EndstopEndStiffness" xml:space="preserve"><value>Sluttgrense-stivhet</value></data>
+  <data name="Hint_EndstopStiffness" xml:space="preserve"><value>Skriver ekte maskinvarekalibrering (cmdId 0xB2) — reverse-engineert fra Pit House-opptak, ikke bekreftet av Moza. Angir hvor hardt pedalen føles når den når start-/sluttpunktet for den fysiske bevegelsen.</value></data>
   <data name="Hint_InputCurveHostOnly" xml:space="preserve"><value>Bare programvareside: omformer den rapporterte pedalposisjonen før den når spillet (og utgangskurven i Sim-inngangskartlegging under). Ingenting skrives til enheten.</value></data>
   <data name="Section_SimInputMapping" xml:space="preserve"><value>SIM-INNGANGSKARTLEGGING</value></data>
   <data name="Subtitle_SimInputMapping" xml:space="preserve"><value>// kartlegger lastcelle-/pedalsignalet til spillet, Pit House-stil</value></data>

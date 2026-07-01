@@ -1989,6 +1989,18 @@ namespace MozaPlugin
             if (s.MaxThresholdKg >= 0)
                 controller.SendIntWrite("mbooster-brake-threshold",
                     global::MozaPlugin.Protocol.MozaMBoosterProtocol.EncodeThresholdKg(s.MaxThresholdKg));
+            if (s.TravelStartMm >= 0)
+                controller.SendIntWrite("mbooster-brake-travel-start",
+                    global::MozaPlugin.Protocol.MozaMBoosterProtocol.EncodeTravelMm(s.TravelStartMm));
+            if (s.TravelEndMm >= 0)
+                controller.SendIntWrite("mbooster-brake-travel-end",
+                    global::MozaPlugin.Protocol.MozaMBoosterProtocol.EncodeTravelMm(s.TravelEndMm));
+            if (s.EndstopFrontStiffness >= 0)
+                controller.SendIntWrite("mbooster-brake-endstop-front",
+                    global::MozaPlugin.Protocol.MozaMBoosterProtocol.EncodeEndstopStiffness(s.EndstopFrontStiffness));
+            if (s.EndstopEndStiffness >= 0)
+                controller.SendIntWrite("mbooster-brake-endstop-end",
+                    global::MozaPlugin.Protocol.MozaMBoosterProtocol.EncodeEndstopStiffness(s.EndstopEndStiffness));
         }
 
         // Resolve a dashboard name to its parsed MultiStreamProfile without firing

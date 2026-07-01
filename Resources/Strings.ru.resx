@@ -166,7 +166,10 @@
   <data name="SliderLabel_MaxForceKg" xml:space="preserve"><value>Макс. усилие (кг)</value></data>
   <data name="Hint_DeadzoneScaleAssumption" xml:space="preserve"><value>Только на стороне ПО. Мёртвая зона и Макс. усилие используют одну и ту же фиксированную полную шкалу 0-200 кг для 0-100% хода педали, поскольку необработанный сигнал педали не имеет собственной калибровки по силе. Макс. усилие задаёт, где кривая ввода ниже достигает 100%.</value></data>
   <data name="SliderLabel_TravelRangeMm" xml:space="preserve"><value>Начало / Конец хода (мм)</value></data>
-  <data name="Hint_TravelRangeMm" xml:space="preserve"><value>Только на стороне ПО. Рассматривает 0-100% хода педали как весь диапазон, показанный здесь — перетащите два узла, чтобы обрезать и масштабировать до реально используемого физического хода.</value></data>
+  <data name="Hint_TravelRangeMm" xml:space="preserve"><value>Записывает реальные калибровочные значения на устройство (cmdId 0x84/0x85) — определено с помощью обратной разработки на основе захвата трафика Pit House, не подтверждено Moza. Перетащите два узла, чтобы задать физические начало и конец хода педали, затем проверьте корректную работу на вашем оборудовании.</value></data>
+  <data name="SliderLabel_EndstopFrontStiffness" xml:space="preserve"><value>Жёсткость переднего упора</value></data>
+  <data name="SliderLabel_EndstopEndStiffness" xml:space="preserve"><value>Жёсткость заднего упора</value></data>
+  <data name="Hint_EndstopStiffness" xml:space="preserve"><value>Записывает реальные калибровочные значения на устройство (cmdId 0xB2) — определено с помощью обратной разработки на основе захвата трафика Pit House, не подтверждено Moza. Задаёт, насколько жёстко ощущается педаль при достижении начала/конца физического хода.</value></data>
   <data name="Hint_InputCurveHostOnly" xml:space="preserve"><value>Только на стороне ПО: преобразует сообщаемое положение педали до того, как оно попадёт в игру (и в кривую вывода в разделе «Сопоставление ввода симулятора» ниже). На устройство ничего не записывается.</value></data>
   <data name="Section_SimInputMapping" xml:space="preserve"><value>СОПОСТАВЛЕНИЕ ВВОДА СИМУЛЯТОРА</value></data>
   <data name="Subtitle_SimInputMapping" xml:space="preserve"><value>// сопоставление сигнала тензодатчика/педали с игрой, в стиле Pit House</value></data>

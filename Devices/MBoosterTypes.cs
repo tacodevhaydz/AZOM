@@ -13,8 +13,8 @@ namespace MozaPlugin.Devices
     {
         public const float TravelMinMm = 3.8f;
         public const float TravelMaxMm = 49.7f;
-        public const float TravelMinGapMm = 4f;
-        public const float TravelMaxGapMm = 32.5f;
+        public const float TravelMinGapMm = 3.8f;
+        public const float TravelMaxGapMm = 32.1f;
     }
 
     /// <summary>
@@ -132,21 +132,32 @@ namespace MozaPlugin.Devices
         // press hard enough to reach the curve's right edge otherwise.
         public float MaxForceKg { get; set; } = 200;
 
-        // Start/End of pedal travel, in mm (Pit House-style). Host-side
-        // only — treats raw 0-100% pedal travel as spanning the full
-        // [MBoosterUiConstants.TravelMinMm, TravelMaxMm] physical range
-        // (same "no independent calibration" assumption as the kg-based
-        // controls above), clips outside [TravelStartMm, TravelEndMm], and
-        // rescales what's left back to 0-100% — same shape as
-        // Deadzone/MaxForce, applied first since physical travel bounds
-        // are a more fundamental sensor characteristic than force. See
-        // MozaMBoosterRegistry.ApplyTravelRangeMm. Defaults anchor at the
-        // slider's minimum with the maximum allowed span
-        // (MBoosterUiConstants.TravelMinMm + TravelMaxGapMm) so a fresh
-        // profile starts with the widest usable window instead of the
-        // narrowest.
-        public float TravelStartMm { get; set; } = MBoosterUiConstants.TravelMinMm;
-        public float TravelEndMm { get; set; } = MBoosterUiConstants.TravelMinMm + MBoosterUiConstants.TravelMaxGapMm;
+        // Start/End of pedal travel, in mm (Pit House's own calibration
+        // control, not a host-side shim). Reverse-engineered from two real
+        // Pit House USB captures (see docs/protocol/devices/mbooster.md
+        // "Pedal Feel"): wire commands mbooster-brake-travel-start (cmdId
+        // 0x84) and mbooster-brake-travel-end (cmdId 0x85), group 35 read /
+        // 36 write, 2-byte int each — same shape as Min/Max. Encodes mm on
+        // a fixed 0-53.5mm scale over the 0-65535 range (mirroring
+        // MaxThresholdKg's "value * 65536 / fullscale" pattern): see
+        // MozaMBoosterProtocol.EncodeTravelMm/DecodeTravelMm.
+        // -1 = "not yet set / no override", same sentinel convention as
+        // Direction/Min/Max/MaxThresholdKg, so a fresh profile never
+        // overwrites whatever calibration is already on the device.
+        public float TravelStartMm { get; set; } = -1;
+        public float TravelEndMm { get; set; } = -1;
+
+        // End Stop Stiffness (Front Limit / End Limit), 1-10 — Pit House's
+        // own hardware calibration, reverse-engineered from two real Pit
+        // House USB captures (see docs/protocol/devices/mbooster.md "Pedal
+        // Feel"): both share wire command cmdId 0xB2 with a selector byte
+        // (mbooster-brake-endstop-front / -end), 2-byte int, encoding on a
+        // fixed 1-10 scale over 0-65535: see
+        // MozaMBoosterProtocol.EncodeEndstopStiffness/DecodeEndstopStiffness.
+        // -1 = "not yet set / no override", same sentinel convention as
+        // TravelStartMm/TravelEndMm.
+        public float EndstopFrontStiffness { get; set; } = -1;
+        public float EndstopEndStiffness { get; set; } = -1;
 
         // Friendly display label the user can edit (defaults to "mBooster"
         // with a serial-tail fallback). Survives reconnects with the dict key.
@@ -173,6 +184,8 @@ namespace MozaPlugin.Devices
                 MaxForceKg = MaxForceKg,
                 TravelStartMm = TravelStartMm,
                 TravelEndMm = TravelEndMm,
+                EndstopFrontStiffness = EndstopFrontStiffness,
+                EndstopEndStiffness = EndstopEndStiffness,
                 DisplayName = DisplayName,
             };
         }

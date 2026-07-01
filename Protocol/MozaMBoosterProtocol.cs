@@ -192,6 +192,64 @@ namespace MozaPlugin.Protocol
         }
 
         /// <summary>
+        /// Pit House "Start/End of Travel (mm)" encoding — reverse-engineered
+        /// from two real Pit House USB captures (wire commands
+        /// <c>mbooster-brake-travel-start</c>/<c>-end</c>, cmdIds 0x84/0x85;
+        /// see docs/protocol/devices/mbooster.md "Pedal Feel"). Same
+        /// "value * 65536 / fullscale" pattern as <see cref="EncodeThresholdKg"/>,
+        /// with fullscale = 53.5mm (= <c>TravelMinMm</c> 3.8 + <c>TravelMaxMm</c>
+        /// 49.7, the slider's own bounds): <c>raw = round(mm * 65536 / 53.5)</c>.
+        /// Verified against 4 capture data points (10/20/30mm on Start,
+        /// 30/40mm on End) — all matched exactly or within 1 raw unit
+        /// (~0.001mm), and the shared 30mm target produced the identical raw
+        /// value via both cmdIds.
+        /// </summary>
+        public static int EncodeTravelMm(double mm)
+        {
+            if (double.IsNaN(mm) || mm <= 0) return 0;
+            double raw = Math.Round(mm * 65536.0 / 53.5);
+            if (raw <= 0) return 0;
+            if (raw >= 0xFFFF) return 0xFFFF;
+            return (int)raw;
+        }
+
+        /// <summary>Inverse of <see cref="EncodeTravelMm"/>.</summary>
+        public static double DecodeTravelMm(int raw)
+        {
+            if (raw <= 0) return 0;
+            return raw * 53.5 / 65536.0;
+        }
+
+        /// <summary>
+        /// Pit House "End Stop Stiffness" (Front Limit / End Limit) encoding
+        /// — reverse-engineered from two real Pit House USB captures (wire
+        /// command <c>mbooster-brake-endstop-front</c>/<c>-end</c>, cmdId
+        /// 0xB2 with a selector byte; see docs/protocol/devices/mbooster.md
+        /// "Pedal Feel"). Fixed 1-10 scale over the 0-65535 range:
+        /// <c>raw = round(value * 65535 / 10)</c>. Verified against 18
+        /// capture data points (9 per slider, values 2-10) — all matched
+        /// exactly, using round-half-away-from-zero (two points landed on an
+        /// exact .5 tie and the device rounded up, not to even, so this uses
+        /// <see cref="MidpointRounding.AwayFromZero"/> unlike the other
+        /// Encode* helpers here, none of which had evidence of a tie case).
+        /// </summary>
+        public static int EncodeEndstopStiffness(double value)
+        {
+            if (double.IsNaN(value) || value <= 0) return 0;
+            double raw = Math.Round(value * 65535.0 / 10.0, MidpointRounding.AwayFromZero);
+            if (raw <= 0) return 0;
+            if (raw >= 0xFFFF) return 0xFFFF;
+            return (int)raw;
+        }
+
+        /// <summary>Inverse of <see cref="EncodeEndstopStiffness"/>.</summary>
+        public static double DecodeEndstopStiffness(int raw)
+        {
+            if (raw <= 0) return 0;
+            return raw * 10.0 / 65535.0;
+        }
+
+        /// <summary>
         /// Look up the ParamK constant for an effect (used by <see cref="ComputeParam1"/>).
         /// </summary>
         public static double ParamKFor(MBoosterEffectId effect)

@@ -1888,11 +1888,39 @@
                                 <StackPanel>
                                     <TextBlock Text="{x:Static res:Strings.SliderLabel_TravelRangeMm}" Style="{StaticResource SliderLabel}" Margin="0,0,0,6"/>
                                     <ctrl:MozaRangeSlider x:Name="MBoosterTravelRangeSlider" Height="90"
-                                                          Minimum="3.8" Maximum="49.7" MinGap="4" MaxGap="32.5"
+                                                          Minimum="3.8" Maximum="49.7" MinGap="3.8" MaxGap="32.1"
                                                           Unit="mm" Decimals="1"
-                                                          LowValue="3.8" HighValue="36.3"
+                                                          LowValue="3.8" HighValue="35.9"
                                                           RangeChanged="MBoosterTravelRangeSlider_RangeChanged"/>
                                     <TextBlock TextWrapping="Wrap" Style="{StaticResource MutedHintText}" Margin="0,8,0,16" Text="{x:Static res:Strings.Hint_TravelRangeMm}"/>
+
+                                    <Grid Margin="0,4">
+                                        <Grid.ColumnDefinitions>
+                                            <ColumnDefinition Width="Auto"/>
+                                            <ColumnDefinition Width="*"/>
+                                            <ColumnDefinition Width="Auto"/>
+                                        </Grid.ColumnDefinitions>
+                                        <TextBlock Grid.Column="0" Text="{x:Static res:Strings.SliderLabel_EndstopFrontStiffness}" Style="{StaticResource SliderLabel}"/>
+                                        <Slider Grid.Column="1" x:Name="MBoosterEndstopFrontSlider" Style="{StaticResource SettingSlider}" Minimum="1" Maximum="10" TickFrequency="1" ValueChanged="MBoosterEndstopFrontSlider_ValueChanged"/>
+                                        <TextBox Grid.Column="2" x:Name="MBoosterEndstopFrontValue" Style="{StaticResource SliderValueEditBox}"
+                                                 Tag="{Binding ElementName=MBoosterEndstopFrontSlider}"
+                                                 KeyDown="SliderValueBox_KeyDown" LostFocus="SliderValueBox_LostFocus"
+                                                 Text="1"/>
+                                    </Grid>
+                                    <Grid Margin="0,4">
+                                        <Grid.ColumnDefinitions>
+                                            <ColumnDefinition Width="Auto"/>
+                                            <ColumnDefinition Width="*"/>
+                                            <ColumnDefinition Width="Auto"/>
+                                        </Grid.ColumnDefinitions>
+                                        <TextBlock Grid.Column="0" Text="{x:Static res:Strings.SliderLabel_EndstopEndStiffness}" Style="{StaticResource SliderLabel}"/>
+                                        <Slider Grid.Column="1" x:Name="MBoosterEndstopEndSlider" Style="{StaticResource SettingSlider}" Minimum="1" Maximum="10" TickFrequency="1" ValueChanged="MBoosterEndstopEndSlider_ValueChanged"/>
+                                        <TextBox Grid.Column="2" x:Name="MBoosterEndstopEndValue" Style="{StaticResource SliderValueEditBox}"
+                                                 Tag="{Binding ElementName=MBoosterEndstopEndSlider}"
+                                                 KeyDown="SliderValueBox_KeyDown" LostFocus="SliderValueBox_LostFocus"
+                                                 Text="1"/>
+                                    </Grid>
+                                    <TextBlock TextWrapping="Wrap" Style="{StaticResource MutedHintText}" Margin="0,0,0,8" Text="{x:Static res:Strings.Hint_EndstopStiffness}"/>
 
                                     <Grid Margin="0,4">
                                         <Grid.ColumnDefinitions>

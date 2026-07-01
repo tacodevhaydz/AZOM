@@ -166,7 +166,10 @@
   <data name="SliderLabel_MaxForceKg" xml:space="preserve"><value>最大力值(kg)</value></data>
   <data name="Hint_DeadzoneScaleAssumption" xml:space="preserve"><value>仅在软件端处理。死区和最大力值均假定踏板行程 0-100% 对应固定的 0-200kg 满量程,因为原始踏板信号本身没有独立的力值校准。最大力值决定下方输入曲线在何处达到 100%。</value></data>
   <data name="SliderLabel_TravelRangeMm" xml:space="preserve"><value>行程起点 / 终点(mm)</value></data>
-  <data name="Hint_TravelRangeMm" xml:space="preserve"><value>仅在软件端处理。将踏板行程 0-100% 视为此处显示的完整范围 — 拖动两个节点即可裁剪并重新缩放到你实际使用的物理行程。</value></data>
+  <data name="Hint_TravelRangeMm" xml:space="preserve"><value>写入真实的硬件校准值(cmdId 0x84/0x85)— 通过对 Pit House 抓包逆向分析得出,未经 Moza 官方确认。拖动两个节点以设置踏板行程的物理起止点,然后请自行验证在你的硬件上是否正常工作。</value></data>
+  <data name="SliderLabel_EndstopFrontStiffness" xml:space="preserve"><value>前限位硬度</value></data>
+  <data name="SliderLabel_EndstopEndStiffness" xml:space="preserve"><value>后限位硬度</value></data>
+  <data name="Hint_EndstopStiffness" xml:space="preserve"><value>写入真实的硬件校准值(cmdId 0xB2)— 通过对 Pit House 抓包逆向分析得出,未经 Moza 官方确认。设置踏板到达物理行程起止点时的硬度手感。</value></data>
   <data name="Hint_InputCurveHostOnly" xml:space="preserve"><value>仅在软件端处理:在踏板位置到达游戏(以及下方"模拟输入映射"的输出曲线)之前对其进行重新塑形。不会写入设备。</value></data>
   <data name="Section_SimInputMapping" xml:space="preserve"><value>模拟输入映射</value></data>
   <data name="Subtitle_SimInputMapping" xml:space="preserve"><value>// 将传感器/踏板信号映射到游戏,Pit House 风格</value></data>

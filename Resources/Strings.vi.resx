@@ -166,7 +166,10 @@
   <data name="SliderLabel_MaxForceKg" xml:space="preserve"><value>Lực tối đa (kg)</value></data>
   <data name="Hint_DeadzoneScaleAssumption" xml:space="preserve"><value>Chỉ xử lý ở phía phần mềm. Cả Vùng chết và Lực tối đa đều giả định thang đo cố định 0-200kg cho 0-100% hành trình bàn đạp, vì tín hiệu bàn đạp thô không có hiệu chỉnh lực riêng. Lực tối đa xác định vị trí đường cong đầu vào bên dưới đạt 100%.</value></data>
   <data name="SliderLabel_TravelRangeMm" xml:space="preserve"><value>Bắt đầu / Kết thúc Hành trình (mm)</value></data>
-  <data name="Hint_TravelRangeMm" xml:space="preserve"><value>Chỉ xử lý ở phía phần mềm. Coi 0-100% hành trình bàn đạp là toàn bộ phạm vi hiển thị ở đây — kéo hai nút để cắt và điều chỉnh lại theo hành trình vật lý bạn thực sự sử dụng.</value></data>
+  <data name="Hint_TravelRangeMm" xml:space="preserve"><value>Ghi giá trị hiệu chỉnh phần cứng thực tế (cmdId 0x84/0x85) — được dịch ngược từ các bản ghi Pit House, chưa được Moza xác nhận. Kéo hai nút để đặt điểm bắt đầu/kết thúc vật lý của hành trình bàn đạp, sau đó kiểm tra xem nó hoạt động đúng trên phần cứng của bạn hay không.</value></data>
+  <data name="SliderLabel_EndstopFrontStiffness" xml:space="preserve"><value>Độ cứng giới hạn đầu</value></data>
+  <data name="SliderLabel_EndstopEndStiffness" xml:space="preserve"><value>Độ cứng giới hạn cuối</value></data>
+  <data name="Hint_EndstopStiffness" xml:space="preserve"><value>Ghi giá trị hiệu chỉnh phần cứng thực tế (cmdId 0xB2) — được dịch ngược từ các bản ghi Pit House, chưa được Moza xác nhận. Đặt độ cứng cảm nhận được khi bàn đạp chạm điểm bắt đầu/kết thúc hành trình vật lý.</value></data>
   <data name="Hint_InputCurveHostOnly" xml:space="preserve"><value>Chỉ xử lý ở phía phần mềm: định hình lại vị trí bàn đạp được báo cáo trước khi nó đến game (và đường cong đầu ra trong Ánh xạ đầu vào Sim bên dưới). Không có gì được ghi vào thiết bị.</value></data>
   <data name="Section_SimInputMapping" xml:space="preserve"><value>ÁNH XẠ ĐẦU VÀO SIM</value></data>
   <data name="Subtitle_SimInputMapping" xml:space="preserve"><value>// ánh xạ tín hiệu loadcell/bàn đạp vào game, theo kiểu Pit House</value></data>
