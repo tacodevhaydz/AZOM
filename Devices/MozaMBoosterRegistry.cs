@@ -272,8 +272,21 @@ namespace MozaPlugin.Devices
             // the raw signal before this HID read ever sees it.
             var settings = _settingsLookup(c.Identity);
             double posPct = pos01 * 100.0;
-            if (settings != null && (settings.DeadzoneKg > 0 || settings.MaxForceKg < 200))
-                posPct = ApplyDeadzoneAndMaxForce(posPct, settings.DeadzoneKg, settings.MaxForceKg);
+            if (settings != null)
+            {
+                // Raw 0-100% HID travel isn't a fixed 0-200kg scale — it's
+                // whatever the device's OWN Max Threshold calibration
+                // (Sim Input Mapping) currently says 100% is. -1 means the
+                // user has never touched that control from this plugin (see
+                // MaxThresholdKg's sentinel doc comment) — the device may
+                // already be calibrated to something else entirely (real
+                // Pit House captures commonly show ~100-125kg, not 200kg),
+                // but there's no way to read that back, so 200kg remains
+                // the best available guess in that case.
+                double fullScaleKg = settings.MaxThresholdKg >= 0 ? settings.MaxThresholdKg : 200.0;
+                if (settings.DeadzoneKg > 0 || settings.MaxForceKg < fullScaleKg)
+                    posPct = ApplyDeadzoneAndMaxForce(posPct, settings.DeadzoneKg, settings.MaxForceKg, fullScaleKg);
+            }
             c.LastRawPercentPreCurve = posPct;
             if (settings?.InputCurveY != null && settings.InputCurveY.Length == 5)
                 posPct = EvaluateInputCurve(settings.InputCurveY, posPct);
@@ -287,27 +300,35 @@ namespace MozaPlugin.Devices
         }
 
         /// <summary>
-        /// Deadzone + Max Force, in kg of force — both host-side only, both
-        /// operate in the same fixed 0-200kg theoretical full-scale as
-        /// <c>MaxThresholdKg</c>/<c>EncodeThresholdKg</c> (the raw HID axis
-        /// has no independent force calibration of its own, so 0-100% raw
-        /// travel is treated as 0-200kg). Combined into one kg-space remap
-        /// rather than two independent percent-space steps:
+        /// Deadzone + Max Force, in kg of force — both host-side only.
+        /// <paramref name="fullScaleKg"/> is the force at which raw 0-100%
+        /// HID travel is CURRENTLY known to reach 100% — i.e. the device's
+        /// own Max Threshold calibration (<c>MaxThresholdKg</c>/
+        /// <c>EncodeThresholdKg</c>, Sim Input Mapping) when the user has
+        /// set it from this plugin, or a 200kg fallback guess otherwise
+        /// (the raw HID axis has no independent force calibration of its
+        /// own to query). Combined into one kg-space remap rather than two
+        /// independent percent-space steps:
         /// <list type="number">
         /// <item>Deadzone (0..40kg): force below this clamps to 0.</item>
         /// <item>Max Force (0..200kg, default 200 = off): the force at
         /// which the <em>input curve's</em> X-axis reaches 100% — lets a
-        /// user who never presses past, say, 100kg use the curve's full
-        /// 0-100% range instead of only ever reaching its midpoint.</item>
+        /// user who never presses past, say, 100kg (out of the device's
+        /// real <paramref name="fullScaleKg"/>) use the curve's full
+        /// 0-100% range instead of only ever reaching its midpoint. Values
+        /// at or above <paramref name="fullScaleKg"/> are a no-op: the raw
+        /// axis is already pegged at 100% by the device itself at that
+        /// point, so there's no more resolution above it for software to
+        /// require.</item>
         /// </list>
         /// Everything between the two rescales linearly. See
         /// docs/protocol/devices/mbooster.md "Pedal Feel".
         /// </summary>
-        internal static double ApplyDeadzoneAndMaxForce(double xPercent, double deadzoneKg, double maxForceKg)
+        internal static double ApplyDeadzoneAndMaxForce(double xPercent, double deadzoneKg, double maxForceKg, double fullScaleKg)
         {
-            // 0-100% raw travel == 0-200kg, so kg -> percent is kg / 2.
-            double loPercent = Math.Max(0, Math.Min(200, deadzoneKg)) / 2.0;
-            double hiPercent = Math.Max(0, Math.Min(200, maxForceKg)) / 2.0;
+            if (fullScaleKg <= 0) fullScaleKg = 200.0;
+            double loPercent = Math.Max(0, Math.Min(fullScaleKg, deadzoneKg)) / fullScaleKg * 100.0;
+            double hiPercent = Math.Max(0, Math.Min(fullScaleKg, maxForceKg)) / fullScaleKg * 100.0;
             return ClipAndRescale(xPercent, loPercent, hiPercent);
         }
 

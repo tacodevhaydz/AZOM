@@ -37,6 +37,21 @@ namespace MozaPlugin.Devices
         // MBoosterEffectSettings.TriggerLevelPct.
         public const float ThresholdTriggerMinPct = 50f;
         public const float ThresholdTriggerMaxPct = 100f;
+
+        // Brake Fade's Onset Temperature slider bounds, in the same unit
+        // BrakeTempC normalizes to (Celsius) — see
+        // MBoosterEffectSettings.BrakeFadeOnsetC. Real fade onset varies
+        // hugely by pad compound (road pads ~300C, race pads 600C+), so
+        // this is user-configurable rather than a hardcoded heuristic like
+        // Lockup's brake/speed/wheel-slip gate.
+        public const float BrakeFadeOnsetMinC = 300f;
+        public const float BrakeFadeOnsetMaxC = 900f;
+
+        // Brake Fade's hard cap on the Travel End (mm) it's allowed to push
+        // the pedal to — deliberately BELOW TravelMaxMm (49.7), per explicit
+        // user instruction, not derived from any capture/spec. See
+        // MBoosterEffectWorker.UpdateBrakeFadeTravelEnd.
+        public const float BrakeFadeMaxTravelEndMm = 47.9f;
     }
 
     /// <summary>
@@ -108,6 +123,18 @@ namespace MozaPlugin.Devices
         // silence immediately after the burst (a short, sharp tick).
         public int DecayPct { get; set; } = 20;
 
+        // Brake Fade-only, degrees Celsius (MBoosterUiConstants
+        // .BrakeFadeOnsetMinC/MaxC) — the brake temperature above which the
+        // pedal's Travel End starts extending (a real hardware calibration
+        // write, not a vibration — see MBoosterDeviceSettings.TravelEndMm
+        // and MBoosterEffectWorker.UpdateBrakeFadeTravelEnd). Compared
+        // against MBoosterTelemetrySnapshot.BrakeTempC (normalized to
+        // Celsius regardless of the game's reported TemperatureUnit).
+        // Unlike Lockup's hardcoded wheel-slip heuristic, this is
+        // user-configurable because real fade onset varies hugely by pad
+        // compound and game.
+        public float BrakeFadeOnsetC { get; set; } = 550f;
+
         public MBoosterEffectSettings Clone() =>
             new MBoosterEffectSettings
             {
@@ -117,6 +144,7 @@ namespace MozaPlugin.Devices
                 SmoothnessPct = SmoothnessPct,
                 TriggerLevelPct = TriggerLevelPct,
                 DecayPct = DecayPct,
+                BrakeFadeOnsetC = BrakeFadeOnsetC,
             };
     }
 
@@ -151,6 +179,21 @@ namespace MozaPlugin.Devices
         // MozaMBoosterProtocol.EncodeRoadTextureLevel); it has no
         // FrequencyHz of its own, unlike Abs/Engine.
         public MBoosterEffectSettings RoadTexture { get; set; } = new MBoosterEffectSettings { IntensityPct = 50, SmoothnessPct = 50 };
+
+        // Brake Fade — NOT a vibration effect (no motor-frame wire type
+        // involved at all). While enabled and BrakeFadeOnsetC is exceeded,
+        // MBoosterEffectWorker.UpdateBrakeFadeTravelEnd dynamically
+        // rewrites the REAL mbooster-brake-travel-end hardware calibration
+        // (the same wire command TravelEndMm's own Pedal Feel slider
+        // writes) to make the pedal require more physical travel to reach
+        // 100%, capped at MBoosterUiConstants.BrakeFadeMaxTravelEndMm, then
+        // restores TravelEndMm's configured value as brake temp cools.
+        // Requires TravelEndMm to already be set (>= 0) — if the user has
+        // never configured a base Travel End, this feature has no known
+        // safe value to restore to and stays fully inert. Disabled by
+        // default given it writes real hardware calibration, not merely a
+        // vibration amplitude.
+        public MBoosterEffectSettings BrakeFade { get; set; } = new MBoosterEffectSettings { BrakeFadeOnsetC = 550 };
 
         // Calibration (experimental per protocol note § 6). -1 = "not yet
         // read / no override"; the worker treats -1 as "do not write".
@@ -212,12 +255,18 @@ namespace MozaPlugin.Devices
         public float DeadzoneKg { get; set; } = 0;
 
         // Force (kg, 0..200) at which the Pedal Feel input curve's X-axis
-        // reaches 100%. Host-side only. Both this and DeadzoneKg treat raw
-        // 0-100% pedal travel as 0-200kg (the raw HID axis has no
-        // independent force calibration of its own — same assumption
-        // MaxThresholdKg makes). 200 = off (default; the full theoretical
-        // range is used, i.e. today's behavior). Lower it if you never
-        // press hard enough to reach the curve's right edge otherwise.
+        // reaches 100%. Host-side only. Raw 0-100% pedal travel isn't a
+        // fixed 0-200kg scale — 100% raw is whatever MaxThresholdKg (Sim
+        // Input Mapping) currently calibrates the device itself to reach
+        // 100% at (200kg is only a fallback guess when MaxThresholdKg is
+        // still -1/unset — see MozaMBoosterRegistry.ApplyDeadzoneAndMaxForce).
+        // 200 = off IF the device's real threshold is also 200kg; if it's
+        // lower (real Pit House captures commonly show ~100-125kg), 200
+        // has no additional effect beyond whatever the device already
+        // saturates at, since there's no headroom above the device's own
+        // calibrated max for software to require more force. Lower it if
+        // you never press hard enough to reach the curve's right edge
+        // otherwise.
         public float MaxForceKg { get; set; } = 200;
 
         // Start/End of pedal travel, in mm (Pit House's own calibration
@@ -261,6 +310,7 @@ namespace MozaPlugin.Devices
                 Threshold = Threshold?.Clone() ?? new MBoosterEffectSettings(),
                 Engine = Engine?.Clone() ?? new MBoosterEffectSettings(),
                 RoadTexture = RoadTexture?.Clone() ?? new MBoosterEffectSettings(),
+                BrakeFade = BrakeFade?.Clone() ?? new MBoosterEffectSettings(),
                 Direction = Direction,
                 Min = Min,
                 Max = Max,
@@ -303,10 +353,22 @@ namespace MozaPlugin.Devices
         // this is a proxy for road-surface roughness used by Road Texture.
         // See docs/protocol/devices/mbooster.md "Road Texture".
         public readonly double SuspensionHeaveG;
+        // Peak brake temperature across all 4 corners, normalized to
+        // Celsius regardless of the game's reported TemperatureUnit —
+        // sourced from StatusDataBase.BrakesTemperatureMax (nullable; 0
+        // when a game doesn't report it). Used by Brake Fade. Unlike
+        // SuspensionHeaveG this is a real, direct measurement (not a
+        // proxy) when the game populates it — but per-corner brake temp is
+        // less universally supported across SimHub's game plugins than
+        // basics like Brake/SpeedKmh, so 0 (unpopulated) is a real
+        // possibility for some titles. See docs/protocol/devices/
+        // mbooster.md "Brake Fade".
+        public readonly double BrakeTempC;
 
         public MBoosterTelemetrySnapshot(
             bool gameRunning, double rpm, double idleRpm, double brake, bool absActive,
-            double vehicleSpeedMs, double avgWheelSpeedMs, double suspensionHeaveG)
+            double vehicleSpeedMs, double avgWheelSpeedMs, double suspensionHeaveG,
+            double brakeTempC)
         {
             GameRunning = gameRunning;
             Rpm = rpm;
@@ -316,9 +378,10 @@ namespace MozaPlugin.Devices
             VehicleSpeedMs = vehicleSpeedMs;
             AvgWheelSpeedMs = avgWheelSpeedMs;
             SuspensionHeaveG = suspensionHeaveG;
+            BrakeTempC = brakeTempC;
         }
 
         public static readonly MBoosterTelemetrySnapshot Empty =
-            new MBoosterTelemetrySnapshot(false, 0, 800, 0, false, 0, 0, 0);
+            new MBoosterTelemetrySnapshot(false, 0, 800, 0, false, 0, 0, 0, 0);
     }
 }

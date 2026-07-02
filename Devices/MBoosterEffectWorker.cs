@@ -54,6 +54,14 @@ namespace MozaPlugin.Devices
         private EffectState _roadTexture;
         private bool _thresholdLatched; // hysteresis flag for the Threshold effect (doc § 4)
 
+        // Brake Fade — NOT part of the vibration-motor effect pipeline
+        // above; a real Travel End (mm) hardware-calibration override, see
+        // UpdateBrakeFadeTravelEnd. -1 = we haven't overridden anything
+        // (device presumably still holds the user's configured base value).
+        private float _brakeFadeAppliedTravelEndMm = -1;
+        private long _brakeFadeLastWriteTicks;
+        private volatile bool _brakeFadeTestActive;
+
         // Engine's, ABS's, Road Texture's, Lockup's, and Threshold's Test
         // toggles all run indefinitely while on, live-tracking Frequency/
         // Intensity/Smoothness/Decay from settings every tick (no snapshot)
@@ -111,6 +119,24 @@ namespace MozaPlugin.Devices
             _stop = true;
             try { _thread?.Join(1000); } catch { }
             _thread = null;
+            // Best-effort only — covers a clean disconnect/shutdown while
+            // connected. An abrupt crash/force-quit while an override is
+            // active can still leave the device holding the extended
+            // Travel End until brake temp is next read as cooled (or the
+            // user re-applies their Pedal Feel Travel slider), since there
+            // is no watchdog outside this worker's own tick loop.
+            TryRestoreBrakeFadeOnStop();
+        }
+
+        private void TryRestoreBrakeFadeOnStop()
+        {
+            if (_brakeFadeAppliedTravelEndMm < 0) return; // never overrode anything
+            var settings = _settingsLookup();
+            float baseMm = settings?.TravelEndMm ?? -1;
+            if (baseMm < 0) return; // no known safe value to restore to
+            if (Math.Abs(_brakeFadeAppliedTravelEndMm - baseMm) < 0.01f) return; // already at base
+            if (_device.SendIntWrite("mbooster-brake-travel-end", MozaMBoosterProtocol.EncodeTravelMm(baseMm)))
+                _brakeFadeAppliedTravelEndMm = baseMm;
         }
 
         public void Dispose() => Stop();
@@ -134,6 +160,9 @@ namespace MozaPlugin.Devices
 
         /// <summary>Turn Threshold's sustained test toggle on/off. See <see cref="_thresholdTestSustained"/>.</summary>
         public void SetThresholdTestSustained(bool on) => _thresholdTestSustained = on;
+
+        /// <summary>Turn Brake Fade's sustained test toggle on/off. See <see cref="_brakeFadeTestActive"/>.</summary>
+        public void SetBrakeFadeTestSustained(bool on) => _brakeFadeTestActive = on;
 
         private void Loop()
         {
@@ -178,26 +207,35 @@ namespace MozaPlugin.Devices
 
             // --- Apply per-effect activation edges + emit motor frame ------
             //
-            // All five effects share ONE latest-wins motor stream slot
-            // (MozaSerialConnection StreamKind.MBoosterEffect — SendStream
-            // overwrites the pending value), so when more than one effect is
-            // active in the same tick only the LAST frame emitted here reaches
-            // the motor. Emission order is therefore a priority ladder, lowest
-            // first: the two continuous "ambient" effects (Engine, Road
-            // Texture) are emitted BEFORE the transient braking cues (ABS,
-            // Lockup, Threshold) so a lockup/ABS/threshold pulse always
-            // overrides the ambient vibration instead of being masked by it.
+            // All five vibration effects share ONE latest-wins motor stream
+            // slot (MozaSerialConnection StreamKind.MBoosterEffect —
+            // SendStream overwrites the pending value), so when more than
+            // one effect is active in the same tick only the LAST frame
+            // emitted here reaches the motor. Emission order is therefore a
+            // priority ladder, lowest first: the two continuous "ambient"
+            // effects (Engine, Road Texture) are emitted BEFORE the
+            // transient braking cues (ABS, Lockup, Threshold) so a
+            // lockup/ABS/threshold pulse always overrides the ambient
+            // vibration instead of being masked by it.
             ProcessEffect(MBoosterEffectId.Engine,    ref _engine);
             // Road Texture has a materially different wire payload (see
             // MozaMBoosterProtocol.BuildRoadTextureFrame) so it doesn't go
-            // through the shared ProcessEffect/BuildMotorFrame path. It streams
-            // a frame every tick while the car is moving, so it must sit here
-            // (ambient, before the braking cues) — emitted last it overwrote
-            // every braking-effect frame whenever you were driving.
+            // through the shared ProcessEffect/BuildMotorFrame path. Even
+            // though it now only streams frames for the duration of a bump's
+            // decaying pulse (see UpdateRoadTextureRequest) rather than the
+            // whole time the car is moving, it still needs to sit here
+            // (ambient tier, before the braking cues) so a lockup/ABS/
+            // threshold pulse that lands in the same tick as a bump always
+            // wins instead of being masked by it.
             ProcessRoadTextureEffect(settings, ref _roadTexture);
             ProcessEffect(MBoosterEffectId.Abs,       ref _abs);
             ProcessEffect(MBoosterEffectId.Lockup,    ref _lockup);
             ProcessEffect(MBoosterEffectId.Threshold, ref _threshold);
+
+            // Brake Fade is NOT a vibration effect — it doesn't touch the
+            // motor stream slot at all, so it's entirely independent of the
+            // priority ladder above. See UpdateBrakeFadeTravelEnd.
+            UpdateBrakeFadeTravelEnd(settings, snap);
 
             // --- 500 ms keepalive (separate from motor frames) -------------
             _keepaliveCounter++;
@@ -473,18 +511,36 @@ namespace MozaPlugin.Devices
 
         // Road Texture's Smoothness is still sent as a fixed user-configured
         // percentage (the firmware applies it internally to the noise
-        // signal we stream; see ProcessRoadTextureEffect), but Intensity is
-        // now also scaled live by RoadTextureRoughness01 — a proxy for
-        // actual road-surface roughness, since real vibration should track
-        // real bumps rather than run at a constant level the whole time
-        // you're driving. There's no generic suspension-travel telemetry in
-        // SimHub (see MBoosterTelemetrySnapshot.SuspensionHeaveG's doc
-        // comment), so vertical chassis acceleration (heave) stands in for
-        // it. The sustained test toggle bypasses Enabled/the telemetry gate
-        // entirely and previews at full roughness (1.0), same as Engine's
-        // and ABS's tests — there's no live road to preview against outside
-        // a real drive.
-        private const double RoadTextureHeaveScaleMaxG = 1.0; // 1g vertical accel -> roughness saturates at 100%
+        // signal we stream; see ProcessRoadTextureEffect). Intensity is
+        // driven by a bump/kerb detector, not a constant ambient level:
+        // there's no generic suspension-travel telemetry in SimHub (see
+        // MBoosterTelemetrySnapshot.SuspensionHeaveG's doc comment), so
+        // vertical chassis acceleration (heave) stands in for it. A single
+        // bump only spikes AccelerationHeave for one or two ticks (40 ms),
+        // too short to feel as a motor pulse, so RoadTextureRoughness01 is a
+        // peak-and-decay envelope (fast attack on a heave spike above
+        // RoadTextureBumpTriggerG, exponential release with time constant
+        // RoadTextureBumpDecayTau) rather than the instantaneous |heave|
+        // reading — this also lets the effect go fully silent (activation
+        // edge fires, disable frame sent) between bumps instead of
+        // streaming near-zero noise the whole time you're driving, same
+        // "quiet unless something is actually happening" contract Lockup/
+        // Threshold/ABS already have. The sustained test toggle bypasses
+        // Enabled/the telemetry gate entirely and previews at full envelope
+        // (1.0), same as Engine's and ABS's tests — there's no live road to
+        // preview against outside a real drive.
+        private const double RoadTextureHeaveScaleMaxG = 1.0; // 1g vertical accel -> envelope saturates at 100%
+        // Heuristic, not a hardware-verified value (there's no wire-protocol
+        // reference for a host-side telemetry threshold) — chosen so normal
+        // tarmac's small accelerometer noise stays under it while a real
+        // bump/kerb strike clears it. Same spirit as Lockup's hardcoded
+        // brake/speed/wheel-slip heuristic: not user-configurable.
+        private const double RoadTextureBumpTriggerG = 0.15;
+        // Exponential release time constant, seconds — how long a single
+        // bump's pulse takes to decay back toward silence. ~0.15 s gives a
+        // punchy, distinct "hit" rather than a lingering buzz.
+        private const double RoadTextureBumpDecayTau = 0.15;
+        private static readonly double RoadTextureBumpDecayPerTick = Math.Exp(-TickPeriodSec / RoadTextureBumpDecayTau);
 
         private void UpdateRoadTextureRequest(MBoosterDeviceSettings? settings, in MBoosterTelemetrySnapshot snap, ref EffectState st)
         {
@@ -496,14 +552,107 @@ namespace MozaPlugin.Devices
             }
             bool active = settings?.RoadTexture != null && settings.RoadTexture.Enabled
                 && snap.GameRunning && snap.VehicleSpeedMs > 0.5;
-            st.IntensityRequest = active ? 1 : 0;
             if (!active)
             {
+                st.IntensityRequest = 0;
                 st.RoadTextureRoughness01 = 0;
                 return;
             }
-            double roughness = Math.Abs(snap.SuspensionHeaveG) / RoadTextureHeaveScaleMaxG;
-            st.RoadTextureRoughness01 = Clamp01(roughness);
+            double bumpMagnitude01 = Clamp01(
+                (Math.Abs(snap.SuspensionHeaveG) - RoadTextureBumpTriggerG)
+                / (RoadTextureHeaveScaleMaxG - RoadTextureBumpTriggerG));
+            double decayed = st.RoadTextureRoughness01 * RoadTextureBumpDecayPerTick;
+            double envelope = Math.Max(bumpMagnitude01, decayed);
+            st.RoadTextureRoughness01 = envelope;
+            // Below this, the envelope is inaudible/imperceptible on the
+            // motor — treat as fully silent so the activation edge below
+            // actually fires (disable frame sent) instead of streaming a
+            // frame with a rounds-to-zero amplitude forever.
+            st.IntensityRequest = envelope > 0.01 ? 1 : 0;
+        }
+
+        // Brake Fade — NOT a vibration effect. Dynamically rewrites the
+        // REAL mbooster-brake-travel-end hardware calibration (the same
+        // wire command TravelEndMm's own Pedal Feel slider writes) so the
+        // pedal requires more physical travel to reach 100% as brake temp
+        // climbs past BrakeFadeOnsetC, ramping linearly up to
+        // MBoosterUiConstants.BrakeFadeMaxTravelEndMm over BrakeFadeSpanC
+        // degrees, then restoring the user's configured TravelEndMm as temp
+        // cools. Requires TravelEndMm >= 0 (the user has actually configured
+        // a base value in Pedal Feel) — without a known-safe value to
+        // restore to, this stays fully inert rather than guessing, since
+        // leaving the device's calibration silently altered would be a much
+        // worse outcome than the feature simply not running.
+        //
+        // Unlike the vibration effects, calibration writes are a real
+        // hardware command with no evidence they're safe to stream at 50Hz
+        // (see docs/protocol/devices/mbooster.md "Pedal Feel" — every other
+        // calibration write in this app only fires when a user drags a
+        // slider thumb, not continuously). ApplyBrakeFadeTravelEnd throttles
+        // writes to at most once per BrakeFadeWriteMinIntervalSec AND only
+        // when the target has moved by at least BrakeFadeWriteMinDeltaMm —
+        // except restoring to the exact base value on cooldown/disable,
+        // which is a safety action and always goes through immediately.
+        private const double BrakeFadeSpanC = 200.0;
+        private const double BrakeFadeWriteMinIntervalSec = 0.5;
+        private const float BrakeFadeWriteMinDeltaMm = 0.2f;
+
+        private void UpdateBrakeFadeTravelEnd(MBoosterDeviceSettings? settings, in MBoosterTelemetrySnapshot snap)
+        {
+            float baseMm = settings?.TravelEndMm ?? -1;
+            if (baseMm < 0) return; // no known safe base — stay fully inert
+
+            var bf = settings?.BrakeFade;
+            float cap = MBoosterUiConstants.BrakeFadeMaxTravelEndMm;
+
+            float targetMm;
+            if (_brakeFadeTestActive)
+            {
+                targetMm = baseMm < cap ? cap : baseMm;
+            }
+            else if (bf == null || !bf.Enabled)
+            {
+                targetMm = baseMm;
+            }
+            else
+            {
+                double ramp01 = Clamp01((snap.BrakeTempC - bf.BrakeFadeOnsetC) / BrakeFadeSpanC);
+                float extendedMm = (float)(baseMm + ramp01 * (cap - baseMm));
+                // Never shrink below the user's own base — if baseMm is
+                // already >= cap there's no room to extend at all.
+                targetMm = extendedMm > baseMm ? Math.Min(extendedMm, cap) : baseMm;
+            }
+
+            ApplyBrakeFadeTravelEnd(targetMm, baseMm);
+        }
+
+        private void ApplyBrakeFadeTravelEnd(float targetMm, float baseMm)
+        {
+            bool isRestoreToBase = Math.Abs(targetMm - baseMm) < 0.01f;
+
+            if (_brakeFadeAppliedTravelEndMm < 0)
+            {
+                // Never overridden anything yet this session — assume the
+                // device currently holds the base value, so don't fire a
+                // spurious write just to "confirm" that on every tick.
+                if (isRestoreToBase) return;
+                _brakeFadeAppliedTravelEndMm = baseMm;
+            }
+
+            float delta = Math.Abs(targetMm - _brakeFadeAppliedTravelEndMm);
+            double sinceLastWriteSec = (Stopwatch.GetTimestamp() - _brakeFadeLastWriteTicks) / (double)Stopwatch.Frequency;
+
+            // Restoring to baseline is a safety action, never throttled away.
+            bool shouldWrite = isRestoreToBase
+                ? delta > 0.01f
+                : delta >= BrakeFadeWriteMinDeltaMm && sinceLastWriteSec >= BrakeFadeWriteMinIntervalSec;
+            if (!shouldWrite) return;
+
+            if (!_device.SendIntWrite("mbooster-brake-travel-end", MozaMBoosterProtocol.EncodeTravelMm(targetMm)))
+                return; // not connected — nothing written, don't update tracking state
+
+            _brakeFadeAppliedTravelEndMm = targetMm;
+            _brakeFadeLastWriteTicks = Stopwatch.GetTimestamp();
         }
 
         // ===== Edge handling + frame emission =============================
@@ -569,14 +718,16 @@ namespace MozaPlugin.Devices
         /// Mirrors ProcessEffect's activation-edge/disable-frame handling
         /// otherwise (only <see cref="EffectState.IntensityRequest"/> gates
         /// session activity here, not FreqHz, since Road Texture has no
-        /// frequency setting of its own). The transmitted Intensity is the
-        /// user's configured percentage scaled by
-        /// <see cref="EffectState.RoadTextureRoughness01"/> every tick — the
-        /// effect stays "active" (streaming frames) continuously while
-        /// driving rather than flickering enable/disable edges on every
-        /// smooth patch of track, but the amplitude itself tracks live
-        /// suspension-heave roughness instead of running at a constant
-        /// level.
+        /// frequency setting of its own). <see cref="EffectState.IntensityRequest"/>
+        /// (and hence <paramref name="st"/>'s activation edge) now tracks the
+        /// bump/kerb peak-and-decay envelope computed in
+        /// <see cref="UpdateRoadTextureRequest"/> — the effect goes fully
+        /// silent (disable frame sent) on smooth track and only streams
+        /// frames for the duration of a bump's decaying pulse, instead of
+        /// running continuously the whole time you're driving. The
+        /// transmitted Intensity is the user's configured percentage scaled
+        /// by that same envelope (<see cref="EffectState.RoadTextureRoughness01"/>)
+        /// every tick.
         /// </summary>
         private void ProcessRoadTextureEffect(MBoosterDeviceSettings? settings, ref EffectState st)
         {

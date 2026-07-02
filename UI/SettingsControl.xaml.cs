@@ -164,9 +164,9 @@ namespace MozaPlugin
             _steeringAngleTimer.Stop();
             _bandwidthTimer?.Stop();
             // Closing the settings panel takes the sustained Engine/ABS/
-            // Road Texture/Lockup/Threshold test toggles out of view — stop
-            // them so a forgotten toggle doesn't leave the pedal buzzing
-            // indefinitely with no UI left to turn it off.
+            // Road Texture/Lockup/Threshold/Brake Fade test toggles out of
+            // view — stop them so a forgotten toggle doesn't leave the pedal
+            // buzzing indefinitely with no UI left to turn it off.
             if (MBoosterEngineTestToggle?.IsChecked == true)
                 CurrentMBoosterController()?.SetEngineTestActive(false);
             if (MBoosterAbsTestToggle?.IsChecked == true)
@@ -177,6 +177,8 @@ namespace MozaPlugin
                 CurrentMBoosterController()?.SetLockupTestActive(false);
             if (MBoosterThresholdTestToggle?.IsChecked == true)
                 CurrentMBoosterController()?.SetThresholdTestActive(false);
+            if (MBoosterBrakeFadeTestToggle?.IsChecked == true)
+                CurrentMBoosterController()?.SetBrakeFadeTestActive(false);
             // SDK CoAP server fires RecentRequestAppended on its receive
             // thread; unsubscribe so a torn-down SettingsControl can be GC'd
             // without the server's event list pinning it. Re-subscribe
@@ -2597,6 +2599,11 @@ namespace MozaPlugin
                 SetValueText(MBoosterRoadTextureSmoothnessValue, (s.RoadTexture?.SmoothnessPct ?? 50).ToString());
                 // Never persisted — always starts off for a freshly-shown tab.
                 MBoosterRoadTextureTestToggle.IsChecked = false;
+                MBoosterBrakeFadeEnable.IsChecked = s.BrakeFade?.Enabled ?? false;
+                MBoosterBrakeFadeOnsetSlider.Value = s.BrakeFade?.BrakeFadeOnsetC ?? 550;
+                SetValueText(MBoosterBrakeFadeOnsetValue, MBoosterBrakeFadeOnsetSlider.Value.ToString("F0"));
+                // Never persisted — always starts off for a freshly-shown tab.
+                MBoosterBrakeFadeTestToggle.IsChecked = false;
                 MBoosterDirCheck.IsChecked = (s.Direction == 1);
                 MBoosterMinSlider.Value = s.Min >= 0 ? s.Min : 0;
                 SetValueText(MBoosterMinValue, MBoosterMinSlider.Value.ToString("F0"));
@@ -2673,10 +2680,11 @@ namespace MozaPlugin
             if (MBoosterDeviceCombo.SelectedItem is not ComboBoxItem item) return;
             if (item.Tag is not string identity) return;
             if (string.Equals(identity, _mboosterSelectedIdentity, StringComparison.OrdinalIgnoreCase)) return;
-            // Stop any sustained Engine/ABS/Road Texture/Lockup/Threshold
-            // test on the device we're navigating away from — otherwise it
-            // keeps buzzing with no visible toggle left to turn it off (the
-            // new device's tab reseeds its own, unrelated toggle state).
+            // Stop any sustained Engine/ABS/Road Texture/Lockup/Threshold/
+            // Brake Fade test on the device we're navigating away from —
+            // otherwise it keeps buzzing with no visible toggle left to turn
+            // it off (the new device's tab reseeds its own, unrelated
+            // toggle state).
             if (MBoosterEngineTestToggle.IsChecked == true)
                 CurrentMBoosterController()?.SetEngineTestActive(false);
             if (MBoosterAbsTestToggle.IsChecked == true)
@@ -2687,6 +2695,8 @@ namespace MozaPlugin
                 CurrentMBoosterController()?.SetLockupTestActive(false);
             if (MBoosterThresholdTestToggle.IsChecked == true)
                 CurrentMBoosterController()?.SetThresholdTestActive(false);
+            if (MBoosterBrakeFadeTestToggle.IsChecked == true)
+                CurrentMBoosterController()?.SetBrakeFadeTestActive(false);
             // Reset the pedal trace to a flat baseline rather than carrying
             // over the previous device's history into the new one's graph.
             for (int i = 0; i < _mboosterPedalTraceSamples.Count; i++)
@@ -2972,6 +2982,44 @@ namespace MozaPlugin
         {
             if (_suppressEvents) return;
             CurrentMBoosterController()?.SetRoadTextureTestActive(MBoosterRoadTextureTestToggle.IsChecked == true);
+        }
+
+        // Brake Fade — NOT a vibration effect. Dynamically rewrites the real
+        // Travel End hardware calibration while brake temp is above
+        // BrakeFadeOnsetC, restoring the user's own configured Travel End
+        // as it cools. See MBoosterEffectWorker.UpdateBrakeFadeTravelEnd.
+        private void MBoosterBrakeFadeEnable_Changed(object sender, RoutedEventArgs e)
+        {
+            if (_suppressEvents) return;
+            var s = CurrentMBoosterSettings();
+            if (s == null) return;
+            (s.BrakeFade ??= new MBoosterEffectSettings()).Enabled = MBoosterBrakeFadeEnable.IsChecked == true;
+            _plugin.SaveSettings();
+        }
+        // Brake temperature (°C) above which Travel End starts extending —
+        // see MBoosterEffectSettings.BrakeFadeOnsetC.
+        private void MBoosterBrakeFadeOnsetSlider_ValueChanged(object sender, RoutedPropertyChangedEventArgs<double> e)
+        {
+            if (_suppressEvents) return;
+            int v = Math.Max((int)MBoosterUiConstants.BrakeFadeOnsetMinC, Math.Min((int)MBoosterUiConstants.BrakeFadeOnsetMaxC, (int)Math.Round(e.NewValue)));
+            MBoosterBrakeFadeOnsetValue.Text = v.ToString();
+            var s = CurrentMBoosterSettings();
+            if (s == null) return;
+            (s.BrakeFade ??= new MBoosterEffectSettings()).BrakeFadeOnsetC = v;
+            _plugin.SaveSettings();
+        }
+        // Sustained test toggle — bypasses Enabled and the brake-temperature
+        // gate entirely (there's no live "how hot are the brakes" signal to
+        // preview against outside a real drive), forcing Travel End to the
+        // BrakeFadeMaxTravelEndMm cap for as long as it's on. Still requires
+        // a configured base Travel End (see MBoosterUiConstants
+        // .TravelEndMm's sentinel doc) — otherwise this is a no-op. See
+        // MBoosterDeviceController.SetBrakeFadeTestActive and
+        // MBoosterEffectWorker's _brakeFadeTestActive.
+        private void MBoosterBrakeFadeTestToggle_Changed(object sender, RoutedEventArgs e)
+        {
+            if (_suppressEvents) return;
+            CurrentMBoosterController()?.SetBrakeFadeTestActive(MBoosterBrakeFadeTestToggle.IsChecked == true);
         }
 
         // ===== Calibration (experimental) ===================================

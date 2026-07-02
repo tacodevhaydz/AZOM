@@ -387,6 +387,25 @@ namespace MozaPlugin.Devices
             _worker.SetThresholdTestSustained(on);
         }
 
+        /// <summary>
+        /// Forces Travel End to the BrakeFadeMaxTravelEndMm cap while
+        /// <paramref name="on"/> is true, bypassing Enabled and the
+        /// brake-temperature gate entirely — there's no live "how hot are
+        /// the brakes" signal to preview against outside a real drive with
+        /// genuinely hot brakes. Unlike the vibration effects' test toggles,
+        /// this writes a REAL hardware calibration — see
+        /// MBoosterEffectWorker.UpdateBrakeFadeTravelEnd. Still requires a
+        /// configured base Travel End (MBoosterDeviceSettings.TravelEndMm
+        /// &gt;= 0) or this is a no-op. Always-allow-off semantics apply
+        /// here (see <see cref="SetEngineTestActive"/>) so a stuck toggle
+        /// can still restore the base value even if disconnected.
+        /// </summary>
+        public void SetBrakeFadeTestActive(bool on)
+        {
+            if (on && !_connection.IsConnected) return;
+            _worker.SetBrakeFadeTestSustained(on);
+        }
+
         public void Dispose()
         {
             if (_disposed) return;
