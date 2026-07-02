@@ -2461,6 +2461,13 @@ namespace MozaPlugin
 
         private string? _mboosterSelectedIdentity;
         private bool _mboosterUiSeeded;
+        // Active-profile name + device identity the tab was last seeded for.
+        // mBooster settings are per-profile (GetOrCreateMBoosterSettings reads
+        // ProfileStore.CurrentProfile) and per-device; the seed-once gate below
+        // must re-fire when either changes, or the tab keeps showing — and
+        // edits keep writing against — the previously-seeded profile/device.
+        private string? _mboosterSeededProfileName;
+        private string? _mboosterSeededIdentity;
 
         private void RefreshMBoosterTab()
         {
@@ -2487,7 +2494,17 @@ namespace MozaPlugin
                         break;
                     }
                 }
-                if (MBoosterDeviceCombo.Items.Count != devices.Count)
+                // Rebuild when the identity set/order changed, not just the
+                // count — a 1:1 device swap (count unchanged) would otherwise
+                // leave stale labels while _mboosterSelectedIdentity is
+                // reassigned to a different device below.
+                bool comboStale = MBoosterDeviceCombo.Items.Count != devices.Count;
+                for (int i = 0; !comboStale && i < devices.Count; i++)
+                {
+                    comboStale = !(MBoosterDeviceCombo.Items[i] is ComboBoxItem existing)
+                        || !string.Equals(existing.Tag as string, devices[i].Identity, StringComparison.OrdinalIgnoreCase);
+                }
+                if (comboStale)
                 {
                     MBoosterDeviceCombo.Items.Clear();
                     for (int i = 0; i < devices.Count; i++)
@@ -2520,6 +2537,16 @@ namespace MozaPlugin
             // 30 Hz from UpdateHidInputDisplays (UpdateMBoosterCurveMarkers)
             // instead of here — this 500ms pass felt sluggish for direct
             // pedal feedback.
+
+            // Re-seed when the active profile or the selected device changed
+            // since the last seed — otherwise the gate below keeps the
+            // previously-seeded values on screen while edits write to the
+            // now-current profile/device (mBooster settings are per-profile,
+            // per-device).
+            var currentProfileName = _plugin?.Settings?.ProfileStore?.CurrentProfile?.Name;
+            if (!string.Equals(currentProfileName, _mboosterSeededProfileName, StringComparison.Ordinal)
+                || !string.Equals(selected.Identity, _mboosterSeededIdentity, StringComparison.OrdinalIgnoreCase))
+                _mboosterUiSeeded = false;
 
             if (_mboosterUiSeeded) return;
             // Seed slider/checkbox values from the profile entry. _plugin is
@@ -2609,6 +2636,8 @@ namespace MozaPlugin
                 SetValueText(MBoosterMaxForceValue, s.MaxForceKg.ToString("F0"));
             }
             _mboosterUiSeeded = true;
+            _mboosterSeededProfileName = currentProfileName;
+            _mboosterSeededIdentity = selected.Identity;
         }
 
         private void SetMBoosterRoleCombo(MBoosterRole role)

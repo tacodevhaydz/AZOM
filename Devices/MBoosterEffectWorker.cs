@@ -177,15 +177,27 @@ namespace MozaPlugin.Devices
             UpdateRoadTextureRequest(settings, snap, ref _roadTexture);
 
             // --- Apply per-effect activation edges + emit motor frame ------
-
+            //
+            // All five effects share ONE latest-wins motor stream slot
+            // (MozaSerialConnection StreamKind.MBoosterEffect — SendStream
+            // overwrites the pending value), so when more than one effect is
+            // active in the same tick only the LAST frame emitted here reaches
+            // the motor. Emission order is therefore a priority ladder, lowest
+            // first: the two continuous "ambient" effects (Engine, Road
+            // Texture) are emitted BEFORE the transient braking cues (ABS,
+            // Lockup, Threshold) so a lockup/ABS/threshold pulse always
+            // overrides the ambient vibration instead of being masked by it.
             ProcessEffect(MBoosterEffectId.Engine,    ref _engine);
+            // Road Texture has a materially different wire payload (see
+            // MozaMBoosterProtocol.BuildRoadTextureFrame) so it doesn't go
+            // through the shared ProcessEffect/BuildMotorFrame path. It streams
+            // a frame every tick while the car is moving, so it must sit here
+            // (ambient, before the braking cues) — emitted last it overwrote
+            // every braking-effect frame whenever you were driving.
+            ProcessRoadTextureEffect(settings, ref _roadTexture);
             ProcessEffect(MBoosterEffectId.Abs,       ref _abs);
             ProcessEffect(MBoosterEffectId.Lockup,    ref _lockup);
             ProcessEffect(MBoosterEffectId.Threshold, ref _threshold);
-            // Road Texture has a materially different wire payload (see
-            // MozaMBoosterProtocol.BuildRoadTextureFrame) so it doesn't go
-            // through the shared ProcessEffect/BuildMotorFrame path.
-            ProcessRoadTextureEffect(settings, ref _roadTexture);
 
             // --- 500 ms keepalive (separate from motor frames) -------------
             _keepaliveCounter++;

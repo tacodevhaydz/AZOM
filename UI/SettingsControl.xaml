@@ -2088,7 +2088,7 @@
                                         <TextBlock Grid.Column="0" Text="{x:Static res:Strings.SliderLabel_Intensity}" Style="{StaticResource SliderLabel}"/>
                                         <Slider Grid.Column="1" x:Name="MBoosterAbsIntensity" Style="{StaticResource SettingSlider}" Minimum="0" Maximum="100" TickFrequency="1" ValueChanged="MBoosterAbsIntensity_ValueChanged"/>
                                         <TextBox Grid.Column="2" x:Name="MBoosterAbsIntensityValue" Style="{StaticResource SliderValueEditBox}"
-                                                 Tag="{Binding ElementName=MBoosterAbsIntensitySlider}"
+                                                 Tag="{Binding ElementName=MBoosterAbsIntensity}"
                                                  KeyDown="SliderValueBox_KeyDown" LostFocus="SliderValueBox_LostFocus"
                                                  Text="50"/>
                                     </Grid>
@@ -2101,7 +2101,7 @@
                                         <TextBlock Grid.Column="0" Text="{x:Static res:Strings.SliderLabel_Smoothness}" Style="{StaticResource SliderLabel}"/>
                                         <Slider Grid.Column="1" x:Name="MBoosterAbsSmoothness" Style="{StaticResource SettingSlider}" Minimum="0" Maximum="100" TickFrequency="1" ValueChanged="MBoosterAbsSmoothness_ValueChanged"/>
                                         <TextBox Grid.Column="2" x:Name="MBoosterAbsSmoothnessValue" Style="{StaticResource SliderValueEditBox}"
-                                                 Tag="{Binding ElementName=MBoosterAbsSmoothnessSlider}"
+                                                 Tag="{Binding ElementName=MBoosterAbsSmoothness}"
                                                  KeyDown="SliderValueBox_KeyDown" LostFocus="SliderValueBox_LostFocus"
                                                  Text="100"/>
                                     </Grid>
@@ -2135,7 +2135,7 @@
                                         <TextBlock Grid.Column="0" Text="{x:Static res:Strings.SliderLabel_Intensity}" Style="{StaticResource SliderLabel}"/>
                                         <Slider Grid.Column="1" x:Name="MBoosterLockupIntensity" Style="{StaticResource SettingSlider}" Minimum="0" Maximum="100" TickFrequency="1" ValueChanged="MBoosterLockupIntensity_ValueChanged"/>
                                         <TextBox Grid.Column="2" x:Name="MBoosterLockupIntensityValue" Style="{StaticResource SliderValueEditBox}"
-                                                 Tag="{Binding ElementName=MBoosterLockupIntensitySlider}"
+                                                 Tag="{Binding ElementName=MBoosterLockupIntensity}"
                                                  KeyDown="SliderValueBox_KeyDown" LostFocus="SliderValueBox_LostFocus"
                                                  Text="50"/>
                                     </Grid>
@@ -2156,7 +2156,7 @@
                                         <TextBlock Grid.Column="0" Text="{x:Static res:Strings.SliderLabel_TriggerLevel}" Style="{StaticResource SliderLabel}"/>
                                         <Slider Grid.Column="1" x:Name="MBoosterThresholdTriggerLevel" Style="{StaticResource SettingSlider}" Minimum="50" Maximum="100" TickFrequency="1" ValueChanged="MBoosterThresholdTriggerLevel_ValueChanged"/>
                                         <TextBox Grid.Column="2" x:Name="MBoosterThresholdTriggerLevelValue" Style="{StaticResource SliderValueEditBox}"
-                                                 Tag="{Binding ElementName=MBoosterThresholdTriggerLevelSlider}"
+                                                 Tag="{Binding ElementName=MBoosterThresholdTriggerLevel}"
                                                  KeyDown="SliderValueBox_KeyDown" LostFocus="SliderValueBox_LostFocus"
                                                  Text="60"/>
                                     </Grid>
@@ -2182,7 +2182,7 @@
                                         <TextBlock Grid.Column="0" Text="{x:Static res:Strings.SliderLabel_Intensity}" Style="{StaticResource SliderLabel}"/>
                                         <Slider Grid.Column="1" x:Name="MBoosterThresholdIntensity" Style="{StaticResource SettingSlider}" Minimum="0" Maximum="100" TickFrequency="1" ValueChanged="MBoosterThresholdIntensity_ValueChanged"/>
                                         <TextBox Grid.Column="2" x:Name="MBoosterThresholdIntensityValue" Style="{StaticResource SliderValueEditBox}"
-                                                 Tag="{Binding ElementName=MBoosterThresholdIntensitySlider}"
+                                                 Tag="{Binding ElementName=MBoosterThresholdIntensity}"
                                                  KeyDown="SliderValueBox_KeyDown" LostFocus="SliderValueBox_LostFocus"
                                                  Text="50"/>
                                     </Grid>
@@ -2195,7 +2195,7 @@
                                         <TextBlock Grid.Column="0" Text="{x:Static res:Strings.SliderLabel_VibrationDecay}" Style="{StaticResource SliderLabel}"/>
                                         <Slider Grid.Column="1" x:Name="MBoosterThresholdDecay" Style="{StaticResource SettingSlider}" Minimum="0" Maximum="100" TickFrequency="1" ValueChanged="MBoosterThresholdDecay_ValueChanged"/>
                                         <TextBox Grid.Column="2" x:Name="MBoosterThresholdDecayValue" Style="{StaticResource SliderValueEditBox}"
-                                                 Tag="{Binding ElementName=MBoosterThresholdDecaySlider}"
+                                                 Tag="{Binding ElementName=MBoosterThresholdDecay}"
                                                  KeyDown="SliderValueBox_KeyDown" LostFocus="SliderValueBox_LostFocus"
                                                  Text="20"/>
                                     </Grid>
@@ -2229,7 +2229,7 @@
                                         <TextBlock Grid.Column="0" Text="{x:Static res:Strings.SliderLabel_Intensity}" Style="{StaticResource SliderLabel}"/>
                                         <Slider Grid.Column="1" x:Name="MBoosterEngineIntensity" Style="{StaticResource SettingSlider}" Minimum="0" Maximum="100" TickFrequency="1" ValueChanged="MBoosterEngineIntensity_ValueChanged"/>
                                         <TextBox Grid.Column="2" x:Name="MBoosterEngineIntensityValue" Style="{StaticResource SliderValueEditBox}"
-                                                 Tag="{Binding ElementName=MBoosterEngineIntensitySlider}"
+                                                 Tag="{Binding ElementName=MBoosterEngineIntensity}"
                                                  KeyDown="SliderValueBox_KeyDown" LostFocus="SliderValueBox_LostFocus"
                                                  Text="50"/>
                                     </Grid>
@@ -2250,7 +2250,7 @@
                                         <TextBlock Grid.Column="0" Text="{x:Static res:Strings.SliderLabel_Intensity}" Style="{StaticResource SliderLabel}"/>
                                         <Slider Grid.Column="1" x:Name="MBoosterRoadTextureIntensity" Style="{StaticResource SettingSlider}" Minimum="0" Maximum="100" TickFrequency="1" ValueChanged="MBoosterRoadTextureIntensity_ValueChanged"/>
                                         <TextBox Grid.Column="2" x:Name="MBoosterRoadTextureIntensityValue" Style="{StaticResource SliderValueEditBox}"
-                                                 Tag="{Binding ElementName=MBoosterRoadTextureIntensitySlider}"
+                                                 Tag="{Binding ElementName=MBoosterRoadTextureIntensity}"
                                                  KeyDown="SliderValueBox_KeyDown" LostFocus="SliderValueBox_LostFocus"
                                                  Text="50"/>
                                     </Grid>
@@ -2263,7 +2263,7 @@
                                         <TextBlock Grid.Column="0" Text="{x:Static res:Strings.SliderLabel_Smoothness}" Style="{StaticResource SliderLabel}"/>
                                         <Slider Grid.Column="1" x:Name="MBoosterRoadTextureSmoothness" Style="{StaticResource SettingSlider}" Minimum="0" Maximum="100" TickFrequency="1" ValueChanged="MBoosterRoadTextureSmoothness_ValueChanged"/>
                                         <TextBox Grid.Column="2" x:Name="MBoosterRoadTextureSmoothnessValue" Style="{StaticResource SliderValueEditBox}"
-                                                 Tag="{Binding ElementName=MBoosterRoadTextureSmoothnessSlider}"
+                                                 Tag="{Binding ElementName=MBoosterRoadTextureSmoothness}"
                                                  KeyDown="SliderValueBox_KeyDown" LostFocus="SliderValueBox_LostFocus"
                                                  Text="50"/>
                                     </Grid>
