@@ -2985,9 +2985,10 @@ namespace MozaPlugin
         }
 
         // Brake Fade — NOT a vibration effect. Dynamically rewrites the real
-        // Travel End hardware calibration while brake temp is above
-        // BrakeFadeOnsetC, restoring the user's own configured Travel End
-        // as it cools. See MBoosterEffectWorker.UpdateBrakeFadeTravelEnd.
+        // Travel End AND Max Threshold hardware calibrations in lockstep
+        // while brake temp is above BrakeFadeOnsetC (more travel AND more
+        // force needed to reach 100%), restoring the user's own configured
+        // values as it cools. See MBoosterEffectWorker.UpdateBrakeFade.
         private void MBoosterBrakeFadeEnable_Changed(object sender, RoutedEventArgs e)
         {
             if (_suppressEvents) return;
@@ -2996,8 +2997,8 @@ namespace MozaPlugin
             (s.BrakeFade ??= new MBoosterEffectSettings()).Enabled = MBoosterBrakeFadeEnable.IsChecked == true;
             _plugin.SaveSettings();
         }
-        // Brake temperature (°C) above which Travel End starts extending —
-        // see MBoosterEffectSettings.BrakeFadeOnsetC.
+        // Brake temperature (°C) above which Travel End and Max Threshold
+        // start ramping — see MBoosterEffectSettings.BrakeFadeOnsetC.
         private void MBoosterBrakeFadeOnsetSlider_ValueChanged(object sender, RoutedPropertyChangedEventArgs<double> e)
         {
             if (_suppressEvents) return;
@@ -3010,10 +3011,10 @@ namespace MozaPlugin
         }
         // Sustained test toggle — bypasses Enabled and the brake-temperature
         // gate entirely (there's no live "how hot are the brakes" signal to
-        // preview against outside a real drive), forcing Travel End to the
-        // BrakeFadeMaxTravelEndMm cap for as long as it's on. Still requires
-        // a configured base Travel End (see MBoosterUiConstants
-        // .TravelEndMm's sentinel doc) — otherwise this is a no-op. See
+        // preview against outside a real drive), forcing Travel End and Max
+        // Threshold to their Brake Fade caps for as long as it's on. Each
+        // independently requires its own configured base value — otherwise
+        // that one is a no-op (the other can still preview on its own). See
         // MBoosterDeviceController.SetBrakeFadeTestActive and
         // MBoosterEffectWorker's _brakeFadeTestActive.
         private void MBoosterBrakeFadeTestToggle_Changed(object sender, RoutedEventArgs e)

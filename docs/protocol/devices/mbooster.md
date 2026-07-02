@@ -506,22 +506,34 @@ Threshold's rebuild, that whole mechanism (the `TestPulse` class,
 `MBoosterDeviceController.FireEffectTest`) has been deleted entirely,
 since nothing constructs one anymore.
 
-### Brake Fade — real Travel End calibration override, not a vibration effect
+### Brake Fade — real Travel End + Max Threshold calibration override, not a vibration effect
 
 Sixth effect added. The motivating request was literal: "make the
 pedal feel like it goes long (more travel needed for the same brake
-force) when the brakes overheat" — i.e. simulate brake fade as an
-actual change in pedal feel, not a buzz representing one. First
-attempt was a haptic warning-cue effect (a sustained buzz on a new,
-uncaptured wire effect type) — rejected on a second pass in favor of
-what was actually asked for: dynamically rewriting the REAL
-`mbooster-brake-travel-end` hardware calibration (cmdId `0x85`, the
-same wire command `TravelEndMm`'s own Pedal Feel slider writes — see
-"Pedal Feel" below) so the pedal genuinely requires more physical
-travel to reach 100% as brake temperature climbs, then restoring the
-user's configured value as it cools. No new/unverified wire ID
-involved — this reuses a command already confirmed real via two Pit
-House USB captures.
+force) when the brakes overheat, and softer/needing more pressure to
+reach 100%" — i.e. simulate brake fade as an actual change in pedal
+feel, not a buzz representing one. First attempt was a haptic
+warning-cue effect (a sustained buzz on a new, uncaptured wire effect
+type) — rejected on a second pass in favor of what was actually asked
+for: dynamically rewriting TWO real hardware calibrations in lockstep.
+
+- `mbooster-brake-travel-end` (cmdId `0x85`, the same wire command
+  `TravelEndMm`'s own Pedal Feel slider writes) — more physical travel
+  needed to reach 100%.
+- `mbooster-brake-threshold` (cmdId `0xB3`, the same wire command
+  `MaxThresholdKg`'s own Sim Input Mapping slider writes) — more
+  load-cell force needed to reach 100%. This is the "softer to press"
+  half, and it specifically has to be `MaxThresholdKg`, not the
+  similarly-named `MaxForceKg` (Pedal Feel) — `MaxForceKg` is
+  host-side only with no wire command at all (see "Pedal Feel" below),
+  so ramping it would only change what this plugin's own dashboard
+  reads, not what the game actually receives. `MaxThresholdKg` is the
+  real, hardware-level equivalent, same category of command as
+  `TravelEndMm`.
+
+Both restore to the user's configured base value as brake temperature
+cools. No new/unverified wire ID involved for either — both reuse
+commands already confirmed real via Pit House USB captures.
 
 **This trades a hardware-verification risk for a different one: write
 frequency on a calibration channel.** Every other calibration write in
@@ -531,39 +543,44 @@ user drags a slider thumb, i.e. rarely, by design. There's no capture
 evidence or protocol-note guidance on whether the device is fine being
 written to repeatedly in real time (e.g. EEPROM wear if the firmware
 persists every write to flash rather than holding it in RAM until some
-explicit "commit"). `MBoosterEffectWorker.UpdateBrakeFadeTravelEnd`
-mitigates this with an explicit throttle rather than writing on every
-20ms tick:
+explicit "commit"). `MBoosterEffectWorker.UpdateBrakeFadeTravelEnd`/
+`UpdateBrakeFadeThreshold` each mitigate this with their own explicit
+throttle rather than writing on every 20ms tick:
 
-- `BrakeFadeWriteMinIntervalSec = 0.5` — at most one write every 500ms.
-- `BrakeFadeWriteMinDeltaMm = 0.2` — ignore target changes smaller than
-  this (brake temp telemetry can be noisy; not every fluctuation should
-  become a wire write).
+- `BrakeFadeWriteMinIntervalSec = 0.5` — at most one write every 500ms,
+  per calibration (Travel End and Max Threshold throttle independently).
+- `BrakeFadeWriteMinDeltaMm = 0.2` / `BrakeFadeWriteMinDeltaKg = 1.0` —
+  ignore target changes smaller than this (brake temp telemetry can be
+  noisy; not every fluctuation should become a wire write).
 - **Exception**: restoring to the exact configured base value (brakes
   cooled below onset, or the effect gets disabled) always goes through
-  immediately, bypassing both the interval and delta checks — this is a
-  safety action, not a cosmetic ramp step, so it's never throttled away.
+  immediately for both, bypassing both the interval and delta checks —
+  this is a safety action, not a cosmetic ramp step, so it's never
+  throttled away.
 
-**Requires a known-safe value to restore to, or it stays fully inert.**
-`TravelEndMm`'s `-1` sentinel means "not yet set from this plugin" —
-the plugin doesn't know what the device's real current calibration is
-in that state (same unresolved gap `MaxThresholdKg` has — see "Pedal
-Feel" below on the Max Force fix that hit this same wall). If
-`TravelEndMm < 0`, Brake Fade does nothing at all, Enabled or not,
-rather than guessing at a value that might overshoot or undershoot
-whatever the device already has. The user must configure a base Travel
-End (drag the Pedal Feel range slider once) before this effect can do
-anything.
+**Each calibration requires its own known-safe value to restore to, or
+it individually stays fully inert.** `TravelEndMm`'s and
+`MaxThresholdKg`'s shared `-1` sentinel means "not yet set from this
+plugin" — the plugin doesn't know what the device's real current
+calibration is in that state (see "Pedal Feel" below on the Max Force
+fix that hit this same wall for `MaxThresholdKg` specifically). If
+`TravelEndMm < 0`, the travel-extension half does nothing; if
+`MaxThresholdKg < 0`, the force half does nothing — independently, so
+a user who's only configured one of the two still gets that one
+working. The user must configure both base values (drag the Pedal Feel
+Travel range slider and the Sim Input Mapping Max Threshold slider,
+each once) to get the full combined effect.
 
 **Residual shutdown risk, explicitly accepted, not fully closed.** If
 the app is force-quit or crashes while brake temp is above onset (an
-override is live), the device can be left holding the extended Travel
-End indefinitely — there is no watchdog outside this worker's own tick
-loop. `MBoosterEffectWorker.Stop()` makes a best-effort restore attempt
-(`TryRestoreBrakeFadeOnStop`) covering the common clean-disconnect/
+override is live), the device can be left holding the extended
+Travel End / raised Max Threshold indefinitely — there is no watchdog
+outside this worker's own tick loop. `MBoosterEffectWorker.Stop()`
+makes a best-effort restore attempt (`TryRestoreBrakeFadeOnStop`)
+covering both calibrations on the common clean-disconnect/
 plugin-shutdown path, but this cannot cover an abrupt process kill. If
-the pedal ever feels permanently "long" after an unclean exit, dragging
-the Pedal Feel Travel End slider once (which always writes) fixes it
+the pedal ever feels permanently "long and soft" after an unclean exit,
+dragging the respective slider once (which always writes) fixes it
 immediately.
 
 **Telemetry**: `MBoosterTelemetrySnapshot.BrakeTempC`, sourced from
@@ -581,38 +598,45 @@ individual SimHub game plugins than basics like `Brake`/`SpeedKmh`, so
 0 (unpopulated) is a real possibility for some titles, in which case
 `ramp01` never exceeds 0 and the effect never fires.
 
-**Design**, in `MBoosterEffectWorker.UpdateBrakeFadeTravelEnd` — called
-every tick but only ever writes on the throttle's terms described
-above, and doesn't touch the motor-stream slot or vibration priority
-ladder at all (it's a completely separate mechanism from the other
-five effects). One slider:
+**Design**, in `MBoosterEffectWorker.UpdateBrakeFade` — called every
+tick, computes one shared `ramp01` fraction from brake temp (or 1.0
+while the sustained Test toggle is on, or 0.0 while disabled) and
+passes it to `UpdateBrakeFadeTravelEnd`/`UpdateBrakeFadeThreshold` so
+both calibrations progress in lockstep. Neither touches the
+motor-stream slot or vibration priority ladder at all (this is a
+completely separate mechanism from the other five effects). One
+slider:
 
 - **Onset Temperature (°C)** (300–900,
   `MBoosterEffectSettings.BrakeFadeOnsetC`, bounds in
   `MBoosterUiConstants.BrakeFadeOnsetMinC`/`MaxC`, default 550) — the
-  brake temperature above which Travel End starts extending. Unlike
+  brake temperature above which both calibrations start ramping. Unlike
   Lockup's hardcoded wheel-slip heuristic, this is user-configurable
   because real fade onset varies hugely by pad compound and game (road
   pads ~300°C, race pads 600°C+).
 
-Ramps linearly from the user's base `TravelEndMm` at `BrakeFadeOnsetC`
-to `MBoosterUiConstants.BrakeFadeMaxTravelEndMm` (47.9mm — explicitly
-below `TravelMaxMm`'s 49.7mm slider ceiling, per direct instruction,
-not derived from any spec) at `BrakeFadeOnsetC + BrakeFadeSpanC`
-(`BrakeFadeSpanC = 200`, fixed, not user-configurable — same "one
-configurable knob, one fixed span" pattern Threshold's trigger/release
-hysteresis uses). If the base value is already at or above the 47.9mm
-cap, there's no room to extend and the effect is a no-op (never
-shrinks travel below the user's own configured base).
+Each calibration ramps linearly from its own base value at
+`BrakeFadeOnsetC` to its own cap
+(`MBoosterUiConstants.BrakeFadeMaxTravelEndMm` = 47.9mm, explicitly
+below `TravelMaxMm`'s 49.7mm slider ceiling per direct instruction, not
+derived from any spec; `BrakeFadeMaxThresholdKg` = 200kg, the
+theoretical full-scale `MaxThresholdKg`'s own wire encoding uses) at
+`BrakeFadeOnsetC + BrakeFadeSpanC` (`BrakeFadeSpanC = 200`, fixed, not
+user-configurable — same "one configurable knob, one fixed span"
+pattern Threshold's trigger/release hysteresis uses). If a base value
+is already at or above its own cap, there's no room to extend and that
+calibration is a no-op (never shrinks below the user's own configured
+base).
 
-The sustained Test toggle forces the 47.9mm cap for as long as it's on
+The sustained Test toggle forces both caps for as long as it's on
 (same always-allow-off semantics as the other effects' tests — see
 `MBoosterDeviceController.SetEngineTestActive`), bypassing Enabled and
 the temperature gate — there's no live brake-temperature signal to
 preview against outside a real drive with genuinely hot brakes, and
 unlike those tests, this one produces a real, physically verifiable
-change: the pedal should visibly/physically require more travel while
-the test is on, and snap back the moment it's switched off.
+change: the pedal should visibly/physically require more travel and
+more force while the test is on, and snap back the moment it's
+switched off.
 
 ## Calibration surface (experimental)
 

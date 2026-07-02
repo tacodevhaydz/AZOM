@@ -52,6 +52,14 @@ namespace MozaPlugin.Devices
         // user instruction, not derived from any capture/spec. See
         // MBoosterEffectWorker.UpdateBrakeFadeTravelEnd.
         public const float BrakeFadeMaxTravelEndMm = 47.9f;
+
+        // Brake Fade's hard cap on Max Threshold (kg) it's allowed to push
+        // the pedal to alongside Travel End — the theoretical full-scale
+        // MaxThresholdKg's own wire encoding uses (EncodeThresholdKg's
+        // "raw = kg * 65536 / 200" pattern), so this ramps to as much extra
+        // force as the device can represent. See MBoosterEffectWorker
+        // .UpdateBrakeFadeThreshold.
+        public const float BrakeFadeMaxThresholdKg = 200f;
     }
 
     /// <summary>
@@ -182,17 +190,25 @@ namespace MozaPlugin.Devices
 
         // Brake Fade — NOT a vibration effect (no motor-frame wire type
         // involved at all). While enabled and BrakeFadeOnsetC is exceeded,
-        // MBoosterEffectWorker.UpdateBrakeFadeTravelEnd dynamically
-        // rewrites the REAL mbooster-brake-travel-end hardware calibration
-        // (the same wire command TravelEndMm's own Pedal Feel slider
-        // writes) to make the pedal require more physical travel to reach
-        // 100%, capped at MBoosterUiConstants.BrakeFadeMaxTravelEndMm, then
-        // restores TravelEndMm's configured value as brake temp cools.
-        // Requires TravelEndMm to already be set (>= 0) — if the user has
-        // never configured a base Travel End, this feature has no known
-        // safe value to restore to and stays fully inert. Disabled by
-        // default given it writes real hardware calibration, not merely a
-        // vibration amplitude.
+        // MBoosterEffectWorker ramps TWO real hardware calibrations in
+        // lockstep, each independently gated on already having a known base
+        // value (>= 0) to restore to:
+        // - UpdateBrakeFadeTravelEnd rewrites mbooster-brake-travel-end
+        //   (TravelEndMm's own wire command) so the pedal needs more
+        //   physical travel to reach 100%, capped at
+        //   MBoosterUiConstants.BrakeFadeMaxTravelEndMm.
+        // - UpdateBrakeFadeThreshold rewrites mbooster-brake-threshold
+        //   (MaxThresholdKg's own wire command) so the pedal needs more
+        //   load-cell force to reach 100%, capped at
+        //   MBoosterUiConstants.BrakeFadeMaxThresholdKg — this is what
+        //   actually makes the pedal feel "softer" (more effort needed for
+        //   the same signal), unlike the host-side-only MaxForceKg, which
+        //   has no wire command and wouldn't affect what the game receives.
+        // Both restore to their configured values as brake temp cools. If
+        // the user has never configured a given base value, that ONE
+        // calibration stays fully inert (the other can still ramp
+        // independently). Disabled by default given it writes real
+        // hardware calibration, not merely a vibration amplitude.
         public MBoosterEffectSettings BrakeFade { get; set; } = new MBoosterEffectSettings { BrakeFadeOnsetC = 550 };
 
         // Calibration (experimental per protocol note § 6). -1 = "not yet

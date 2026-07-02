@@ -199,7 +199,7 @@
   <data name="SliderLabel_TriggerLevel" xml:space="preserve"><value>Trigger Input Level</value></data>
   <data name="SliderLabel_VibrationDecay" xml:space="preserve"><value>Vibration Decay</value></data>
   <data name="SliderLabel_OnsetTempC" xml:space="preserve"><value>Onset Temperature (°C)</value></data>
-  <data name="Hint_BrakeFadeExperimental" xml:space="preserve"><value>Experimental — writes the real Travel End hardware calibration while active, then restores your Pedal Feel Travel End as brakes cool. Requires a Travel End already set below — has no effect otherwise.</value></data>
+  <data name="Hint_BrakeFadeExperimental" xml:space="preserve"><value>Experimental — writes the real Travel End and Max Threshold hardware calibrations while active (more travel and more force needed), then restores your configured values as brakes cool. Requires those already set in Pedal Feel / Sim Input Mapping — has no effect otherwise.</value></data>
   <data name="Label_PedalTrace" xml:space="preserve"><value>Pedal Trace (last 5s)</value></data>
   <data name="Subtitle_CalibrationExperimental" xml:space="preserve"><value>// experimental — may not be honored by mBooster firmware</value></data>
   <data name="Label_ReversedDirection" xml:space="preserve"><value>Reversed direction</value></data>
