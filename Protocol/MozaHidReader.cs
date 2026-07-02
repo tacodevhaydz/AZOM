@@ -307,6 +307,17 @@ namespace MozaPlugin.Protocol
                                  : category == MozaDeviceCategory.Pedals ? MozaHidClass.Pedals
                                  : MozaHidClass.Standard;
                         string identity = isMBooster ? ExtractUsbParentInstance(dev) : "";
+                        if (isMBooster)
+                        {
+                            // Diagnostic for the HID/CDC identity-reconciliation gap
+                            // (docs/protocol/devices/mbooster.md) — logs the raw
+                            // DevicePath alongside the extracted identity so a
+                            // mismatch against the CDC InstanceId can be read
+                            // straight out of a support-bundle export.
+                            string path = "";
+                            try { path = dev.DevicePath ?? ""; } catch { }
+                            MozaLog.Debug($"[AZOM/mBooster] HID identity extracted: '{identity}' from path '{path}'");
+                        }
                         result.Add((dev, usages, kind, identity));
                     }
                 }
@@ -366,7 +377,12 @@ namespace MozaPlugin.Protocol
                     if (targetItem != null) break;
                 }
 
-                if (targetItem == null) return;
+                if (targetItem == null)
+                {
+                    if (kind == MozaHidClass.MBooster)
+                        MozaLog.Warn($"[AZOM/mBooster] {identity}: no DeviceItem contains any tracked usage — HID read never started for this device.");
+                    return;
+                }
 
                 // Cache steering axis range if this device has it
                 if (usages.ContainsKey(UsageX))
@@ -381,20 +397,53 @@ namespace MozaPlugin.Protocol
                 var buffer = new byte[descriptor.MaxInputReportLength];
                 var stopped = new ManualResetEventSlim(false);
 
+                // Diagnostic-only counters for the mBooster HID pipeline —
+                // every step here (report parse failure, no changed usages,
+                // an untracked usage firing) previously failed completely
+                // silently, which made a stuck-at-zero position bar
+                // impossible to root-cause from logs alone.
+                long mbReceivedCount = 0;
+                long mbParseFailCount = 0;
+                long mbChangeCount = 0;
+
                 receiver.Received += (sender, e) =>
                 {
                     try
                     {
+                        if (kind == MozaHidClass.MBooster)
+                        {
+                            long n = System.Threading.Interlocked.Increment(ref mbReceivedCount);
+                            if (n == 1 || n % 500 == 0)
+                                MozaLog.Debug($"[AZOM/mBooster] {identity}: Received event #{n}");
+                        }
                         while (receiver.TryRead(buffer, 0, out Report report))
                         {
                             if (!parser.TryParseReport(buffer, 0, report))
+                            {
+                                if (kind == MozaHidClass.MBooster)
+                                {
+                                    long n = System.Threading.Interlocked.Increment(ref mbParseFailCount);
+                                    if (n == 1 || n % 500 == 0)
+                                        MozaLog.Debug($"[AZOM/mBooster] {identity}: TryParseReport failed #{n}");
+                                }
                                 continue;
+                            }
 
                             while (parser.HasChanged)
                             {
                                 int changedIndex = parser.GetNextChangedIndex();
                                 var value = parser.GetValue(changedIndex);
                                 uint usage = value.Usages.FirstOrDefault();
+
+                                if (kind == MozaHidClass.MBooster)
+                                {
+                                    long n = System.Threading.Interlocked.Increment(ref mbChangeCount);
+                                    if (n <= 20 || n % 200 == 0)
+                                        MozaLog.Debug(
+                                            $"[AZOM/mBooster] {identity}: changed usage 0x{usage:X8} " +
+                                            $"raw={value.GetLogicalValue()} tracked={usages.ContainsKey(usage)}");
+                                }
+
                                 if (usage == 0 || !usages.ContainsKey(usage)) continue;
 
                                 if (usage == UsageX)

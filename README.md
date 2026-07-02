@@ -186,11 +186,23 @@ Full configuration support for the MOZA AB9 active shifter, surfaced under its o
 
 ### mBooster Pedals
 
-MOZA mBooster pedal haptics get their own **mBooster** tab when one or more units are connected. Each unit is assigned a role (Throttle, Brake, or Clutch), and the plugin renders pedal haptic effects host-side from live telemetry:
+MOZA mBooster pedal haptics get their own **mBooster** tab when one or more units are connected. Each unit is assigned a role (Throttle, Brake, or Clutch), and the plugin renders pedal haptic effects host-side from live telemetry. A **Pedal Trace** sparkline above the Effects card plots the pedal's position over the last 5 seconds, giving a visual reference for when the effects below actually trigger:
 
-- **Engine Vibration** — RPM-driven continuous vibration.
+- **ABS** — pulses on ABS activation, with a fixed, user-set Frequency (5–30Hz), Intensity (0–100%), and Smoothness (0–100% — pulse modulation depth: 100% is a smooth buzz, 0% a sharper, choppier pulse). A **Test** toggle substitutes live brake position for ABS activation so you can preview it by pressing the pedal, running indefinitely at the live slider values.
+- **Engine Vibration** — continuous vibration at a fixed, user-set Frequency (60–200Hz) and Intensity (0–100%) whenever the engine's running above idle. Same kind of **Test** toggle as ABS.
+- **Road Texture** — road-surface vibration while driving (game running and the car actually moving), with Intensity (0–100%) scaled live by a road-roughness proxy (vertical chassis G-force — SimHub has no generic suspension-travel telemetry) so it tracks actual bumps instead of running at a constant level, and Smoothness (0–100%) sent straight through as a raw percentage — the firmware shapes the actual noise signal internally, reverse-engineered from real Pit House captures. Same **Test** toggle pattern as the other two.
+- **Lockup** — ramps in when a wheel locks under heavy braking, with a fixed, user-set Frequency (10–100Hz) and Intensity (0–100%). Detection (brake + speed + wheel-slip heuristic) is unchanged from before; only the frequency became a fixed slider. A **Test** toggle substitutes live brake position for the wheel-slip check so you can preview it by pressing the pedal.
+- **Threshold** — a pulsed envelope on the braking threshold, with four sliders: Trigger Input Level (50–100% — the brake position that fires the effect; the release point stays a fixed 30 points below it), Frequency (5–100Hz), Intensity (0–100%), and Vibration Decay (0–100% — how much the pulse fades after its initial burst: low decay sustains near full strength, high decay drops to a short, sharp tick). Same **Test** toggle pattern as the others, substituting live brake position for the trigger check — the test respects the same trigger threshold as real driving, so it won't fire until you actually press past it.
 
-An experimental calibration section is also available per device.
+All five mBooster effects now have their own card in the Effects section.
+
+A **Pedal Feel** section holds a Start/End of Travel slider (a real dual-thumb range slider, 3.8–49.7mm, with the gap between the two ends constrained to 3.8–32.1mm — this one writes real calibration to the device, reverse-engineered from Pit House captures), two End Stop Stiffness sliders (Front Limit / End Limit, 1–10 — how hard the pedal feels at each end of its travel, also a real hardware write reverse-engineered from Pit House captures), a Deadzone slider (0–40kg at the start of pedal travel), a Max Force slider (0–200kg — sets where the input curve's 100% point sits, for pedals that never get pressed all the way to their theoretical max), and a second draggable 5-point curve — an **input curve** that reshapes how the pedal feels. Deadzone, Max Force, and the input curve are host-side only, applied before anything else sees the pedal's position, and don't touch the output curve below.
+
+Both the input curve and the output curve show a live dot on the spline (with a guide line down to the axis) tracking the pedal as it's pressed.
+
+A **Sim Input Mapping** section (Pit House-style) holds a Sensor Output Ratio slider (blends the mBooster's angle sensor and load cell readings), a Max Threshold (kg) slider (the load-cell force at which output reaches 100%, reverse-engineered from real Pit House USB captures — unconfirmed by Moza), and the output curve (with Linear/S-Curve/Exponential/Parabolic presets, same as Pedal Feel) that shapes what's actually sent to the game. Unlike every other curve in the plugin, this one's nodes can also be dragged **horizontally** — drag the last node left to reach 100% output before 100% input, without needing the hardware breakpoint command that doesn't exist for this curve (the plugin resamples the shape at the fixed breakpoints the real wire commands support instead).
+
+An experimental calibration section is also available per device, with direction/min/max raw range plus read/apply buttons.
 
 ### Diagnostics & Serial Capture
 

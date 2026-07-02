@@ -55,6 +55,15 @@ namespace MozaPlugin
         private int _mosfetTempMaxRaw = -1;
         private int _motorTempMaxRaw = -1;
 
+        // ---- mBooster Effects card pedal-trace sparkline. Pushed from
+        // UpdateMBoosterCurveMarkers, which already runs at 30 Hz (same
+        // cadence as the curve editors' live position dot) — 150 samples ×
+        // 1/30s = 5 seconds of rolling history for the currently selected
+        // device. Cleared on device switch so the trace doesn't show a
+        // discontinuous mix of two different pedals' history. ----
+        private const int MBoosterPedalTraceSamples = 150;
+        private readonly ObservableCollection<double> _mboosterPedalTraceSamples = new ObservableCollection<double>();
+
         /// <summary>
         /// Called from the existing constructor after InitializeComponent runs.
         /// Wires the new controls' bindings + initial values. Safe to invoke
@@ -88,6 +97,21 @@ namespace MozaPlugin
                 {
                     ClutchY1Slider, ClutchY2Slider, ClutchY3Slider,
                     ClutchY4Slider, ClutchY5Slider
+                });
+                BindEditorToSliders(MBoosterCurveEditor, new[]
+                {
+                    MBoosterY1Slider, MBoosterY2Slider, MBoosterY3Slider,
+                    MBoosterY4Slider, MBoosterY5Slider
+                });
+                BindEditorXToSliders(MBoosterCurveEditor, new[]
+                {
+                    MBoosterX1Slider, MBoosterX2Slider, MBoosterX3Slider,
+                    MBoosterX4Slider, MBoosterX5Slider
+                });
+                BindEditorToSliders(MBoosterInputCurveEditor, new[]
+                {
+                    MBoosterInputY1Slider, MBoosterInputY2Slider, MBoosterInputY3Slider,
+                    MBoosterInputY4Slider, MBoosterInputY5Slider
                 });
 
                 // Two-way bindings: CurveEditor.YN ↔ EqNSlider.Value (FFB EQ
@@ -128,6 +152,14 @@ namespace MozaPlugin
                     _mosfetTempSamples.Add(0);
                     _motorTempSamples.Add(0);
                 }
+
+                // mBooster Effects card pedal trace: single series, fixed
+                // 0-100% scale (MaxValue set in XAML) — OutSamples stays
+                // unbound.
+                if (MBoosterPedalTraceViz != null)
+                    MBoosterPedalTraceViz.InSamples = _mboosterPedalTraceSamples;
+                for (int i = 0; i < MBoosterPedalTraceSamples; i++)
+                    _mboosterPedalTraceSamples.Add(0);
 
                 _bandwidthTimer = new DispatcherTimer { Interval = TimeSpan.FromMilliseconds(500) };
                 _bandwidthTimer.Tick += OnBandwidthTick;
@@ -191,6 +223,30 @@ namespace MozaPlugin
                     UpdateSourceTrigger = UpdateSourceTrigger.PropertyChanged,
                 };
                 BindingOperations.SetBinding(editor, ys[i], b);
+            }
+        }
+
+        // Two-way bind a MozaCurveEditor's X1..X5 dependency properties to
+        // sliders — only meaningful when the editor has
+        // AllowHorizontalDrag="True" (currently just the Sim Input Mapping
+        // output curve). 5 slots only, unlike BindEditorToSliders — no X6,
+        // since horizontal drag isn't offered on the 6-band EQ.
+        private void BindEditorXToSliders(MozaControls.MozaCurveEditor editor, Slider[] sliders)
+        {
+            if (editor == null || sliders == null || sliders.Length < 5) return;
+            var xs = new[] {
+                MozaControls.MozaCurveEditor.X1Property, MozaControls.MozaCurveEditor.X2Property,
+                MozaControls.MozaCurveEditor.X3Property, MozaControls.MozaCurveEditor.X4Property,
+                MozaControls.MozaCurveEditor.X5Property };
+            for (int i = 0; i < xs.Length; i++)
+            {
+                var b = new Binding(nameof(Slider.Value))
+                {
+                    Source = sliders[i],
+                    Mode = BindingMode.TwoWay,
+                    UpdateSourceTrigger = UpdateSourceTrigger.PropertyChanged,
+                };
+                BindingOperations.SetBinding(editor, xs[i], b);
             }
         }
 

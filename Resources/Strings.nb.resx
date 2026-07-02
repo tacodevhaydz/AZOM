@@ -160,21 +160,42 @@
   <data name="Section_MBoosterPedals" xml:space="preserve"><value>MBOOSTER-PEDALER</value></data>
   <data name="Subtitle_MBoosterPedals" xml:space="preserve"><value>// host-genererte effekter · rolle + posisjon per enhet</value></data>
   <data name="SliderLabel_Device" xml:space="preserve"><value>Enhet</value></data>
-  <data name="Status_NoMBooster" xml:space="preserve"><value>Ingen mBooster tilkoblet</value></data>
-  <data name="Section_PedalRole" xml:space="preserve"><value>PEDALROLLE</value></data>
   <data name="SliderLabel_Role" xml:space="preserve"><value>Rolle</value></data>
   <data name="Option_Disabled" xml:space="preserve"><value>Deaktivert</value></data>
   <data name="Option_Throttle" xml:space="preserve"><value>Gass</value></data>
   <data name="Option_Brake" xml:space="preserve"><value>Brems</value></data>
   <data name="Option_Clutch" xml:space="preserve"><value>Clutch</value></data>
+  <data name="Section_PedalFeel" xml:space="preserve"><value>PEDALFØLELSE</value></data>
+  <data name="Subtitle_PedalFeel" xml:space="preserve"><value>// bestemmer hvordan pedalen føles, uavhengig av utgangskurven under</value></data>
+  <data name="SliderLabel_DeadzoneKg" xml:space="preserve"><value>Dødsone (kg)</value></data>
+  <data name="SliderLabel_MaxForceKg" xml:space="preserve"><value>Maks kraft (kg)</value></data>
+  <data name="Hint_DeadzoneScaleAssumption" xml:space="preserve"><value>Bare programvareside. Dødsone og Maks kraft forutsetter begge en fast 0-200kg fullskala for 0-100% pedalbevegelse, siden det rå pedalsignalet ikke har egen kraftkalibrering. Maks kraft angir hvor inngangskurven under når 100%.</value></data>
+  <data name="SliderLabel_TravelRangeMm" xml:space="preserve"><value>Start / Slutt på Bevegelse (mm)</value></data>
+  <data name="Hint_TravelRangeMm" xml:space="preserve"><value>Skriver ekte maskinvarekalibrering (cmdId 0x84/0x85) — reverse-engineert fra Pit House-opptak, ikke bekreftet av Moza. Dra de to nodene for å angi det fysiske start-/sluttpunktet for pedalbevegelsen, og bekreft deretter at dette fungerer korrekt på din maskinvare.</value></data>
+  <data name="SliderLabel_EndstopFrontStiffness" xml:space="preserve"><value>Frontgrense-stivhet</value></data>
+  <data name="SliderLabel_EndstopEndStiffness" xml:space="preserve"><value>Sluttgrense-stivhet</value></data>
+  <data name="Hint_EndstopStiffness" xml:space="preserve"><value>Skriver ekte maskinvarekalibrering (cmdId 0xB2) — reverse-engineert fra Pit House-opptak, ikke bekreftet av Moza. Angir hvor hardt pedalen føles når den når start-/sluttpunktet for den fysiske bevegelsen.</value></data>
+  <data name="Hint_InputCurveHostOnly" xml:space="preserve"><value>Bare programvareside: omformer den rapporterte pedalposisjonen før den når spillet (og utgangskurven i Sim-inngangskartlegging under). Ingenting skrives til enheten.</value></data>
+  <data name="Section_SimInputMapping" xml:space="preserve"><value>SIM-INNGANGSKARTLEGGING</value></data>
+  <data name="Subtitle_SimInputMapping" xml:space="preserve"><value>// kartlegger lastcelle-/pedalsignalet til spillet, Pit House-stil</value></data>
+  <data name="SliderLabel_MaxThresholdKg" xml:space="preserve"><value>Maks terskel (kg)</value></data>
+  <data name="Hint_MaxThresholdReverseEngineered" xml:space="preserve"><value>Reverse-engineert fra en Pit House-opptak (cmdId 0xB3) — ikke bekreftet av Moza. Vennligst bekreft at dette fungerer korrekt på din maskinvare.</value></data>
+  <data name="Hint_OutputCurveDragX" xml:space="preserve"><value>Dra en node sidelengs for å flytte posisjonen på inngangsaksen — dra f.eks. den siste noden til venstre slik at 100 % utgang nås før 100 % inngang.</value></data>
   <data name="Section_Effects" xml:space="preserve"><value>EFFEKTER</value></data>
   <data name="Subtitle_EffectsTriggers" xml:space="preserve"><value>// utløsere: ABS på spillsignal · lockup på brems&gt;0,8 · terskel på flanke · motor kontinuerlig</value></data>
   <data name="Section_Abs" xml:space="preserve"><value>ABS</value></data>
+  <data name="Section_RoadTexture" xml:space="preserve"><value>Veitekstur</value></data>
   <data name="Label_Enable" xml:space="preserve"><value>Aktiver</value></data>
   <data name="Button_Test1s" xml:space="preserve"><value>Test 1s</value></data>
+  <data name="Label_Test" xml:space="preserve"><value>Test</value></data>
   <data name="Section_Lockup" xml:space="preserve"><value>Lockup</value></data>
   <data name="Section_Threshold" xml:space="preserve"><value>Terskel</value></data>
-  <data name="Section_EngineContinuous" xml:space="preserve"><value>Motor (kontinuerlig — auto-begrenset til 10 %)</value></data>
+  <data name="Section_EngineContinuous" xml:space="preserve"><value>Motorvibrasjon</value></data>
+  <data name="SliderLabel_FrequencyHz" xml:space="preserve"><value>Frekvens (Hz)</value></data>
+  <data name="SliderLabel_Smoothness" xml:space="preserve"><value>Glatthet</value></data>
+  <data name="SliderLabel_TriggerLevel" xml:space="preserve"><value>Utløsernivå</value></data>
+  <data name="SliderLabel_VibrationDecay" xml:space="preserve"><value>Vibrasjonsavklinging</value></data>
+  <data name="Label_PedalTrace" xml:space="preserve"><value>Pedalspor (siste 5s)</value></data>
   <data name="Subtitle_CalibrationExperimental" xml:space="preserve"><value>// eksperimentelt — kanskje ikke respektert av mBooster-firmware</value></data>
   <data name="Label_ReversedDirection" xml:space="preserve"><value>Reversert retning</value></data>
   <data name="SliderLabel_MinRaw" xml:space="preserve"><value>Min (rå)</value></data>
@@ -547,7 +568,6 @@
   <data name="Status_TelemetrySenderUnavailableInit" xml:space="preserve"><value>Telemetrisender utilgjengelig (plugin ikke initialisert).</value></data>
   <data name="Status_PickMzdashFirst" xml:space="preserve"><value>Velg en .mzdash-fil eller et biblioteksoppføring først.</value></data>
   <data name="Status_NoConfigJsonState" xml:space="preserve"><value>(ingen configJson-tilstand mottatt ennå)</value></data>
-  <data name="Status_NoMBoosterSelected" xml:space="preserve"><value>Ingen mBooster valgt</value></data>
   <data name="Status_PluginNotLoaded" xml:space="preserve"><value>Plugin ikke lastet</value></data>
   <data name="Upload_CannotResolveBytes" xml:space="preserve"><value>Kan ikke hente rådata for «{0}» – velg en lokal fil i stedet.</value></data>
   <data name="Upload_FolderPrefix" xml:space="preserve"><value>Mappe: {0}</value></data>

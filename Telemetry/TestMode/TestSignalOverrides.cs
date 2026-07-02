@@ -273,6 +273,12 @@ namespace MozaPlugin.Telemetry.TestMode
             Add("OrientationRollAcceleration",  TestSignal.Sweep(-5, 5, periodMs: 4000, phaseOffsetMs: 1000));
             Add("OrientationYawAcceleration",   TestSignal.Sweep(-5, 5, periodMs: 4000, phaseOffsetMs: 2000));
             Add("OrientationYawVelocity",       TestSignal.Sweep(-2, 2, periodMs: 4000));
+            // Fast, bump-like oscillation — mBooster's Road Texture effect
+            // scales its Intensity by |AccelerationHeave| (see
+            // docs/protocol/devices/mbooster.md "Road Texture"), and a slow
+            // multi-second sweep like the other orientation signals above
+            // wouldn't exercise that in any recognizable way.
+            Add("AccelerationHeave", TestSignal.Sweep(-0.6, 0.6, periodMs: 700));
 
             // --- Spotter / radar / coordinates ---
             Add("SpotterCarLeft",         TestSignal.Toggle(stepMs: 5000));
