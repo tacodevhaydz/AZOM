@@ -708,31 +708,31 @@ namespace MozaPlugin
                          " — dash LED path switched");
         }
 
-        /// <summary>New-firmware CM2 live LED colour chunk (wheel-style group-0
-        /// 3F 19 00, 20-byte 5-LED chunk) addressed to the CM2. Rides the same
-        /// coalescing slots the legacy per-LED colour path used (DashRpmColor0+).</summary>
-        internal bool WriteCm2LiveLedColorChunk(byte[] chunk20, int chunkIdx)
+        /// <summary>New-firmware CM2 live LED colour chunk (group 0x32 cmd 13 00,
+        /// idx/R/G/B records) addressed to the CM2. Rides the same coalescing slots
+        /// the legacy per-LED colour path used (DashRpmColor0+).</summary>
+        internal bool WriteCm2LiveLedColorChunk(byte[] chunk, int chunkIdx)
         {
             var slot = (Protocol.StreamKind)((int)Protocol.StreamKind.DashRpmColor0 + chunkIdx);
             bool inRange = chunkIdx >= 0 && (int)slot <= (int)Protocol.StreamKind.DashRpmColor9;
             if (DashboardUsbConnected)
                 return inRange
-                    ? _dashboardManager.WriteArrayForDeviceStream("wheel-telemetry-rpm-colors", Cm2TargetDeviceId, chunk20, slot)
-                    : _dashboardManager.WriteArrayForDevice("wheel-telemetry-rpm-colors", Cm2TargetDeviceId, chunk20);
+                    ? _dashboardManager.WriteArrayForDeviceStream("cm2-live-colors", Cm2TargetDeviceId, chunk, slot)
+                    : _dashboardManager.WriteArrayForDevice("cm2-live-colors", Cm2TargetDeviceId, chunk);
             return inRange
-                ? _deviceManager.WriteArrayForDeviceStream("wheel-telemetry-rpm-colors", Cm2TargetDeviceId, chunk20, slot)
-                : _deviceManager.WriteArrayForDevice("wheel-telemetry-rpm-colors", Cm2TargetDeviceId, chunk20);
+                ? _deviceManager.WriteArrayForDeviceStream("cm2-live-colors", Cm2TargetDeviceId, chunk, slot)
+                : _deviceManager.WriteArrayForDevice("cm2-live-colors", Cm2TargetDeviceId, chunk);
         }
 
-        /// <summary>New-firmware CM2 live LED bitmask (wheel-style group-0
-        /// 3F 1A 00, 8-byte active+window form) addressed to the CM2.</summary>
+        /// <summary>New-firmware CM2 live LED bitmask (group 0x32 cmd 14 00, 8-byte
+        /// active(u32 LE) + window(u32 LE) form) addressed to the CM2.</summary>
         internal bool WriteCm2LiveLedBitmask(byte[] activeWindow8)
         {
             if (DashboardUsbConnected)
                 return _dashboardManager.WriteArrayForDeviceStream(
-                    "wheel-send-rpm-telemetry", Cm2TargetDeviceId, activeWindow8, Protocol.StreamKind.DashRpmBitmask);
+                    "cm2-live-bitmask", Cm2TargetDeviceId, activeWindow8, Protocol.StreamKind.DashRpmBitmask);
             return _deviceManager.WriteArrayForDeviceStream(
-                "wheel-send-rpm-telemetry", Cm2TargetDeviceId, activeWindow8, Protocol.StreamKind.DashRpmBitmask);
+                "cm2-live-bitmask", Cm2TargetDeviceId, activeWindow8, Protocol.StreamKind.DashRpmBitmask);
         }
 
         /// <summary>
@@ -4140,7 +4140,9 @@ namespace MozaPlugin
         internal System.Collections.Generic.List<Fsr1SyntheticField> GetSyntheticFields(string recordKey) => _fsr1Cm1Mapping.GetSyntheticFields(recordKey);
         internal bool SplitFsr1Field(string recordKey, string fieldId) => _fsr1Cm1Mapping.SplitFsr1Field(recordKey, fieldId);
         internal bool RemoveFsr1Split(string recordKey, string fieldId) => _fsr1Cm1Mapping.RemoveFsr1Split(recordKey, fieldId);
+        internal bool MergeFsr1Field(string recordKey, string fieldId, bool mergeNext) => _fsr1Cm1Mapping.MergeFsr1Field(recordKey, fieldId, mergeNext);
         internal void ClearSyntheticFields(string recordKey) => _fsr1Cm1Mapping.ClearSyntheticFields(recordKey);
+        internal void ClearFsr1FieldOverrides(string recordKey) => _fsr1Cm1Mapping.ClearFsr1FieldOverrides(recordKey);
         internal Fsr1FieldDef? FindFsr1Field(string recordKey, string fieldId) => Fsr1FieldComposer.FindField(this, recordKey, fieldId);
 
         internal Fsr1FieldMapping? GetCm1FieldMapping(string fieldId) => _fsr1Cm1Mapping.GetCm1FieldMapping(fieldId);

@@ -27,8 +27,9 @@ namespace MozaPlugin.Devices
     ///          (cm2t.pcapng: flags lit while the bitmask stayed 0).
     ///
     /// 2026-06 indicator firmware (meter_diag.c:88): the ramp registers are gone;
-    /// the whole strip is driven wheel-style — group-0 live colour chunks
-    /// (3F 19 00) + windowed active bitmask (3F 1A 00). See DisplayNewEra.
+    /// the whole strip is driven live on group 0x32 — colour chunks (13 00) +
+    /// windowed active bitmask (14 00, window = RPM band 0x1FF8). Decoded from
+    /// cm2(1).pcapng (PitHouse on an updated CM2). See DisplayNewEra.
     ///
     /// Both SimHub LED modes are supported like the wheel manager: combined
     /// (telemetry effects on the `leds` channel) and individual-exclusive (effects
@@ -363,13 +364,18 @@ namespace MozaPlugin.Devices
             }
         }
 
+        // New-firmware RPM window: LEDs 3..12 in the 16-LED [flag 1-3][RPM 1-10]
+        // [flag 4-6] strip. PitHouse fixes the 32/14 window at exactly this
+        // (cm2(1).pcapng: window=0x00001FF8 on every frame); the active mask only
+        // sets bits inside it, so flags (0-2, 13-15) are driven by colour alone.
+        private const int NewEraRpmWindow = 0x1FF8;
+
         /// <summary>
-        /// New-firmware live path: the whole 16-LED strip (SimHub physical order
-        /// [flag 1-3][RPM 1-10][flag 4-6]) as ONE wheel-style group-0 surface —
-        /// colour chunks then the windowed active bitmask, colours-before-mask
-        /// like every other LED path. Cadence mirrors the legacy path: send on
-        /// change + keepalive while game-active / within hold; gated on the
-        /// host-drive latch like everything else.
+        /// 2026-06 indicator-firmware live path (decoded from cm2(1).pcapng): the
+        /// whole 16-LED strip as group-0x32 live colour chunks (13 00) plus a
+        /// windowed active bitmask (14 00, window fixed = RPM band). Colours before
+        /// the mask, send-on-change + keepalive while game-active / within hold,
+        /// gated on the host-drive latch like every other path.
         /// </summary>
         private void DisplayNewEra(MozaPlugin plugin, Color[] ledColors, bool alwaysResend, bool gameActive, DateTime now)
         {
@@ -377,19 +383,20 @@ namespace MozaPlugin.Devices
             int count = Math.Min(ledColors.Length, TotalLedCount);
             if (count == 0) return;
 
-            int bitmask = 0;
+            int fullMask = 0;
             bool colorsChanged = !_newColorsPrimed;
             for (int i = 0; i < count; i++)
             {
                 var c = ledColors[i];
-                if (c.R > 0 || c.G > 0 || c.B > 0) bitmask |= (1 << i);
+                if (c.R > 0 || c.G > 0 || c.B > 0) fullMask |= (1 << i);
                 if (!colorsChanged
                     && (_lastNewColors[i].R != c.R || _lastNewColors[i].G != c.G || _lastNewColors[i].B != c.B))
                     colorsChanged = true;
             }
+            int active = fullMask & NewEraRpmWindow;
 
-            bool bitmaskChanged = bitmask != _lastBitmask;
-            if (bitmask != 0) _lastLitUtc = now;
+            bool bitmaskChanged = active != _lastBitmask;
+            if (active != 0) _lastLitUtc = now;
             int holdSec = plugin.Settings?.WheelKeepaliveTimeoutSec ?? (int)KeepaliveHoldSeconds;
             bool withinHold = (now - _lastLitUtc).TotalSeconds < holdSec;
             bool keepaliveDue = (now - _lastSendTime).TotalSeconds >= KeepaliveIntervalSeconds;
@@ -402,42 +409,33 @@ namespace MozaPlugin.Devices
                 _newColorsPrimed = true;
                 SendNewEraColorChunks(plugin, ledColors, count);
             }
-            _lastBitmask = bitmask;
+            _lastBitmask = active;
             _lastSendTime = now;
             plugin.WriteCm2LiveLedBitmask(
-                MozaLedDeviceManager.BuildWindowedBitmaskBytes(bitmask, (1 << count) - 1));
+                MozaLedDeviceManager.BuildWindowedBitmaskBytes(active, NewEraRpmWindow));
             _bitmaskSends++;
             Interlocked.Exchange(ref _lastBitmaskSendUtcTicks, now.Ticks);
         }
 
-        /// <summary>20-byte 5-LED chunks (idx,R,G,B ×5, 0xFF-index padding), one
-        /// coalescing slot per chunk — same packing as MozaLedDeviceManager.
-        /// SendColorChunks, but device-addressed to the CM2.</summary>
+        /// <summary>Variable-length 5-LED colour chunks (idx,R,G,B records, last
+        /// chunk short — byte-for-byte as PitHouse in cm2(1).pcapng), one coalescing
+        /// slot per chunk. All 16 LEDs sent so flag colours land even though the
+        /// bitmask window covers only the RPM band.</summary>
         private void SendNewEraColorChunks(MozaPlugin plugin, Color[] colors, int count)
         {
-            int bufferLen = ((count * 4 + 19) / 20) * 20;
-            var chunk = new byte[20];
+            const int ledsPerChunk = 5;
             int chunkIdx = 0;
-            for (int pos = 0; pos < bufferLen; pos += 20)
+            for (int start = 0; start < count; start += ledsPerChunk)
             {
-                for (int b = 0; b < 20; b += 4)
+                int n = Math.Min(ledsPerChunk, count - start);
+                var chunk = new byte[n * 4];
+                for (int j = 0; j < n; j++)
                 {
-                    int led = (pos + b) / 4;
-                    if (led < count)
-                    {
-                        var c = colors[led];
-                        chunk[b] = (byte)led;
-                        chunk[b + 1] = c.R;
-                        chunk[b + 2] = c.G;
-                        chunk[b + 3] = c.B;
-                    }
-                    else
-                    {
-                        chunk[b] = 0xFF;
-                        chunk[b + 1] = 0;
-                        chunk[b + 2] = 0;
-                        chunk[b + 3] = 0;
-                    }
+                    var c = colors[start + j];
+                    chunk[j * 4] = (byte)(start + j);
+                    chunk[j * 4 + 1] = c.R;
+                    chunk[j * 4 + 2] = c.G;
+                    chunk[j * 4 + 3] = c.B;
                 }
                 plugin.WriteCm2LiveLedColorChunk(chunk, chunkIdx);
                 _rpmColorSends++;
