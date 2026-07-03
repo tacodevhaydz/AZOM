@@ -1,5 +1,6 @@
 using System;
 using System.Drawing;
+using System.Threading;
 using BA63Driver.Interfaces;
 using BA63Driver.Mapper;
 using MozaPlugin.Protocol;
@@ -15,12 +16,19 @@ namespace MozaPlugin.Devices
     ///
     /// The rim is a wheel-style 16-LED strip in physical order
     /// [flag 1-3][RPM 1-10][flag 4-6]. SimHub feeds a single telemetry array in
-    /// that order; we drive it with two firmware paths:
+    /// that order; the wire path depends on the meter firmware era
+    /// (MozaPlugin.Cm2HasNewLedFirmware, auto-detected from the 0x0E heartbeat):
+    ///
+    /// Legacy RPM-ramp firmware (meter_diag.c:89):
     ///   RPM  → 10-bit on/off bitmask (dash-send-telemetry, 41 FD DE) + live
     ///          per-LED indicator colours (cm2-indicator-color / dash-rpm-color,
     ///          0B 00). PitHouse drives the bitmask per frame (cm2.pcapng).
     ///   Flag → live 6×RGB colour array (dash-flag-colors, 32 08 00), black = off
     ///          (cm2t.pcapng: flags lit while the bitmask stayed 0).
+    ///
+    /// 2026-06 indicator firmware (meter_diag.c:88): the ramp registers are gone;
+    /// the whole strip is driven wheel-style — group-0 live colour chunks
+    /// (3F 19 00) + windowed active bitmask (3F 1A 00). See DisplayNewEra.
     ///
     /// Both SimHub LED modes are supported like the wheel manager: combined
     /// (telemetry effects on the `leds` channel) and individual-exclusive (effects
@@ -33,6 +41,13 @@ namespace MozaPlugin.Devices
             Array.Empty<Color>(), Array.Empty<Color>(), 1.0, 1.0, 1.0, 1.0);
 
         private int _lastBitmask = -1;
+
+        // Host-drive latch: until SimHub's effect feed produces a non-black LED,
+        // send NOTHING on the bitmask/flag lanes — a zero stream overrides the CM2
+        // firmware's own autonomous LED ramp (ApplyCm2DashboardConfig) and holds
+        // the dash dark. Re-earned per game-active phase and per connection.
+        private bool _hostDriveEngaged;
+        private bool _prevGameActive;
 
         // LED-bitmask keepalive: the dash firmware blanks its LEDs if it doesn't
         // get a fresh dash-send-telemetry frame within a few seconds, even when the
@@ -75,6 +90,28 @@ namespace MozaPlugin.Devices
         private readonly Color[] _lastRpmColors = new Color[RpmLedCount];
         private bool _rpmColorsPrimed;
 
+        // New-firmware (2026-06 indicator stack) live path: last full-strip colour
+        // frame sent as wheel-style group-0 chunks, change detection.
+        private readonly Color[] _lastNewColors = new Color[TotalLedCount];
+        private bool _newColorsPrimed;
+
+        // Diagnostics (surfaced in the Diagnostics tab): separates "SimHub feeds
+        // black" (everLit=no, sends=0) from "colors produced but writes dropped"
+        // (everLit=yes, sends>0). Counters are cumulative per driver instance;
+        // the host-drive latch resets separately.
+        internal static MozaDashLedDeviceManager? Latest { get; private set; }
+        private bool _everLit;
+        private long _lastNonBlackUtcTicks;
+        private long _lastBitmaskSendUtcTicks;
+        private int _bitmaskSends, _rpmColorSends, _flagSends;
+
+        public MozaDashLedDeviceManager() { Latest = this; }
+
+        internal (bool Engaged, bool EverLit, long LastNonBlackTicks, int LastBitmask,
+                  long LastBitmaskSendTicks, int BitmaskSends, int RpmColorSends, int FlagSends) DiagSnapshot =>
+            (_hostDriveEngaged, _everLit, Interlocked.Read(ref _lastNonBlackUtcTicks), _lastBitmask,
+             Interlocked.Read(ref _lastBitmaskSendUtcTicks), _bitmaskSends, _rpmColorSends, _flagSends);
+
         public LedModuleSettings LedModuleSettings { get; set; } = null!;
 
         public LedDeviceState LastState => _lastState;
@@ -111,6 +148,9 @@ namespace MozaPlugin.Devices
                 _lastFlagPrimed = false;
                 _lastFlagSendTime = DateTime.MinValue;
                 _rpmColorsPrimed = false;
+                _newColorsPrimed = false;
+                _hostDriveEngaged = false;
+                _prevGameActive = false;
                 OnDisconnect?.Invoke(this, EventArgs.Empty);
             }
         }
@@ -187,6 +227,39 @@ namespace MozaPlugin.Devices
 
                 bool alwaysResend = plugin.Settings.AlwaysResendBitmask;
                 var now = DateTime.UtcNow;
+                bool gameActive = plugin.IsGameActive;
+
+                // Host-drive latch maintenance: re-earned per game-active phase,
+                // level-triggered on any non-black LED so feed stalls self-heal.
+                if (gameActive != _prevGameActive)
+                {
+                    _prevGameActive = gameActive;
+                    _hostDriveEngaged = false;
+                }
+                int scanLen = Math.Min(ledColors.Length, TotalLedCount);
+                for (int i = 0; i < scanLen; i++)
+                {
+                    var c = ledColors[i];
+                    if (c.R > 0 || c.G > 0 || c.B > 0)
+                    {
+                        _hostDriveEngaged = true;
+                        _everLit = true;
+                        Interlocked.Exchange(ref _lastNonBlackUtcTicks, now.Ticks);
+                        break;
+                    }
+                }
+
+                // 2026-06 "indicator" meter firmware: the autonomous RPM ramp and
+                // the legacy 41 FD DE / 32 0B / 32 08 live registers are gone —
+                // drive the 16-LED strip like a new-protocol wheel rim instead:
+                // group-0 live colour chunks (3F 19 00) + windowed active bitmask
+                // (3F 1A 00) addressed to the CM2. Best-effort mirror of the
+                // wheel wire pending a PitHouse capture of this firmware.
+                if (plugin.Cm2HasNewLedFirmware)
+                {
+                    DisplayNewEra(plugin, ledColors, alwaysResend, gameActive, now);
+                    return;
+                }
 
                 // Split flag/RPM/flag by position. Full 16-LED array → flags at
                 // [0,1,2] + [13,14,15], RPM at [3..12]. A short array (pre-detection
@@ -218,19 +291,24 @@ namespace MozaPlugin.Devices
                 int holdSec = plugin.Settings?.WheelKeepaliveTimeoutSec ?? (int)KeepaliveHoldSeconds;
                 bool withinHold = (now - _lastLitUtc).TotalSeconds < holdSec;
                 bool keepaliveDue = (now - _lastSendTime).TotalSeconds >= KeepaliveIntervalSeconds;
-                // While a game is actively feeding telemetry, NEVER pause the keepalive —
-                // the dash must stay live for the whole session and only idle once the
-                // game is closed. Otherwise resend on change always, and hold the
-                // keepalive / always-resend for holdSec after the bar last had a lit bit,
-                // then pause. A 1 Hz (or per-frame, under AlwaysResendBitmask) all-off
-                // resend pins the dash in live-render mode and blocks its idle/sleep —
-                // the same fix applied to the wheel keepalive.
-                bool gameActive = plugin.IsGameActive;
-                if (bitmaskChanged || ((gameActive || withinHold) && (alwaysResend || keepaliveDue)))
+                // Until the host-drive latch engages, send nothing — the firmware's
+                // autonomous ramp owns the LEDs and a zero mask would blank it.
+                // Once engaged: while a game is actively feeding telemetry, NEVER
+                // pause the keepalive — the dash must stay live for the whole
+                // session and only idle once the game is closed. Otherwise resend
+                // on change always, and hold the keepalive / always-resend for
+                // holdSec after the bar last had a lit bit, then pause. A 1 Hz (or
+                // per-frame, under AlwaysResendBitmask) all-off resend pins the
+                // dash in live-render mode and blocks its idle/sleep — the same
+                // fix applied to the wheel keepalive.
+                if (_hostDriveEngaged
+                    && (bitmaskChanged || ((gameActive || withinHold) && (alwaysResend || keepaliveDue))))
                 {
                     _lastBitmask = bitmask;
                     _lastSendTime = now;
                     plugin.WriteDashLedBitmask(bitmask);
+                    _bitmaskSends++;
+                    Interlocked.Exchange(ref _lastBitmaskSendUtcTicks, now.Ticks);
                 }
 
                 // ── Flag LEDs: live 6×RGB colour array (32 08 00), black = off.
@@ -263,12 +341,14 @@ namespace MozaPlugin.Devices
                 // anyFlagOn gates the keepalive AND always-resend: a fully-off flag
                 // array is sent once via flagsChanged, then left quiet so the dash
                 // can idle instead of being held awake by all-black flag refreshes.
-                if (hasFlags && (flagsChanged || ((alwaysResend || flagKeepaliveDue) && anyFlagOn)))
+                if (_hostDriveEngaged && hasFlags
+                    && (flagsChanged || ((alwaysResend || flagKeepaliveDue) && anyFlagOn)))
                 {
                     Array.Copy(rgb, _lastFlagRgb, rgb.Length);
                     _lastFlagPrimed = true;
                     _lastFlagSendTime = now;
                     plugin.WriteDashFlagColors(rgb);
+                    _flagSends++;
                 }
 
                 // Dashboard brightness is stored config (set via plugin UI slider →
@@ -280,6 +360,88 @@ namespace MozaPlugin.Devices
             finally
             {
                 AfterDisplay?.Invoke(this, EventArgs.Empty);
+            }
+        }
+
+        /// <summary>
+        /// New-firmware live path: the whole 16-LED strip (SimHub physical order
+        /// [flag 1-3][RPM 1-10][flag 4-6]) as ONE wheel-style group-0 surface —
+        /// colour chunks then the windowed active bitmask, colours-before-mask
+        /// like every other LED path. Cadence mirrors the legacy path: send on
+        /// change + keepalive while game-active / within hold; gated on the
+        /// host-drive latch like everything else.
+        /// </summary>
+        private void DisplayNewEra(MozaPlugin plugin, Color[] ledColors, bool alwaysResend, bool gameActive, DateTime now)
+        {
+            if (!_hostDriveEngaged) return;
+            int count = Math.Min(ledColors.Length, TotalLedCount);
+            if (count == 0) return;
+
+            int bitmask = 0;
+            bool colorsChanged = !_newColorsPrimed;
+            for (int i = 0; i < count; i++)
+            {
+                var c = ledColors[i];
+                if (c.R > 0 || c.G > 0 || c.B > 0) bitmask |= (1 << i);
+                if (!colorsChanged
+                    && (_lastNewColors[i].R != c.R || _lastNewColors[i].G != c.G || _lastNewColors[i].B != c.B))
+                    colorsChanged = true;
+            }
+
+            bool bitmaskChanged = bitmask != _lastBitmask;
+            if (bitmask != 0) _lastLitUtc = now;
+            int holdSec = plugin.Settings?.WheelKeepaliveTimeoutSec ?? (int)KeepaliveHoldSeconds;
+            bool withinHold = (now - _lastLitUtc).TotalSeconds < holdSec;
+            bool keepaliveDue = (now - _lastSendTime).TotalSeconds >= KeepaliveIntervalSeconds;
+            bool cadence = (gameActive || withinHold) && (alwaysResend || keepaliveDue);
+            if (!colorsChanged && !bitmaskChanged && !cadence) return;
+
+            if (colorsChanged || cadence)
+            {
+                for (int i = 0; i < count; i++) _lastNewColors[i] = ledColors[i];
+                _newColorsPrimed = true;
+                SendNewEraColorChunks(plugin, ledColors, count);
+            }
+            _lastBitmask = bitmask;
+            _lastSendTime = now;
+            plugin.WriteCm2LiveLedBitmask(
+                MozaLedDeviceManager.BuildWindowedBitmaskBytes(bitmask, (1 << count) - 1));
+            _bitmaskSends++;
+            Interlocked.Exchange(ref _lastBitmaskSendUtcTicks, now.Ticks);
+        }
+
+        /// <summary>20-byte 5-LED chunks (idx,R,G,B ×5, 0xFF-index padding), one
+        /// coalescing slot per chunk — same packing as MozaLedDeviceManager.
+        /// SendColorChunks, but device-addressed to the CM2.</summary>
+        private void SendNewEraColorChunks(MozaPlugin plugin, Color[] colors, int count)
+        {
+            int bufferLen = ((count * 4 + 19) / 20) * 20;
+            var chunk = new byte[20];
+            int chunkIdx = 0;
+            for (int pos = 0; pos < bufferLen; pos += 20)
+            {
+                for (int b = 0; b < 20; b += 4)
+                {
+                    int led = (pos + b) / 4;
+                    if (led < count)
+                    {
+                        var c = colors[led];
+                        chunk[b] = (byte)led;
+                        chunk[b + 1] = c.R;
+                        chunk[b + 2] = c.G;
+                        chunk[b + 3] = c.B;
+                    }
+                    else
+                    {
+                        chunk[b] = 0xFF;
+                        chunk[b + 1] = 0;
+                        chunk[b + 2] = 0;
+                        chunk[b + 3] = 0;
+                    }
+                }
+                plugin.WriteCm2LiveLedColorChunk(chunk, chunkIdx);
+                _rpmColorSends++;
+                chunkIdx++;
             }
         }
 
@@ -305,6 +467,7 @@ namespace MozaPlugin.Devices
                 {
                     _lastRpmColors[i] = c;
                     plugin.WriteDashRpmColor(i, c.R, c.G, c.B);
+                    _rpmColorSends++;
                 }
             }
             _rpmColorsPrimed = true;

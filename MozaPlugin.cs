@@ -678,6 +678,63 @@ namespace MozaPlugin
                 : _deviceManager.WriteArrayForDevice($"dash-rpm-color{index + 1}", Cm2TargetDeviceId, rgb);
         }
 
+        /// <summary>True when the CM2's meter firmware is the 2026-06 indicator
+        /// stack that takes wheel-style group-0x3F live LED commands instead of
+        /// the legacy 41 FD DE / 32 0B registers. Auto-detected + persisted; see
+        /// <see cref="DetectCm2LedFirmwareEra"/>.</summary>
+        internal bool Cm2HasNewLedFirmware => Settings?.Cm2NewLedFirmware ?? false;
+
+        /// <summary>
+        /// CM2 meter firmware era detection from the meter's 0x0E heartbeat text
+        /// (src=0x41). The 2026-06 firmware rework replaced the autonomous
+        /// threshold RPM ramp (RpmMode / RpmNumber[0~9] / RpmPercent[0~9]) with
+        /// the wheel-style indicator-group stack (IndicatorMode / StandbyMode,
+        /// meter_diag.c:89 → :88) and stopped honoring the legacy live LED
+        /// registers. Both directions are detected so a firmware downgrade
+        /// recovers too. Persisted because the heartbeat only arrives ~1/min —
+        /// the next boot starts on the right LED path immediately.
+        /// </summary>
+        private void DetectCm2LedFirmwareEra(string text)
+        {
+            bool isNew;
+            if (text.Contains("RpmNumber[") || text.Contains("RpmMode:")) isNew = false;
+            else if (text.Contains("IndicatorMode:") || text.Contains("StandbyMode:")) isNew = true;
+            else return;
+            if (Settings == null || Settings.Cm2NewLedFirmware == isNew) return;
+            Settings.Cm2NewLedFirmware = isNew;
+            PersistSettings();
+            MozaLog.Info("[AZOM] CM2 meter firmware era detected: " +
+                         (isNew ? "indicator stack — wheel-style LED commands" : "legacy RPM ramp") +
+                         " — dash LED path switched");
+        }
+
+        /// <summary>New-firmware CM2 live LED colour chunk (wheel-style group-0
+        /// 3F 19 00, 20-byte 5-LED chunk) addressed to the CM2. Rides the same
+        /// coalescing slots the legacy per-LED colour path used (DashRpmColor0+).</summary>
+        internal bool WriteCm2LiveLedColorChunk(byte[] chunk20, int chunkIdx)
+        {
+            var slot = (Protocol.StreamKind)((int)Protocol.StreamKind.DashRpmColor0 + chunkIdx);
+            bool inRange = chunkIdx >= 0 && (int)slot <= (int)Protocol.StreamKind.DashRpmColor9;
+            if (DashboardUsbConnected)
+                return inRange
+                    ? _dashboardManager.WriteArrayForDeviceStream("wheel-telemetry-rpm-colors", Cm2TargetDeviceId, chunk20, slot)
+                    : _dashboardManager.WriteArrayForDevice("wheel-telemetry-rpm-colors", Cm2TargetDeviceId, chunk20);
+            return inRange
+                ? _deviceManager.WriteArrayForDeviceStream("wheel-telemetry-rpm-colors", Cm2TargetDeviceId, chunk20, slot)
+                : _deviceManager.WriteArrayForDevice("wheel-telemetry-rpm-colors", Cm2TargetDeviceId, chunk20);
+        }
+
+        /// <summary>New-firmware CM2 live LED bitmask (wheel-style group-0
+        /// 3F 1A 00, 8-byte active+window form) addressed to the CM2.</summary>
+        internal bool WriteCm2LiveLedBitmask(byte[] activeWindow8)
+        {
+            if (DashboardUsbConnected)
+                return _dashboardManager.WriteArrayForDeviceStream(
+                    "wheel-send-rpm-telemetry", Cm2TargetDeviceId, activeWindow8, Protocol.StreamKind.DashRpmBitmask);
+            return _deviceManager.WriteArrayForDeviceStream(
+                "wheel-send-rpm-telemetry", Cm2TargetDeviceId, activeWindow8, Protocol.StreamKind.DashRpmBitmask);
+        }
+
         /// <summary>
         /// Route a one-shot CM2 meter-config write (group 0x32: modes, thresholds,
         /// indicator brightness, stored idle colours) to the CM2's OWN pipe + device.
@@ -3694,6 +3751,10 @@ namespace MozaPlugin
                 // "Table 7, Param 6 Written: N" log on dev 0x41 (0x14 swapped). Follow it.
                 if (rawDeviceId == 0x41 && DashIsCm1)
                     _fsr1Cm1Mapping.TryFollowCm1DashboardLog(text);
+                // CM2 meter heartbeat vocabulary identifies its firmware era (LED
+                // command family) — see DetectCm2LedFirmwareEra.
+                if (rawDeviceId == 0x41 && !DashIsCm1)
+                    DetectCm2LedFirmwareEra(text);
                 // The main bridge logs steering-wheel (rim) attach/detach edges
                 // here as "steer_connected <N>" / "Gpw Wheel Disconnected". A rim
                 // pull is NOT a USB/serial disconnect, so the poll-miss hot-swap

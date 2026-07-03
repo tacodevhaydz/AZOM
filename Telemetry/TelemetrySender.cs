@@ -3484,7 +3484,7 @@ namespace MozaPlugin.Telemetry
                 TickEmitValueFrames(tiers);
                 TickEmitStringValues();
 
-                TickEmitEnableAndSequence();
+                TickEmitSequence();
                 // Parity polls keep the wheel engaged during idle. Empirically
                 // verified: turning them off entirely caused the dashboard to
                 // freeze on last-value within ~5 min. ~1 Hz cadence is enough
@@ -4140,26 +4140,17 @@ namespace MozaPlugin.Telemetry
         /// subsequent tick doesn't immediately re-emit.</summary>
         public void ForceStringEmitAll() => EmitStringChannels(force: true);
 
-        /// <summary>FFB-enable + sequence-counter. Both gated on gameRunning
-        /// because PitHouse only emits these while a game is actively driving
-        /// telemetry — bursting them at idle is the largest plugin-vs-PitHouse
-        /// drift source observed in 2026-04-29 captures.</summary>
-        private void TickEmitEnableAndSequence()
+        /// <summary>Sequence-counter, gated on gameRunning because PitHouse only
+        /// emits it while a game is actively driving telemetry — bursting it at
+        /// idle is the largest plugin-vs-PitHouse drift source observed in
+        /// 2026-04-29 captures.</summary>
+        private void TickEmitSequence()
         {
             if (!TestMode && (!_gameRunning || !_profileTelemetryEnabled)) return;
-            // The 0x41 FD DE "enable" (BaseSendTelemetry, hardcoded dev 0x17) is the
-            // dash/CM2 legacy RPM-LED on/off bitmask command, and belongs to a CM2/dash
-            // target only. The FSR V2 (W13) drives its RPM rim through the SAME wheel
-            // pipeline as the CS Pro — the group-0x3F windowed bitmask from
-            // MozaLedDeviceManager — and needs no FD DE frame: a CS Pro drives screen +
-            // rim with zero FD DE on the wire. Streaming FD DE with bitmask=0 to the
-            // wheel at 0x17 every tick stomps those 0x3F RPM bars and holds the rim
-            // dark. (Before the CM2 routing fix the main sender lived on the CM2, so the
-            // wheel never saw this; once it correctly moved to the wheel screen it began
-            // pouring the dash enable onto 0x17.) Emit it only when this sender is
-            // actually driving a dashboard — never to a wheel screen, matching CS Pro.
-            if (StandaloneDashboardMode)
-                SendStreamSlot((int)StreamKind.Enable, _frames.EnableFrame);
+            // No static FD DE "enable" here: wheels need none (CS Pro capture:
+            // zero FD DE on the wire), and the CM2's live bitmask is owned by
+            // MozaDashLedDeviceManager — a static zero mask streamed at tick
+            // rate kills LEDs on whatever device it hits.
             if (SendSequenceCounter)
                 SendStreamSlot((int)StreamKind.Sequence, _frames.BuildSequenceCounterFrame());
         }
