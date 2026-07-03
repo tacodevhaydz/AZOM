@@ -936,21 +936,19 @@ namespace MozaPlugin.Devices.WheelUi
                 return;
             }
 
-            // FSR V1: clear synthetic split fields first (restores the gapless catalog
-            // partition), then clear each catalog field's override. Synthetic rows are
-            // skipped in the override loop — their mapping lives inline and is dropped with
-            // the synthetic, and SetFsr1FieldMapping(synthetic, null) would corrupt the span.
+            // FSR V1: per active record, drop the synthetic split fields AND every catalog
+            // override (boundary/scale/property + any hidden/merged flag) so the record reverts
+            // to the pristine catalog partition. Clearing the whole override dict per record
+            // (not row-by-row) is what unhides merged-away fields — those rows aren't present.
             if (!IsCm2Target && _plugin.IsFsr1DisplayWheel)
             {
                 var clearedRecords = new HashSet<string>();
                 foreach (var row in _channelRows)
                     if (row.IsFsr1 && !string.IsNullOrEmpty(row.RecordKey) && clearedRecords.Add(row.RecordKey))
+                    {
                         _plugin.ClearSyntheticFields(row.RecordKey);
-                foreach (var row in _channelRows)
-                {
-                    if (row.IsSynthetic) continue;
-                    _plugin.SetFsr1FieldMapping(row.RecordKey, row.FieldId, null);
-                }
+                        _plugin.ClearFsr1FieldOverrides(row.RecordKey);
+                    }
                 PopulateChannelMappingList();
                 TelemetryMappingStatus.Text = $"Reset to defaults at {DateTime.Now:HH:mm:ss}";
                 return;
@@ -1158,6 +1156,27 @@ namespace MozaPlugin.Devices.WheelUi
             TelemetryMappingStatus.Text = ok
                 ? $"Merged split back at {DateTime.Now:HH:mm:ss}"
                 : "Cannot merge — shrink an adjacent field first";
+        }
+
+        // Merge this field with its previous/next neighbour into one wider field (≤ 3 bytes) —
+        // the inverse of Split. Lets users build a u16/u24 where the catalog has 1-byte slots
+        // the divider steppers can't combine. The neighbour is removed (synthetic) or hidden
+        // (catalog); reset-to-defaults restores it.
+        private void FieldMergePrev_Click(object sender, RoutedEventArgs e) => MergeField(sender, mergeNext: false);
+        private void FieldMergeNext_Click(object sender, RoutedEventArgs e) => MergeField(sender, mergeNext: true);
+
+        private void MergeField(object sender, bool mergeNext)
+        {
+            if (_plugin == null) return;
+            if ((sender as FrameworkElement)?.Tag is not ChannelMappingRow row) return;
+            if (!row.IsFsr1 || string.IsNullOrEmpty(row.RecordKey) || string.IsNullOrEmpty(row.FieldId)) return;
+
+            _plugin.ClearFsr1FieldProbe();
+            bool ok = _plugin.MergeFsr1Field(row.RecordKey, row.FieldId, mergeNext);
+            PopulateChannelMappingList();
+            TelemetryMappingStatus.Text = ok
+                ? $"Merged {(mergeNext ? "with next" : "with previous")} at {DateTime.Now:HH:mm:ss}"
+                : "Cannot merge — no neighbour, or combined field would exceed 3 bytes";
         }
 
         private void FocusInlineFilter(ChannelMappingRow row)

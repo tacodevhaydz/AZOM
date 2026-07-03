@@ -146,13 +146,17 @@ namespace MozaPlugin
         public double? Scale { get; set; }
         /// <summary>Output offset added after Scale; null = 0.0.</summary>
         public double? Bias { get; set; }
+        /// <summary>True = this catalog field has been merged into a neighbour, so it is
+        /// skipped everywhere (driver/UI/probe/viz) and its byte belongs to the neighbour.
+        /// Cleared by reset-to-defaults. Synthetic fields are removed outright, not hidden.</summary>
+        public bool Hidden { get; set; }
 
         public Fsr1FieldMapping Clone() =>
             new Fsr1FieldMapping
             {
                 Property = Property, InMin = InMin, InMax = InMax,
                 StartOffset = StartOffset, EndOffset = EndOffset,
-                LittleEndian = LittleEndian, Scale = Scale, Bias = Bias,
+                LittleEndian = LittleEndian, Scale = Scale, Bias = Bias, Hidden = Hidden,
             };
     }
 

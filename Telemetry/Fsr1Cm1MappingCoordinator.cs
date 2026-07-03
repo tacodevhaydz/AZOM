@@ -59,7 +59,8 @@ namespace MozaPlugin.Telemetry
             m == null
             || (string.IsNullOrEmpty((m.Property ?? "").Trim())
                 && m.StartOffset == null && m.EndOffset == null
-                && m.LittleEndian == null && m.Scale == null && m.Bias == null);
+                && m.LittleEndian == null && m.Scale == null && m.Bias == null
+                && !m.Hidden);
 
         /// <summary>
         /// Persist (or clear) an FSR1 dashboard field assignment (property + input scale +
@@ -246,6 +247,73 @@ namespace MozaPlugin.Telemetry
             RemoveSynthetic(recordKey, fieldId);
             _plugin.SaveSettings();
             return true;
+        }
+
+        /// <summary>
+        /// Merge the field <paramref name="fieldId"/> with its immediate neighbour (next =
+        /// the field starting at this one's end+1; prev = the field ending at this one's
+        /// start-1) into a single wider field — the inverse of <see cref="SplitFsr1Field"/>.
+        /// This field grows to span both; the neighbour is removed (synthetic → deleted,
+        /// catalog → hidden). Fails if there is no neighbour on that side or the combined
+        /// width would exceed 3. The record stays a gapless partition.
+        /// </summary>
+        internal bool MergeFsr1Field(string recordKey, string fieldId, bool mergeNext)
+        {
+            var span = ResolveFieldSpan(recordKey, fieldId);
+            if (span == null) return false;
+            int s = span.Value.start, e = span.Value.end;
+
+            var dash = Fsr1DashboardCatalog.ByKey(recordKey);
+            if (dash == null) return false;
+
+            // Find the adjacent neighbour by span across the composed catalog+synthetic set.
+            string? nbId = null; int nbStart = 0, nbEnd = 0;
+            foreach (var f in Fsr1FieldComposer.FieldsFor(_plugin, dash))
+            {
+                if (f.FieldId == fieldId) continue;
+                var fs = ResolveFieldSpan(recordKey, f.FieldId);
+                if (fs == null) continue;
+                if (mergeNext && fs.Value.start == e + 1) { nbId = f.FieldId; nbStart = fs.Value.start; nbEnd = fs.Value.end; break; }
+                if (!mergeNext && fs.Value.end == s - 1) { nbId = f.FieldId; nbStart = fs.Value.start; nbEnd = fs.Value.end; break; }
+            }
+            if (nbId == null) return false;                     // record edge — nothing to merge into
+
+            int newStart = mergeNext ? s : nbStart;
+            int newEnd = mergeNext ? nbEnd : e;
+            if (newEnd - newStart + 1 > 3) return false;        // combined field would exceed u24
+
+            // Grow this field over both spans, then drop the neighbour.
+            WriteFieldSpan(recordKey, fieldId, newStart, newEnd);
+            if (FindSynthetic(recordKey, nbId) != null) RemoveSynthetic(recordKey, nbId);
+            else HideCatalogField(recordKey, nbId);
+            _plugin.SaveSettings();
+            return true;
+        }
+
+        /// <summary>Mark a catalog field hidden (merged away) via a persisted override so the
+        /// composer skips it. Reset-to-defaults clears it. Synthetics are removed, not hidden.</summary>
+        private void HideCatalogField(string recordKey, string fieldId)
+        {
+            var m = GetFsr1FieldMapping(recordKey, fieldId)?.Clone() ?? new Fsr1FieldMapping();
+            m.Hidden = true;
+            SetFsr1FieldMapping(recordKey, fieldId, m);
+        }
+
+        /// <summary>Drop ALL per-field overrides on a record (including hidden/merged flags) so
+        /// it reverts to the catalog layout. Used by reset-to-defaults alongside
+        /// <see cref="ClearSyntheticFields"/>.</summary>
+        internal void ClearFsr1FieldOverrides(string recordKey)
+        {
+            var profile = _plugin.Settings?.ProfileStore?.CurrentProfile;
+            if (profile?.Fsr1DashboardMappings == null) return;
+            var g = _plugin.GetCurrentWheelPageGuid();
+            if (!g.HasValue) return;
+            if (profile.Fsr1DashboardMappings.TryGetValue(g.Value, out var mid) && mid != null
+                && mid.Remove(recordKey))
+            {
+                if (mid.Count == 0) profile.Fsr1DashboardMappings.Remove(g.Value);
+                _plugin.SaveSettings();
+            }
         }
 
         /// <summary>Remove all synthetic split fields on a record (reset-to-defaults).</summary>

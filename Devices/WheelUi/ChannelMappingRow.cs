@@ -141,6 +141,12 @@ namespace MozaPlugin.Devices.WheelUi
         public bool CanEndMinus => NextField != null && Width > 1 && NextField.Width < 3;
         public bool CanEndPlus => NextField != null && NextField.Width > 1 && Width < 3;
 
+        /// <summary>Merge with the previous/next field into one wider field (≤ 3 bytes) — the
+        /// inverse of Split. Absorbs a neighbour the divider steppers can't (e.g. a 1-byte
+        /// slot), so two u8 slots can become a u16/u24 where the catalog lacks one.</summary>
+        public bool CanMergePrev => PrevField != null && Width + PrevField.Width <= 3;
+        public bool CanMergeNext => NextField != null && Width + NextField.Width <= 3;
+
         /// <summary>Move the LEFT divider one byte toward the record start: this field grows
         /// left, the previous field shrinks from its right. Returns the neighbour that also
         /// changed (so the caller can persist it), or null if the move was not allowed.</summary>
@@ -211,6 +217,8 @@ namespace MozaPlugin.Devices.WheelUi
             PropertyChanged?.Invoke(this, new PropertyChangedEventArgs(nameof(CanStartPlus)));
             PropertyChanged?.Invoke(this, new PropertyChangedEventArgs(nameof(CanEndMinus)));
             PropertyChanged?.Invoke(this, new PropertyChangedEventArgs(nameof(CanEndPlus)));
+            PropertyChanged?.Invoke(this, new PropertyChangedEventArgs(nameof(CanMergePrev)));
+            PropertyChanged?.Invoke(this, new PropertyChangedEventArgs(nameof(CanMergeNext)));
         }
 
         private double _inMin;

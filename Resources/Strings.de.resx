@@ -429,6 +429,8 @@
   <data name="Button_ResetToDefaults" xml:space="preserve"><value>AUF STANDARDS ZURÜCKSETZEN</value></data>
   <data name="Button_ResetField" xml:space="preserve"><value>FELD ZURÜCKSETZEN</value></data>
   <data name="Button_SplitField" xml:space="preserve"><value>FELD TEILEN</value></data>
+  <data name="Button_MergePrev" xml:space="preserve"><value>VERBINDEN ◀</value></data>
+  <data name="Button_MergeNext" xml:space="preserve"><value>VERBINDEN ▶</value></data>
   <data name="Button_RemoveSplit" xml:space="preserve"><value>TEILUNG ENTFERNEN</value></data>
   <data name="Viz_Title" xml:space="preserve"><value>LIVE-FSR1-DATEN</value></data>
   <data name="Edit_StartByte" xml:space="preserve"><value>Startbyte</value></data>

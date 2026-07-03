@@ -454,8 +454,18 @@
                                                      Background="{DynamicResource BgDeepBrush}"
                                                      BorderBrush="{DynamicResource BorderBrush}"
                                                      BorderThickness="1"/>
-                                            <Button Content="{x:Static res:Strings.Button_SplitField}"
+                                            <Button Content="{x:Static res:Strings.Button_MergePrev}"
                                                     Margin="14,0,0,0"
+                                                    Click="FieldMergePrev_Click" Tag="{Binding}"
+                                                    Visibility="{Binding CanMergePrev,
+                                                                Converter={StaticResource BoolToVisibility}}"/>
+                                            <Button Content="{x:Static res:Strings.Button_MergeNext}"
+                                                    Margin="8,0,0,0"
+                                                    Click="FieldMergeNext_Click" Tag="{Binding}"
+                                                    Visibility="{Binding CanMergeNext,
+                                                                Converter={StaticResource BoolToVisibility}}"/>
+                                            <Button Content="{x:Static res:Strings.Button_SplitField}"
+                                                    Margin="8,0,0,0"
                                                     Click="FieldSplit_Click" Tag="{Binding}"
                                                     Visibility="{Binding CanSplit,
                                                                 Converter={StaticResource BoolToVisibility}}"/>
