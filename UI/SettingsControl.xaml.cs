@@ -1051,13 +1051,6 @@ namespace MozaPlugin
             _plugin.SetConnectionEnabled(ConnectionToggle.IsChecked == true);
         }
 
-        // ===== Refresh button =====
-
-        private void RefreshButton_Click(object sender, RoutedEventArgs e)
-        {
-            RequestAllSettings();
-        }
-
         private void SoftRebootButton_Click(object sender, RoutedEventArgs e)
         {
             var result = MessageBox.Show(

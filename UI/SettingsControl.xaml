@@ -215,7 +215,6 @@
                     <ColumnDefinition Width="Auto"/>
                     <ColumnDefinition Width="Auto"/>
                     <ColumnDefinition Width="Auto"/>
-                    <ColumnDefinition Width="Auto"/>
                     <ColumnDefinition Width="*"/>
                 </Grid.ColumnDefinitions>
                 <!-- Brand block -->
@@ -252,13 +251,10 @@
                                   Unchecked="ConnectionToggle_Changed"
                                   VerticalAlignment="Center"/>
 
-                <Button Grid.Column="3" x:Name="RefreshButton" Content="{x:Static res:Strings.Button_Refresh}"
-                        Click="RefreshButton_Click" VerticalAlignment="Center"/>
-
                 <!-- Right-aligned profile selector. Preset import now lives in
                      its own "Import" tab, so the top bar carries just the
                      active-profile dropdown here. -->
-                <StackPanel Grid.Column="4" Orientation="Horizontal"
+                <StackPanel Grid.Column="3" Orientation="Horizontal"
                             HorizontalAlignment="Right"
                             VerticalAlignment="Center">
                     <profilescommon:ProfileList x:Name="ProfileListControl"
