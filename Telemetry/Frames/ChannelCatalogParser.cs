@@ -786,13 +786,41 @@ namespace MozaPlugin.Telemetry.Frames
 
                     if (_committedMarkers.Contains(markerValue))
                     {
-                        // Either current-generation keepalive (markerValue
-                        // == _committedEndMarker) or prior-generation
-                        // re-affirmation (markerValue is some earlier
-                        // committed marker). Either way the first commit
-                        // at this markerValue was authoritative; drop.
-                        _pendingIdxs.Clear();
-                        return;
+                        // A same-marker re-advertise is normally a keepalive or a
+                        // prior-generation re-affirmation — the first commit at this
+                        // marker was authoritative, so drop it.
+                        //
+                        // EXCEPTION — dropped-chunk recovery: on a saturated link
+                        // (radar/track-map dashes push h2b to ~93% of the 115200
+                        // budget) the wheel's catalog advertisement loses inbound
+                        // chunks, leaving a PERMANENT hole in _liveCatalog (observed
+                        // idx 244-251 ri, 98-101, 123). The wheel re-advertises at the
+                        // SAME END marker, so this dedup throws away the very copy that
+                        // would fill the hole. If this re-advertise carries an idx that
+                        // is currently MISSING from the live set (and we now have a URL
+                        // for it), let it through to UNION the gap closed. Converges:
+                        // once filled, the idx is no longer missing, so the next
+                        // same-marker re-advertise dedups normally.
+                        bool fillsLiveGap = false;
+                        foreach (var ix in _pendingIdxs)
+                        {
+                            int k = ix - 1;
+                            if (k < 0) continue;
+                            bool missingInLive = _liveCatalog == null
+                                || k >= _liveCatalog.Count
+                                || string.IsNullOrEmpty(_liveCatalog[k]);
+                            if (!missingInLive) continue;
+                            bool haveUrl = parsed.ContainsKey(ix)
+                                || (_catalog != null && k < _catalog.Count
+                                    && !string.IsNullOrEmpty(_catalog[k]));
+                            if (haveUrl) { fillsLiveGap = true; break; }
+                        }
+                        if (!fillsLiveGap)
+                        {
+                            _pendingIdxs.Clear();
+                            return;
+                        }
+                        // else fall through: UNION the recovered idxs into _liveCatalog.
                     }
 
                     var targetIdxs = new HashSet<int>(_pendingIdxs);
@@ -833,9 +861,13 @@ namespace MozaPlugin.Telemetry.Frames
                     int maxIdx = 0;
                     foreach (var ix in targetIdxs) if (ix > maxIdx) maxIdx = ix;
                     int catCount = _catalog?.Count ?? 0;
-                    int liveCount = useUnion ? (_liveCatalog?.Count ?? 0) : 0;
+                    // Always include the prior live-catalog extent so the cross-switch
+                    // preservation below can reach idxs a dropped/incomplete generation
+                    // left out of targetIdxs (e.g. idx 81 = Gear).
+                    int liveCount = _liveCatalog?.Count ?? 0;
                     int size = Math.Max(Math.Max(maxIdx, catCount), liveCount);
                     var masked = new List<string>(size);
+                    int preservedIdxs = 0;
                     for (int k = 0; k < size; k++)
                     {
                         int oneIdx = k + 1;
@@ -862,6 +894,30 @@ namespace MozaPlugin.Telemetry.Frames
                             // shrinkage across a single switch's batches).
                             masked.Add(_liveCatalog[k]);
                         }
+                        else if (!useUnion
+                                 && _liveCatalog != null
+                                 && k < _liveCatalog.Count
+                                 && !string.IsNullOrEmpty(_liveCatalog[k])
+                                 && _catalog != null
+                                 && k < _catalog.Count
+                                 && string.Equals(_liveCatalog[k], _catalog[k], StringComparison.Ordinal))
+                        {
+                            // Cross-switch preservation of an UNCHANGED channel. A switch
+                            // normally REPLACES the live set with the winning generation,
+                            // but the wheel re-advertises its catalog across several
+                            // generations and one can arrive INCOMPLETE — a dropped catalog
+                            // chunk under Wine/USB silently omits a contiguous idx range.
+                            // REPLACE then blanks stable telemetry channels the new
+                            // dashboard still uses (observed on a radar-dash switch: idx
+                            // 77-81 YellowFlag/WhiteFlag/Flag_Orange/EngineStarted/Gear
+                            // dropped → gear stuck on neutral, flags dead). Preserve an idx
+                            // from the prior live set ONLY when its URL is unchanged vs the
+                            // current parsed _catalog: a genuinely re-bound idx (different
+                            // URL on a real A→B switch) still drops, and old-dashboard
+                            // channels can't leak (their URL no longer matches _catalog).
+                            masked.Add(_liveCatalog[k]);
+                            preservedIdxs++;
+                        }
                         else
                         {
                             masked.Add("");
@@ -876,7 +932,7 @@ namespace MozaPlugin.Telemetry.Frames
                         $"liveIdxs={{{string.Join(",", targetIdxs.OrderBy(x => x))}}} " +
                         (useUnion
                             ? $"(same-burst UNION arm={currentArmCount}, total live={liveNonEmpty})"
-                            : $"(replace arm={currentArmCount})"));
+                            : $"(replace arm={currentArmCount}, preservedUnchanged={preservedIdxs}, total live={liveNonEmpty})"));
                     _committedEndMarker = markerValue;
                     _committedMarkers.Add(markerValue);
                     _pendingIdxs.Clear();

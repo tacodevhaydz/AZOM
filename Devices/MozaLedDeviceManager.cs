@@ -66,6 +66,16 @@ namespace MozaPlugin.Devices
         // keepalive fires) still keeps the gate engaged.
         internal static readonly TimeSpan LivePathActiveWindow = TimeSpan.FromMilliseconds(750);
 
+        // Catalog-negotiation LED throttle. During cold-start / post-switch catalog
+        // (re)advertisement the half-duplex 115200 link is contended (our tier-def
+        // burst + the wheel's inbound catalog chunks); a ~60 Hz LED stream on top
+        // saturates it and drops inbound catalog chunks (radar/track-map dashes →
+        // missing channels / stuck gear). While the wheel is negotiating we cap LED
+        // writes to one per this interval so chunks get through; racing LEDs resume
+        // full-rate the instant negotiation completes (a few seconds).
+        private const int CatalogNegotiationLedThrottleMs = 150;
+        private int _lastNegotiationLedTickMs;
+
         /// <summary>
         /// True if any live LED frame went out within <see cref="LivePathActiveWindow"/>.
         /// Static writers (HardwareApplier, UI handlers) check this before touching wheel
@@ -415,6 +425,21 @@ namespace MozaPlugin.Devices
                 // computed for it; only the hardware write is suppressed.
                 if (!IsConnected())
                     return;
+
+                // Catalog-negotiation LED throttle: while the wheel is (re)advertising
+                // its catalog (cold-start or a post-switch hot-reneg burst) the link is
+                // saturated by our tier-def burst + the wheel's inbound catalog chunks.
+                // A 60 Hz LED stream on top drops those chunks — the root of radar/track
+                // channel loss on a saturated link. Cap LED writes to ~7/s during the
+                // window; full rate resumes the instant negotiation completes. _lastState
+                // is already captured above, so the UI preview is unaffected.
+                if (plugin.TelemetrySender?.WheelInCatalogNegotiation == true)
+                {
+                    int nowMs = Environment.TickCount;
+                    if (nowMs - _lastNegotiationLedTickMs < CatalogNegotiationLedThrottleMs)
+                        return;
+                    _lastNegotiationLedTickMs = nowMs;
+                }
 
                 // IsConnected() above already matched this device to the connected
                 // wheel, so the global detection flag tells us its protocol. ES is

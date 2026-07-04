@@ -483,8 +483,23 @@ namespace MozaPlugin.Telemetry.Watchdog
                 return;
             }
 
-            var s09 = _sender.SessionsGetOrCreate(0x09);
-            if (s09.DeviceInitiated) return;
+            // Stop retrying ONLY once the wheel has actually PUSHED its dashboard
+            // list this session — NOT merely opened 0x09. On a slow-bring-up wheel
+            // (radar/track-map dash on a CS-Pro base) the wheel device-inits 0x09
+            // within ~1 s of our open request but only pushes the list once its
+            // dashboard has finished loading (~35-40 s later). The old gate stopped
+            // at DeviceInitiated (the open itself), so the request landed ~35 s too
+            // early, the wheel opened 0x09 with nothing to enumerate, and the list
+            // never arrived — dropdown "(none)", UI stuck on "wheel state not yet
+            // ready" (wire trace: 6c80 request at t=5.7s, wheel 0x09 open type=0x81
+            // at t=6.0s, dashboard load at t=41s, no list ever pushed). Re-emit
+            // prime+open across the full backoff window (~56 s) until the LIVE
+            // (this-session, not cross-session-cached) list lands. A screenless wheel
+            // never pushes one and falls through to MaybeParkScreenless at
+            // S09RetryMaxRounds below, unchanged.
+            bool liveListArrived =
+                (_sender.ConfigJson?.LiveState?.ConfigJsonList?.Count ?? 0) > 0;
+            if (liveListArrived) return;
 
             int now = Environment.TickCount;
             if (_s09RetryRounds > 0)
