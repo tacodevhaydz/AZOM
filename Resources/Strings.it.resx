@@ -287,9 +287,11 @@
   <data name="Button_Github" xml:space="preserve"><value>GitHub</value></data>
   <data name="Button_JoinDiscord" xml:space="preserve"><value>Entra nel Discord</value></data>
   <data name="Button_SponsorDevelopment" xml:space="preserve"><value>Supporta lo Sviluppo</value></data>
+  <data name="Button_Kofi" xml:space="preserve"><value>Supportami su Ko-fi</value></data>
   <data name="Tooltip_Github" xml:space="preserve"><value>github.com/giantorth/moza-simhub-plugin</value></data>
   <data name="Tooltip_JoinDiscord" xml:space="preserve"><value>Entra nel Discord del progetto</value></data>
   <data name="Tooltip_Sponsor" xml:space="preserve"><value>github.com/sponsors/giantorth</value></data>
+  <data name="Tooltip_Kofi" xml:space="preserve"><value>ko-fi.com/giantorth</value></data>
   <data name="Label_UpdateAvailable" xml:space="preserve"><value>Aggiornamento disponibile</value></data>
   <data name="Button_OpenReleaseNotes" xml:space="preserve"><value>Apri le note di rilascio</value></data>
   <data name="Button_SkipThisVersion" xml:space="preserve"><value>Salta questa versione</value></data>

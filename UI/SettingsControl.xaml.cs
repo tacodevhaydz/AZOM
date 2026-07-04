@@ -1713,10 +1713,12 @@ namespace MozaPlugin
         private const string AboutGitHubUrl  = "https://github.com/giantorth/moza-simhub-plugin";
         private const string AboutDiscordUrl = "https://discord.gg/J4enw43e62";
         private const string AboutSponsorUrl = "https://github.com/sponsors/giantorth";
+        private const string AboutKofiUrl    = "https://ko-fi.com/giantorth";
 
         private void AboutGitHubButton_Click(object sender, System.Windows.RoutedEventArgs e)  => OpenExternalUrl(AboutGitHubUrl);
         private void AboutDiscordButton_Click(object sender, System.Windows.RoutedEventArgs e) => OpenExternalUrl(AboutDiscordUrl);
         private void AboutSponsorButton_Click(object sender, System.Windows.RoutedEventArgs e) => OpenExternalUrl(AboutSponsorUrl);
+        private void AboutKofiButton_Click(object sender, System.Windows.RoutedEventArgs e)    => OpenExternalUrl(AboutKofiUrl);
 
         // Open a URL via the OS shell. On Windows this hits the default
         // browser; under Wine/Proton it routes through winebrowser which

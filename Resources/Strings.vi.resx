@@ -283,9 +283,11 @@
   <data name="Button_Github" xml:space="preserve"><value>GitHub</value></data>
   <data name="Button_JoinDiscord" xml:space="preserve"><value>Tham gia Discord</value></data>
   <data name="Button_SponsorDevelopment" xml:space="preserve"><value>Tài trợ phát triển</value></data>
+  <data name="Button_Kofi" xml:space="preserve"><value>Ủng hộ tôi trên Ko-fi</value></data>
   <data name="Tooltip_Github" xml:space="preserve"><value>github.com/giantorth/moza-simhub-plugin</value></data>
   <data name="Tooltip_JoinDiscord" xml:space="preserve"><value>Tham gia Discord của dự án</value></data>
   <data name="Tooltip_Sponsor" xml:space="preserve"><value>github.com/sponsors/giantorth</value></data>
+  <data name="Tooltip_Kofi" xml:space="preserve"><value>ko-fi.com/giantorth</value></data>
   <data name="Hint_ThanksToTesters" xml:space="preserve"><value>Xin gửi lời cảm ơn chân thành đến tất cả các tester alpha và beta đầu tiên — những người đã bỏ thời gian và sự kiên nhẫn của mình trong khi tôi tìm ra cách làm cho giao thức MOZA hoạt động. Plugin này sẽ không tồn tại nếu không có các bạn.</value></data>
   <data name="Label_UpdateAvailable" xml:space="preserve"><value>Có bản cập nhật</value></data>
   <data name="Button_OpenReleaseNotes" xml:space="preserve"><value>Mở ghi chú phát hành</value></data>

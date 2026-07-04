@@ -288,9 +288,11 @@
   <data name="Button_Github" xml:space="preserve"><value>GitHub</value></data>
   <data name="Button_JoinDiscord" xml:space="preserve"><value>Unirse al Discord</value></data>
   <data name="Button_SponsorDevelopment" xml:space="preserve"><value>Patrocinar el desarrollo</value></data>
+  <data name="Button_Kofi" xml:space="preserve"><value>Apóyame en Ko-fi</value></data>
   <data name="Tooltip_Github" xml:space="preserve"><value>github.com/giantorth/moza-simhub-plugin</value></data>
   <data name="Tooltip_JoinDiscord" xml:space="preserve"><value>Únete al Discord del proyecto</value></data>
   <data name="Tooltip_Sponsor" xml:space="preserve"><value>github.com/sponsors/giantorth</value></data>
+  <data name="Tooltip_Kofi" xml:space="preserve"><value>ko-fi.com/giantorth</value></data>
   <data name="Hint_ThanksToTesters" xml:space="preserve"><value>Un enorme agradecimiento a todos los probadores alfa y beta tempranos que pusieron su tiempo — y su cordura — en juego mientras yo descubría cómo hacer funcionar el protocolo MOZA. Este plugin no existiría sin ustedes.</value></data>
   <data name="Label_UpdateAvailable" xml:space="preserve"><value>Actualización disponible</value></data>
   <data name="Button_OpenReleaseNotes" xml:space="preserve"><value>Abrir notas de la versión</value></data>

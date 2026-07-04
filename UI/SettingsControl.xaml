@@ -2850,7 +2850,11 @@
                                             Click="AboutSponsorButton_Click"
                                             Foreground="{StaticResource GreenBrush}"
                                             BorderBrush="#6639FF88"
+                                            Margin="0,0,8,0"
                                             ToolTip="{x:Static res:Strings.Tooltip_Sponsor}"/>
+                                    <Button Content="{x:Static res:Strings.Button_Kofi}"
+                                            Click="AboutKofiButton_Click"
+                                            ToolTip="{x:Static res:Strings.Tooltip_Kofi}"/>
                                 </StackPanel>
                             </StackPanel>
                         </ctrl:SectionCard>

@@ -283,9 +283,11 @@
   <data name="Button_Github" xml:space="preserve"><value>GitHub</value></data>
   <data name="Button_JoinDiscord" xml:space="preserve"><value>Присоединиться к Discord</value></data>
   <data name="Button_SponsorDevelopment" xml:space="preserve"><value>Поддержать разработку</value></data>
+  <data name="Button_Kofi" xml:space="preserve"><value>Поддержите меня на Ko-fi</value></data>
   <data name="Tooltip_Github" xml:space="preserve"><value>github.com/giantorth/moza-simhub-plugin</value></data>
   <data name="Tooltip_JoinDiscord" xml:space="preserve"><value>Присоединиться к Discord проекта</value></data>
   <data name="Tooltip_Sponsor" xml:space="preserve"><value>github.com/sponsors/giantorth</value></data>
+  <data name="Tooltip_Kofi" xml:space="preserve"><value>ko-fi.com/giantorth</value></data>
   <data name="Hint_ThanksToTesters" xml:space="preserve"><value>Огромное спасибо всем первым альфа- и бета-тестировщикам, которые потратили своё время — и нервы — пока я разбирался, как заставить работать протокол MOZA. Без вас этого плагина не существовало бы.</value></data>
   <data name="Label_UpdateAvailable" xml:space="preserve"><value>Доступно обновление</value></data>
   <data name="Button_OpenReleaseNotes" xml:space="preserve"><value>Открыть заметки о выпуске</value></data>

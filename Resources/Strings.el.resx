@@ -284,9 +284,11 @@
   <data name="Button_Github" xml:space="preserve"><value>GitHub</value></data>
   <data name="Button_JoinDiscord" xml:space="preserve"><value>Εγγραφή στο Discord</value></data>
   <data name="Button_SponsorDevelopment" xml:space="preserve"><value>Χορηγία Ανάπτυξης</value></data>
+  <data name="Button_Kofi" xml:space="preserve"><value>Στηρίξτε με στο Ko-fi</value></data>
   <data name="Tooltip_Github" xml:space="preserve"><value>github.com/giantorth/moza-simhub-plugin</value></data>
   <data name="Tooltip_JoinDiscord" xml:space="preserve"><value>Εγγραφή στο Discord του προσθέτου</value></data>
   <data name="Tooltip_Sponsor" xml:space="preserve"><value>github.com/sponsors/giantorth</value></data>
+  <data name="Tooltip_Kofi" xml:space="preserve"><value>ko-fi.com/giantorth</value></data>
   <data name="Label_UpdateAvailable" xml:space="preserve"><value>Διαθέσιμη ενημέρωση</value></data>
   <data name="Button_OpenReleaseNotes" xml:space="preserve"><value>Άνοιγμα σημειώσεων έκδοσης</value></data>
   <data name="Button_SkipThisVersion" xml:space="preserve"><value>Παράλειψη αυτής της έκδοσης</value></data>

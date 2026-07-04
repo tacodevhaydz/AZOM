@@ -357,9 +357,11 @@ namespace MozaPlugin.Resources
         public static string Button_Github => Get("Button_Github");
         public static string Button_JoinDiscord => Get("Button_JoinDiscord");
         public static string Button_SponsorDevelopment => Get("Button_SponsorDevelopment");
+        public static string Button_Kofi => Get("Button_Kofi");
         public static string Tooltip_Github => Get("Tooltip_Github");
         public static string Tooltip_JoinDiscord => Get("Tooltip_JoinDiscord");
         public static string Tooltip_Sponsor => Get("Tooltip_Sponsor");
+        public static string Tooltip_Kofi => Get("Tooltip_Kofi");
         public static string Label_UpdateAvailable => Get("Label_UpdateAvailable");
         public static string Button_OpenReleaseNotes => Get("Button_OpenReleaseNotes");
         public static string Button_SkipThisVersion => Get("Button_SkipThisVersion");
