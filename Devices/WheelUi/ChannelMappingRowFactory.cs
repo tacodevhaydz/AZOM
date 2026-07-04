@@ -174,6 +174,10 @@ namespace MozaPlugin.Devices.WheelUi
             foreach (var url in catalog.OrderBy(u => u, StringComparer.OrdinalIgnoreCase))
             {
                 if (string.IsNullOrEmpty(url)) continue;
+                // Radar / track-map channels (patch/Location*, patch/riN) are driven
+                // entirely by the plugin's own position/radar pipeline — users have no
+                // reason to remap them, so keep them out of the channel mapper.
+                if (DashboardProfileStore.IsRadarTrackMapChannel(url)) continue;
                 rows.Add(new ChannelMappingRow
                 {
                     AllProperties = props,
@@ -202,6 +206,9 @@ namespace MozaPlugin.Devices.WheelUi
                 foreach (var ch in tier.Channels.OrderBy(c => c.Url, StringComparer.OrdinalIgnoreCase))
                 {
                     if (DashboardProfileStore.IsInternalChannel(ch.SimHubProperty)) continue;
+                    // Radar / track-map channels (patch/Location*, patch/riN) are plugin-
+                    // driven; users don't remap them — suppress from the channel mapper.
+                    if (DashboardProfileStore.IsRadarTrackMapChannel(ch.Url)) continue;
                     if (!seen.Add(ch.Url)) continue;
                     rows.Add(new ChannelMappingRow
                     {

@@ -978,7 +978,7 @@ namespace MozaPlugin
                 // (plugin DLLs load only at SimHub process start; a telemetry toggle /
                 // game switch re-runs Init on the already-loaded assembly). Bump on
                 // each radar build so a restart is verifiable from the log.
-                MozaLog.Info("[AZOM] BUILD radar-2026-06-29X: narrow session close first (0x01-0x03) on all starts, escalate to wide 0x04-0x0A only if wheel silent 20s - prevents radar display reboot on SimHub restart");
+                MozaLog.Info("[AZOM] BUILD radar-2026-06-29Y: suppress radar/track-map channels (patch/Location*, patch/riN) from the channel mapper UI");
 
                 // Bridge-format JSONL wire trace at SimHub/Logs/moza-wire-*.jsonl.
                 // Opt-in via _settings.EnableWireTraceFileSink. Fresh file per launch.
