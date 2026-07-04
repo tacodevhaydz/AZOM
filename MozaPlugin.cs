@@ -201,6 +201,14 @@ namespace MozaPlugin
         private int _headProbeCount;
         private HardwareApplier _hardwareApplier = null!;
         internal HardwareApplier HardwareApplier => _hardwareApplier;
+        // SimHub's shared/master LED-brightness slider (0..100), published by the
+        // active wheel LED driver from LedModuleSettings.GlobalBrightnessPreset. The
+        // driver reads it per-frame off SimHub's LED thread; DataUpdate applies it on
+        // the data thread. -1 until the user first moves the slider — the wheel's
+        // device-stored brightness is left untouched until then. Drives the firmware
+        // group brightness (rpm/buttons/knobs) equally via ApplyMasterWheelLedBrightness.
+        internal volatile int WheelLedMasterBrightness = -1;
+        private int _masterLedBrightnessApplied = -2; // DataUpdate-thread-local change gate
         private DeviceProber _deviceProber = null!;
         internal DeviceProber DeviceProber => _deviceProber;
         // Peripheral-enumeration prober for the dedicated hub pipe. Shares
@@ -1795,6 +1803,20 @@ namespace MozaPlugin
             _cm1Driver?.SetGameRunning(data.GameRunning);
             CheckGearshiftEvent(data);
             CheckAb9GearshiftEvent(data);
+
+            // Push SimHub's shared/master LED brightness to the wheel firmware group
+            // brightness (rpm/buttons/knobs) when the user moves the slider. The wheel
+            // LED driver publishes the settled value into WheelLedMasterBrightness off
+            // the LED thread; apply it here (change-gated) so the firmware write runs on
+            // the data thread and shares HardwareApplier's per-wheel cfg cache with the
+            // connect/profile brightness path (no fight, no redundant flash).
+            int masterLedBri = WheelLedMasterBrightness;
+            if (masterLedBri != _masterLedBrightnessApplied)
+            {
+                _masterLedBrightnessApplied = masterLedBri;
+                if (masterLedBri >= 0)
+                    _hardwareApplier?.ApplyMasterWheelLedBrightness(masterLedBri);
+            }
 
             // Hand the latest RPM, MaxRpm + engine-on flag to the AB9 engine-vib
             // worker. GameRunning stays true while paused or in menu, so we'd

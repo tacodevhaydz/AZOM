@@ -215,6 +215,19 @@ namespace MozaPlugin.Hardware
             int stickMode      = ov?.WheelStickMode ?? -1;
             int knobRingBri    = Eff(ov?.WheelKnobRingBrightness ?? -1, profile.WheelKnobRingBrightness);
 
+            // Shared/master LED brightness override. Once the user has moved
+            // SimHub's master LED-brightness slider (WheelLedMasterBrightness >= 0),
+            // it is the authority for the wheel's firmware group brightness — the
+            // rpm/buttons/knob-ring values follow it equally, so a connect/profile
+            // re-apply asserts the master rather than reverting to the device-read
+            // profile value. -1 = user has not engaged the master; keep the
+            // per-group profile brightness untouched (unchanged legacy behaviour).
+            // ES (old-protocol) RPM brightness is a different command/range and is
+            // deliberately not overridden here. Live drags apply via the data-thread
+            // ApplyMasterWheelLedBrightness path, which shares the same cfg cache.
+            int ledMaster = _plugin.WheelLedMasterBrightness;
+            if (ledMaster >= 0) { rpmBri = ledMaster; btnBri = ledMaster; knobRingBri = ledMaster; }
+
             // _data mirror (UI binding).
             if (telemMode      >= 0) _data.WheelTelemetryMode      = telemMode;
             if (idleEffect     >= 0) _data.WheelTelemetryIdleEffect = idleEffect;
@@ -1356,6 +1369,46 @@ namespace MozaPlugin.Hardware
                 _deviceManager.WriteColor($"wheel-knob-bg-color{i + 1}", rgb[0], rgb[1], rgb[2]);
             }
             MozaLedDeviceManager.InvalidateLiveCacheAny(LedKind.Knob);
+        }
+
+        /// <summary>
+        /// Push SimHub's shared/master LED brightness (0..100) to the wheel's
+        /// firmware group brightness — the rpm (group 0), buttons (group 1) and
+        /// knob-ring (group 3) groups all receive the same value (cmd <c>1B [G] FF</c>).
+        /// Called from the data thread when the user moves the master slider (the
+        /// wheel LED driver publishes the settled value into
+        /// <see cref="MozaPlugin.WheelLedMasterBrightness"/>). Flag brightness lives
+        /// on the Meter sub-device and is out of the wheel LED-group scope; ES
+        /// (old-protocol) wheels use a different command/range and are gated out via
+        /// <c>NewWheelDetected</c>. Change-gated through the same per-wheel cfg cache
+        /// as <c>ApplyWheelToHardware</c>, so a value already on the wheel is not
+        /// re-flashed and this never fights the connect/profile brightness write.
+        /// </summary>
+        public void ApplyMasterWheelLedBrightness(int value)
+        {
+            if (value < 0) return;
+            if (!_detectionState.NewWheelDetected) return;
+            var model = _plugin.WheelModelInfo;   // null until identity resolves
+            if (model == null) return;
+
+            SyncWheelCfgCache();
+
+            if (model.RpmLedCount > 0 && WheelCfgChanged("wheel-rpm-brightness", value))
+            {
+                _data.WheelRpmBrightness = value;
+                _deviceManager.WriteSetting("wheel-rpm-brightness", value);
+            }
+            if (model.ButtonLedCount > 0 && WheelCfgChanged("wheel-buttons-brightness", value))
+            {
+                _data.WheelButtonsBrightness = value;
+                _deviceManager.WriteSetting("wheel-buttons-brightness", value);
+            }
+            if (model.KnobRingLeds != null && _detectionState.IsWheelLedGroupPresent(3)
+                    && WheelCfgChanged("wheel-knob-brightness", value))
+            {
+                _data.KnobRingBrightness = value;
+                _deviceManager.WriteSetting("wheel-knob-brightness", value);
+            }
         }
 
         public static void UnpackPackedColor(int packed, byte[] dst)
