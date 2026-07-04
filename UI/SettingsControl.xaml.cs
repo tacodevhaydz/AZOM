@@ -1807,8 +1807,6 @@ namespace MozaPlugin
                 _serialCaptureRendered = null;
                 _serialCaptureSnapshot = null;
                 SerialCaptureToggleButton.Content = "Stop capture";
-                SerialCaptureOutputBox.Visibility = System.Windows.Visibility.Collapsed;
-                SerialCaptureOutputBox.Text = string.Empty;
                 SerialCaptureExportButton.IsEnabled = false;
                 SerialCaptureCopyButton.IsEnabled = false;
                 SerialCaptureStatusText.Text = Strings.Status_CapturingOpenTab;
@@ -1820,8 +1818,6 @@ namespace MozaPlugin
             _serialCaptureRendered = SerialTrafficCapture.Format(snap);
             SerialCaptureToggleButton.Content = "Start capture";
             SerialCaptureStatusText.Text = string.Format(Strings.Status_CaptureStopped, snap.Count);
-            SerialCaptureOutputBox.Text = _serialCaptureRendered;
-            SerialCaptureOutputBox.Visibility = System.Windows.Visibility.Visible;
             SerialCaptureExportButton.IsEnabled = true;
             SerialCaptureCopyButton.IsEnabled = snap.Count > 0;
         }

@@ -2428,6 +2428,33 @@
                             </ctrl:SectionCard>
                         </Grid>
 
+                        <ctrl:SectionCard Title="{x:Static res:Strings.Section_SerialTrafficCapture}"
+                                          Subtitle="{x:Static res:Strings.Subtitle_SerialTrafficCapture}"
+                                          Icon="{StaticResource IconDiag}">
+                            <StackPanel>
+                                <TextBlock TextWrapping="Wrap" Style="{StaticResource MutedHintText}" Margin="0,0,0,10"
+                                           Text="{x:Static res:Strings.Hint_CaptureDataInMemory}"/>
+                                <StackPanel Orientation="Horizontal" Margin="0,0,0,10">
+                                    <Button x:Name="SerialCaptureToggleButton" Content="{x:Static res:Strings.Button_StartCapture}"
+                                            Click="SerialCaptureToggle_Click" MinWidth="120"/>
+                                    <TextBlock x:Name="SerialCaptureStatusText" Text="{x:Static res:Strings.Status_Idle}"
+                                               Style="{StaticResource MutedHintText}" Margin="14,0,0,0"/>
+                                </StackPanel>
+                                <ctrl:OffOnToggle x:Name="AlwaysCaptureOnStartupCheck"
+                                          Content="{x:Static res:Strings.Label_AlwaysCaptureOnStartup}"
+                                          Click="AlwaysCaptureOnStartup_Click"
+                                          Margin="0,0,0,10"
+                                          ToolTip="{x:Static res:Strings.Tooltip_AlwaysCaptureOnStartup}"/>
+                                <StackPanel Orientation="Horizontal">
+                                    <Button x:Name="SerialCaptureExportButton" Content="{x:Static res:Strings.Button_ExportBundle}"
+                                            Click="SerialCaptureExport_Click" IsEnabled="False"/>
+                                    <Button x:Name="SerialCaptureCopyButton" Content="{x:Static res:Strings.Button_CopyCapture}"
+                                            Click="SerialCaptureCopy_Click"
+                                            Margin="8,0,0,0" IsEnabled="False"/>
+                                </StackPanel>
+                            </StackPanel>
+                        </ctrl:SectionCard>
+
                         <ctrl:SectionCard Title="{x:Static res:Strings.Section_WheelLedOutput}"
                                           Subtitle="{x:Static res:Strings.Subtitle_WheelLedOutput}"
                                           Icon="{StaticResource IconLed}">
@@ -2942,39 +2969,7 @@
                         <!-- Bandwidth visualization was moved to the Base tab's live header
                              (next to the temperature graph) as a single dual-line sparkline. -->
 
-                        <ctrl:SectionCard Title="{x:Static res:Strings.Section_SerialTrafficCapture}"
-                                          Subtitle="{x:Static res:Strings.Subtitle_SerialTrafficCapture}"
-                                          Icon="{StaticResource IconDiag}">
-                            <StackPanel>
-                                <TextBlock TextWrapping="Wrap" Style="{StaticResource MutedHintText}" Margin="0,0,0,10"
-                                           Text="{x:Static res:Strings.Hint_CaptureDataInMemory}"/>
-                                <StackPanel Orientation="Horizontal" Margin="0,0,0,10">
-                                    <Button x:Name="SerialCaptureToggleButton" Content="{x:Static res:Strings.Button_StartCapture}"
-                                            Click="SerialCaptureToggle_Click" MinWidth="120"/>
-                                    <TextBlock x:Name="SerialCaptureStatusText" Text="{x:Static res:Strings.Status_Idle}"
-                                               Style="{StaticResource MutedHintText}" Margin="14,0,0,0"/>
-                                </StackPanel>
-                                <ctrl:OffOnToggle x:Name="AlwaysCaptureOnStartupCheck"
-                                          Content="{x:Static res:Strings.Label_AlwaysCaptureOnStartup}"
-                                          Click="AlwaysCaptureOnStartup_Click"
-                                          Margin="0,0,0,10"
-                                          ToolTip="{x:Static res:Strings.Tooltip_AlwaysCaptureOnStartup}"/>
-                                <TextBox x:Name="SerialCaptureOutputBox" FontFamily="{StaticResource FontMono}" FontSize="11"
-                                         IsReadOnly="True" TextWrapping="NoWrap" AcceptsReturn="True"
-                                         Background="{StaticResource BgDeepBrush}"
-                                         Foreground="{StaticResource TextDimBrush}"
-                                         BorderBrush="{StaticResource BorderBrush}" BorderThickness="1"
-                                         VerticalScrollBarVisibility="Auto" HorizontalScrollBarVisibility="Auto"
-                                         Height="220" Margin="0,0,0,10" Padding="10" Visibility="Collapsed"/>
-                                <StackPanel Orientation="Horizontal">
-                                    <Button x:Name="SerialCaptureExportButton" Content="{x:Static res:Strings.Button_ExportBundle}"
-                                            Click="SerialCaptureExport_Click" IsEnabled="False"/>
-                                    <Button x:Name="SerialCaptureCopyButton" Content="{x:Static res:Strings.Button_CopyCapture}"
-                                            Click="SerialCaptureCopy_Click"
-                                            Margin="8,0,0,0" IsEnabled="False"/>
-                                </StackPanel>
-                            </StackPanel>
-                        </ctrl:SectionCard>
+                        <!-- Serial Traffic Capture moved to the Options tab. -->
 
                         <!-- ============ Full Diagnostic Report (expandable) ============ -->
                         <ctrl:SectionCard Title="{x:Static res:Strings.Section_FullDiagReport}"
