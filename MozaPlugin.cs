@@ -2947,12 +2947,14 @@ namespace MozaPlugin
             var p = _fsr1FieldProbe;
             if (p == null) return null;
             var dash = Telemetry.Fsr1DashboardCatalog.ByKey(p.RecordKey);
-            var def = dash?.Fields.FirstOrDefault(x => x.FieldId == p.FieldId);
-            if (dash == null || def == null) return null;
-            var m = GetFsr1FieldMapping(p.RecordKey, p.FieldId);
-            var (offsets, _) = Telemetry.Fsr1DashboardCatalog.ResolveLayout(def, m, dash.PayloadLen);
-            if (offsets.Length == 0) return null;
-            return (dash.RecordType, offsets[0], offsets[offsets.Length - 1]);
+            if (dash == null) return null;
+            // Resolve through the SAME gapless partition the driver emits — so the lit span
+            // matches the wire exactly, and synthetic split fields (absent from dash.Fields)
+            // are found too. Using the raw override here diverged from the tiled output.
+            foreach (var (f, offsets, _) in Telemetry.Fsr1DashboardCatalog.ResolvePartition(this, dash))
+                if (f.FieldId == p.FieldId && offsets.Length > 0)
+                    return (dash.RecordType, offsets[0], offsets[offsets.Length - 1]);
+            return null;
         }
 
         // ── FSR1 live numeric visualization channel ─────────────────────────

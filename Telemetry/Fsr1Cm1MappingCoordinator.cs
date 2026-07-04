@@ -331,18 +331,17 @@ namespace MozaPlugin.Telemetry
             }
         }
 
-        // Resolve a field's effective byte span (catalog or synthetic) through the same
-        // ResolveLayout the driver/emitter use, so split math sees the live layout.
+        // Resolve a field's effective byte span through the SAME gapless partition the driver
+        // emits and the editor shows — so split/merge math operates on the live tiled layout,
+        // not the raw override (which can differ once the partition reapportions bytes).
         private (int start, int end, int payloadLen)? ResolveFieldSpan(string recordKey, string fieldId)
         {
             var dash = Fsr1DashboardCatalog.ByKey(recordKey);
             if (dash == null) return null;
-            var def = Fsr1FieldComposer.FindField(_plugin, recordKey, fieldId);
-            if (def == null) return null;
-            var m = GetFsr1FieldMapping(recordKey, fieldId);
-            var (offsets, _) = Fsr1DashboardCatalog.ResolveLayout(def, m, dash.PayloadLen);
-            if (offsets.Length == 0) return null;
-            return (offsets[0], offsets[offsets.Length - 1], dash.PayloadLen);
+            foreach (var (f, offsets, _) in Fsr1DashboardCatalog.ResolvePartition(_plugin, dash))
+                if (f.FieldId == fieldId && offsets.Length > 0)
+                    return (offsets[0], offsets[offsets.Length - 1], dash.PayloadLen);
+            return null;
         }
 
         // Pin a field's byte span. Synthetic → inline mapping; catalog → deviation-only
