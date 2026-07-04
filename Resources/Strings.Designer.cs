@@ -245,6 +245,7 @@ namespace MozaPlugin.Resources
         public static string Subtitle_EffectsTriggers => Get("Subtitle_EffectsTriggers");
         public static string Section_Abs => Get("Section_Abs");
         public static string Section_RoadTexture => Get("Section_RoadTexture");
+        public static string Section_BrakeFade => Get("Section_BrakeFade");
         public static string Label_Enable => Get("Label_Enable");
         public static string Button_Test1s => Get("Button_Test1s");
         public static string Label_Test => Get("Label_Test");
@@ -255,6 +256,8 @@ namespace MozaPlugin.Resources
         public static string SliderLabel_Smoothness => Get("SliderLabel_Smoothness");
         public static string SliderLabel_TriggerLevel => Get("SliderLabel_TriggerLevel");
         public static string SliderLabel_VibrationDecay => Get("SliderLabel_VibrationDecay");
+        public static string SliderLabel_OnsetTempC => Get("SliderLabel_OnsetTempC");
+        public static string Hint_BrakeFadeExperimental => Get("Hint_BrakeFadeExperimental");
         public static string Label_PedalTrace => Get("Label_PedalTrace");
         public static string Subtitle_CalibrationExperimental => Get("Subtitle_CalibrationExperimental");
         public static string Label_ReversedDirection => Get("Label_ReversedDirection");

@@ -2269,6 +2269,28 @@
                                     </Grid>
                                 </StackPanel>
                             </Expander>
+                            <Expander Header="{x:Static res:Strings.Section_BrakeFade}" IsExpanded="False">
+                                <StackPanel Margin="8,4">
+                                    <TextBlock TextWrapping="Wrap" Foreground="#FFE082" FontSize="11" Margin="0,0,0,8" Text="{x:Static res:Strings.Hint_BrakeFadeExperimental}"/>
+                                    <StackPanel Orientation="Horizontal" Margin="0,0,0,8">
+                                        <ctrl:OffOnToggle x:Name="MBoosterBrakeFadeEnable" Content="{x:Static res:Strings.Label_Enable}" VerticalAlignment="Center" Checked="MBoosterBrakeFadeEnable_Changed" Unchecked="MBoosterBrakeFadeEnable_Changed"/>
+                                        <ctrl:OffOnToggle x:Name="MBoosterBrakeFadeTestToggle" Content="{x:Static res:Strings.Label_Test}" VerticalAlignment="Center" Margin="24,0,0,0" Checked="MBoosterBrakeFadeTestToggle_Changed" Unchecked="MBoosterBrakeFadeTestToggle_Changed"/>
+                                    </StackPanel>
+                                    <Grid Margin="0,4">
+                                        <Grid.ColumnDefinitions>
+                                            <ColumnDefinition Width="Auto"/>
+                                            <ColumnDefinition Width="*"/>
+                                            <ColumnDefinition Width="Auto"/>
+                                        </Grid.ColumnDefinitions>
+                                        <TextBlock Grid.Column="0" Text="{x:Static res:Strings.SliderLabel_OnsetTempC}" Style="{StaticResource SliderLabel}"/>
+                                        <Slider Grid.Column="1" x:Name="MBoosterBrakeFadeOnsetSlider" Style="{StaticResource SettingSlider}" Minimum="300" Maximum="900" TickFrequency="10" ValueChanged="MBoosterBrakeFadeOnsetSlider_ValueChanged"/>
+                                        <TextBox Grid.Column="2" x:Name="MBoosterBrakeFadeOnsetValue" Style="{StaticResource SliderValueEditBox}"
+                                                 Tag="{Binding ElementName=MBoosterBrakeFadeOnsetSlider}"
+                                                 KeyDown="SliderValueBox_KeyDown" LostFocus="SliderValueBox_LostFocus"
+                                                 Text="550"/>
+                                    </Grid>
+                                </StackPanel>
+                            </Expander>
 
                                 </StackPanel>
                             </ctrl:SectionCard>

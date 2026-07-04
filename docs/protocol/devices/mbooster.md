@@ -384,6 +384,47 @@ travel — a curb strike and a mid-corner weight-transfer G-spike look
 similar to `AccelerationHeave`. Good enough for "does the road feel
 bumpy right now", not a precise physics replica.
 
+**Update**: reversed the "stay active continuously" call above —
+feedback was that a continuously-streaming ambient effect whose
+amplitude merely dips low on smooth track doesn't read as "the pedal
+triggers when you hit a bump/kerb", it reads as background hum. Road
+Texture is now a genuine bump/kerb *trigger*, same "silent unless
+something is actually happening" contract Lockup/ABS/Threshold already
+have. A single bump only spikes `AccelerationHeave` for one or two 20 ms
+ticks — too brief to feel as a motor pulse on its own — so
+`UpdateRoadTextureRequest` runs a peak-and-decay envelope instead of
+using the instantaneous reading directly: fast attack once
+`|SuspensionHeaveG|` clears `RoadTextureBumpTriggerG` (0.15g, a
+heuristic like Lockup's brake/speed/wheel-slip thresholds — no
+hardware capture backs this since it's a host-side telemetry gate, not
+a wire value), then exponential release (`RoadTextureBumpDecayTau` =
+0.15 s) back toward zero. `EffectState.IntensityRequest` (and so the
+activation edge in `ProcessRoadTextureEffect`) now tracks that envelope
+crossing ~0.01 instead of "is the car moving", so the effect goes fully
+silent (disable frame sent) between bumps and only streams frames for
+the duration of each decaying pulse. `RoadTextureRoughness01` is still
+the transmitted-Intensity multiplier, just envelope-shaped now instead
+of the raw `|heave| / 1g` ratio.
+
+**Update**: added a directional attack transient so a bump/kerb strike
+leads with a punchy "hit" rather than easing in from the ambient noise
+baseline — a haptics technique (asymmetric onset transients bias
+perceived direction more than steady-state amplitude does), not a
+protocol-verified behavior. `MBoosterEffectSynthesizer
+.SynthesizeRoadTextureNoise` now cross-fades from a fast-decaying
+directional spike (`RoadTextureAttackSign`, exponential decay over
+`RoadTextureAttackSec` = 80 ms) into the regular ambient noise for the
+first 80 ms of `elapsedSec` (time since the activation edge — i.e. time
+since *this* bump started, resetting each time the effect goes
+silent-to-active, so a sustained kerb only gets one punch on first
+contact, not one per ripple). **`RoadTextureAttackSign`'s polarity is an
+unverified guess** at "pushes the pedal face toward the driver's foot"
+— there's no capture evidence for which raw-sample sign the
+firmware/motor treats as which physical direction (prior Road Texture
+work only needed to match amplitude/oscillation character, never a
+sign's physical meaning). If it feels backwards on real hardware,
+negate that one constant.
+
 ### Lockup rebuild
 
 Fourth effect rebuilt, and the most direct port of the Engine/ABS
@@ -464,6 +505,138 @@ Threshold's rebuild, that whole mechanism (the `TestPulse` class,
 `_thresholdPulse` field, `MBoosterEffectWorker.FireTestPulse`, and
 `MBoosterDeviceController.FireEffectTest`) has been deleted entirely,
 since nothing constructs one anymore.
+
+### Brake Fade — real Travel End + Max Threshold calibration override, not a vibration effect
+
+Sixth effect added. The motivating request was literal: "make the
+pedal feel like it goes long (more travel needed for the same brake
+force) when the brakes overheat, and softer/needing more pressure to
+reach 100%" — i.e. simulate brake fade as an actual change in pedal
+feel, not a buzz representing one. First attempt was a haptic
+warning-cue effect (a sustained buzz on a new, uncaptured wire effect
+type) — rejected on a second pass in favor of what was actually asked
+for: dynamically rewriting TWO real hardware calibrations in lockstep.
+
+- `mbooster-brake-travel-end` (cmdId `0x85`, the same wire command
+  `TravelEndMm`'s own Pedal Feel slider writes) — more physical travel
+  needed to reach 100%.
+- `mbooster-brake-threshold` (cmdId `0xB3`, the same wire command
+  `MaxThresholdKg`'s own Sim Input Mapping slider writes) — more
+  load-cell force needed to reach 100%. This is the "softer to press"
+  half, and it specifically has to be `MaxThresholdKg`, not the
+  similarly-named `MaxForceKg` (Pedal Feel) — `MaxForceKg` is
+  host-side only with no wire command at all (see "Pedal Feel" below),
+  so ramping it would only change what this plugin's own dashboard
+  reads, not what the game actually receives. `MaxThresholdKg` is the
+  real, hardware-level equivalent, same category of command as
+  `TravelEndMm`.
+
+Both restore to the user's configured base value as brake temperature
+cools. No new/unverified wire ID involved for either — both reuse
+commands already confirmed real via Pit House USB captures.
+
+**This trades a hardware-verification risk for a different one: write
+frequency on a calibration channel.** Every other calibration write in
+this app — `TravelStartMm`/`TravelEndMm`, `EndstopFrontStiffness`/
+`EndstopEndStiffness`, `CurveY`, `MaxThresholdKg` — only fires when a
+user drags a slider thumb, i.e. rarely, by design. There's no capture
+evidence or protocol-note guidance on whether the device is fine being
+written to repeatedly in real time (e.g. EEPROM wear if the firmware
+persists every write to flash rather than holding it in RAM until some
+explicit "commit"). `MBoosterEffectWorker.UpdateBrakeFadeTravelEnd`/
+`UpdateBrakeFadeThreshold` each mitigate this with their own explicit
+throttle rather than writing on every 20ms tick:
+
+- `BrakeFadeWriteMinIntervalSec = 0.5` — at most one write every 500ms,
+  per calibration (Travel End and Max Threshold throttle independently).
+- `BrakeFadeWriteMinDeltaMm = 0.2` / `BrakeFadeWriteMinDeltaKg = 1.0` —
+  ignore target changes smaller than this (brake temp telemetry can be
+  noisy; not every fluctuation should become a wire write).
+- **Exception**: restoring to the exact configured base value (brakes
+  cooled below onset, or the effect gets disabled) always goes through
+  immediately for both, bypassing both the interval and delta checks —
+  this is a safety action, not a cosmetic ramp step, so it's never
+  throttled away.
+
+**Each calibration requires its own known-safe value to restore to, or
+it individually stays fully inert.** `TravelEndMm`'s and
+`MaxThresholdKg`'s shared `-1` sentinel means "not yet set from this
+plugin" — the plugin doesn't know what the device's real current
+calibration is in that state (see "Pedal Feel" below on the Max Force
+fix that hit this same wall for `MaxThresholdKg` specifically). If
+`TravelEndMm < 0`, the travel-extension half does nothing; if
+`MaxThresholdKg < 0`, the force half does nothing — independently, so
+a user who's only configured one of the two still gets that one
+working. The user must configure both base values (drag the Pedal Feel
+Travel range slider and the Sim Input Mapping Max Threshold slider,
+each once) to get the full combined effect.
+
+**Residual shutdown risk, explicitly accepted, not fully closed.** If
+the app is force-quit or crashes while brake temp is above onset (an
+override is live), the device can be left holding the extended
+Travel End / raised Max Threshold indefinitely — there is no watchdog
+outside this worker's own tick loop. `MBoosterEffectWorker.Stop()`
+makes a best-effort restore attempt (`TryRestoreBrakeFadeOnStop`)
+covering both calibrations on the common clean-disconnect/
+plugin-shutdown path, but this cannot cover an abrupt process kill. If
+the pedal ever feels permanently "long and soft" after an unclean exit,
+dragging the respective slider once (which always writes) fixes it
+immediately.
+
+**Telemetry**: `MBoosterTelemetrySnapshot.BrakeTempC`, sourced from
+`StatusDataBase.BrakesTemperatureMax` (peak across all 4 corners — any
+one wheel overheating should trigger fade) in `MozaPlugin.cs`'s
+`DataUpdate`, normalized to Celsius via a fail-soft substring check on
+`TemperatureUnit` (contains "F" → treat as Fahrenheit and convert;
+otherwise assume Celsius — the same "unit gotcha" style already used
+for `VehicleSpeedMs`'s km/h→m/s conversion, since the real set of
+`TemperatureUnit` string values SimHub's game plugins write isn't
+documented anywhere). Confirmed to genuinely exist as a
+`StatusDataBase` member (verified by reflecting `GameReaderCommon.dll`
+directly) — but per-corner brake temp is less universally populated by
+individual SimHub game plugins than basics like `Brake`/`SpeedKmh`, so
+0 (unpopulated) is a real possibility for some titles, in which case
+`ramp01` never exceeds 0 and the effect never fires.
+
+**Design**, in `MBoosterEffectWorker.UpdateBrakeFade` — called every
+tick, computes one shared `ramp01` fraction from brake temp (or 1.0
+while the sustained Test toggle is on, or 0.0 while disabled) and
+passes it to `UpdateBrakeFadeTravelEnd`/`UpdateBrakeFadeThreshold` so
+both calibrations progress in lockstep. Neither touches the
+motor-stream slot or vibration priority ladder at all (this is a
+completely separate mechanism from the other five effects). One
+slider:
+
+- **Onset Temperature (°C)** (300–900,
+  `MBoosterEffectSettings.BrakeFadeOnsetC`, bounds in
+  `MBoosterUiConstants.BrakeFadeOnsetMinC`/`MaxC`, default 550) — the
+  brake temperature above which both calibrations start ramping. Unlike
+  Lockup's hardcoded wheel-slip heuristic, this is user-configurable
+  because real fade onset varies hugely by pad compound and game (road
+  pads ~300°C, race pads 600°C+).
+
+Each calibration ramps linearly from its own base value at
+`BrakeFadeOnsetC` to its own cap
+(`MBoosterUiConstants.BrakeFadeMaxTravelEndMm` = 47.9mm, explicitly
+below `TravelMaxMm`'s 49.7mm slider ceiling per direct instruction, not
+derived from any spec; `BrakeFadeMaxThresholdKg` = 200kg, the
+theoretical full-scale `MaxThresholdKg`'s own wire encoding uses) at
+`BrakeFadeOnsetC + BrakeFadeSpanC` (`BrakeFadeSpanC = 200`, fixed, not
+user-configurable — same "one configurable knob, one fixed span"
+pattern Threshold's trigger/release hysteresis uses). If a base value
+is already at or above its own cap, there's no room to extend and that
+calibration is a no-op (never shrinks below the user's own configured
+base).
+
+The sustained Test toggle forces both caps for as long as it's on
+(same always-allow-off semantics as the other effects' tests — see
+`MBoosterDeviceController.SetEngineTestActive`), bypassing Enabled and
+the temperature gate — there's no live brake-temperature signal to
+preview against outside a real drive with genuinely hot brakes, and
+unlike those tests, this one produces a real, physically verifiable
+change: the pedal should visibly/physically require more travel and
+more force while the test is on, and snap back the moment it's
+switched off.
 
 ## Calibration surface (experimental)
 
@@ -566,16 +739,39 @@ runs *before* `EvaluateInputCurve`:
   never presses past, say, 100kg use the curve's full 0–100% range
   instead of only ever reaching its midpoint.
 
-Both are combined into one kg-space remap rather than two independent
-percent-space steps: raw 0–100% travel is first treated as 0–200kg
-(the raw HID axis has no independent force calibration of its own —
-same assumption `MaxThresholdKg`/`EncodeThresholdKg` makes), force
-below the deadzone clamps to 0, and everything between the deadzone
-and Max Force rescales linearly to 0–100%. This is stated plainly in
-the UI hint (`Hint_DeadzoneScaleAssumption`) since it's an assumption,
-not a measurement. Verified numerically: with defaults (dz=0,
-maxForce=200) the remap is an exact identity; with maxForce=100kg, raw
-50% (=100kg on the fixed scale) maps to exactly 100%.
+**Update**: originally both were combined into a kg-space remap that
+treated raw 0–100% travel as a fixed 0–200kg full scale. That's wrong
+whenever the device's real calibration isn't 200kg — and real Pit
+House captures already on file for `MaxThresholdKg` show ~100-125kg,
+not 200kg. Raw 100% travel is only ever as many kg as
+`MaxThresholdKg` (Sim Input Mapping, a genuine hardware calibration —
+see above) currently says it is; past that point the device itself
+has already pegged its own output at 100%, so there is no more
+resolution left for software to detect additional force. Concretely,
+the bug this caused: setting Max Force to 200kg (its slider max) was
+silently a no-op whenever `MaxThresholdKg` was lower, because
+`hiPercent` degenerated to the same 100% raw-travel point the axis
+already saturates at — pressing anywhere near the device's real max
+already read as 100% input, never requiring the full 200kg the slider
+implied.
+
+Fixed by threading the device's actual `MaxThresholdKg` through as
+`ApplyDeadzoneAndMaxForce`'s `fullScaleKg` reference (falling back to
+200kg only when `MaxThresholdKg` is still the -1 "not yet set /
+no override" sentinel, since the plugin has no way to read the
+device's real calibration back — `RequestCalibrationReads`'s read of
+`mbooster-brake-threshold` is sent but its response was never wired up
+to populate `MaxThresholdKg`, so this remains a best-effort guess until
+that's implemented). Force below the deadzone clamps to 0, and
+everything between the deadzone and Max Force rescales linearly to
+0–100%, same as before — just against the real reference scale instead
+of a hardcoded one. This is stated in the UI hint
+(`Hint_DeadzoneScaleAssumption`). Practical implication for users: Max
+Force can only ever *lower* the effort needed to reach 100% below the
+device's real Max Threshold — it can't demand *more* force than the
+device's own calibration already saturates at, so getting a genuine
+"200kg to reach 100%" feel requires setting Max Threshold to 200kg
+first (Sim Input Mapping), not just Max Force.
 
 ### Live position indicator on the curves
 
