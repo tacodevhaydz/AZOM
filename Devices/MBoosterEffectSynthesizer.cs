@@ -101,6 +101,23 @@ namespace MozaPlugin.Devices
         // road-like noise generator satisfies the wire contract.
         private const double RoadTextureKeyframeSec = 0.35;
 
+        // ROAD TEXTURE directional attack transient — a haptics technique,
+        // not a protocol-verified behavior: injecting a brief, strongly
+        // asymmetric spike at the very start of a bump (instead of easing
+        // in from the symmetric ambient noise baseline) can bias the
+        // *perceived* direction of a vibration motor's pulse, since touch
+        // is far more sensitive to a sudden onset's acceleration than to
+        // steady-state amplitude. There is NO capture evidence establishing
+        // which raw-sample polarity the firmware/motor treats as which
+        // physical direction — prior Road Texture work only needed to match
+        // the noise's amplitude/oscillation character (see
+        // RoadTextureKeyframeSec's doc comment), never its sign's physical
+        // meaning. RoadTextureAttackSign is therefore a guess at "pushes the
+        // pedal face toward the driver's foot" — if it feels backwards on
+        // real hardware, negate this one constant.
+        private const double RoadTextureAttackSec = 0.08;
+        private const double RoadTextureAttackSign = 1.0;
+
         /// <summary>
         /// ROAD TEXTURE noise generator — unlike the other three effects,
         /// this doesn't return an amplitude the caller scales by intensity;
@@ -113,7 +130,15 @@ namespace MozaPlugin.Devices
         /// algorithm. Deterministic value noise: a new pseudo-random target
         /// every <see cref="RoadTextureKeyframeSec"/>, smoothstep-
         /// interpolated between keyframes so the output can't jump
-        /// discontinuously.
+        /// discontinuously. <paramref name="elapsedSec"/> is time since
+        /// THIS bump's activation edge (resets to 0 each time the effect
+        /// goes silent-to-active — see MBoosterEffectWorker.
+        /// ProcessRoadTextureEffect) — for the first
+        /// <see cref="RoadTextureAttackSec"/> of a new bump, the ambient
+        /// noise is cross-faded in from the directional attack transient
+        /// above instead of starting cold, so every bump/kerb strike leads
+        /// with a punchy directional "hit" before settling into regular
+        /// road chatter.
         /// </summary>
         public static double SynthesizeRoadTextureNoise(double elapsedSec)
         {
@@ -123,7 +148,13 @@ namespace MozaPlugin.Devices
             double a = KeyframeNoise((long)t0);
             double b = KeyframeNoise((long)t0 + 1);
             double s = frac * frac * (3.0 - 2.0 * frac); // smoothstep
-            return a + (b - a) * s;
+            double ambient = a + (b - a) * s;
+
+            if (elapsedSec >= RoadTextureAttackSec) return ambient;
+
+            double blend = elapsedSec / RoadTextureAttackSec; // 0 at onset -> 1 at end of attack window
+            double impulse = RoadTextureAttackSign * Math.Exp(-elapsedSec / (RoadTextureAttackSec / 3.0));
+            return impulse * (1.0 - blend) + ambient * blend;
         }
 
         /// <summary>Deterministic hash of an integer keyframe index to a pseudo-random value in [-1, 1].</summary>

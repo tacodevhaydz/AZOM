@@ -1867,6 +1867,21 @@ namespace MozaPlugin
                 // road-surface roughness. Nullable — 0 for games that don't
                 // report it, same fail-soft style as the rest of this block.
                 double suspensionHeaveG = nd?.AccelerationHeave ?? 0.0;
+                // Brake Fade's temperature signal — peak across all 4
+                // corners (any one wheel overheating should trigger the
+                // warning, not just the average). BrakesTemperatureMax is
+                // nullable — 0 for games that don't report it. Normalized
+                // to Celsius: TemperatureUnit is a per-game display hint
+                // (Celsius/Fahrenheit), same "unit gotcha" the protocol
+                // note warns about for speed fields elsewhere in this
+                // method — fail-soft substring match rather than an exact
+                // string comparison, since the real set of values SimHub's
+                // game plugins actually write isn't documented anywhere.
+                double brakeTempRaw = nd?.BrakesTemperatureMax ?? 0.0;
+                string tempUnit = nd?.TemperatureUnit ?? "";
+                double brakeTempC = tempUnit.IndexOf("F", StringComparison.OrdinalIgnoreCase) >= 0
+                    ? (brakeTempRaw - 32.0) * 5.0 / 9.0
+                    : brakeTempRaw;
                 var snap = new MBoosterTelemetrySnapshot(
                     gameRunning: data.GameRunning,
                     rpm: rpm,
@@ -1875,7 +1890,8 @@ namespace MozaPlugin
                     absActive: absActive,
                     vehicleSpeedMs: vehicleMs,
                     avgWheelSpeedMs: avgWheelMs,
-                    suspensionHeaveG: suspensionHeaveG);
+                    suspensionHeaveG: suspensionHeaveG,
+                    brakeTempC: brakeTempC);
                 _mboosterRegistry.OnDataUpdate(snap);
             }
 

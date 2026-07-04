@@ -171,7 +171,7 @@
   <data name="Subtitle_PedalFeel" xml:space="preserve"><value>// shape how the pedal feels, independent of the output curve below</value></data>
   <data name="SliderLabel_DeadzoneKg" xml:space="preserve"><value>Deadzone (kg)</value></data>
   <data name="SliderLabel_MaxForceKg" xml:space="preserve"><value>Max Force (kg)</value></data>
-  <data name="Hint_DeadzoneScaleAssumption" xml:space="preserve"><value>Host-side only. Deadzone and Max Force both treat raw 0-100% pedal travel as 0-200kg — the raw pedal signal has no independent force calibration of its own. Max Force sets where the input curve below reaches 100%.</value></data>
+  <data name="Hint_DeadzoneScaleAssumption" xml:space="preserve"><value>Host-side only. Deadzone and Max Force are in kg out of the device's Max Threshold (Sim Input Mapping) — or 0-200kg if you haven't set that yet. Max Force sets where the input curve below reaches 100%.</value></data>
   <data name="SliderLabel_TravelRangeMm" xml:space="preserve"><value>Start / End of Travel (mm)</value></data>
   <data name="Hint_TravelRangeMm" xml:space="preserve"><value>Writes real hardware calibration (cmdIds 0x84/0x85) — reverse-engineered from Pit House captures, not confirmed by Moza. Drag the two nodes to set the physical start/end of pedal travel, then verify it behaves correctly on your hardware.</value></data>
   <data name="SliderLabel_EndstopFrontStiffness" xml:space="preserve"><value>Front Limit Stiffness</value></data>
@@ -187,6 +187,7 @@
   <data name="Subtitle_EffectsTriggers" xml:space="preserve"><value>// triggers: ABS on game signal · Lockup on brake&gt;0.8 · Threshold on edge · Engine continuous</value></data>
   <data name="Section_Abs" xml:space="preserve"><value>ABS</value></data>
   <data name="Section_RoadTexture" xml:space="preserve"><value>Road Texture</value></data>
+  <data name="Section_BrakeFade" xml:space="preserve"><value>Brake Fade (Experimental)</value></data>
   <data name="Label_Enable" xml:space="preserve"><value>Enable</value></data>
   <data name="Button_Test1s" xml:space="preserve"><value>Test 1s</value></data>
   <data name="Label_Test" xml:space="preserve"><value>Test</value></data>
@@ -197,6 +198,8 @@
   <data name="SliderLabel_Smoothness" xml:space="preserve"><value>Smoothness</value></data>
   <data name="SliderLabel_TriggerLevel" xml:space="preserve"><value>Trigger Input Level</value></data>
   <data name="SliderLabel_VibrationDecay" xml:space="preserve"><value>Vibration Decay</value></data>
+  <data name="SliderLabel_OnsetTempC" xml:space="preserve"><value>Onset Temperature (°C)</value></data>
+  <data name="Hint_BrakeFadeExperimental" xml:space="preserve"><value>Experimental — writes the real Travel End and Max Threshold hardware calibrations while active (more travel and more force needed), then restores your configured values as brakes cool. Requires those already set in Pedal Feel / Sim Input Mapping — has no effect otherwise.</value></data>
   <data name="Label_PedalTrace" xml:space="preserve"><value>Pedal Trace (last 5s)</value></data>
   <data name="Subtitle_CalibrationExperimental" xml:space="preserve"><value>// experimental — may not be honored by mBooster firmware</value></data>
   <data name="Label_ReversedDirection" xml:space="preserve"><value>Reversed direction</value></data>
