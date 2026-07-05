@@ -142,6 +142,17 @@ namespace MozaPlugin
         public int? EndOffset { get; set; }
         /// <summary>Width-2 only: true = U16-LE, false = U16-BE; null = catalog default.</summary>
         public bool? LittleEndian { get; set; }
+        // ── Sub-byte / bit-packed geometry (null = byte-aligned) ──
+        // When StartBit or BitWidth is non-null the field is bit-packed: it owns the
+        // contiguous MSB-first bit run starting at StartOffset*8 + StartBit for BitWidth
+        // bits (may share a byte with a neighbour and leave spare bits). StartOffset stays
+        // authoritative for the first byte; EndOffset tracks the last touched byte (advisory).
+        /// <summary>In-byte MSB-first bit (0..7) of the field's MSB; null = byte-aligned.</summary>
+        public int? StartBit { get; set; }
+        /// <summary>Total bit width (1..24) of a packed field; null = byte-aligned.</summary>
+        public int? BitWidth { get; set; }
+        /// <summary>Bit order of a packed field: null/true = MSB-first (only mode used today).</summary>
+        public bool? MsbFirst { get; set; }
         /// <summary>Output gain: raw·Scale + Bias; null = 1.0. (CM1: per-field gain.)</summary>
         public double? Scale { get; set; }
         /// <summary>Output offset added after Scale; null = 0.0.</summary>
@@ -157,6 +168,7 @@ namespace MozaPlugin
                 Property = Property, InMin = InMin, InMax = InMax,
                 StartOffset = StartOffset, EndOffset = EndOffset,
                 LittleEndian = LittleEndian, Scale = Scale, Bias = Bias, Hidden = Hidden,
+                StartBit = StartBit, BitWidth = BitWidth, MsbFirst = MsbFirst,
             };
     }
 

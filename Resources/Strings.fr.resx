@@ -431,11 +431,14 @@
   <data name="Button_ResetToDefaults" xml:space="preserve"><value>RÉINITIALISER PAR DÉFAUT</value></data>
   <data name="Button_ResetField" xml:space="preserve"><value>RÉINITIALISER LE CHAMP</value></data>
   <data name="Button_SplitField" xml:space="preserve"><value>DIVISER LE CHAMP</value></data>
+  <data name="Button_BitSplit" xml:space="preserve"><value>DIVISER LES BITS</value></data>
   <data name="Button_MergePrev" xml:space="preserve"><value>FUSIONNER ◀</value></data>
   <data name="Button_MergeNext" xml:space="preserve"><value>FUSIONNER ▶</value></data>
   <data name="Button_RemoveSplit" xml:space="preserve"><value>SUPPRIMER LA DIVISION</value></data>
   <data name="Viz_Title" xml:space="preserve"><value>DONNÉES FSR1 EN DIRECT</value></data>
   <data name="Edit_StartByte" xml:space="preserve"><value>Octet de début</value></data>
+  <data name="Edit_StartBit" xml:space="preserve"><value>Bit de début</value></data>
+  <data name="Edit_BitWidth" xml:space="preserve"><value>Largeur de bits</value></data>
   <data name="Edit_EndByte" xml:space="preserve"><value>Octet de fin</value></data>
   <data name="Edit_Endian_LE" xml:space="preserve"><value>Petit-boutiste</value></data>
   <data name="Edit_Scale" xml:space="preserve"><value>Échelle</value></data>

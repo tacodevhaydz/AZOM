@@ -431,6 +431,39 @@
                                                                   Converter={StaticResource BoolToVisibility}}"/>
                                         </StackPanel>
 
+                                        <!-- FSR1 sub-byte / bit-packed steppers: shown only when this field
+                                             shares a byte (two values packed with a shared middle byte, e.g.
+                                             tyre/brake temps). Start-bit shifts the run; bit-width grows/shrinks
+                                             it. Independent of neighbours; spare bits between fields are allowed.
+                                             Probe overlays only these bits on live data, so exactly this box moves. -->
+                                        <StackPanel Orientation="Horizontal" Margin="0,8,0,0"
+                                                    Visibility="{Binding IsBitPacked,
+                                                                Converter={StaticResource BoolToVisibility}}">
+                                            <TextBlock Text="{x:Static res:Strings.Edit_StartBit}"
+                                                       VerticalAlignment="Center"
+                                                       Style="{StaticResource MutedHintText}"/>
+                                            <Button Content="◀" Width="30" Margin="6,0,0,0"
+                                                    Click="FieldBitOffsetMinus_Click" Tag="{Binding}"
+                                                    IsEnabled="{Binding CanBitOffsetMinus}"/>
+                                            <Button Content="▶" Width="30"
+                                                    Click="FieldBitOffsetPlus_Click" Tag="{Binding}"
+                                                    IsEnabled="{Binding CanBitOffsetPlus}"/>
+
+                                            <TextBlock Text="{x:Static res:Strings.Edit_BitWidth}"
+                                                       VerticalAlignment="Center" Margin="14,0,0,0"
+                                                       Style="{StaticResource MutedHintText}"/>
+                                            <Button Content="◀" Width="30" Margin="6,0,0,0"
+                                                    Click="FieldBitWidthMinus_Click" Tag="{Binding}"
+                                                    IsEnabled="{Binding CanBitWidthMinus}"/>
+                                            <TextBlock Text="{Binding BitRangeText}" MinWidth="86"
+                                                       VerticalAlignment="Center" TextAlignment="Center"
+                                                       FontFamily="{DynamicResource FontMono}"
+                                                       Foreground="{DynamicResource TextBrush}"/>
+                                            <Button Content="▶" Width="30"
+                                                    Click="FieldBitWidthPlus_Click" Tag="{Binding}"
+                                                    IsEnabled="{Binding CanBitWidthPlus}"/>
+                                        </StackPanel>
+
                                         <StackPanel Orientation="Horizontal" Margin="0,8,0,0"
                                                     Visibility="{Binding IsFsr1,
                                                                 Converter={StaticResource BoolToVisibility}}">
@@ -468,6 +501,11 @@
                                                     Margin="8,0,0,0"
                                                     Click="FieldSplit_Click" Tag="{Binding}"
                                                     Visibility="{Binding CanSplit,
+                                                                Converter={StaticResource BoolToVisibility}}"/>
+                                            <Button Content="{x:Static res:Strings.Button_BitSplit}"
+                                                    Margin="8,0,0,0"
+                                                    Click="FieldBitSplit_Click" Tag="{Binding}"
+                                                    Visibility="{Binding CanBitSplit,
                                                                 Converter={StaticResource BoolToVisibility}}"/>
                                             <Button Content="{x:Static res:Strings.Button_RemoveSplit}"
                                                     Margin="8,0,0,0"

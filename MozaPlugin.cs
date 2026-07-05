@@ -2977,10 +2977,11 @@ namespace MozaPlugin
         /// <summary>Disarm the field-span probe (row editor closed).</summary>
         internal void ClearFsr1FieldProbe() => _fsr1FieldProbe = null;
 
-        /// <summary>The field-span probe's CURRENT resolved target — record type + the
-        /// contiguous byte span (start..end inclusive) the field occupies after applying
-        /// its user override — or null when the field-span probe is not armed / unresolvable.</summary>
-        internal (byte type, int startOff, int endOff)? Fsr1FieldProbeTarget()
+        /// <summary>The field-span probe's CURRENT resolved target — record type, the contiguous
+        /// byte span (start..end inclusive), and (for a bit-packed field) its exact bit run — after
+        /// applying its user override, or null when not armed / unresolvable. <c>packed</c> selects
+        /// the overlay probe (ramp only the field's bits over live data) vs the byte-span probe.</summary>
+        internal (byte type, int startOff, int endOff, bool packed, int bitOffset, int bitWidth, bool msbFirst)? Fsr1FieldProbeTarget()
         {
             var p = _fsr1FieldProbe;
             if (p == null) return null;
@@ -2989,9 +2990,10 @@ namespace MozaPlugin
             // Resolve through the SAME gapless partition the driver emits — so the lit span
             // matches the wire exactly, and synthetic split fields (absent from dash.Fields)
             // are found too. Using the raw override here diverged from the tiled output.
-            foreach (var (f, offsets, _) in Telemetry.Fsr1DashboardCatalog.ResolvePartition(this, dash))
-                if (f.FieldId == p.FieldId && offsets.Length > 0)
-                    return (dash.RecordType, offsets[0], offsets[offsets.Length - 1]);
+            foreach (var slot in Telemetry.Fsr1DashboardCatalog.ResolvePartition(this, dash))
+                if (slot.Field.FieldId == p.FieldId)
+                    return (dash.RecordType, slot.ByteStart, slot.ByteEnd,
+                            !slot.IsByteAligned, slot.BitOffset, slot.BitWidth, slot.MsbFirst);
             return null;
         }
 
@@ -4179,6 +4181,7 @@ namespace MozaPlugin
         // FSR1 synthetic split fields (net-new fields carved out of a catalog field).
         internal System.Collections.Generic.List<Fsr1SyntheticField> GetSyntheticFields(string recordKey) => _fsr1Cm1Mapping.GetSyntheticFields(recordKey);
         internal bool SplitFsr1Field(string recordKey, string fieldId) => _fsr1Cm1Mapping.SplitFsr1Field(recordKey, fieldId);
+        internal bool BitSplitFsr1Field(string recordKey, string fieldId) => _fsr1Cm1Mapping.BitSplitFsr1Field(recordKey, fieldId);
         internal bool RemoveFsr1Split(string recordKey, string fieldId) => _fsr1Cm1Mapping.RemoveFsr1Split(recordKey, fieldId);
         internal bool MergeFsr1Field(string recordKey, string fieldId, bool mergeNext) => _fsr1Cm1Mapping.MergeFsr1Field(recordKey, fieldId, mergeNext);
         internal void ClearSyntheticFields(string recordKey) => _fsr1Cm1Mapping.ClearSyntheticFields(recordKey);

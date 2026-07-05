@@ -202,6 +202,50 @@ namespace MozaPlugin.Devices.WheelUi
             RaiseLayoutChanged();
         }
 
+        // ── FSR1 sub-byte / bit-packed editor state (INDEPENDENT steppers) ──────
+        // A packed field owns an arbitrary MSB-first bit run [BitOffset, BitOffset+BitWidth) that
+        // may share a byte with a neighbour and leave spare bits between fields. Unlike the coupled
+        // byte divider, the bit steppers move only THIS field — LowerBitBound/UpperBitBound (set by
+        // the factory from the adjacent slots' bit edges) fence it off from its neighbours' bits.
+        // BitOffset/BitWidth are non-notifying (like Start/End); SetBitSpan raises UI only, the
+        // code-behind owns persistence.
+
+        /// <summary>True when this row edits a bit-packed field (shows the bit-stepper panel).</summary>
+        public bool IsBitPacked { get; set; }
+        /// <summary>Absolute MSB-first bit offset of the field's MSB over the payload.</summary>
+        public int BitOffset { get; set; }
+        /// <summary>Field width in bits (1..24).</summary>
+        public int BitWidth { get; set; } = 8;
+        /// <summary>Lowest bit this field may start at (previous field's bit-end / record start).</summary>
+        public int LowerBitBound { get; set; }
+        /// <summary>Highest bit-end this field may reach (next field's bit-start / record end).</summary>
+        public int UpperBitBound { get; set; }
+
+        /// <summary>Set the bit span and refresh dependent UI (no persist — code-behind owns that).</summary>
+        public void SetBitSpan(int bitOffset, int bitWidth)
+        {
+            BitOffset = bitOffset;
+            BitWidth = bitWidth;
+            RaiseLayoutChanged();
+        }
+
+        /// <summary>Bit-range label shown next to the bit steppers, e.g. "b15.5 +11b".</summary>
+        public string BitRangeText => $"b{BitOffset >> 3}.{BitOffset & 7} +{BitWidth}b";
+
+        /// <summary>Total bits the field currently occupies (packed → BitWidth, else Width×8).</summary>
+        private int CurrentBits => IsBitPacked ? BitWidth : Width * 8;
+
+        /// <summary>An FSR1 field ≥ 2 bits wide can be bit-split into two sub-byte fields that
+        /// share a byte — the shared-byte packing the wheel actually uses for tyre/brake temps.</summary>
+        public bool CanBitSplit => IsFsr1 && CurrentBits >= 2;
+
+        // Independent bit-stepper guards — fenced by Lower/UpperBitBound so a step can never
+        // overlap a neighbour's bits (shrinking just leaves spare bits, which is allowed).
+        public bool CanBitOffsetMinus => IsBitPacked && BitOffset > LowerBitBound;
+        public bool CanBitOffsetPlus => IsBitPacked && BitOffset + BitWidth < UpperBitBound;
+        public bool CanBitWidthMinus => IsBitPacked && BitWidth > 1;
+        public bool CanBitWidthPlus => IsBitPacked && BitWidth < 24 && BitOffset + BitWidth < UpperBitBound;
+
         // A span/endianness change can flip the encoding text, the BE/LE visibility, and every
         // stepper guard (a neighbour's guards depend on this field's width) — re-raise the lot.
         // Public so the code-behind can refresh sibling rows after a divider move ripples out.
@@ -219,6 +263,12 @@ namespace MozaPlugin.Devices.WheelUi
             PropertyChanged?.Invoke(this, new PropertyChangedEventArgs(nameof(CanEndPlus)));
             PropertyChanged?.Invoke(this, new PropertyChangedEventArgs(nameof(CanMergePrev)));
             PropertyChanged?.Invoke(this, new PropertyChangedEventArgs(nameof(CanMergeNext)));
+            PropertyChanged?.Invoke(this, new PropertyChangedEventArgs(nameof(BitRangeText)));
+            PropertyChanged?.Invoke(this, new PropertyChangedEventArgs(nameof(CanBitSplit)));
+            PropertyChanged?.Invoke(this, new PropertyChangedEventArgs(nameof(CanBitOffsetMinus)));
+            PropertyChanged?.Invoke(this, new PropertyChangedEventArgs(nameof(CanBitOffsetPlus)));
+            PropertyChanged?.Invoke(this, new PropertyChangedEventArgs(nameof(CanBitWidthMinus)));
+            PropertyChanged?.Invoke(this, new PropertyChangedEventArgs(nameof(CanBitWidthPlus)));
         }
 
         private double _inMin;

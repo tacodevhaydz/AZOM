@@ -1098,6 +1098,75 @@ namespace MozaPlugin.Devices.WheelUi
                     r.RaiseLayoutChanged();
         }
 
+        // ── FSR1 bit-packed steppers (INDEPENDENT — move only this field's bit run) ──────
+        private void FieldBitOffsetMinus_Click(object sender, RoutedEventArgs e) =>
+            StepBit(sender, r => { if (r.CanBitOffsetMinus) r.SetBitSpan(r.BitOffset - 1, r.BitWidth); });
+        private void FieldBitOffsetPlus_Click(object sender, RoutedEventArgs e) =>
+            StepBit(sender, r => { if (r.CanBitOffsetPlus) r.SetBitSpan(r.BitOffset + 1, r.BitWidth); });
+        private void FieldBitWidthMinus_Click(object sender, RoutedEventArgs e) =>
+            StepBit(sender, r => { if (r.CanBitWidthMinus) r.SetBitSpan(r.BitOffset, r.BitWidth - 1); });
+        private void FieldBitWidthPlus_Click(object sender, RoutedEventArgs e) =>
+            StepBit(sender, r => { if (r.CanBitWidthPlus) r.SetBitSpan(r.BitOffset, r.BitWidth + 1); });
+
+        private void StepBit(object sender, Action<ChannelMappingRow> step)
+        {
+            if (_plugin == null) return;
+            if ((sender as FrameworkElement)?.Tag is not ChannelMappingRow row) return;
+            if (!row.IsFsr1 || !row.IsBitPacked || string.IsNullOrEmpty(row.RecordKey) || string.IsNullOrEmpty(row.FieldId)) return;
+
+            int beforeOff = row.BitOffset, beforeW = row.BitWidth;
+            step(row);
+            if (row.BitOffset == beforeOff && row.BitWidth == beforeW) return;  // guard rejected the step
+
+            _plugin.SetFsr1FieldMapping(row.RecordKey, row.FieldId, BuildFsr1MappingFromRow(row));
+            RefreshRecordBitBounds(row.RecordKey);           // re-fence neighbours + sync resolved geometry
+            _plugin.SetFsr1FieldProbe(row.RecordKey, row.FieldId);   // re-arm on the new bit run
+            TelemetryMappingStatus.Text = $"Saved at {DateTime.Now:HH:mm:ss}";
+        }
+
+        // After a bit step, the freed/consumed bits shift a neighbour's room, so recompute every
+        // row's bit bounds from the authoritative partition (includes anchors + push/clamp repair)
+        // and re-raise guards — keeps the editor open for rapid stepping (no list rebuild).
+        private void RefreshRecordBitBounds(string recordKey)
+        {
+            var dash = Telemetry.Fsr1DashboardCatalog.ByKey(recordKey);
+            if (dash == null || _plugin == null) { RefreshRecordGuards(recordKey); return; }
+            var slots = Telemetry.Fsr1DashboardCatalog.ResolvePartition(_plugin, dash);
+            for (int i = 0; i < slots.Count; i++)
+            {
+                int lower = i > 0 ? slots[i - 1].BitOffset + slots[i - 1].BitWidth : 5 * 8;
+                int upper = i < slots.Count - 1 ? slots[i + 1].BitOffset : dash.PayloadLen * 8;
+                var s = slots[i];
+                foreach (var r in _channelRows)
+                    if (r.IsFsr1 && r.RecordKey == recordKey && r.FieldId == s.Field.FieldId)
+                    {
+                        r.LowerBitBound = lower;
+                        r.UpperBitBound = upper;
+                        r.IsBitPacked = !s.IsByteAligned;
+                        r.BitOffset = s.BitOffset;
+                        r.BitWidth = s.BitWidth;
+                        r.SetSpan(s.ByteStart, s.ByteEnd);   // sync byte view + raise all layout state
+                    }
+            }
+        }
+
+        // Convert an FSR1 field into two sub-byte / bit-packed fields sharing a byte — the packing
+        // the wheel uses for tyre/brake temps. Halves the bit range; each half is then bit-stepped
+        // and probed to land the real split. The editor closes on repopulate; release the probe.
+        private void FieldBitSplit_Click(object sender, RoutedEventArgs e)
+        {
+            if (_plugin == null) return;
+            if ((sender as FrameworkElement)?.Tag is not ChannelMappingRow row) return;
+            if (!row.IsFsr1 || string.IsNullOrEmpty(row.RecordKey) || string.IsNullOrEmpty(row.FieldId)) return;
+
+            _plugin.ClearFsr1FieldProbe();
+            bool ok = _plugin.BitSplitFsr1Field(row.RecordKey, row.FieldId);
+            PopulateChannelMappingList();
+            TelemetryMappingStatus.Text = ok
+                ? $"Bit-split at {DateTime.Now:HH:mm:ss}"
+                : "Cannot bit-split — field is only 1 bit wide";
+        }
+
         // Revert one field to its catalog default: clear the stored override and
         // re-seed the row's editor state from the catalog so the steppers reset.
         private void FieldReset_Click(object sender, RoutedEventArgs e)
@@ -1264,6 +1333,25 @@ namespace MozaPlugin.Devices.WheelUi
         // default, so an unedited field prunes to nothing (dict-missing ≠ explicit-off).
         private static Fsr1FieldMapping BuildFsr1MappingFromRow(ChannelMappingRow row)
         {
+            // Bit-packed field: persist explicit bit geometry (StartBit/BitWidth). A bit field
+            // always deviates from the byte-aligned catalog default, so it never prunes and keeps
+            // the record in bit mode. Same shape for a synthetic or a catalog-field-turned-packed.
+            if (row.IsBitPacked)
+            {
+                return new Fsr1FieldMapping
+                {
+                    Property = (row.SimHubProperty ?? "").Trim(),
+                    InMin = row.InMin,
+                    InMax = row.InMax,
+                    StartOffset = row.BitOffset >> 3,
+                    EndOffset = (row.BitOffset + row.BitWidth - 1) >> 3,
+                    StartBit = row.BitOffset & 7,
+                    BitWidth = row.BitWidth,
+                    Scale = row.Scale != 1.0 ? row.Scale : (double?)null,
+                    Bias = row.Bias != 0.0 ? row.Bias : (double?)null,
+                };
+            }
+
             // Synthetic split fields exist only in the profile — there is no catalog default
             // to deviate from, so always persist an explicit, full span (never prunes). The
             // endianness flag is meaningful only at width 2; gain prunes to null at unity.
