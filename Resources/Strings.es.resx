@@ -160,21 +160,42 @@
   <data name="Section_MBoosterPedals" xml:space="preserve"><value>PEDALES MBOOSTER</value></data>
   <data name="Subtitle_MBoosterPedals" xml:space="preserve"><value>// efectos renderizados por el host · rol + posición por dispositivo</value></data>
   <data name="SliderLabel_Device" xml:space="preserve"><value>Dispositivo</value></data>
-  <data name="Status_NoMBooster" xml:space="preserve"><value>No hay mBooster conectado</value></data>
-  <data name="Section_PedalRole" xml:space="preserve"><value>ROL DEL PEDAL</value></data>
   <data name="SliderLabel_Role" xml:space="preserve"><value>Rol</value></data>
   <data name="Option_Disabled" xml:space="preserve"><value>Desactivado</value></data>
   <data name="Option_Throttle" xml:space="preserve"><value>Acelerador</value></data>
   <data name="Option_Brake" xml:space="preserve"><value>Freno</value></data>
   <data name="Option_Clutch" xml:space="preserve"><value>Embrague</value></data>
+  <data name="Section_PedalFeel" xml:space="preserve"><value>SENSACIÓN DEL PEDAL</value></data>
+  <data name="Subtitle_PedalFeel" xml:space="preserve"><value>// define cómo se siente el pedal, independientemente de la curva de salida de abajo</value></data>
+  <data name="SliderLabel_DeadzoneKg" xml:space="preserve"><value>Zona muerta (kg)</value></data>
+  <data name="SliderLabel_MaxForceKg" xml:space="preserve"><value>Fuerza máxima (kg)</value></data>
+  <data name="Hint_DeadzoneScaleAssumption" xml:space="preserve"><value>Solo del lado del software. Tanto la Zona muerta como la Fuerza máxima asumen una escala completa fija de 0-200 kg para el 0-100% del recorrido del pedal, ya que la señal cruda del pedal no tiene una calibración de fuerza propia. Fuerza máxima define dónde la curva de entrada de abajo alcanza el 100%.</value></data>
+  <data name="SliderLabel_TravelRangeMm" xml:space="preserve"><value>Inicio / Fin del Recorrido (mm)</value></data>
+  <data name="Hint_TravelRangeMm" xml:space="preserve"><value>Escribe una calibración de hardware real (cmdId 0x84/0x85); obtenido por ingeniería inversa a partir de capturas de Pit House, no confirmado por Moza. Arrastra los dos nodos para establecer el inicio/fin físico del recorrido del pedal y luego verifica que funcione correctamente en tu hardware.</value></data>
+  <data name="SliderLabel_EndstopFrontStiffness" xml:space="preserve"><value>Rigidez del límite frontal</value></data>
+  <data name="SliderLabel_EndstopEndStiffness" xml:space="preserve"><value>Rigidez del límite final</value></data>
+  <data name="Hint_EndstopStiffness" xml:space="preserve"><value>Escribe una calibración de hardware real (cmdId 0xB2); obtenido por ingeniería inversa a partir de capturas de Pit House, no confirmado por Moza. Establece cuán rígido se siente el pedal al alcanzar el inicio/fin de su recorrido físico.</value></data>
+  <data name="Hint_InputCurveHostOnly" xml:space="preserve"><value>Solo del lado del software: remodela la posición del pedal informada antes de que llegue al juego (y a la curva de salida de Mapeo de entrada de simulación). No se escribe nada en el dispositivo.</value></data>
+  <data name="Section_SimInputMapping" xml:space="preserve"><value>MAPEO DE ENTRADA DE SIMULACIÓN</value></data>
+  <data name="Subtitle_SimInputMapping" xml:space="preserve"><value>// mapea la señal de la celda de carga/pedal al juego, al estilo Pit House</value></data>
+  <data name="SliderLabel_MaxThresholdKg" xml:space="preserve"><value>Umbral máximo (kg)</value></data>
+  <data name="Hint_MaxThresholdReverseEngineered" xml:space="preserve"><value>Obtenido por ingeniería inversa a partir de una captura de Pit House (cmdId 0xB3); no confirmado por Moza. Verifica que funcione correctamente en tu hardware.</value></data>
+  <data name="Hint_OutputCurveDragX" xml:space="preserve"><value>Arrastra un nodo lateralmente para mover su posición en el eje de entrada; por ejemplo, arrastra el último nodo a la izquierda para alcanzar el 100% de salida antes del 100% de entrada.</value></data>
   <data name="Section_Effects" xml:space="preserve"><value>EFECTOS</value></data>
   <data name="Subtitle_EffectsTriggers" xml:space="preserve"><value>// disparadores: ABS por señal del juego · Bloqueo con freno&gt;0,8 · Umbral en el borde · Motor continuo</value></data>
   <data name="Section_Abs" xml:space="preserve"><value>ABS</value></data>
+  <data name="Section_RoadTexture" xml:space="preserve"><value>Textura de la carretera</value></data>
   <data name="Label_Enable" xml:space="preserve"><value>Activar</value></data>
   <data name="Button_Test1s" xml:space="preserve"><value>Probar 1s</value></data>
+  <data name="Label_Test" xml:space="preserve"><value>Probar</value></data>
   <data name="Section_Lockup" xml:space="preserve"><value>Bloqueo</value></data>
   <data name="Section_Threshold" xml:space="preserve"><value>Umbral</value></data>
-  <data name="Section_EngineContinuous" xml:space="preserve"><value>Motor (continuo — limitado automáticamente al 10%)</value></data>
+  <data name="Section_EngineContinuous" xml:space="preserve"><value>Vibración del motor</value></data>
+  <data name="SliderLabel_FrequencyHz" xml:space="preserve"><value>Frecuencia (Hz)</value></data>
+  <data name="SliderLabel_Smoothness" xml:space="preserve"><value>Suavidad</value></data>
+  <data name="SliderLabel_TriggerLevel" xml:space="preserve"><value>Nivel de activación</value></data>
+  <data name="SliderLabel_VibrationDecay" xml:space="preserve"><value>Decaimiento de la vibración</value></data>
+  <data name="Label_PedalTrace" xml:space="preserve"><value>Traza del pedal (últimos 5s)</value></data>
   <data name="Subtitle_CalibrationExperimental" xml:space="preserve"><value>// experimental — puede que el firmware del mBooster lo ignore</value></data>
   <data name="Label_ReversedDirection" xml:space="preserve"><value>Dirección invertida</value></data>
   <data name="SliderLabel_MinRaw" xml:space="preserve"><value>Mín (bruto)</value></data>
@@ -267,9 +288,11 @@
   <data name="Button_Github" xml:space="preserve"><value>GitHub</value></data>
   <data name="Button_JoinDiscord" xml:space="preserve"><value>Unirse al Discord</value></data>
   <data name="Button_SponsorDevelopment" xml:space="preserve"><value>Patrocinar el desarrollo</value></data>
+  <data name="Button_Kofi" xml:space="preserve"><value>Apóyame en Ko-fi</value></data>
   <data name="Tooltip_Github" xml:space="preserve"><value>github.com/giantorth/moza-simhub-plugin</value></data>
   <data name="Tooltip_JoinDiscord" xml:space="preserve"><value>Únete al Discord del proyecto</value></data>
   <data name="Tooltip_Sponsor" xml:space="preserve"><value>github.com/sponsors/giantorth</value></data>
+  <data name="Tooltip_Kofi" xml:space="preserve"><value>ko-fi.com/giantorth</value></data>
   <data name="Hint_ThanksToTesters" xml:space="preserve"><value>Un enorme agradecimiento a todos los probadores alfa y beta tempranos que pusieron su tiempo — y su cordura — en juego mientras yo descubría cómo hacer funcionar el protocolo MOZA. Este plugin no existiría sin ustedes.</value></data>
   <data name="Label_UpdateAvailable" xml:space="preserve"><value>Actualización disponible</value></data>
   <data name="Button_OpenReleaseNotes" xml:space="preserve"><value>Abrir notas de la versión</value></data>
@@ -413,9 +436,14 @@
   <data name="Button_ResetToDefaults" xml:space="preserve"><value>RESTABLECER VALORES</value></data>
   <data name="Button_ResetField" xml:space="preserve"><value>RESTABLECER CAMPO</value></data>
   <data name="Button_SplitField" xml:space="preserve"><value>DIVIDIR CAMPO</value></data>
+  <data name="Button_BitSplit" xml:space="preserve"><value>DIVIDIR BITS</value></data>
+  <data name="Button_MergePrev" xml:space="preserve"><value>COMBINAR ◀</value></data>
+  <data name="Button_MergeNext" xml:space="preserve"><value>COMBINAR ▶</value></data>
   <data name="Button_RemoveSplit" xml:space="preserve"><value>QUITAR DIVISIÓN</value></data>
   <data name="Viz_Title" xml:space="preserve"><value>DATOS FSR1 EN VIVO</value></data>
   <data name="Edit_StartByte" xml:space="preserve"><value>Byte inicial</value></data>
+  <data name="Edit_StartBit" xml:space="preserve"><value>Bit inicial</value></data>
+  <data name="Edit_BitWidth" xml:space="preserve"><value>Ancho de bits</value></data>
   <data name="Edit_EndByte" xml:space="preserve"><value>Byte final</value></data>
   <data name="Edit_Endian_LE" xml:space="preserve"><value>Little-endian</value></data>
   <data name="Edit_Scale" xml:space="preserve"><value>Escala</value></data>
@@ -547,7 +575,6 @@
   <data name="Status_TelemetrySenderUnavailableInit" xml:space="preserve"><value>Emisor de telemetría no disponible (complemento no inicializado).</value></data>
   <data name="Status_PickMzdashFirst" xml:space="preserve"><value>Primero seleccione un archivo .mzdash o una entrada de la biblioteca.</value></data>
   <data name="Status_NoConfigJsonState" xml:space="preserve"><value>(aún no se ha recibido el estado configJson)</value></data>
-  <data name="Status_NoMBoosterSelected" xml:space="preserve"><value>Ningún mBooster seleccionado</value></data>
   <data name="Status_PluginNotLoaded" xml:space="preserve"><value>Complemento no cargado</value></data>
   <data name="Upload_CannotResolveBytes" xml:space="preserve"><value>No se pueden obtener los bytes sin procesar de «{0}»; seleccione un archivo local en su lugar.</value></data>
   <data name="Upload_FolderPrefix" xml:space="preserve"><value>Carpeta: {0}</value></data>

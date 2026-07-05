@@ -77,10 +77,14 @@ namespace MozaPlugin.Sdk.Resources.Motor
             // this conversion the wheel applies 2× the requested lock or
             // silently clamps, which manifests as "client wrote but the
             // wheel didn't change angle".
-            if (map.TryGetValue("GameMaximumAngle", out int gameMax))
-                _hardware.WriteIfBaseConnected("base-max-angle", gameMax / 2);
+            // ORDER IS LOAD-BEARING: base-limit BEFORE base-max-angle. The wheelbase
+            // clamps max-angle to >= the current limit, so lowering the lock fails live
+            // if max-angle is written while the old (higher) limit still stands. Lower
+            // the limit first. See SteerLockWriteHandler for the capture rationale.
             if (map.TryGetValue("LimitAngle", out int limit))
                 _hardware.WriteIfBaseConnected("base-limit", limit / 2);
+            if (map.TryGetValue("GameMaximumAngle", out int gameMax))
+                _hardware.WriteIfBaseConnected("base-max-angle", gameMax / 2);
 
             return CoapResourceResponse.Valid();
         }

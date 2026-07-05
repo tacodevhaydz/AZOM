@@ -44,9 +44,15 @@ namespace MozaPlugin.Telemetry
         public long Value { get; }
         public byte[] Bytes { get; }
         public bool IsSynthetic { get; }
+        /// <summary>Absolute MSB-first bit offset for a bit-packed field; -1 = byte-aligned.</summary>
+        public int BitOffset { get; }
+        /// <summary>Bit width for a bit-packed field; 0 = byte-aligned.</summary>
+        public int BitWidth { get; }
+        public bool IsPacked => BitOffset >= 0 && BitWidth > 0;
 
         public Fsr1VizField(string label, int start, int end, string encoding,
-                            long value, byte[] bytes, bool isSynthetic)
+                            long value, byte[] bytes, bool isSynthetic,
+                            int bitOffset = -1, int bitWidth = 0)
         {
             Label = label ?? "";
             Start = start;
@@ -55,6 +61,8 @@ namespace MozaPlugin.Telemetry
             Value = value;
             Bytes = bytes ?? Array.Empty<byte>();
             IsSynthetic = isSynthetic;
+            BitOffset = bitOffset;
+            BitWidth = bitWidth;
         }
     }
 }

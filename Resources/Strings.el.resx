@@ -155,21 +155,42 @@
   <data name="Section_MBoosterPedals" xml:space="preserve"><value>ΠΕΝΤΆΛ MBOOSTER</value></data>
   <data name="Subtitle_MBoosterPedals" xml:space="preserve"><value>// host-rendered εφφέ · ρόλος + θέση ανά συσκευή</value></data>
   <data name="SliderLabel_Device" xml:space="preserve"><value>Συσκευή</value></data>
-  <data name="Status_NoMBooster" xml:space="preserve"><value>Δεν βρέθηκε mBooster</value></data>
-  <data name="Section_PedalRole" xml:space="preserve"><value>ΡΟΛΟΣ ΠΕΝΤΆΛ</value></data>
   <data name="SliderLabel_Role" xml:space="preserve"><value>Ρόλος</value></data>
   <data name="Option_Disabled" xml:space="preserve"><value>Απενεργοποιημένο</value></data>
   <data name="Option_Throttle" xml:space="preserve"><value>Γκάζι</value></data>
   <data name="Option_Brake" xml:space="preserve"><value>Φρένο</value></data>
   <data name="Option_Clutch" xml:space="preserve"><value>Συμπλέκτης</value></data>
+  <data name="Section_PedalFeel" xml:space="preserve"><value>ΑΙΣΘΗΣΗ ΠΕΝΤΑΛ</value></data>
+  <data name="Subtitle_PedalFeel" xml:space="preserve"><value>// καθορίζει πώς αισθάνεται το πεντάλ, ανεξάρτητα από την καμπύλη εξόδου παρακάτω</value></data>
+  <data name="SliderLabel_DeadzoneKg" xml:space="preserve"><value>Νεκρή ζώνη (kg)</value></data>
+  <data name="SliderLabel_MaxForceKg" xml:space="preserve"><value>Μέγιστη δύναμη (kg)</value></data>
+  <data name="Hint_DeadzoneScaleAssumption" xml:space="preserve"><value>Μόνο από την πλευρά του λογισμικού. Η Νεκρή ζώνη και η Μέγιστη δύναμη θεωρούν και οι δύο μια σταθερή πλήρη κλίμακα 0-200kg για το 0-100% της διαδρομής του πεντάλ, καθώς το ανεπεξέργαστο σήμα δεν έχει δική του βαθμονόμηση δύναμης. Η Μέγιστη δύναμη καθορίζει πού η καμπύλη εισόδου παρακάτω φτάνει στο 100%.</value></data>
+  <data name="SliderLabel_TravelRangeMm" xml:space="preserve"><value>Αρχή / Τέλος Διαδρομής (mm)</value></data>
+  <data name="Hint_TravelRangeMm" xml:space="preserve"><value>Γράφει πραγματική βαθμονόμηση υλικού (cmdId 0x84/0x85) — αντίστροφη μηχανική από καταγραφές του Pit House, δεν έχει επιβεβαιωθεί από τη Moza. Σύρετε τους δύο κόμβους για να ορίσετε το φυσικό σημείο έναρξης/λήξης της διαδρομής του πεντάλ και έπειτα επιβεβαιώστε ότι λειτουργεί σωστά στο υλικό σας.</value></data>
+  <data name="SliderLabel_EndstopFrontStiffness" xml:space="preserve"><value>Σκληρότητα εμπρός ορίου</value></data>
+  <data name="SliderLabel_EndstopEndStiffness" xml:space="preserve"><value>Σκληρότητα τελικού ορίου</value></data>
+  <data name="Hint_EndstopStiffness" xml:space="preserve"><value>Γράφει πραγματική βαθμονόμηση υλικού (cmdId 0xB2) — αντίστροφη μηχανική από καταγραφές του Pit House, δεν έχει επιβεβαιωθεί από τη Moza. Ορίζει πόσο σκληρό αισθάνεται το πεντάλ όταν φτάνει στην αρχή/το τέλος της φυσικής διαδρομής του.</value></data>
+  <data name="Hint_InputCurveHostOnly" xml:space="preserve"><value>Μόνο από την πλευρά του λογισμικού: αναδιαμορφώνει τη θέση του πεντάλ πριν φτάσει στο παιχνίδι (και στην καμπύλη εξόδου παρακάτω). Δεν αποστέλλεται τίποτα στη συσκευή.</value></data>
+  <data name="Section_SimInputMapping" xml:space="preserve"><value>ΑΝΤΙΣΤΟΙΧΙΣΗ ΕΙΣΟΔΟΥ ΠΡΟΣΟΜΟΙΩΣΗΣ</value></data>
+  <data name="Subtitle_SimInputMapping" xml:space="preserve"><value>// αντιστοίχιση σήματος κυψέλης φόρτισης/πεντάλ στο παιχνίδι, στυλ Pit House</value></data>
+  <data name="SliderLabel_MaxThresholdKg" xml:space="preserve"><value>Μέγιστο κατώφλι (kg)</value></data>
+  <data name="Hint_MaxThresholdReverseEngineered" xml:space="preserve"><value>Αντίστροφη μηχανική από καταγραφή του Pit House (cmdId 0xB3) — δεν έχει επιβεβαιωθεί από τη Moza. Παρακαλούμε επιβεβαιώστε ότι λειτουργεί σωστά στο υλικό σας.</value></data>
+  <data name="Hint_OutputCurveDragX" xml:space="preserve"><value>Σύρετε έναν κόμβο πλευρικά για να αλλάξετε τη θέση του στον άξονα εισόδου — π.χ. σύρετε τον τελευταίο κόμβο αριστερά για να επιτευχθεί το 100% εξόδου πριν από το 100% εισόδου.</value></data>
   <data name="Section_Effects" xml:space="preserve"><value>ΕΦΦΕ</value></data>
   <data name="Subtitle_EffectsTriggers" xml:space="preserve"><value>// triggers: ABS σε σήμα παιχνιδιού · Κλείδωμα σε φρένο>0.8 · Κατώφλι σε άκρο · Κινητήρας συνεχής</value></data>
   <data name="Section_Abs" xml:space="preserve"><value>ABS</value></data>
+  <data name="Section_RoadTexture" xml:space="preserve"><value>Υφή δρόμου</value></data>
   <data name="Label_Enable" xml:space="preserve"><value>Ενεργοποίηση</value></data>
   <data name="Button_Test1s" xml:space="preserve"><value>Δοκιμή 1δ</value></data>
+  <data name="Label_Test" xml:space="preserve"><value>Δοκιμή</value></data>
   <data name="Section_Lockup" xml:space="preserve"><value>Κλείδωμα</value></data>
   <data name="Section_Threshold" xml:space="preserve"><value>Κατώφλι</value></data>
-  <data name="Section_EngineContinuous" xml:space="preserve"><value>Κινητήρας (συνεχής — αυτόματος περιορισμός στο 10%)</value></data>
+  <data name="Section_EngineContinuous" xml:space="preserve"><value>Δόνηση κινητήρα</value></data>
+  <data name="SliderLabel_FrequencyHz" xml:space="preserve"><value>Συχνότητα (Hz)</value></data>
+  <data name="SliderLabel_Smoothness" xml:space="preserve"><value>Ομαλότητα</value></data>
+  <data name="SliderLabel_TriggerLevel" xml:space="preserve"><value>Επίπεδο ενεργοποίησης</value></data>
+  <data name="SliderLabel_VibrationDecay" xml:space="preserve"><value>Απόσβεση δόνησης</value></data>
+  <data name="Label_PedalTrace" xml:space="preserve"><value>Ίχνος πεντάλ (τελευταία 5δ)</value></data>
   <data name="Subtitle_CalibrationExperimental" xml:space="preserve"><value>// πειραματικό — ενδέχεται να μην υποστηρίζεται από firmware mBooster</value></data>
   <data name="Label_ReversedDirection" xml:space="preserve"><value>Αντίστροφη κατεύθυνση</value></data>
   <data name="SliderLabel_MinRaw" xml:space="preserve"><value>Ελάχ. Τιμή αισθητήρα</value></data>
@@ -263,9 +284,11 @@
   <data name="Button_Github" xml:space="preserve"><value>GitHub</value></data>
   <data name="Button_JoinDiscord" xml:space="preserve"><value>Εγγραφή στο Discord</value></data>
   <data name="Button_SponsorDevelopment" xml:space="preserve"><value>Χορηγία Ανάπτυξης</value></data>
+  <data name="Button_Kofi" xml:space="preserve"><value>Στηρίξτε με στο Ko-fi</value></data>
   <data name="Tooltip_Github" xml:space="preserve"><value>github.com/giantorth/moza-simhub-plugin</value></data>
   <data name="Tooltip_JoinDiscord" xml:space="preserve"><value>Εγγραφή στο Discord του προσθέτου</value></data>
   <data name="Tooltip_Sponsor" xml:space="preserve"><value>github.com/sponsors/giantorth</value></data>
+  <data name="Tooltip_Kofi" xml:space="preserve"><value>ko-fi.com/giantorth</value></data>
   <data name="Label_UpdateAvailable" xml:space="preserve"><value>Διαθέσιμη ενημέρωση</value></data>
   <data name="Button_OpenReleaseNotes" xml:space="preserve"><value>Άνοιγμα σημειώσεων έκδοσης</value></data>
   <data name="Button_SkipThisVersion" xml:space="preserve"><value>Παράλειψη αυτής της έκδοσης</value></data>
@@ -408,9 +431,14 @@
   <data name="Button_ResetToDefaults" xml:space="preserve"><value>ΕΠΑΝΑΦΟΡΑ ΣΤΑ ΠΡΟΕΠΙΛΕΓΜΕΝΑ</value></data>
   <data name="Button_ResetField" xml:space="preserve"><value>ΕΠΑΝΑΦΟΡΑ ΠΕΔΙΟΥ</value></data>
   <data name="Button_SplitField" xml:space="preserve"><value>ΔΙΑΙΡΕΣΗ ΠΕΔΙΟΥ</value></data>
+  <data name="Button_BitSplit" xml:space="preserve"><value>ΔΙΑΙΡΕΣΗ BIT</value></data>
+  <data name="Button_MergePrev" xml:space="preserve"><value>ΣΥΓΧΩΝΕΥΣΗ ◀</value></data>
+  <data name="Button_MergeNext" xml:space="preserve"><value>ΣΥΓΧΩΝΕΥΣΗ ▶</value></data>
   <data name="Button_RemoveSplit" xml:space="preserve"><value>ΚΑΤΑΡΓΗΣΗ ΔΙΑΙΡΕΣΗΣ</value></data>
   <data name="Viz_Title" xml:space="preserve"><value>ΖΩΝΤΑΝΑ ΔΕΔΟΜΕΝΑ FSR1</value></data>
   <data name="Edit_StartByte" xml:space="preserve"><value>Αρχικό byte</value></data>
+  <data name="Edit_StartBit" xml:space="preserve"><value>Αρχικό bit</value></data>
+  <data name="Edit_BitWidth" xml:space="preserve"><value>Πλάτος bit</value></data>
   <data name="Edit_EndByte" xml:space="preserve"><value>Τελικό byte</value></data>
   <data name="Edit_Endian_LE" xml:space="preserve"><value>Little-endian</value></data>
   <data name="Edit_Scale" xml:space="preserve"><value>Κλίμακα</value></data>
@@ -541,7 +569,6 @@
   <data name="Status_TelemetrySenderUnavailableInit" xml:space="preserve"><value>Ο αποστολέας τηλεμετρίας δεν είναι διαθέσιμος (το πρόσθετο δεν αρχικοποιήθηκε).</value></data>
   <data name="Status_PickMzdashFirst" xml:space="preserve"><value>Επιλέξτε πρώτα ένα αρχείο .mzdash ή μια καταχώριση βιβλιοθήκης.</value></data>
   <data name="Status_NoConfigJsonState" xml:space="preserve"><value>(δεν έχει ληφθεί ακόμη κατάσταση configJson)</value></data>
-  <data name="Status_NoMBoosterSelected" xml:space="preserve"><value>Δεν επιλέχθηκε mBooster</value></data>
   <data name="Status_PluginNotLoaded" xml:space="preserve"><value>Το πρόσθετο δεν φορτώθηκε</value></data>
   <data name="Upload_CannotResolveBytes" xml:space="preserve"><value>Δεν είναι δυνατή η ανάκτηση των ακατέργαστων δεδομένων για «{0}» — επιλέξτε ένα τοπικό αρχείο.</value></data>
   <data name="Upload_FolderPrefix" xml:space="preserve"><value>Φάκελος: {0}</value></data>

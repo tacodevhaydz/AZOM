@@ -142,17 +142,33 @@ namespace MozaPlugin
         public int? EndOffset { get; set; }
         /// <summary>Width-2 only: true = U16-LE, false = U16-BE; null = catalog default.</summary>
         public bool? LittleEndian { get; set; }
+        // ── Sub-byte / bit-packed geometry (null = byte-aligned) ──
+        // When StartBit or BitWidth is non-null the field is bit-packed: it owns the
+        // contiguous MSB-first bit run starting at StartOffset*8 + StartBit for BitWidth
+        // bits (may share a byte with a neighbour and leave spare bits). StartOffset stays
+        // authoritative for the first byte; EndOffset tracks the last touched byte (advisory).
+        /// <summary>In-byte MSB-first bit (0..7) of the field's MSB; null = byte-aligned.</summary>
+        public int? StartBit { get; set; }
+        /// <summary>Total bit width (1..24) of a packed field; null = byte-aligned.</summary>
+        public int? BitWidth { get; set; }
+        /// <summary>Bit order of a packed field: null/true = MSB-first (only mode used today).</summary>
+        public bool? MsbFirst { get; set; }
         /// <summary>Output gain: raw·Scale + Bias; null = 1.0. (CM1: per-field gain.)</summary>
         public double? Scale { get; set; }
         /// <summary>Output offset added after Scale; null = 0.0.</summary>
         public double? Bias { get; set; }
+        /// <summary>True = this catalog field has been merged into a neighbour, so it is
+        /// skipped everywhere (driver/UI/probe/viz) and its byte belongs to the neighbour.
+        /// Cleared by reset-to-defaults. Synthetic fields are removed outright, not hidden.</summary>
+        public bool Hidden { get; set; }
 
         public Fsr1FieldMapping Clone() =>
             new Fsr1FieldMapping
             {
                 Property = Property, InMin = InMin, InMax = InMax,
                 StartOffset = StartOffset, EndOffset = EndOffset,
-                LittleEndian = LittleEndian, Scale = Scale, Bias = Bias,
+                LittleEndian = LittleEndian, Scale = Scale, Bias = Bias, Hidden = Hidden,
+                StartBit = StartBit, BitWidth = BitWidth, MsbFirst = MsbFirst,
             };
     }
 
@@ -322,7 +338,11 @@ namespace MozaPlugin
         public int Equalizer5 { get; set; } = -1000;
         public int Equalizer6 { get; set; } = -1000;
 
-        // ===== FFB Curve (Y outputs at fixed 20/40/60/80/100% breakpoints) =====
+        // ===== FFB Curve (X input positions of points 1-4 + Y outputs; point 5 fixed at input=100%) =====
+        public int FfbCurveX1 { get; set; } = -1;
+        public int FfbCurveX2 { get; set; } = -1;
+        public int FfbCurveX3 { get; set; } = -1;
+        public int FfbCurveX4 { get; set; } = -1;
         public int FfbCurveY1 { get; set; } = -1;
         public int FfbCurveY2 { get; set; } = -1;
         public int FfbCurveY3 { get; set; } = -1;
@@ -509,6 +529,7 @@ namespace MozaPlugin
             Equalizer4 = p.Equalizer4; Equalizer5 = p.Equalizer5; Equalizer6 = p.Equalizer6;
 
             // FFB Curve
+            FfbCurveX1 = p.FfbCurveX1; FfbCurveX2 = p.FfbCurveX2; FfbCurveX3 = p.FfbCurveX3; FfbCurveX4 = p.FfbCurveX4;
             FfbCurveY1 = p.FfbCurveY1; FfbCurveY2 = p.FfbCurveY2; FfbCurveY3 = p.FfbCurveY3; FfbCurveY4 = p.FfbCurveY4; FfbCurveY5 = p.FfbCurveY5;
 
             // Handbrake
@@ -694,6 +715,7 @@ namespace MozaPlugin
             Equalizer4 = data.Equalizer4; Equalizer5 = data.Equalizer5; Equalizer6 = data.Equalizer6;
 
             // FFB Curve
+            FfbCurveX1 = data.FfbCurveX1; FfbCurveX2 = data.FfbCurveX2; FfbCurveX3 = data.FfbCurveX3; FfbCurveX4 = data.FfbCurveX4;
             FfbCurveY1 = data.FfbCurveY1; FfbCurveY2 = data.FfbCurveY2; FfbCurveY3 = data.FfbCurveY3; FfbCurveY4 = data.FfbCurveY4; FfbCurveY5 = data.FfbCurveY5;
 
             // Handbrake

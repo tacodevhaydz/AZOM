@@ -20,16 +20,27 @@ namespace MozaPlugin.Telemetry
         {
             if (dash == null) return System.Array.Empty<Fsr1FieldDef>();
             var synth = plugin?.GetSyntheticFields(dash.Key);
-            if (synth == null || synth.Count == 0)
+            bool hasSynth = synth != null && synth.Count > 0;
+
+            // A catalog field merged into a neighbour is marked Hidden on its override and is
+            // skipped everywhere. Detect any so the fast (unchanged) path still applies when none.
+            bool anyHidden = false;
+            if (plugin != null)
+                foreach (var f in dash.Fields)
+                    if (plugin.GetFsr1FieldMapping(dash.Key, f.FieldId)?.Hidden == true) { anyHidden = true; break; }
+
+            if (!hasSynth && !anyHidden)
                 return dash.Fields;
 
-            var list = new List<Fsr1FieldDef>(dash.Fields.Length + synth.Count);
-            list.AddRange(dash.Fields);
-            foreach (var s in synth)
+            var list = new List<Fsr1FieldDef>(dash.Fields.Length + (hasSynth ? synth!.Count : 0));
+            foreach (var f in dash.Fields)
             {
-                if (s == null) continue;
-                list.Add(Synthesise(s));
+                if (anyHidden && plugin!.GetFsr1FieldMapping(dash.Key, f.FieldId)?.Hidden == true) continue;
+                list.Add(f);
             }
+            if (hasSynth)
+                foreach (var s in synth!)
+                    if (s != null) list.Add(Synthesise(s));
             return list;
         }
 

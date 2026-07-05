@@ -202,17 +202,59 @@ namespace MozaPlugin.Telemetry.Sessions
             // wheel acks, the close has definitively been processed and we
             // can re-open against a clean state immediately. Silent closes
             // are accepted and we proceed regardless.
-            byte lastClosePort = isColdStart ? (byte)0x0A : (byte)0x03;
+            // Narrow close FIRST (0x01..0x03) for BOTH cold start and reload. The old
+            // code did a WIDE 0x01..0x0A close on a fresh process (isColdStart), which
+            // tears down the wheel's display-content sessions (0x04..0x08). On a SimHub
+            // RESTART (fresh process but the wheel still engaged, display up) that makes
+            // the wheel force-reload its current dashboard, and the large radar/track-map
+            // dash hard-faults the display firmware → full reboot (MOZA logo). The narrow
+            // close matches the reload path, which never reboots. A genuinely stale wheel
+            // (true cold start, residual half-engaged 0x04..0x0A state) is caught below —
+            // when its opens stay silent past the 20 s bring-up wait it is escalated to
+            // the wide close there, harmless since its display isn't up.
+            const byte NarrowLastClosePort = 0x03;
             MozaLog.Debug(
-                $"[AZOM] Closing any stale {(isColdStart ? "cold-start" : "host")} sessions " +
-                $"(0x01..0x{lastClosePort:X2}{(isColdStart ? " — wide" : "")})...");
-            for (byte port = 1; port <= lastClosePort; port++)
+                $"[AZOM] Closing stale sessions (0x01..0x{NarrowLastClosePort:X2} narrow; " +
+                "wide 0x04..0x0A escalated only if the wheel stays silent)...");
+            for (byte port = 1; port <= NarrowLastClosePort; port++)
             {
                 if (cancel.IsCancellationRequested
                     || _sender.StateIsIdle || !_sender.ConnectionRef.IsConnected) return;
                 bool acked = TryCloseSession(port, CloseAckTimeoutMs);
                 MozaLog.Debug(
                     $"[AZOM] SessionClose 0x{port:X2} {(acked ? "acked" : "no ack within " + CloseAckTimeoutMs + "ms")}");
+            }
+
+            // Warm-restart dashboard-list recovery. The reload path (above) leaves
+            // sess=0x09 bound to avoid a re-render — correct ONLY when our configJson
+            // dashboard list survived (static cache, same process). When we reload
+            // with NO list (fresh state) but the wheel still thinks 0x09 is bound from
+            // the prior session, the wheel will NOT re-push its dashboard list. Without
+            // that list the host can't tell the wheel is already on its current dash,
+            // so it force-applies it — and on the large radar/track-map dash that
+            // re-load LOCKS (older fw) or crashes→reboots (newer fw) the display.
+            // Small dashes survive the force-apply, which is exactly why only the radar
+            // dash breaks on warm restart. Closing 0x09 here makes the wheel re-emit
+            // its configJson burst on the configJson-open we send next, restoring the
+            // list so the slot-match path can skip the crashing re-apply. This now
+            // fires on a fresh process too (isColdStart): the narrow close above no
+            // longer sweeps 0x09, so a SimHub restart needs it here to recover the list.
+            // Gate on the actual LIST, not LastState!=null: a stale LastState object
+            // survives in ConfigJsonClient's static cache across reloads while its
+            // ConfigJsonList is empty — that empty list is exactly the "no dashboard
+            // list" failure, and checking LastState!=null wrongly skipped the recovery.
+            int cfgListCount = _sender.ConfigJson?.LastState?.ConfigJsonList?.Count ?? 0;
+            MozaLog.Info(
+                $"[AZOM] Cold-start configJson list check: isColdStart={isColdStart} " +
+                $"cachedDashListCount={cfgListCount}");
+            if (cfgListCount == 0
+                && !cancel.IsCancellationRequested && !_sender.StateIsIdle
+                && _sender.ConnectionRef.IsConnected)
+            {
+                bool acked9 = TryCloseSession(0x09, CloseAckTimeoutMs);
+                MozaLog.Info(
+                    "[AZOM] Forced sess=0x09 close (EMPTY configJson dashboard list) to " +
+                    $"re-trigger the wheel's dashboard-list push {(acked9 ? "(acked)" : "(no ack)")}");
             }
 
             byte mgmtPort = TryOpenSession(MgmtSession, OpenAckTimeoutMs);
@@ -315,12 +357,33 @@ namespace MozaPlugin.Telemetry.Sessions
                 }
                 else
                 {
+                    // Both opens stayed silent through the full 20 s bring-up wait AND
+                    // (with narrow-close-first above) we have NOT yet done the destructive
+                    // wide 0x04..0x0A close. A silent wheel here is the genuine stale-
+                    // residual case the wide close exists for (CS-Pro/KS-Pro silently
+                    // ignoring fresh opens with half-engaged 0x04..0x0A state). Its display
+                    // is NOT rendering, so the reload/reboot the wide close can provoke is
+                    // harmless. Escalate to the wide close now and re-issue the opens
+                    // against the cleared state. A WARM restart never reaches here — its
+                    // wheel is engaged and acks the opens above — so its display-content
+                    // sessions stay intact and the radar dash isn't force-reloaded.
                     MozaLog.Warn(
-                        $"[AZOM] No ack within {ExtendedAckWaitMs}ms extended wait — " +
-                        "proceeding with defaults; session watchdog will retry post-Active. " +
-                        "If this recurs after a SimHub restart, the cold-start wide close " +
-                        "(0x01..0x0a above) should already have cleared any stale wheel " +
-                        "session state — escalate via wire trace if the wedge persists.");
+                        $"[AZOM] No ack within {ExtendedAckWaitMs}ms — escalating to the wide " +
+                        "0x04..0x0A close (stale wheel session state) and re-opening.");
+                    for (byte wport = 0x04; wport <= 0x0A; wport++)
+                    {
+                        if (cancel.IsCancellationRequested
+                            || _sender.StateIsIdle || !_sender.ConnectionRef.IsConnected) return;
+                        bool ackedW = TryCloseSession(wport, CloseAckTimeoutMs);
+                        MozaLog.Debug(
+                            $"[AZOM] SessionClose 0x{wport:X2} " +
+                            $"{(ackedW ? "acked" : "no ack within " + CloseAckTimeoutMs + "ms")} (wide escalation)");
+                    }
+                    if (_sender.ConnectionRef.IsConnected)
+                        mgmtPort = TryOpenSession(MgmtSession, OpenAckTimeoutMs);
+                    if (_sender.StateIsIdle || !_sender.ConnectionRef.IsConnected) return;
+                    if (_sender.ConnectionRef.IsConnected)
+                        telemetryPort = TryOpenSession(TelemSession, OpenAckTimeoutMs);
                 }
             }
 

@@ -54,11 +54,6 @@ namespace MozaPlugin
         private Run[]? _activeButtonSeparatorRuns;
         private bool _activeButtonsShowingNone;
 
-        // Cache of the previous tick's hint list so RefreshDisplay only assigns
-        // ItemsSource when the set genuinely changes. ItemsControl rebuilds its
-        // visual tree on every assignment; the diff keeps it stable at 2 Hz.
-        private IReadOnlyList<StatusHint>? _lastHints;
-
         public SettingsControl(MozaPlugin plugin)
         {
             _plugin = plugin;
@@ -116,6 +111,16 @@ namespace MozaPlugin
 
             Instance = this;
 
+            // Host the shared banner control (instantiated here — a generated
+            // typed field of MozaPlugin.UI.* collides with the MozaPlugin class
+            // name). Wire its in-app navigation; device-page hosts leave these
+            // null and fall back to the external URL / a hidden Configure button.
+            BannersHost.Content = new UI.PluginBanners
+            {
+                OpenReleaseNotesInApp = OpenReleaseNotes,
+                ConfigureSdkInApp = NavigateToSdkTab,
+            };
+
             _refreshTimer = new DispatcherTimer { Interval = TimeSpan.FromMilliseconds(500) };
             _refreshTimer.Tick += RefreshDisplay;
 
@@ -163,6 +168,22 @@ namespace MozaPlugin
             _refreshTimer.Stop();
             _steeringAngleTimer.Stop();
             _bandwidthTimer?.Stop();
+            // Closing the settings panel takes the sustained Engine/ABS/
+            // Road Texture/Lockup/Threshold/Brake Fade test toggles out of
+            // view — stop them so a forgotten toggle doesn't leave the pedal
+            // buzzing indefinitely with no UI left to turn it off.
+            if (MBoosterEngineTestToggle?.IsChecked == true)
+                CurrentMBoosterController()?.SetEngineTestActive(false);
+            if (MBoosterAbsTestToggle?.IsChecked == true)
+                CurrentMBoosterController()?.SetAbsTestActive(false);
+            if (MBoosterRoadTextureTestToggle?.IsChecked == true)
+                CurrentMBoosterController()?.SetRoadTextureTestActive(false);
+            if (MBoosterLockupTestToggle?.IsChecked == true)
+                CurrentMBoosterController()?.SetLockupTestActive(false);
+            if (MBoosterThresholdTestToggle?.IsChecked == true)
+                CurrentMBoosterController()?.SetThresholdTestActive(false);
+            if (MBoosterBrakeFadeTestToggle?.IsChecked == true)
+                CurrentMBoosterController()?.SetBrakeFadeTestActive(false);
             // SDK CoAP server fires RecentRequestAppended on its receive
             // thread; unsubscribe so a torn-down SettingsControl can be GC'd
             // without the server's event list pinning it. Re-subscribe
@@ -192,17 +213,8 @@ namespace MozaPlugin
 
         private void RefreshDisplay(object sender, EventArgs e)
         {
-            var hints = StatusHintBuilder.Build(_plugin, DateTime.UtcNow);
-            if (!StatusHint.ListEquals(_lastHints, hints))
-            {
-                HintBanners.ItemsSource = hints;
-                _lastHints = hints;
-            }
-
-            // Keep the cross-tab update banner live so it appears as soon as a
-            // background check finds a newer release, regardless of which tab
-            // the user is on. Cheap (a few string compares); no network.
-            try { RefreshHeaderBanner(); } catch { /* never let the banner break the refresh loop */ }
+            // All top-of-pane banners (status hints + update + SDK nudge) are
+            // owned by the self-refreshing PluginBanners control now.
 
             using (_suppressor.Begin())
             {
@@ -260,12 +272,39 @@ namespace MozaPlugin
 
             UpdateActiveButtons(connected);
             UpdateHandbrakeButtonStatus(connected);
+            UpdateMBoosterCurveMarkers();
 
             // Phase 6: fan out live HID data to the per-device wheel control's
             // Inputs sub-tab so its paddle bars + active-button text update at
             // the same 30 Hz cadence as the (now hidden) plugin-pane controls.
             try { global::MozaPlugin.Devices.MozaWheelSettingsControl.Instance?.PushInputsLiveData(_data); }
             catch { }
+        }
+
+        // Live position markers on the mBooster tab's two curve editors,
+        // driven by the currently selected device's latest HID position.
+        // Runs at the same 30 Hz cadence as the standard pedal bars above
+        // instead of the 500ms general refresh — that felt sluggish for
+        // direct pedal feedback.
+        private void UpdateMBoosterCurveMarkers()
+        {
+            if (MBoosterDevicePanel.Visibility != Visibility.Visible) return;
+            var selected = _plugin?.MBoosterRegistry?.FindByIdentity(_mboosterSelectedIdentity ?? "");
+            if (selected == null) return;
+            int pct = (int)Math.Round(selected.LastHidPosition * 100);
+            if (pct < 0) pct = 0; if (pct > 100) pct = 100;
+
+            // Input Curve sees the pre-shaping value (what it actually
+            // receives); the output curve sees the post-Pedal-Feel value
+            // (what's effectively sent onward).
+            MBoosterInputCurveEditor.LiveX = selected.LastRawPercentPreCurve;
+            MBoosterCurveEditor.LiveX = pct;
+
+            // Effects card pedal trace — same 30 Hz cadence, same position
+            // value as the output curve's live dot.
+            _mboosterPedalTraceSamples.Add(pct);
+            while (_mboosterPedalTraceSamples.Count > MBoosterPedalTraceSamples)
+                _mboosterPedalTraceSamples.RemoveAt(0);
         }
 
         private void UpdateActiveButtons(bool connected)
@@ -461,7 +500,12 @@ namespace MozaPlugin
             SetSliderRaw(Eq5Slider, Eq5Value, _data.Equalizer5, 0, 400, "%");
             SetSliderRaw(Eq6Slider, Eq6Value, _data.Equalizer6, 0, 400, "%");
 
-            // FFB Curve (X breakpoints are fixed at 20/40/60/80; only Y output values are user-adjustable)
+            // FFB Curve — X1..X4 are the draggable input positions of points 1-4
+            // (point 5 fixed at input=100%); Y1..Y5 the output values.
+            SetSliderRaw(FfbCurveX1Slider, FfbCurveX1Value, _data.FfbCurveX1, 0, 100, "");
+            SetSliderRaw(FfbCurveX2Slider, FfbCurveX2Value, _data.FfbCurveX2, 0, 100, "");
+            SetSliderRaw(FfbCurveX3Slider, FfbCurveX3Value, _data.FfbCurveX3, 0, 100, "");
+            SetSliderRaw(FfbCurveX4Slider, FfbCurveX4Value, _data.FfbCurveX4, 0, 100, "");
             SetSliderRaw(FfbCurveY1Slider, FfbCurveY1Value, _data.FfbCurveY1, 0, 100, "");
             SetSliderRaw(FfbCurveY2Slider, FfbCurveY2Value, _data.FfbCurveY2, 0, 100, "");
             SetSliderRaw(FfbCurveY3Slider, FfbCurveY3Value, _data.FfbCurveY3, 0, 100, "");
@@ -1008,13 +1052,6 @@ namespace MozaPlugin
             _plugin.SetConnectionEnabled(ConnectionToggle.IsChecked == true);
         }
 
-        // ===== Refresh button =====
-
-        private void RefreshButton_Click(object sender, RoutedEventArgs e)
-        {
-            RequestAllSettings();
-        }
-
         private void SoftRebootButton_Click(object sender, RoutedEventArgs e)
         {
             var result = MessageBox.Show(
@@ -1222,6 +1259,12 @@ namespace MozaPlugin
         {
             using (_suppressor.Begin())
             {
+                // Presets are Y-shapes defined at the standard breakpoints, so
+                // snap any dragged X positions back to 20/40/60/80.
+                FfbCurveX1Slider.Value = 20; FfbCurveX1Value.Text = "20"; _data.FfbCurveX1 = 20;
+                FfbCurveX2Slider.Value = 40; FfbCurveX2Value.Text = "40"; _data.FfbCurveX2 = 40;
+                FfbCurveX3Slider.Value = 60; FfbCurveX3Value.Text = "60"; _data.FfbCurveX3 = 60;
+                FfbCurveX4Slider.Value = 80; FfbCurveX4Value.Text = "80"; _data.FfbCurveX4 = 80;
                 FfbCurveY1Slider.Value = p[0]; FfbCurveY1Value.Text = $"{p[0]}"; _data.FfbCurveY1 = p[0];
                 FfbCurveY2Slider.Value = p[1]; FfbCurveY2Value.Text = $"{p[1]}"; _data.FfbCurveY2 = p[1];
                 FfbCurveY3Slider.Value = p[2]; FfbCurveY3Value.Text = $"{p[2]}"; _data.FfbCurveY3 = p[2];
@@ -1242,6 +1285,10 @@ namespace MozaPlugin
         private void FfbCurvePreset_Exponential(object s, RoutedEventArgs e) => ApplyFfbCurvePreset(FfbCurvePresets[2]);
         private void FfbCurvePreset_Parabolic(object s, RoutedEventArgs e) => ApplyFfbCurvePreset(FfbCurvePresets[3]);
 
+        private void FfbCurveX1Slider_ValueChanged(object s, RoutedPropertyChangedEventArgs<double> e) => OnIntSliderChanged(e.NewValue, FfbCurveX1Value, "", v => { _data.FfbCurveX1 = v; _plugin.WriteIfBaseConnected("base-ffb-curve-x1", v); });
+        private void FfbCurveX2Slider_ValueChanged(object s, RoutedPropertyChangedEventArgs<double> e) => OnIntSliderChanged(e.NewValue, FfbCurveX2Value, "", v => { _data.FfbCurveX2 = v; _plugin.WriteIfBaseConnected("base-ffb-curve-x2", v); });
+        private void FfbCurveX3Slider_ValueChanged(object s, RoutedPropertyChangedEventArgs<double> e) => OnIntSliderChanged(e.NewValue, FfbCurveX3Value, "", v => { _data.FfbCurveX3 = v; _plugin.WriteIfBaseConnected("base-ffb-curve-x3", v); });
+        private void FfbCurveX4Slider_ValueChanged(object s, RoutedPropertyChangedEventArgs<double> e) => OnIntSliderChanged(e.NewValue, FfbCurveX4Value, "", v => { _data.FfbCurveX4 = v; _plugin.WriteIfBaseConnected("base-ffb-curve-x4", v); });
         private void FfbCurveY1Slider_ValueChanged(object s, RoutedPropertyChangedEventArgs<double> e) => OnIntSliderChanged(e.NewValue, FfbCurveY1Value, "", v => { _data.FfbCurveY1 = v; _plugin.WriteIfBaseConnected("base-ffb-curve-y1", v); });
         private void FfbCurveY2Slider_ValueChanged(object s, RoutedPropertyChangedEventArgs<double> e) => OnIntSliderChanged(e.NewValue, FfbCurveY2Value, "", v => { _data.FfbCurveY2 = v; _plugin.WriteIfBaseConnected("base-ffb-curve-y2", v); });
         private void FfbCurveY3Slider_ValueChanged(object s, RoutedPropertyChangedEventArgs<double> e) => OnIntSliderChanged(e.NewValue, FfbCurveY3Value, "", v => { _data.FfbCurveY3 = v; _plugin.WriteIfBaseConnected("base-ffb-curve-y3", v); });
@@ -1677,10 +1724,12 @@ namespace MozaPlugin
         private const string AboutGitHubUrl  = "https://github.com/giantorth/moza-simhub-plugin";
         private const string AboutDiscordUrl = "https://discord.gg/J4enw43e62";
         private const string AboutSponsorUrl = "https://github.com/sponsors/giantorth";
+        private const string AboutKofiUrl    = "https://ko-fi.com/giantorth";
 
         private void AboutGitHubButton_Click(object sender, System.Windows.RoutedEventArgs e)  => OpenExternalUrl(AboutGitHubUrl);
         private void AboutDiscordButton_Click(object sender, System.Windows.RoutedEventArgs e) => OpenExternalUrl(AboutDiscordUrl);
         private void AboutSponsorButton_Click(object sender, System.Windows.RoutedEventArgs e) => OpenExternalUrl(AboutSponsorUrl);
+        private void AboutKofiButton_Click(object sender, System.Windows.RoutedEventArgs e)    => OpenExternalUrl(AboutKofiUrl);
 
         // Open a URL via the OS shell. On Windows this hits the default
         // browser; under Wine/Proton it routes through winebrowser which
@@ -1771,8 +1820,6 @@ namespace MozaPlugin
                 _serialCaptureRendered = null;
                 _serialCaptureSnapshot = null;
                 SerialCaptureToggleButton.Content = "Stop capture";
-                SerialCaptureOutputBox.Visibility = System.Windows.Visibility.Collapsed;
-                SerialCaptureOutputBox.Text = string.Empty;
                 SerialCaptureExportButton.IsEnabled = false;
                 SerialCaptureCopyButton.IsEnabled = false;
                 SerialCaptureStatusText.Text = Strings.Status_CapturingOpenTab;
@@ -1784,8 +1831,6 @@ namespace MozaPlugin
             _serialCaptureRendered = SerialTrafficCapture.Format(snap);
             SerialCaptureToggleButton.Content = "Start capture";
             SerialCaptureStatusText.Text = string.Format(Strings.Status_CaptureStopped, snap.Count);
-            SerialCaptureOutputBox.Text = _serialCaptureRendered;
-            SerialCaptureOutputBox.Visibility = System.Windows.Visibility.Visible;
             SerialCaptureExportButton.IsEnabled = true;
             SerialCaptureCopyButton.IsEnabled = snap.Count > 0;
         }
@@ -2420,6 +2465,13 @@ namespace MozaPlugin
 
         private string? _mboosterSelectedIdentity;
         private bool _mboosterUiSeeded;
+        // Active-profile name + device identity the tab was last seeded for.
+        // mBooster settings are per-profile (GetOrCreateMBoosterSettings reads
+        // ProfileStore.CurrentProfile) and per-device; the seed-once gate below
+        // must re-fire when either changes, or the tab keeps showing — and
+        // edits keep writing against — the previously-seeded profile/device.
+        private string? _mboosterSeededProfileName;
+        private string? _mboosterSeededIdentity;
 
         private void RefreshMBoosterTab()
         {
@@ -2446,7 +2498,17 @@ namespace MozaPlugin
                         break;
                     }
                 }
-                if (MBoosterDeviceCombo.Items.Count != devices.Count)
+                // Rebuild when the identity set/order changed, not just the
+                // count — a 1:1 device swap (count unchanged) would otherwise
+                // leave stale labels while _mboosterSelectedIdentity is
+                // reassigned to a different device below.
+                bool comboStale = MBoosterDeviceCombo.Items.Count != devices.Count;
+                for (int i = 0; !comboStale && i < devices.Count; i++)
+                {
+                    comboStale = !(MBoosterDeviceCombo.Items[i] is ComboBoxItem existing)
+                        || !string.Equals(existing.Tag as string, devices[i].Identity, StringComparison.OrdinalIgnoreCase);
+                }
+                if (comboStale)
                 {
                     MBoosterDeviceCombo.Items.Clear();
                     for (int i = 0; i < devices.Count; i++)
@@ -2469,25 +2531,26 @@ namespace MozaPlugin
             var selected = registry.FindByIdentity(_mboosterSelectedIdentity ?? "");
             if (selected == null)
             {
-                MBoosterStatusDot.Fill = Brushes.Gray;
-                MBoosterStatusLabel.Text = Strings.Status_NoMBoosterSelected;
                 MBoosterDevicePanel.Visibility = Visibility.Collapsed;
                 return;
             }
 
-            MBoosterStatusDot.Fill = selected.Detected
-                ? Brushes.LimeGreen
-                : (selected.IsConnected ? Brushes.Goldenrod : Brushes.Gray);
-            MBoosterStatusLabel.Text = selected.Detected
-                ? $"Connected ({MBoosterDeviceController.ShortIdentity(selected.Identity)})"
-                : (selected.IsConnected ? "Probing…" : "Disconnected");
             MBoosterDevicePanel.Visibility = Visibility.Visible;
 
-            // Live position bar — driven by the controller's latest HID position.
-            int pct = (int)Math.Round(selected.LastHidPosition * 100);
-            if (pct < 0) pct = 0; if (pct > 100) pct = 100;
-            MBoosterPositionBar.Value = pct;
-            MBoosterPositionLabel.Text = pct + " %";
+            // Live position marker (on the curve editors) is updated at
+            // 30 Hz from UpdateHidInputDisplays (UpdateMBoosterCurveMarkers)
+            // instead of here — this 500ms pass felt sluggish for direct
+            // pedal feedback.
+
+            // Re-seed when the active profile or the selected device changed
+            // since the last seed — otherwise the gate below keeps the
+            // previously-seeded values on screen while edits write to the
+            // now-current profile/device (mBooster settings are per-profile,
+            // per-device).
+            var currentProfileName = _plugin?.Settings?.ProfileStore?.CurrentProfile?.Name;
+            if (!string.Equals(currentProfileName, _mboosterSeededProfileName, StringComparison.Ordinal)
+                || !string.Equals(selected.Identity, _mboosterSeededIdentity, StringComparison.OrdinalIgnoreCase))
+                _mboosterUiSeeded = false;
 
             if (_mboosterUiSeeded) return;
             // Seed slider/checkbox values from the profile entry. _plugin is
@@ -2497,25 +2560,93 @@ namespace MozaPlugin
             using (_suppressor.Begin())
             {
                 SetMBoosterRoleCombo(s.Role);
-                MBoosterAbsEnable.IsChecked       = s.Abs?.Enabled       ?? false;
-                MBoosterAbsIntensity.Value        = s.Abs?.IntensityPct  ?? 50;
+                MBoosterAbsEnable.IsChecked       = s.Abs?.Enabled          ?? false;
+                MBoosterAbsFrequencySlider.Value  = s.Abs?.FrequencyHz      ?? MBoosterUiConstants.AbsFreqMinHz;
+                SetValueText(MBoosterAbsFrequencyValue, MBoosterAbsFrequencySlider.Value.ToString("F0"));
+                MBoosterAbsIntensity.Value        = s.Abs?.IntensityPct     ?? 50;
                 SetValueText(MBoosterAbsIntensityValue, (s.Abs?.IntensityPct ?? 50).ToString());
-                MBoosterLockupEnable.IsChecked    = s.Lockup?.Enabled       ?? false;
-                MBoosterLockupIntensity.Value     = s.Lockup?.IntensityPct  ?? 50;
+                MBoosterAbsSmoothness.Value       = s.Abs?.SmoothnessPct    ?? 100;
+                SetValueText(MBoosterAbsSmoothnessValue, (s.Abs?.SmoothnessPct ?? 100).ToString());
+                // Never persisted — always starts off for a freshly-shown tab.
+                MBoosterAbsTestToggle.IsChecked = false;
+                MBoosterLockupEnable.IsChecked = s.Lockup?.Enabled ?? false;
+                MBoosterLockupFrequencySlider.Value = s.Lockup?.FrequencyHz ?? MBoosterUiConstants.LockupFreqMinHz;
+                SetValueText(MBoosterLockupFrequencyValue, MBoosterLockupFrequencySlider.Value.ToString("F0"));
+                MBoosterLockupIntensity.Value = s.Lockup?.IntensityPct ?? 50;
                 SetValueText(MBoosterLockupIntensityValue, (s.Lockup?.IntensityPct ?? 50).ToString());
-                MBoosterThresholdEnable.IsChecked    = s.Threshold?.Enabled       ?? false;
-                MBoosterThresholdIntensity.Value     = s.Threshold?.IntensityPct  ?? 50;
+                // Never persisted — always starts off for a freshly-shown tab.
+                MBoosterLockupTestToggle.IsChecked = false;
+                MBoosterThresholdEnable.IsChecked = s.Threshold?.Enabled ?? false;
+                MBoosterThresholdTriggerLevel.Value = s.Threshold?.TriggerLevelPct ?? 60;
+                SetValueText(MBoosterThresholdTriggerLevelValue, (s.Threshold?.TriggerLevelPct ?? 60).ToString());
+                MBoosterThresholdFrequencySlider.Value = s.Threshold?.FrequencyHz ?? MBoosterUiConstants.ThresholdFreqMinHz;
+                SetValueText(MBoosterThresholdFrequencyValue, MBoosterThresholdFrequencySlider.Value.ToString("F0"));
+                MBoosterThresholdIntensity.Value = s.Threshold?.IntensityPct ?? 50;
                 SetValueText(MBoosterThresholdIntensityValue, (s.Threshold?.IntensityPct ?? 50).ToString());
+                MBoosterThresholdDecay.Value = s.Threshold?.DecayPct ?? 20;
+                SetValueText(MBoosterThresholdDecayValue, (s.Threshold?.DecayPct ?? 20).ToString());
+                // Never persisted — always starts off for a freshly-shown tab.
+                MBoosterThresholdTestToggle.IsChecked = false;
                 MBoosterEngineEnable.IsChecked    = s.Engine?.Enabled       ?? false;
+                MBoosterEngineFrequencySlider.Value = s.Engine?.FrequencyHz ?? MBoosterUiConstants.EngineFreqMinHz;
+                SetValueText(MBoosterEngineFrequencyValue, MBoosterEngineFrequencySlider.Value.ToString("F0"));
                 MBoosterEngineIntensity.Value     = s.Engine?.IntensityPct  ?? 50;
                 SetValueText(MBoosterEngineIntensityValue, (s.Engine?.IntensityPct ?? 50).ToString());
+                // Never persisted — always starts off for a freshly-shown tab.
+                MBoosterEngineTestToggle.IsChecked = false;
+                MBoosterRoadTextureEnable.IsChecked = s.RoadTexture?.Enabled ?? false;
+                MBoosterRoadTextureIntensity.Value = s.RoadTexture?.IntensityPct ?? 50;
+                SetValueText(MBoosterRoadTextureIntensityValue, (s.RoadTexture?.IntensityPct ?? 50).ToString());
+                MBoosterRoadTextureSmoothness.Value = s.RoadTexture?.SmoothnessPct ?? 50;
+                SetValueText(MBoosterRoadTextureSmoothnessValue, (s.RoadTexture?.SmoothnessPct ?? 50).ToString());
+                // Never persisted — always starts off for a freshly-shown tab.
+                MBoosterRoadTextureTestToggle.IsChecked = false;
+                MBoosterBrakeFadeEnable.IsChecked = s.BrakeFade?.Enabled ?? false;
+                MBoosterBrakeFadeOnsetSlider.Value = s.BrakeFade?.BrakeFadeOnsetC ?? 550;
+                SetValueText(MBoosterBrakeFadeOnsetValue, MBoosterBrakeFadeOnsetSlider.Value.ToString("F0"));
+                // Never persisted — always starts off for a freshly-shown tab.
+                MBoosterBrakeFadeTestToggle.IsChecked = false;
                 MBoosterDirCheck.IsChecked = (s.Direction == 1);
                 MBoosterMinSlider.Value = s.Min >= 0 ? s.Min : 0;
                 SetValueText(MBoosterMinValue, MBoosterMinSlider.Value.ToString("F0"));
                 MBoosterMaxSlider.Value = s.Max >= 0 ? s.Max : 0;
                 SetValueText(MBoosterMaxValue, MBoosterMaxSlider.Value.ToString("F0"));
+                var curve = (s.CurveY != null && s.CurveY.Length == 5) ? s.CurveY : MBoosterDefaultCurve;
+                MBoosterY1Slider.Value = curve[0]; SetValueText(MBoosterY1Value, curve[0].ToString("F0"));
+                MBoosterY2Slider.Value = curve[1]; SetValueText(MBoosterY2Value, curve[1].ToString("F0"));
+                MBoosterY3Slider.Value = curve[2]; SetValueText(MBoosterY3Value, curve[2].ToString("F0"));
+                MBoosterY4Slider.Value = curve[3]; SetValueText(MBoosterY4Value, curve[3].ToString("F0"));
+                MBoosterY5Slider.Value = curve[4]; SetValueText(MBoosterY5Value, curve[4].ToString("F0"));
+                var curveX = (s.CurveX != null && s.CurveX.Length == 5) ? s.CurveX : MBoosterDefaultCurve;
+                MBoosterX1Slider.Value = curveX[0]; SetValueText(MBoosterX1Value, curveX[0].ToString("F0"));
+                MBoosterX2Slider.Value = curveX[1]; SetValueText(MBoosterX2Value, curveX[1].ToString("F0"));
+                MBoosterX3Slider.Value = curveX[2]; SetValueText(MBoosterX3Value, curveX[2].ToString("F0"));
+                MBoosterX4Slider.Value = curveX[3]; SetValueText(MBoosterX4Value, curveX[3].ToString("F0"));
+                MBoosterX5Slider.Value = curveX[4]; SetValueText(MBoosterX5Value, curveX[4].ToString("F0"));
+                MBoosterRatioSlider.Value = s.SensorOutputRatioPct >= 0 ? s.SensorOutputRatioPct : 0;
+                SetValueText(MBoosterRatioValue, $"{MBoosterRatioSlider.Value:F0}%");
+                MBoosterMaxThresholdSlider.Value = s.MaxThresholdKg >= 0 ? s.MaxThresholdKg : 100;
+                SetValueText(MBoosterMaxThresholdValue, MBoosterMaxThresholdSlider.Value.ToString("F0"));
+                var inputCurve = (s.InputCurveY != null && s.InputCurveY.Length == 5) ? s.InputCurveY : MBoosterDefaultCurve;
+                MBoosterInputY1Slider.Value = inputCurve[0]; SetValueText(MBoosterInputY1Value, inputCurve[0].ToString("F0"));
+                MBoosterInputY2Slider.Value = inputCurve[1]; SetValueText(MBoosterInputY2Value, inputCurve[1].ToString("F0"));
+                MBoosterInputY3Slider.Value = inputCurve[2]; SetValueText(MBoosterInputY3Value, inputCurve[2].ToString("F0"));
+                MBoosterInputY4Slider.Value = inputCurve[3]; SetValueText(MBoosterInputY4Value, inputCurve[3].ToString("F0"));
+                MBoosterInputY5Slider.Value = inputCurve[4]; SetValueText(MBoosterInputY5Value, inputCurve[4].ToString("F0"));
+                MBoosterTravelRangeSlider.LowValue = s.TravelStartMm >= 0 ? s.TravelStartMm : MBoosterUiConstants.TravelMinMm;
+                MBoosterTravelRangeSlider.HighValue = s.TravelEndMm >= 0 ? s.TravelEndMm : MBoosterUiConstants.TravelMinMm + MBoosterUiConstants.TravelMaxGapMm;
+                MBoosterEndstopFrontSlider.Value = s.EndstopFrontStiffness >= 0 ? s.EndstopFrontStiffness : 1;
+                SetValueText(MBoosterEndstopFrontValue, MBoosterEndstopFrontSlider.Value.ToString("F0"));
+                MBoosterEndstopEndSlider.Value = s.EndstopEndStiffness >= 0 ? s.EndstopEndStiffness : 1;
+                SetValueText(MBoosterEndstopEndValue, MBoosterEndstopEndSlider.Value.ToString("F0"));
+                MBoosterDeadzoneSlider.Value = s.DeadzoneKg;
+                SetValueText(MBoosterDeadzoneValue, s.DeadzoneKg.ToString("F1"));
+                MBoosterMaxForceSlider.Value = s.MaxForceKg;
+                SetValueText(MBoosterMaxForceValue, s.MaxForceKg.ToString("F0"));
             }
             _mboosterUiSeeded = true;
+            _mboosterSeededProfileName = currentProfileName;
+            _mboosterSeededIdentity = selected.Identity;
         }
 
         private void SetMBoosterRoleCombo(MBoosterRole role)
@@ -2551,6 +2682,27 @@ namespace MozaPlugin
             if (MBoosterDeviceCombo.SelectedItem is not ComboBoxItem item) return;
             if (item.Tag is not string identity) return;
             if (string.Equals(identity, _mboosterSelectedIdentity, StringComparison.OrdinalIgnoreCase)) return;
+            // Stop any sustained Engine/ABS/Road Texture/Lockup/Threshold/
+            // Brake Fade test on the device we're navigating away from —
+            // otherwise it keeps buzzing with no visible toggle left to turn
+            // it off (the new device's tab reseeds its own, unrelated
+            // toggle state).
+            if (MBoosterEngineTestToggle.IsChecked == true)
+                CurrentMBoosterController()?.SetEngineTestActive(false);
+            if (MBoosterAbsTestToggle.IsChecked == true)
+                CurrentMBoosterController()?.SetAbsTestActive(false);
+            if (MBoosterRoadTextureTestToggle.IsChecked == true)
+                CurrentMBoosterController()?.SetRoadTextureTestActive(false);
+            if (MBoosterLockupTestToggle.IsChecked == true)
+                CurrentMBoosterController()?.SetLockupTestActive(false);
+            if (MBoosterThresholdTestToggle.IsChecked == true)
+                CurrentMBoosterController()?.SetThresholdTestActive(false);
+            if (MBoosterBrakeFadeTestToggle.IsChecked == true)
+                CurrentMBoosterController()?.SetBrakeFadeTestActive(false);
+            // Reset the pedal trace to a flat baseline rather than carrying
+            // over the previous device's history into the new one's graph.
+            for (int i = 0; i < _mboosterPedalTraceSamples.Count; i++)
+                _mboosterPedalTraceSamples[i] = 0;
             _mboosterSelectedIdentity = identity;
             _mboosterUiSeeded = false;
             RefreshMBoosterTab();
@@ -2567,7 +2719,11 @@ namespace MozaPlugin
             _plugin.SaveSettings();
         }
 
-        // ===== Effect handlers (4 × enable + slider + test button) ==========
+        // ===== Effect handlers =====
+        // All five effects (ABS, Engine, Road Texture, Lockup, Threshold)
+        // have now been rebuilt with Enable + sustained Test toggles — see
+        // docs/protocol/devices/mbooster.md "Effects card UI (mid-rebuild)"
+        // for the history.
 
         private void MBoosterAbsEnable_Changed(object sender, RoutedEventArgs e)
         {
@@ -2587,9 +2743,44 @@ namespace MozaPlugin
             (s.Abs ??= new MBoosterEffectSettings()).IntensityPct = v;
             _plugin.SaveSettings();
         }
-        private void MBoosterAbsTest_Click(object sender, RoutedEventArgs e)
+        // Fixed vibration frequency (5-30Hz) — replaces the old ABS-
+        // activation-depth mapping (which SimHub's bool AbsActive collapsed
+        // to a constant 30Hz anyway). See MBoosterEffectSettings.FrequencyHz
+        // and MBoosterEffectWorker.UpdateAbsRequest.
+        private void MBoosterAbsFrequencySlider_ValueChanged(object sender, RoutedPropertyChangedEventArgs<double> e)
         {
-            CurrentMBoosterController()?.FireEffectTest(global::MozaPlugin.Protocol.MBoosterEffectId.Abs);
+            if (_suppressEvents) return;
+            int v = Math.Max((int)MBoosterUiConstants.AbsFreqMinHz, Math.Min((int)MBoosterUiConstants.AbsFreqMaxHz, (int)Math.Round(e.NewValue)));
+            MBoosterAbsFrequencyValue.Text = v.ToString();
+            var s = CurrentMBoosterSettings();
+            if (s == null) return;
+            (s.Abs ??= new MBoosterEffectSettings()).FrequencyHz = v;
+            _plugin.SaveSettings();
+        }
+        // Pulse modulation depth (0-100%) — 100 (default) is the exact
+        // original verified waveform; 0 widens it to a sharper, choppier
+        // full-swing pulse. See MBoosterEffectSettings.SmoothnessPct and
+        // MBoosterEffectSynthesizer.SynthesizeAbs.
+        private void MBoosterAbsSmoothness_ValueChanged(object sender, RoutedPropertyChangedEventArgs<double> e)
+        {
+            if (_suppressEvents) return;
+            int v = Math.Max(0, Math.Min(100, (int)Math.Round(e.NewValue)));
+            MBoosterAbsSmoothnessValue.Text = v.ToString();
+            var s = CurrentMBoosterSettings();
+            if (s == null) return;
+            (s.Abs ??= new MBoosterEffectSettings()).SmoothnessPct = v;
+            _plugin.SaveSettings();
+        }
+        // Sustained test toggle — substitutes live brake position for
+        // absActive (there's no live ABS-activation signal to press against
+        // outside a real ABS event), vibrating continuously at the live
+        // Frequency/Intensity/Smoothness slider values for as long as it's
+        // on. See MBoosterDeviceController.SetAbsTestActive and
+        // MBoosterEffectWorker's _absTestSustained.
+        private void MBoosterAbsTestToggle_Changed(object sender, RoutedEventArgs e)
+        {
+            if (_suppressEvents) return;
+            CurrentMBoosterController()?.SetAbsTestActive(MBoosterAbsTestToggle.IsChecked == true);
         }
 
         private void MBoosterLockupEnable_Changed(object sender, RoutedEventArgs e)
@@ -2598,6 +2789,19 @@ namespace MozaPlugin
             var s = CurrentMBoosterSettings();
             if (s == null) return;
             (s.Lockup ??= new MBoosterEffectSettings()).Enabled = MBoosterLockupEnable.IsChecked == true;
+            _plugin.SaveSettings();
+        }
+        // Fixed vibration frequency (10-100Hz) — replaces the old brake-
+        // position mapping. See MBoosterEffectSettings.FrequencyHz and
+        // MBoosterEffectWorker.UpdateLockupRequest.
+        private void MBoosterLockupFrequencySlider_ValueChanged(object sender, RoutedPropertyChangedEventArgs<double> e)
+        {
+            if (_suppressEvents) return;
+            int v = Math.Max((int)MBoosterUiConstants.LockupFreqMinHz, Math.Min((int)MBoosterUiConstants.LockupFreqMaxHz, (int)Math.Round(e.NewValue)));
+            MBoosterLockupFrequencyValue.Text = v.ToString();
+            var s = CurrentMBoosterSettings();
+            if (s == null) return;
+            (s.Lockup ??= new MBoosterEffectSettings()).FrequencyHz = v;
             _plugin.SaveSettings();
         }
         private void MBoosterLockupIntensity_ValueChanged(object sender, RoutedPropertyChangedEventArgs<double> e)
@@ -2610,9 +2814,17 @@ namespace MozaPlugin
             (s.Lockup ??= new MBoosterEffectSettings()).IntensityPct = v;
             _plugin.SaveSettings();
         }
-        private void MBoosterLockupTest_Click(object sender, RoutedEventArgs e)
+        // Sustained test toggle — bypasses the wheel-slip detection
+        // heuristic entirely, substituting live brake position for it
+        // (there's no live "is the wheel actually locking" signal to
+        // preview against outside a real drive), vibrating continuously at
+        // the live Frequency/Intensity slider values for as long as it's
+        // on. See MBoosterDeviceController.SetLockupTestActive and
+        // MBoosterEffectWorker's _lockupTestSustained.
+        private void MBoosterLockupTestToggle_Changed(object sender, RoutedEventArgs e)
         {
-            CurrentMBoosterController()?.FireEffectTest(global::MozaPlugin.Protocol.MBoosterEffectId.Lockup);
+            if (_suppressEvents) return;
+            CurrentMBoosterController()?.SetLockupTestActive(MBoosterLockupTestToggle.IsChecked == true);
         }
 
         private void MBoosterThresholdEnable_Changed(object sender, RoutedEventArgs e)
@@ -2621,6 +2833,33 @@ namespace MozaPlugin
             var s = CurrentMBoosterSettings();
             if (s == null) return;
             (s.Threshold ??= new MBoosterEffectSettings()).Enabled = MBoosterThresholdEnable.IsChecked == true;
+            _plugin.SaveSettings();
+        }
+        // Brake position (%) at which the rising-edge trigger fires. The
+        // release threshold stays a fixed 30 points below this. See
+        // MBoosterEffectSettings.TriggerLevelPct and
+        // MBoosterEffectWorker.UpdateThresholdRequest.
+        private void MBoosterThresholdTriggerLevel_ValueChanged(object sender, RoutedPropertyChangedEventArgs<double> e)
+        {
+            if (_suppressEvents) return;
+            int v = Math.Max((int)MBoosterUiConstants.ThresholdTriggerMinPct, Math.Min((int)MBoosterUiConstants.ThresholdTriggerMaxPct, (int)Math.Round(e.NewValue)));
+            MBoosterThresholdTriggerLevelValue.Text = v.ToString();
+            var s = CurrentMBoosterSettings();
+            if (s == null) return;
+            (s.Threshold ??= new MBoosterEffectSettings()).TriggerLevelPct = v;
+            _plugin.SaveSettings();
+        }
+        // Fixed vibration frequency (5-100Hz) — replaces the old brake-
+        // position mapping. See MBoosterEffectSettings.FrequencyHz and
+        // MBoosterEffectWorker.UpdateThresholdRequest.
+        private void MBoosterThresholdFrequencySlider_ValueChanged(object sender, RoutedPropertyChangedEventArgs<double> e)
+        {
+            if (_suppressEvents) return;
+            int v = Math.Max((int)MBoosterUiConstants.ThresholdFreqMinHz, Math.Min((int)MBoosterUiConstants.ThresholdFreqMaxHz, (int)Math.Round(e.NewValue)));
+            MBoosterThresholdFrequencyValue.Text = v.ToString();
+            var s = CurrentMBoosterSettings();
+            if (s == null) return;
+            (s.Threshold ??= new MBoosterEffectSettings()).FrequencyHz = v;
             _plugin.SaveSettings();
         }
         private void MBoosterThresholdIntensity_ValueChanged(object sender, RoutedPropertyChangedEventArgs<double> e)
@@ -2633,9 +2872,29 @@ namespace MozaPlugin
             (s.Threshold ??= new MBoosterEffectSettings()).IntensityPct = v;
             _plugin.SaveSettings();
         }
-        private void MBoosterThresholdTest_Click(object sender, RoutedEventArgs e)
+        // How much the pulse fades after its initial burst (0 = barely
+        // decays, 100 = drops to silence immediately). See
+        // MBoosterEffectSettings.DecayPct and
+        // MBoosterEffectSynthesizer.SynthesizeThreshold.
+        private void MBoosterThresholdDecay_ValueChanged(object sender, RoutedPropertyChangedEventArgs<double> e)
         {
-            CurrentMBoosterController()?.FireEffectTest(global::MozaPlugin.Protocol.MBoosterEffectId.Threshold);
+            if (_suppressEvents) return;
+            int v = Math.Max(0, Math.Min(100, (int)Math.Round(e.NewValue)));
+            MBoosterThresholdDecayValue.Text = v.ToString();
+            var s = CurrentMBoosterSettings();
+            if (s == null) return;
+            (s.Threshold ??= new MBoosterEffectSettings()).DecayPct = v;
+            _plugin.SaveSettings();
+        }
+        // Sustained test toggle — skips the rising-edge hysteresis entirely,
+        // substituting live brake position for it, vibrating continuously
+        // at the live Frequency/Intensity/Decay slider values for as long
+        // as it's on. See MBoosterDeviceController.SetThresholdTestActive
+        // and MBoosterEffectWorker's _thresholdTestSustained.
+        private void MBoosterThresholdTestToggle_Changed(object sender, RoutedEventArgs e)
+        {
+            if (_suppressEvents) return;
+            CurrentMBoosterController()?.SetThresholdTestActive(MBoosterThresholdTestToggle.IsChecked == true);
         }
 
         private void MBoosterEngineEnable_Changed(object sender, RoutedEventArgs e)
@@ -2656,9 +2915,114 @@ namespace MozaPlugin
             (s.Engine ??= new MBoosterEffectSettings()).IntensityPct = v;
             _plugin.SaveSettings();
         }
-        private void MBoosterEngineTest_Click(object sender, RoutedEventArgs e)
+        // Fixed vibration frequency (60-200Hz) — replaces the old RPM-driven
+        // auto-frequency mapping. See MBoosterEffectSettings.FrequencyHz and
+        // MBoosterEffectWorker.UpdateEngineRequest.
+        private void MBoosterEngineFrequencySlider_ValueChanged(object sender, RoutedPropertyChangedEventArgs<double> e)
         {
-            CurrentMBoosterController()?.FireEffectTest(global::MozaPlugin.Protocol.MBoosterEffectId.Engine);
+            if (_suppressEvents) return;
+            int v = Math.Max((int)MBoosterUiConstants.EngineFreqMinHz, Math.Min((int)MBoosterUiConstants.EngineFreqMaxHz, (int)Math.Round(e.NewValue)));
+            MBoosterEngineFrequencyValue.Text = v.ToString();
+            var s = CurrentMBoosterSettings();
+            if (s == null) return;
+            (s.Engine ??= new MBoosterEffectSettings()).FrequencyHz = v;
+            _plugin.SaveSettings();
+        }
+        // Sustained test toggle — unlike the other effects' fire-and-forget
+        // 1s Test button, this vibrates continuously at the live Frequency/
+        // Intensity slider values (both tracked in real time, not a
+        // snapshot) for as long as it's on. See
+        // MBoosterDeviceController.SetEngineTestActive and
+        // MBoosterEffectWorker's _engineTestSustained.
+        private void MBoosterEngineTestToggle_Changed(object sender, RoutedEventArgs e)
+        {
+            if (_suppressEvents) return;
+            CurrentMBoosterController()?.SetEngineTestActive(MBoosterEngineTestToggle.IsChecked == true);
+        }
+
+        private void MBoosterRoadTextureEnable_Changed(object sender, RoutedEventArgs e)
+        {
+            if (_suppressEvents) return;
+            var s = CurrentMBoosterSettings();
+            if (s == null) return;
+            (s.RoadTexture ??= new MBoosterEffectSettings()).Enabled = MBoosterRoadTextureEnable.IsChecked == true;
+            _plugin.SaveSettings();
+        }
+        // Both Intensity and Smoothness are sent to the device as raw
+        // percentages — the firmware applies them to the streamed noise
+        // signal internally (confirmed from capture: neither affects the
+        // noise's shape as transmitted). See
+        // MozaMBoosterProtocol.EncodeRoadTextureLevel and
+        // MBoosterEffectWorker.ProcessRoadTextureEffect.
+        private void MBoosterRoadTextureIntensity_ValueChanged(object sender, RoutedPropertyChangedEventArgs<double> e)
+        {
+            if (_suppressEvents) return;
+            int v = Math.Max(0, Math.Min(100, (int)Math.Round(e.NewValue)));
+            MBoosterRoadTextureIntensityValue.Text = v.ToString();
+            var s = CurrentMBoosterSettings();
+            if (s == null) return;
+            (s.RoadTexture ??= new MBoosterEffectSettings()).IntensityPct = v;
+            _plugin.SaveSettings();
+        }
+        private void MBoosterRoadTextureSmoothness_ValueChanged(object sender, RoutedPropertyChangedEventArgs<double> e)
+        {
+            if (_suppressEvents) return;
+            int v = Math.Max(0, Math.Min(100, (int)Math.Round(e.NewValue)));
+            MBoosterRoadTextureSmoothnessValue.Text = v.ToString();
+            var s = CurrentMBoosterSettings();
+            if (s == null) return;
+            (s.RoadTexture ??= new MBoosterEffectSettings()).SmoothnessPct = v;
+            _plugin.SaveSettings();
+        }
+        // Sustained test toggle — bypasses Enabled and the game-running/
+        // speed gate entirely (there's no live "how rough is the road"
+        // signal to preview against outside a real drive), running
+        // continuously at the live Intensity/Smoothness slider values. See
+        // MBoosterDeviceController.SetRoadTextureTestActive and
+        // MBoosterEffectWorker's _roadTextureTestSustained.
+        private void MBoosterRoadTextureTestToggle_Changed(object sender, RoutedEventArgs e)
+        {
+            if (_suppressEvents) return;
+            CurrentMBoosterController()?.SetRoadTextureTestActive(MBoosterRoadTextureTestToggle.IsChecked == true);
+        }
+
+        // Brake Fade — NOT a vibration effect. Dynamically rewrites the real
+        // Travel End AND Max Threshold hardware calibrations in lockstep
+        // while brake temp is above BrakeFadeOnsetC (more travel AND more
+        // force needed to reach 100%), restoring the user's own configured
+        // values as it cools. See MBoosterEffectWorker.UpdateBrakeFade.
+        private void MBoosterBrakeFadeEnable_Changed(object sender, RoutedEventArgs e)
+        {
+            if (_suppressEvents) return;
+            var s = CurrentMBoosterSettings();
+            if (s == null) return;
+            (s.BrakeFade ??= new MBoosterEffectSettings()).Enabled = MBoosterBrakeFadeEnable.IsChecked == true;
+            _plugin.SaveSettings();
+        }
+        // Brake temperature (°C) above which Travel End and Max Threshold
+        // start ramping — see MBoosterEffectSettings.BrakeFadeOnsetC.
+        private void MBoosterBrakeFadeOnsetSlider_ValueChanged(object sender, RoutedPropertyChangedEventArgs<double> e)
+        {
+            if (_suppressEvents) return;
+            int v = Math.Max((int)MBoosterUiConstants.BrakeFadeOnsetMinC, Math.Min((int)MBoosterUiConstants.BrakeFadeOnsetMaxC, (int)Math.Round(e.NewValue)));
+            MBoosterBrakeFadeOnsetValue.Text = v.ToString();
+            var s = CurrentMBoosterSettings();
+            if (s == null) return;
+            (s.BrakeFade ??= new MBoosterEffectSettings()).BrakeFadeOnsetC = v;
+            _plugin.SaveSettings();
+        }
+        // Sustained test toggle — bypasses Enabled and the brake-temperature
+        // gate entirely (there's no live "how hot are the brakes" signal to
+        // preview against outside a real drive), forcing Travel End and Max
+        // Threshold to their Brake Fade caps for as long as it's on. Each
+        // independently requires its own configured base value — otherwise
+        // that one is a no-op (the other can still preview on its own). See
+        // MBoosterDeviceController.SetBrakeFadeTestActive and
+        // MBoosterEffectWorker's _brakeFadeTestActive.
+        private void MBoosterBrakeFadeTestToggle_Changed(object sender, RoutedEventArgs e)
+        {
+            if (_suppressEvents) return;
+            CurrentMBoosterController()?.SetBrakeFadeTestActive(MBoosterBrakeFadeTestToggle.IsChecked == true);
         }
 
         // ===== Calibration (experimental) ===================================
@@ -2691,6 +3055,245 @@ namespace MozaPlugin
             s.Max = v;
             _plugin.SaveSettings();
         }
+
+        private static readonly float[] MBoosterDefaultCurve = { 20, 40, 60, 80, 100 };
+
+        // Output curve (5-point, mirrors the wheelbase pedal Y curves). The
+        // mBooster's single physical axis always writes through the
+        // "throttle" command slot regardless of assigned role — same
+        // convention as Direction/Min/Max above (see ApplyMBoosterToHardware).
+        //
+        // Nodes are also draggable horizontally (AllowHorizontalDrag on the
+        // editor) so "100% output before 100% input" works without a
+        // (nonexistent) hardware X-breakpoint command: every Y or X change
+        // resamples the whole (CurveX, CurveY) shape at the fixed
+        // 20/40/60/80/100 breakpoints the wire protocol actually supports
+        // and pushes all 5 through the existing y1-y5 commands, instead of
+        // pushing just the one changed value. When CurveX is still the
+        // default, resampling is the identity, so this is a no-op change in
+        // behavior for anyone who never drags a node sideways.
+        private void SetMBoosterCurveY(int index, int v)
+        {
+            var s = CurrentMBoosterSettings();
+            if (s == null) return;
+            if (s.CurveY == null || s.CurveY.Length != 5) s.CurveY = (float[])MBoosterDefaultCurve.Clone();
+            s.CurveY[index] = v;
+            PushResampledMBoosterCurve(s);
+        }
+
+        private void SetMBoosterCurveX(int index, int v)
+        {
+            var s = CurrentMBoosterSettings();
+            if (s == null) return;
+            if (s.CurveX == null || s.CurveX.Length != 5) s.CurveX = (float[])MBoosterDefaultCurve.Clone();
+            if (s.CurveY == null || s.CurveY.Length != 5) s.CurveY = (float[])MBoosterDefaultCurve.Clone();
+            s.CurveX[index] = v;
+            PushResampledMBoosterCurve(s);
+        }
+
+        private void PushResampledMBoosterCurve(MBoosterDeviceSettings s)
+        {
+            if (s.CurveY == null || s.CurveY.Length != 5) return;
+            var controller = CurrentMBoosterController();
+            if (controller == null) return;
+            var resampled = global::MozaPlugin.Devices.MozaMBoosterRegistry.ResampleCurveAtFixedBreakpoints(s.CurveX, s.CurveY);
+            for (int i = 0; i < 5; i++)
+                controller.SendFloatWrite($"mbooster-throttle-y{i + 1}", resampled[i]);
+        }
+
+        private void MBoosterY1Slider_ValueChanged(object s, RoutedPropertyChangedEventArgs<double> e) => OnIntSliderChanged(e.NewValue, MBoosterY1Value, "", v => SetMBoosterCurveY(0, v));
+        private void MBoosterY2Slider_ValueChanged(object s, RoutedPropertyChangedEventArgs<double> e) => OnIntSliderChanged(e.NewValue, MBoosterY2Value, "", v => SetMBoosterCurveY(1, v));
+        private void MBoosterY3Slider_ValueChanged(object s, RoutedPropertyChangedEventArgs<double> e) => OnIntSliderChanged(e.NewValue, MBoosterY3Value, "", v => SetMBoosterCurveY(2, v));
+        private void MBoosterY4Slider_ValueChanged(object s, RoutedPropertyChangedEventArgs<double> e) => OnIntSliderChanged(e.NewValue, MBoosterY4Value, "", v => SetMBoosterCurveY(3, v));
+        private void MBoosterY5Slider_ValueChanged(object s, RoutedPropertyChangedEventArgs<double> e) => OnIntSliderChanged(e.NewValue, MBoosterY5Value, "", v => SetMBoosterCurveY(4, v));
+
+        private void MBoosterX1Slider_ValueChanged(object s, RoutedPropertyChangedEventArgs<double> e) => OnIntSliderChanged(e.NewValue, MBoosterX1Value, "", v => SetMBoosterCurveX(0, v));
+        private void MBoosterX2Slider_ValueChanged(object s, RoutedPropertyChangedEventArgs<double> e) => OnIntSliderChanged(e.NewValue, MBoosterX2Value, "", v => SetMBoosterCurveX(1, v));
+        private void MBoosterX3Slider_ValueChanged(object s, RoutedPropertyChangedEventArgs<double> e) => OnIntSliderChanged(e.NewValue, MBoosterX3Value, "", v => SetMBoosterCurveX(2, v));
+        private void MBoosterX4Slider_ValueChanged(object s, RoutedPropertyChangedEventArgs<double> e) => OnIntSliderChanged(e.NewValue, MBoosterX4Value, "", v => SetMBoosterCurveX(3, v));
+        private void MBoosterX5Slider_ValueChanged(object s, RoutedPropertyChangedEventArgs<double> e) => OnIntSliderChanged(e.NewValue, MBoosterX5Value, "", v => SetMBoosterCurveX(4, v));
+
+        private void ApplyMBoosterCurvePreset(int[] curve)
+        {
+            var s = CurrentMBoosterSettings();
+            if (s == null) return;
+            if (s.CurveY == null || s.CurveY.Length != 5) s.CurveY = new float[5];
+            // Presets are a clean, standard shape — reset any dragged X
+            // positions back to the fixed breakpoints too.
+            s.CurveX = null;
+            using (_suppressor.Begin())
+            {
+                MBoosterY1Slider.Value = curve[0]; SetValueText(MBoosterY1Value, curve[0].ToString());
+                MBoosterY2Slider.Value = curve[1]; SetValueText(MBoosterY2Value, curve[1].ToString());
+                MBoosterY3Slider.Value = curve[2]; SetValueText(MBoosterY3Value, curve[2].ToString());
+                MBoosterY4Slider.Value = curve[3]; SetValueText(MBoosterY4Value, curve[3].ToString());
+                MBoosterY5Slider.Value = curve[4]; SetValueText(MBoosterY5Value, curve[4].ToString());
+                MBoosterX1Slider.Value = MBoosterDefaultCurve[0]; SetValueText(MBoosterX1Value, MBoosterDefaultCurve[0].ToString("F0"));
+                MBoosterX2Slider.Value = MBoosterDefaultCurve[1]; SetValueText(MBoosterX2Value, MBoosterDefaultCurve[1].ToString("F0"));
+                MBoosterX3Slider.Value = MBoosterDefaultCurve[2]; SetValueText(MBoosterX3Value, MBoosterDefaultCurve[2].ToString("F0"));
+                MBoosterX4Slider.Value = MBoosterDefaultCurve[3]; SetValueText(MBoosterX4Value, MBoosterDefaultCurve[3].ToString("F0"));
+                MBoosterX5Slider.Value = MBoosterDefaultCurve[4]; SetValueText(MBoosterX5Value, MBoosterDefaultCurve[4].ToString("F0"));
+            }
+            for (int i = 0; i < 5; i++)
+                s.CurveY[i] = curve[i];
+            PushResampledMBoosterCurve(s);
+            _plugin.SaveSettings();
+        }
+
+        private void MBoosterCurvePreset_Linear(object s, RoutedEventArgs e)      => ApplyMBoosterCurvePreset(PedalCurvePresets[0]);
+        private void MBoosterCurvePreset_SCurve(object s, RoutedEventArgs e)      => ApplyMBoosterCurvePreset(PedalCurvePresets[1]);
+        private void MBoosterCurvePreset_Exponential(object s, RoutedEventArgs e) => ApplyMBoosterCurvePreset(PedalCurvePresets[2]);
+        private void MBoosterCurvePreset_Parabolic(object s, RoutedEventArgs e)   => ApplyMBoosterCurvePreset(PedalCurvePresets[3]);
+
+        // Pedal Feel input curve (host-side only — see MozaMBoosterRegistry.
+        // EvaluateInputCurve). Reshapes the reported HID position before it
+        // reaches the game or the Sim Input Mapping output curve above;
+        // never writes to the device, unlike SetMBoosterCurveY.
+        private void SetMBoosterInputCurveY(int index, int v)
+        {
+            var s = CurrentMBoosterSettings();
+            if (s == null) return;
+            if (s.InputCurveY == null || s.InputCurveY.Length != 5) s.InputCurveY = (float[])MBoosterDefaultCurve.Clone();
+            s.InputCurveY[index] = v;
+        }
+
+        private void MBoosterInputY1Slider_ValueChanged(object s, RoutedPropertyChangedEventArgs<double> e) => OnIntSliderChanged(e.NewValue, MBoosterInputY1Value, "", v => SetMBoosterInputCurveY(0, v));
+        private void MBoosterInputY2Slider_ValueChanged(object s, RoutedPropertyChangedEventArgs<double> e) => OnIntSliderChanged(e.NewValue, MBoosterInputY2Value, "", v => SetMBoosterInputCurveY(1, v));
+        private void MBoosterInputY3Slider_ValueChanged(object s, RoutedPropertyChangedEventArgs<double> e) => OnIntSliderChanged(e.NewValue, MBoosterInputY3Value, "", v => SetMBoosterInputCurveY(2, v));
+        private void MBoosterInputY4Slider_ValueChanged(object s, RoutedPropertyChangedEventArgs<double> e) => OnIntSliderChanged(e.NewValue, MBoosterInputY4Value, "", v => SetMBoosterInputCurveY(3, v));
+        private void MBoosterInputY5Slider_ValueChanged(object s, RoutedPropertyChangedEventArgs<double> e) => OnIntSliderChanged(e.NewValue, MBoosterInputY5Value, "", v => SetMBoosterInputCurveY(4, v));
+
+        private void ApplyMBoosterInputCurvePreset(int[] curve)
+        {
+            var s = CurrentMBoosterSettings();
+            if (s == null) return;
+            if (s.InputCurveY == null || s.InputCurveY.Length != 5) s.InputCurveY = new float[5];
+            using (_suppressor.Begin())
+            {
+                MBoosterInputY1Slider.Value = curve[0]; SetValueText(MBoosterInputY1Value, curve[0].ToString());
+                MBoosterInputY2Slider.Value = curve[1]; SetValueText(MBoosterInputY2Value, curve[1].ToString());
+                MBoosterInputY3Slider.Value = curve[2]; SetValueText(MBoosterInputY3Value, curve[2].ToString());
+                MBoosterInputY4Slider.Value = curve[3]; SetValueText(MBoosterInputY4Value, curve[3].ToString());
+                MBoosterInputY5Slider.Value = curve[4]; SetValueText(MBoosterInputY5Value, curve[4].ToString());
+            }
+            for (int i = 0; i < 5; i++)
+                s.InputCurveY[i] = curve[i];
+            _plugin.SaveSettings();
+        }
+
+        private void MBoosterInputCurvePreset_Linear(object s, RoutedEventArgs e)      => ApplyMBoosterInputCurvePreset(PedalCurvePresets[0]);
+        private void MBoosterInputCurvePreset_SCurve(object s, RoutedEventArgs e)      => ApplyMBoosterInputCurvePreset(PedalCurvePresets[1]);
+        private void MBoosterInputCurvePreset_Exponential(object s, RoutedEventArgs e) => ApplyMBoosterInputCurvePreset(PedalCurvePresets[2]);
+        private void MBoosterInputCurvePreset_Parabolic(object s, RoutedEventArgs e)   => ApplyMBoosterInputCurvePreset(PedalCurvePresets[3]);
+
+        // Start/End of pedal travel (mm) — a real hardware calibration
+        // write, reverse-engineered from two real Pit House USB captures:
+        // wire commands mbooster-brake-travel-start/-end (cmdIds 0x84/0x85),
+        // 2-byte ints, same shape as Min/Max. See
+        // MozaMBoosterProtocol.EncodeTravelMm and
+        // docs/protocol/devices/mbooster.md "Pedal Feel". MozaRangeSlider
+        // has no built-in "changed" CLR event (its Low/HighValue are plain
+        // DPs), so it raises RangeChanged instead of the ValueChanged the
+        // other mBooster sliders use.
+        private void MBoosterTravelRangeSlider_RangeChanged(object sender, EventArgs e)
+        {
+            if (_suppressEvents) return;
+            var s = CurrentMBoosterSettings();
+            if (s == null) return;
+            s.TravelStartMm = (float)MBoosterTravelRangeSlider.LowValue;
+            s.TravelEndMm = (float)MBoosterTravelRangeSlider.HighValue;
+            var controller = CurrentMBoosterController();
+            controller?.SendIntWrite("mbooster-brake-travel-start",
+                global::MozaPlugin.Protocol.MozaMBoosterProtocol.EncodeTravelMm(s.TravelStartMm));
+            controller?.SendIntWrite("mbooster-brake-travel-end",
+                global::MozaPlugin.Protocol.MozaMBoosterProtocol.EncodeTravelMm(s.TravelEndMm));
+            _plugin.SaveSettings();
+        }
+
+        // Deadzone at the start of pedal travel (0..40kg, host-side only —
+        // see MozaMBoosterRegistry.ApplyDeadzoneAndMaxForce). Decimal
+        // precision (0.1kg ticks), so this doesn't reuse OnIntSliderChanged
+        // (which rounds to whole numbers like the other mBooster sliders).
+        private void MBoosterDeadzoneSlider_ValueChanged(object sender, RoutedPropertyChangedEventArgs<double> e)
+        {
+            if (_suppressEvents) return;
+            double v = Math.Round(e.NewValue, 1);
+            SetValueText(MBoosterDeadzoneValue, v.ToString("F1"));
+            var s = CurrentMBoosterSettings();
+            if (s == null) return;
+            s.DeadzoneKg = (float)v;
+            _plugin.SaveSettings();
+        }
+
+        // Max Force (0..200kg, host-side only, default 200 = off) — the
+        // force at which the Pedal Feel input curve's X-axis reaches 100%.
+        // See MozaMBoosterRegistry.ApplyDeadzoneAndMaxForce.
+        private void MBoosterMaxForceSlider_ValueChanged(object sender, RoutedPropertyChangedEventArgs<double> e) =>
+            OnIntSliderChanged(e.NewValue, MBoosterMaxForceValue, "", v =>
+            {
+                var s = CurrentMBoosterSettings();
+                if (s == null) return;
+                s.MaxForceKg = v;
+            });
+
+        // Sensor Output Ratio — blend between the mBooster's angle sensor
+        // (0%) and its load cell (100%). Live-pushes on every drag, same as
+        // the wheelbase Brake tab's BrakeAngleRatioSlider (pedals-brake-angle-ratio) —
+        // this is the mBooster-side twin of that control (mbooster-brake-angle-ratio).
+        private void MBoosterRatioSlider_ValueChanged(object sender, RoutedPropertyChangedEventArgs<double> e)
+        {
+            if (_suppressEvents) return;
+            int v = (int)Math.Round(e.NewValue);
+            SetValueText(MBoosterRatioValue, $"{v}%");
+            var s = CurrentMBoosterSettings();
+            if (s == null) return;
+            s.SensorOutputRatioPct = v;
+            CurrentMBoosterController()?.SendFloatWrite("mbooster-brake-angle-ratio", v);
+            _plugin.SaveSettings();
+        }
+
+        // Max Threshold (kg) — Pit House's load-cell-force-for-100%-output
+        // setting. Reverse-engineered from a real capture: wire command
+        // mbooster-brake-threshold (cmdId 0xB3), a 4-byte big-endian raw
+        // uint (NOT a float) on a fixed 0-200kg scale — see
+        // MozaMBoosterProtocol.EncodeThresholdKg and
+        // docs/protocol/devices/mbooster.md "Sim Input Mapping".
+        private void MBoosterMaxThresholdSlider_ValueChanged(object sender, RoutedPropertyChangedEventArgs<double> e) =>
+            OnIntSliderChanged(e.NewValue, MBoosterMaxThresholdValue, "", v =>
+            {
+                var s = CurrentMBoosterSettings();
+                if (s == null) return;
+                s.MaxThresholdKg = v;
+                CurrentMBoosterController()?.SendIntWrite("mbooster-brake-threshold",
+                    global::MozaPlugin.Protocol.MozaMBoosterProtocol.EncodeThresholdKg(v));
+            });
+
+        // End Stop Stiffness (Front Limit / End Limit), 1-10 — Pit House's
+        // own hardware calibration. Reverse-engineered from two real
+        // captures: both share wire command cmdId 0xB2 with a selector byte
+        // (mbooster-brake-endstop-front/-end), 2-byte int on a fixed 1-10
+        // scale — see MozaMBoosterProtocol.EncodeEndstopStiffness and
+        // docs/protocol/devices/mbooster.md "Pedal Feel".
+        private void MBoosterEndstopFrontSlider_ValueChanged(object sender, RoutedPropertyChangedEventArgs<double> e) =>
+            OnIntSliderChanged(e.NewValue, MBoosterEndstopFrontValue, "", v =>
+            {
+                var s = CurrentMBoosterSettings();
+                if (s == null) return;
+                s.EndstopFrontStiffness = v;
+                CurrentMBoosterController()?.SendIntWrite("mbooster-brake-endstop-front",
+                    global::MozaPlugin.Protocol.MozaMBoosterProtocol.EncodeEndstopStiffness(v));
+            });
+
+        private void MBoosterEndstopEndSlider_ValueChanged(object sender, RoutedPropertyChangedEventArgs<double> e) =>
+            OnIntSliderChanged(e.NewValue, MBoosterEndstopEndValue, "", v =>
+            {
+                var s = CurrentMBoosterSettings();
+                if (s == null) return;
+                s.EndstopEndStiffness = v;
+                CurrentMBoosterController()?.SendIntWrite("mbooster-brake-endstop-end",
+                    global::MozaPlugin.Protocol.MozaMBoosterProtocol.EncodeEndstopStiffness(v));
+            });
+
         private void MBoosterReadCalButton_Click(object sender, RoutedEventArgs e)
         {
             CurrentMBoosterController()?.RequestCalibrationReads();

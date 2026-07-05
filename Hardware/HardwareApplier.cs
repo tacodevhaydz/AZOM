@@ -215,6 +215,19 @@ namespace MozaPlugin.Hardware
             int stickMode      = ov?.WheelStickMode ?? -1;
             int knobRingBri    = Eff(ov?.WheelKnobRingBrightness ?? -1, profile.WheelKnobRingBrightness);
 
+            // Shared/master LED brightness override. Once the user has moved
+            // SimHub's master LED-brightness slider (WheelLedMasterBrightness >= 0),
+            // it is the authority for the wheel's firmware group brightness — the
+            // rpm/buttons/knob-ring values follow it equally, so a connect/profile
+            // re-apply asserts the master rather than reverting to the device-read
+            // profile value. -1 = user has not engaged the master; keep the
+            // per-group profile brightness untouched (unchanged legacy behaviour).
+            // ES (old-protocol) RPM brightness is a different command/range and is
+            // deliberately not overridden here. Live drags apply via the data-thread
+            // ApplyMasterWheelLedBrightness path, which shares the same cfg cache.
+            int ledMaster = _plugin.WheelLedMasterBrightness;
+            if (ledMaster >= 0) { rpmBri = ledMaster; btnBri = ledMaster; knobRingBri = ledMaster; }
+
             // _data mirror (UI binding).
             if (telemMode      >= 0) _data.WheelTelemetryMode      = telemMode;
             if (idleEffect     >= 0) _data.WheelTelemetryIdleEffect = idleEffect;
@@ -837,7 +850,11 @@ namespace MozaPlugin.Hardware
             ApplyEq(profile.Equalizer5, v => _data.Equalizer5 = v, "base-equalizer5");
             ApplyEq(profile.Equalizer6, v => _data.Equalizer6 = v, "base-equalizer6");
 
-            // FFB Curve Y values: mirror always; write when live.
+            // FFB Curve X/Y values: mirror always; write when live.
+            if (profile.FfbCurveX1 >= 0) _data.FfbCurveX1 = profile.FfbCurveX1;
+            if (profile.FfbCurveX2 >= 0) _data.FfbCurveX2 = profile.FfbCurveX2;
+            if (profile.FfbCurveX3 >= 0) _data.FfbCurveX3 = profile.FfbCurveX3;
+            if (profile.FfbCurveX4 >= 0) _data.FfbCurveX4 = profile.FfbCurveX4;
             if (profile.FfbCurveY1 >= 0) _data.FfbCurveY1 = profile.FfbCurveY1;
             if (profile.FfbCurveY2 >= 0) _data.FfbCurveY2 = profile.FfbCurveY2;
             if (profile.FfbCurveY3 >= 0) _data.FfbCurveY3 = profile.FfbCurveY3;
@@ -846,11 +863,15 @@ namespace MozaPlugin.Hardware
             // Persisted BaseDetected gate (see ApplyBaseSettingIfSet comment).
             if (!_detectionState.BaseDetected) return;
             // The device doesn't persist the X breakpoints, so they have to ride
-            // every curve write — but the curve only needs re-sending when a Y
-            // value actually changed. Gate the whole curve as a unit (X + Y) on
-            // the Y hash so an unchanged re-apply (e.g. a wheel hot-attach) sends
-            // nothing — re-pushing it bounces the motor mode on some bases.
+            // every curve write — but the curve only needs re-sending when a
+            // point actually changed. Gate the whole curve as a unit (X + Y) on
+            // the X+Y hash so an unchanged re-apply (e.g. a wheel hot-attach)
+            // sends nothing — re-pushing it bounces the motor mode on some bases.
             long curveHash = unchecked((long)1469598103934665603UL);
+            curveHash = Fnv(curveHash, _data.FfbCurveX1);
+            curveHash = Fnv(curveHash, _data.FfbCurveX2);
+            curveHash = Fnv(curveHash, _data.FfbCurveX3);
+            curveHash = Fnv(curveHash, _data.FfbCurveX4);
             curveHash = Fnv(curveHash, _data.FfbCurveY1);
             curveHash = Fnv(curveHash, _data.FfbCurveY2);
             curveHash = Fnv(curveHash, _data.FfbCurveY3);
@@ -858,10 +879,10 @@ namespace MozaPlugin.Hardware
             curveHash = Fnv(curveHash, _data.FfbCurveY5);
             if (BaseCfgChanged("base-ffb-curve", curveHash))
             {
-                BaseManager.WriteSetting("base-ffb-curve-x1", 20);
-                BaseManager.WriteSetting("base-ffb-curve-x2", 40);
-                BaseManager.WriteSetting("base-ffb-curve-x3", 60);
-                BaseManager.WriteSetting("base-ffb-curve-x4", 80);
+                BaseManager.WriteSetting("base-ffb-curve-x1", _data.FfbCurveX1);
+                BaseManager.WriteSetting("base-ffb-curve-x2", _data.FfbCurveX2);
+                BaseManager.WriteSetting("base-ffb-curve-x3", _data.FfbCurveX3);
+                BaseManager.WriteSetting("base-ffb-curve-x4", _data.FfbCurveX4);
                 BaseManager.WriteSetting("base-ffb-curve-y1", _data.FfbCurveY1);
                 BaseManager.WriteSetting("base-ffb-curve-y2", _data.FfbCurveY2);
                 BaseManager.WriteSetting("base-ffb-curve-y3", _data.FfbCurveY3);
@@ -1356,6 +1377,46 @@ namespace MozaPlugin.Hardware
                 _deviceManager.WriteColor($"wheel-knob-bg-color{i + 1}", rgb[0], rgb[1], rgb[2]);
             }
             MozaLedDeviceManager.InvalidateLiveCacheAny(LedKind.Knob);
+        }
+
+        /// <summary>
+        /// Push SimHub's shared/master LED brightness (0..100) to the wheel's
+        /// firmware group brightness — the rpm (group 0), buttons (group 1) and
+        /// knob-ring (group 3) groups all receive the same value (cmd <c>1B [G] FF</c>).
+        /// Called from the data thread when the user moves the master slider (the
+        /// wheel LED driver publishes the settled value into
+        /// <see cref="MozaPlugin.WheelLedMasterBrightness"/>). Flag brightness lives
+        /// on the Meter sub-device and is out of the wheel LED-group scope; ES
+        /// (old-protocol) wheels use a different command/range and are gated out via
+        /// <c>NewWheelDetected</c>. Change-gated through the same per-wheel cfg cache
+        /// as <c>ApplyWheelToHardware</c>, so a value already on the wheel is not
+        /// re-flashed and this never fights the connect/profile brightness write.
+        /// </summary>
+        public void ApplyMasterWheelLedBrightness(int value)
+        {
+            if (value < 0) return;
+            if (!_detectionState.NewWheelDetected) return;
+            var model = _plugin.WheelModelInfo;   // null until identity resolves
+            if (model == null) return;
+
+            SyncWheelCfgCache();
+
+            if (model.RpmLedCount > 0 && WheelCfgChanged("wheel-rpm-brightness", value))
+            {
+                _data.WheelRpmBrightness = value;
+                _deviceManager.WriteSetting("wheel-rpm-brightness", value);
+            }
+            if (model.ButtonLedCount > 0 && WheelCfgChanged("wheel-buttons-brightness", value))
+            {
+                _data.WheelButtonsBrightness = value;
+                _deviceManager.WriteSetting("wheel-buttons-brightness", value);
+            }
+            if (model.KnobRingLeds != null && _detectionState.IsWheelLedGroupPresent(3)
+                    && WheelCfgChanged("wheel-knob-brightness", value))
+            {
+                _data.KnobRingBrightness = value;
+                _deviceManager.WriteSetting("wheel-knob-brightness", value);
+            }
         }
 
         public static void UnpackPackedColor(int packed, byte[] dst)

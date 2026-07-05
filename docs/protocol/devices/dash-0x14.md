@@ -28,16 +28,56 @@ The CM2 (USB PID `0x0025`) connects in one of two topologies:
   For a base-bridged CM2 the whole pipeline targets dev `0x14`; PitHouse runs the
   session + value stream there and `0x14` answers with b2h session chunks
   (`cm2.pcapng` 2026-06-08).
-- **CM2 RPM/flag LEDs are driven by the `dash-send-telemetry` on/off bitmask** —
-  group `0x41` cmd `FD DE`, dev `0x14`, sent per telemetry frame; the firmware
-  lights each set bit in its stored colour. PitHouse drives the base-bridged CM2
-  exactly this way (`cm2.pcapng` 2026-06-08: per-frame `7E .. 41 14 FD DE <u32
-  bitmask>`). The per-LED COLOURS and RPM thresholds are a separate one-time
-  group-`0x32` config push (`1B 00 FF <idx>` stored colours, `05`/`0E` thresholds,
-  `18`/`11`/`0D` modes); see [`main-hub-0x12.md`](main-hub-0x12.md) § "CM2
-  bridge/main routing". The plugin does NOT stream per-LED colour per frame — an
-  earlier build streamed group-`0x32` sub `0x0B` to dev `0x12`, which the firmware
-  ignores, so CM2 LEDs never lit until the bitmask path was restored.
+- **CM2 RPM/flag LEDs depend on the meter FIRMWARE ERA** (see § "CM2 LED firmware
+  eras" below). Two distinct live-LED paths exist; the plugin auto-detects which
+  and picks the matching emitter.
+
+#### CM2 LED firmware eras
+
+The CM2 meter firmware was reworked around 2026-06, replacing the LED subsystem.
+The eras are distinguishable from the meter's own `0x0E` firmware-debug heartbeat
+(`src=0x41`) and drive LEDs by completely different wire commands.
+
+| | **Legacy RPM-ramp** (≤ 2026-06) | **Indicator** (2026-06+) |
+|---|---|---|
+| Heartbeat vocabulary | `RpmMode`, `RpmNumber[0~9]`, `RpmPercent[0~9]` | `IndicatorMode`, `StandbyMode`, `SleepMode`, `SleepSwitches` |
+| `meter_diag.c` line | `:89` | `:88` |
+| Config params (`Table 7`) | ramp thresholds at 60–69 / 75–84, modes 90/92/94 | packed RGB at 21–36, mode 6, brightness 8 |
+| Live LED driver | `0x41 FD DE <u32 bitmask>` to `0x14`; firmware lights each set bit in its stored/ramp colour | group-`0x32` live path (below) |
+| Reference capture | `cm2.pcapng` (2026-06-08) | `cm2(1).pcapng` |
+
+On the **legacy** firmware the autonomous RPM ramp (driven by the one-time
+group-`0x32` config push — `1B 00 FF <idx>` stored colours, `05`/`0E` thresholds,
+`18`/`11`/`0D` modes; see [`main-hub-0x12.md`](main-hub-0x12.md) § "CM2 bridge/main
+routing") lights the bar from the RPM value alone; the `41 FD DE` bitmask is the
+per-frame on/off overlay. PitHouse drives it per frame (`cm2.pcapng`: `7E .. 41 14
+FD DE <u32>`).
+
+On the **indicator** firmware the autonomous ramp and the `41 FD DE` / `0B` live
+registers are **gone** (the bitmask is still sent by PitHouse but always `00000000`
+— vestigial parity). LEDs are driven live, wheel-style, on group `0x32`
+(`cm2(1).pcapng`, PitHouse on an updated CM2; frames reproduce byte-exact under
+`MozaProtocol.CalculateWireChecksum`):
+
+```
+colours  7E <6N> 32 14 13 00 [ <idx> <R> <G> <B> ] * N   <csum>   (~14.5 Hz driving)
+bitmask  7E 0A   32 14 14 00 <active u32 LE> <window u32 LE> <csum> (~2.4 Hz)
+```
+
+- **Colours** (`13 00`): the full 16-LED strip in physical order
+  `[flag 1-3][RPM 1-10][flag 4-6]`, 5 LEDs per 20-byte chunk, 4 chunks
+  (0-4, 5-9, 10-14, 15 — last chunk short). `idx` is the absolute 0-based LED.
+- **Bitmask** (`14 00`): `window` is fixed at `0x00001FF8` (LEDs 3..12 = the 10
+  RPM positions); `active` sets the lit RPM bits within it. Flags (0-2, 13-15) are
+  outside the window — driven by colour presence alone (no flag-lit capture on this
+  firmware yet, so flag on/off semantics are unconfirmed).
+
+Plugin handling: `MozaPlugin.Cm2NewLedFirmware` (persisted) is set by
+`DetectCm2LedFirmwareEra` from the heartbeat vocabulary (bidirectional, so a
+downgrade recovers). `MozaDashLedDeviceManager.DisplayNewEra` emits the group-`0x32`
+path via `cm2-live-colors` / `cm2-live-bitmask`; the legacy path is unchanged.
+Earlier note (still true for legacy fw): a build that streamed group-`0x32` sub
+`0x0B` to dev `0x12` did nothing — that firmware ignores it.
 
 ### CM1 Racing Dash — group `0x35` keyed value stream
 

@@ -1,3 +1,12 @@
+## Claude stuff
+.claude*
+
+## Captures/logs from dev
+KS-Pro*.zip
+serialcapture.txt
+*.pcapng
+usb-cap*
+
 ## Build output
 bin/
 obj/

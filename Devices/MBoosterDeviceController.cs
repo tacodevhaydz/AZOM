@@ -42,9 +42,17 @@ namespace MozaPlugin.Devices
         public bool IsConnected => _connection.IsConnected;
         public MozaSerialConnection Connection => _connection;
 
-        // Latest HID axis value (0..1). Updated by MozaHidReader via the
+        // Latest HID axis value (0..1), AFTER Pedal Feel shaping (deadzone,
+        // max force, input curve). Updated by MozaHidReader via the
         // registry; published as a property so the UI panel can show the bar.
         public double LastHidPosition { get; internal set; }
+
+        // Same signal, but BEFORE the input curve (i.e. after deadzone/max
+        // force only) — 0..100. Lets the UI place a live position marker on
+        // the Pedal Feel input curve showing exactly what it receives, since
+        // LastHidPosition is already past that point. See
+        // MozaMBoosterRegistry.OnHidAxisUpdate.
+        public double LastRawPercentPreCurve { get; internal set; }
 
         /// <summary>Latest per-identity settings (role, display name, calibration).
         /// Thin pass-through to the registry's settings lookup — returns null if no
@@ -157,6 +165,14 @@ namespace MozaPlugin.Devices
             {
                 MozaLog.Info($"[AZOM/mBooster] Connected ({ShortIdentity(Identity)} on {_connection.LastPortName})");
                 _worker.Start();
+                // Nothing else proactively elicits a response from this device:
+                // motor frames and the keepalive are write-only, and with all
+                // effects disabled (the default for a fresh device) the worker
+                // sends nothing else at all. Without this, MarkDetected() never
+                // fires and the UI sits at "Probing…" until the user manually
+                // clicks "Read from device" in the Calibration section — fire
+                // the same read burst here so detection latches on its own.
+                RequestCalibrationReads();
             }
             return ok;
         }
@@ -261,9 +277,12 @@ namespace MozaPlugin.Devices
 
         /// <summary>
         /// Issue a one-time burst of calibration reads (direction / min / max
-        /// per pedal + 5-point curves). Mirrors the wheelbase pedal seed; runs
-        /// once per detection edge so the UI can populate from device state.
-        /// Experimental: may produce no responses on mBooster firmware.
+        /// per pedal + 5-point curves). Mirrors the wheelbase pedal seed.
+        /// Called from <see cref="TryConnect"/> (it's also the only thing
+        /// that elicits a response a fresh connection can latch detection
+        /// on), from the rising-edge handler, and from the UI's "Read from
+        /// device" button. Experimental: may produce no responses on
+        /// mBooster firmware.
         /// </summary>
         public void RequestCalibrationReads()
         {
@@ -276,13 +295,14 @@ namespace MozaPlugin.Devices
                 "mbooster-throttle-y1", "mbooster-throttle-y2", "mbooster-throttle-y3", "mbooster-throttle-y4", "mbooster-throttle-y5",
                 "mbooster-brake-y1", "mbooster-brake-y2", "mbooster-brake-y3", "mbooster-brake-y4", "mbooster-brake-y5",
                 "mbooster-clutch-y1", "mbooster-clutch-y2", "mbooster-clutch-y3", "mbooster-clutch-y4", "mbooster-clutch-y5",
+                "mbooster-brake-angle-ratio", "mbooster-brake-threshold",
             })
             {
                 SendRead(name);
             }
         }
 
-        /// <summary>Fire all four disable frames; called on disconnect / shutdown.</summary>
+        /// <summary>Fire all five disable frames; called on disconnect / shutdown.</summary>
         public void SendAllDisableFrames()
         {
             if (!_connection.IsConnected) return;
@@ -291,31 +311,101 @@ namespace MozaPlugin.Devices
             SendOneShot(MozaMBoosterProtocol.BuildDisableFrame(MBoosterEffectId.Lockup));
             SendOneShot(MozaMBoosterProtocol.BuildDisableFrame(MBoosterEffectId.Threshold));
             SendOneShot(MozaMBoosterProtocol.BuildDisableFrame(MBoosterEffectId.Engine));
+            SendOneShot(MozaMBoosterProtocol.BuildDisableFrame(MBoosterEffectId.RoadTexture));
         }
 
         /// <summary>
-        /// Fire a single effect for ~1 s, used by the per-effect "Test" buttons
-        /// in the UI. The worker handles per-effect scale caps and brake
-        /// modulation (ABS / Lockup / Threshold track live brake; Engine uses
-        /// its reference frequency at the configured intensity). The raw 0..1
-        /// user setting is passed through unchanged.
+        /// Continuously runs the Engine effect at its currently configured
+        /// Frequency/Intensity while <paramref name="on"/> is true — the
+        /// Engine card's Test toggle. Both sliders are tracked live by
+        /// the worker, not snapshotted at toggle-on time. Turning off is
+        /// always allowed (even if disconnected) so a stuck toggle can
+        /// always be cleared; turning on requires a live connection.
         /// </summary>
-        public void FireEffectTest(MBoosterEffectId effect)
+        public void SetEngineTestActive(bool on)
         {
-            var settings = _settingsLookup();
-            if (settings == null || !_connection.IsConnected) return;
+            if (on && !_connection.IsConnected) return;
+            _worker.SetEngineTestSustained(on);
+        }
 
-            var es = effect switch
-            {
-                MBoosterEffectId.Abs       => settings.Abs,
-                MBoosterEffectId.Lockup    => settings.Lockup,
-                MBoosterEffectId.Threshold => settings.Threshold,
-                MBoosterEffectId.Engine    => settings.Engine,
-                _ => settings.Abs,
-            };
+        /// <summary>
+        /// Continuously runs the ABS effect — substituting live brake
+        /// position for absActive, same as the old 1s test pulse did — at
+        /// its currently configured Frequency/Intensity/Smoothness while
+        /// <paramref name="on"/> is true. See <see cref="SetEngineTestActive"/>
+        /// for the analogous Engine toggle; same live-tracking and
+        /// always-allow-off semantics apply here.
+        /// </summary>
+        public void SetAbsTestActive(bool on)
+        {
+            if (on && !_connection.IsConnected) return;
+            _worker.SetAbsTestSustained(on);
+        }
 
-            double intensity = (es?.IntensityPct ?? 50) / 100.0;
-            _worker.FireTestPulse(effect, intensity);
+        /// <summary>
+        /// Continuously runs Road Texture at its currently configured
+        /// Intensity/Smoothness while <paramref name="on"/> is true,
+        /// bypassing Enabled and the game-running/speed gate entirely —
+        /// there's no live "how rough is the road" signal to preview
+        /// against outside a real drive. See <see cref="SetEngineTestActive"/>
+        /// for the analogous Engine toggle; same live-tracking and
+        /// always-allow-off semantics apply here.
+        /// </summary>
+        public void SetRoadTextureTestActive(bool on)
+        {
+            if (on && !_connection.IsConnected) return;
+            _worker.SetRoadTextureTestSustained(on);
+        }
+
+        /// <summary>
+        /// Continuously runs Lockup — substituting live brake position for
+        /// the wheel-slip detection heuristic (which needs vehicle speed),
+        /// same as the old 1s test pulse did — at its currently configured
+        /// Frequency/Intensity while <paramref name="on"/> is true. See
+        /// <see cref="SetEngineTestActive"/> for the analogous Engine
+        /// toggle; same live-tracking and always-allow-off semantics apply
+        /// here.
+        /// </summary>
+        public void SetLockupTestActive(bool on)
+        {
+            if (on && !_connection.IsConnected) return;
+            _worker.SetLockupTestSustained(on);
+        }
+
+        /// <summary>
+        /// Continuously runs Threshold — skipping the rising-edge hysteresis
+        /// entirely, substituting live brake position for it (same
+        /// substitution the old 1s test pulse used) — at its currently
+        /// configured Frequency/Intensity/Decay while <paramref name="on"/>
+        /// is true. See <see cref="SetEngineTestActive"/> for the analogous
+        /// Engine toggle; same live-tracking and always-allow-off semantics
+        /// apply here.
+        /// </summary>
+        public void SetThresholdTestActive(bool on)
+        {
+            if (on && !_connection.IsConnected) return;
+            _worker.SetThresholdTestSustained(on);
+        }
+
+        /// <summary>
+        /// Forces Travel End and Max Threshold to their Brake Fade caps
+        /// (BrakeFadeMaxTravelEndMm / BrakeFadeMaxThresholdKg) while
+        /// <paramref name="on"/> is true, bypassing Enabled and the
+        /// brake-temperature gate entirely — there's no live "how hot are
+        /// the brakes" signal to preview against outside a real drive with
+        /// genuinely hot brakes. Unlike the vibration effects' test toggles,
+        /// this writes REAL hardware calibration — see
+        /// MBoosterEffectWorker.UpdateBrakeFade. Each of the two
+        /// calibrations independently requires its own configured base
+        /// value (MBoosterDeviceSettings.TravelEndMm / MaxThresholdKg
+        /// &gt;= 0) or that one stays a no-op. Always-allow-off semantics
+        /// apply here (see <see cref="SetEngineTestActive"/>) so a stuck
+        /// toggle can still restore the base values even if disconnected.
+        /// </summary>
+        public void SetBrakeFadeTestActive(bool on)
+        {
+            if (on && !_connection.IsConnected) return;
+            _worker.SetBrakeFadeTestSustained(on);
         }
 
         public void Dispose()

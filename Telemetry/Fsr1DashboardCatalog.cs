@@ -54,6 +54,35 @@ namespace MozaPlugin.Telemetry
         public bool IsUserMappable => Kind != Fsr1FieldKind.EngineFlag;
     }
 
+    /// <summary>
+    /// A field resolved into its effective wire geometry by <see cref="Fsr1DashboardCatalog.ResolvePartition"/>.
+    /// Bit geometry is the true model; byte-aligned fields are the case where the run starts on a
+    /// byte boundary and is a whole number of bytes wide (<see cref="IsByteAligned"/> → the fast
+    /// <c>WriteField</c> path, which also handles U16_LE). Sub-byte / bit-packed fields carry an
+    /// arbitrary MSB-first bit run that may share a byte with a neighbour and leave spare bits.
+    /// </summary>
+    internal readonly struct Fsr1Slot
+    {
+        public readonly Fsr1FieldDef Field;
+        public readonly int[] Offsets;      // contiguous touched payload bytes [ByteStart..ByteEnd]
+        public readonly Fsr1Encoding Enc;   // real enc for byte-aligned; U24_BE placeholder for packed
+        public readonly int BitOffset;      // absolute MSB-first bit over the payload (byte*8 + inByteBit)
+        public readonly int BitWidth;       // total bits (1..24)
+        public readonly bool MsbFirst;
+
+        public Fsr1Slot(Fsr1FieldDef field, int[] offsets, Fsr1Encoding enc,
+                        int bitOffset, int bitWidth, bool msbFirst)
+        {
+            Field = field; Offsets = offsets; Enc = enc;
+            BitOffset = bitOffset; BitWidth = bitWidth; MsbFirst = msbFirst;
+        }
+
+        /// <summary>Byte-boundary, whole-byte, MSB-first → emit via the unchanged byte path.</summary>
+        public bool IsByteAligned => (BitOffset & 7) == 0 && (BitWidth & 7) == 0 && MsbFirst;
+        public int ByteStart => BitOffset >> 3;
+        public int ByteEnd => (BitOffset + BitWidth - 1) >> 3;
+    }
+
     /// <summary>One built-in dashboard = one group-0x42 record type.</summary>
     internal sealed class Fsr1Dashboard
     {
@@ -446,6 +475,17 @@ namespace MozaPlugin.Telemetry
             };
         }
 
+        /// <summary>Output ceiling for a packed field of <paramref name="bitWidth"/> bits:
+        /// the field's <paramref name="fullScale"/> cap if set, else the full bit-width range
+        /// <c>(1 &lt;&lt; bitWidth) - 1</c>. Mirrors <see cref="OutputMaxFor"/> for sub-byte fields.</summary>
+        internal static long BitOutputMax(int bitWidth, long fullScale)
+        {
+            if (fullScale > 0) return fullScale;
+            if (bitWidth <= 0) return 0;
+            if (bitWidth >= 63) return long.MaxValue;
+            return (1L << bitWidth) - 1;
+        }
+
         /// <summary>
         /// The record's fields resolved into a GUARANTEED gapless, non-overlapping partition
         /// of the data range <c>[5, PayloadLen-1]</c> — the single layout source of truth for
@@ -459,19 +499,33 @@ namespace MozaPlugin.Telemetry
         /// owned by exactly one field, so the wheel never renders a dead (gap) byte. Field
         /// order and identity are preserved; only spans are reapportioned to close gaps/overlaps.
         /// </summary>
-        internal static System.Collections.Generic.IReadOnlyList<(Fsr1FieldDef field, int[] offsets, Fsr1Encoding enc)>
+        internal static System.Collections.Generic.IReadOnlyList<Fsr1Slot>
             ResolvePartition(MozaPlugin? plugin, Fsr1Dashboard dash)
         {
             const int dataMin = 5;
             int dataMax = dash.PayloadLen - 1;
             int dataBytes = dataMax - dataMin + 1;
-            var empty = System.Array.Empty<(Fsr1FieldDef, int[], Fsr1Encoding)>();
+            var empty = System.Array.Empty<Fsr1Slot>();
             if (dataBytes <= 0) return empty;
 
+            var composed = Fsr1FieldComposer.FieldsFor(plugin, dash);
+
+            // A record enters BIT mode as soon as any composed field carries a sub-byte override.
+            // Every current catalog dash + byte-only profile stays in BYTE mode, so the tiler
+            // below is the unchanged algorithm and those records resolve byte-identically.
+            bool anyBit = false;
+            foreach (var f in composed)
+            {
+                var mm = plugin?.GetFsr1FieldMapping(dash.Key, f.FieldId);
+                if (mm != null && (mm.StartBit != null || mm.BitWidth != null)) { anyBit = true; break; }
+            }
+            if (anyBit) return ResolveBitPartition(plugin, dash, composed, dataMin, dataMax);
+
+            // ── BYTE MODE (unchanged gapless byte tiler, wrapped as byte-aligned slots) ──
             // Desired width + endianness per composed field (catalog + synthetic splits),
             // ordered by where the field wants to sit.
             var items = new System.Collections.Generic.List<(Fsr1FieldDef f, int start, int width, bool le)>();
-            foreach (var f in Fsr1FieldComposer.FieldsFor(plugin, dash))
+            foreach (var f in composed)
             {
                 var m = plugin?.GetFsr1FieldMapping(dash.Key, f.FieldId);
                 var (offs, enc) = ResolveLayout(f, m, dash.PayloadLen);
@@ -490,7 +544,7 @@ namespace MozaPlugin.Telemetry
             // to [minW, maxW], where minW forces a field to grow when the remaining fields
             // can't otherwise reach the end (≤3 each), and maxW makes it shrink to leave ≥1
             // byte for each remaining field. Result tiles [5, dataMax] exactly — no gap/overlap.
-            var result = new (Fsr1FieldDef, int[], Fsr1Encoding)[n];
+            var result = new Fsr1Slot[n];
             int cursor = dataMin;
             for (int i = 0; i < n; i++)
             {
@@ -510,8 +564,84 @@ namespace MozaPlugin.Telemetry
                     2 => items[i].le ? Fsr1Encoding.U16_LE : Fsr1Encoding.U16_BE,
                     _ => Fsr1Encoding.U24_BE,
                 };
-                result[i] = (items[i].f, offsets, enc);
+                result[i] = new Fsr1Slot(items[i].f, offsets, enc, cursor * 8, w * 8, msbFirst: true);
                 cursor += w;
+            }
+            return result;
+        }
+
+        /// <summary>
+        /// Resolve a record that has at least one sub-byte / bit-packed field. Unlike byte mode
+        /// this does NOT reapportion spans — explicit bit ranges (and their intentional spare
+        /// bits) are honoured. Each field's bit run is resolved (packed → explicit; byte-aligned
+        /// neighbours → their byte span ×8), sorted by bit, and pushed right on bit overlap so no
+        /// two fields ever own the same bit. Byte-level gaps are warned but benign (an uncovered
+        /// byte stays 0, which <c>NewFrame</c> already zeroes).
+        /// </summary>
+        private static System.Collections.Generic.IReadOnlyList<Fsr1Slot> ResolveBitPartition(
+            MozaPlugin? plugin, Fsr1Dashboard dash,
+            System.Collections.Generic.IReadOnlyList<Fsr1FieldDef> composed, int dataMin, int dataMax)
+        {
+            int bitLo = dataMin * 8;
+            int bitHi = (dataMax + 1) * 8;   // exclusive
+
+            var items = new System.Collections.Generic.List<(Fsr1FieldDef f, int bo, int bw, Fsr1Encoding enc, bool msb, bool aligned)>();
+            foreach (var f in composed)
+            {
+                var m = plugin?.GetFsr1FieldMapping(dash.Key, f.FieldId);
+                int defStart = f.Offsets.Length > 0 ? f.Offsets[0] : 5;
+                int defEnd = f.Offsets.Length > 0 ? f.Offsets[f.Offsets.Length - 1] : defStart;
+                if (m != null && (m.StartBit != null || m.BitWidth != null))
+                {
+                    int byteStart = m.StartOffset ?? defStart;
+                    int bo = byteStart * 8 + (m.StartBit ?? 0);
+                    int bw = m.BitWidth ?? ((defEnd - defStart + 1) * 8);
+                    items.Add((f, bo, bw, Fsr1Encoding.U24_BE, m.MsbFirst ?? true, aligned: false));
+                }
+                else
+                {
+                    var (offs, enc) = ResolveLayout(f, m, dash.PayloadLen);
+                    items.Add((f, offs[0] * 8, offs.Length * 8, enc, true, aligned: true));
+                }
+            }
+            items.Sort((a, b) => a.bo.CompareTo(b.bo));
+
+            var result = new System.Collections.Generic.List<Fsr1Slot>(items.Count);
+            int prevEnd = bitLo;
+            foreach (var it in items)
+            {
+                int bo = it.bo, bw = it.bw < 1 ? 1 : it.bw;
+                if (bo < bitLo) bo = bitLo;
+                if (bo < prevEnd)   // bit overlap — push right so no two fields own a bit
+                {
+                    MozaLog.Warn($"[AZOM] FSR1 bit partition {dash.Key}: field {it.f.FieldId} overlaps at bit {bo}, pushed to {prevEnd}.");
+                    bo = prevEnd;
+                }
+                if (bo >= bitHi)
+                {
+                    MozaLog.Warn($"[AZOM] FSR1 bit partition {dash.Key}: field {it.f.FieldId} past record end — dropped.");
+                    continue;
+                }
+                if (bo + bw > bitHi) bw = bitHi - bo;   // clamp width into the record
+                prevEnd = bo + bw;
+
+                int byteStart = bo >> 3, byteEnd = (bo + bw - 1) >> 3;
+                var offsets = new int[byteEnd - byteStart + 1];
+                for (int k = 0; k < offsets.Length; k++) offsets[k] = byteStart + k;
+                // Keep the real byte encoding only for runs that stayed byte-aligned (U16_LE
+                // handling); anything sub-byte (incl. a byte field pushed off a boundary) → packed.
+                bool stillAligned = it.aligned && (bo & 7) == 0 && (bw & 7) == 0;
+                Fsr1Encoding enc = stillAligned ? it.enc : Fsr1Encoding.U24_BE;
+                result.Add(new Fsr1Slot(it.f, offsets, enc, bo, bw, it.msb));
+            }
+
+            // Coverage check (warn-only): a data byte owned by no field renders 0 on the wheel.
+            for (int b = dataMin; b <= dataMax; b++)
+            {
+                bool covered = false;
+                foreach (var s in result) if (s.ByteStart <= b && b <= s.ByteEnd) { covered = true; break; }
+                if (!covered)
+                    MozaLog.Warn($"[AZOM] FSR1 bit partition {dash.Key}: data byte {b} uncovered (renders 0).");
             }
             return result;
         }

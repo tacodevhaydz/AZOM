@@ -185,6 +185,13 @@ namespace MozaPlugin
         // value hasn't changed. Fixes wheels that don't pick up new colors without a bitmask write.
         public bool AlwaysResendBitmask { get; set; } = false;
 
+        // CM2 meter firmware era, auto-detected from the meter's 0x0E heartbeat
+        // vocabulary and persisted so the right LED path is used from boot (the
+        // heartbeat only arrives ~1/min). False = legacy RPM-ramp firmware
+        // (autonomous thresholds + 41 FD DE bitmask); true = 2026-06 indicator
+        // firmware (wheel-style group-0x3F live LED commands).
+        public bool Cm2NewLedFirmware { get; set; } = false;
+
         // Gearshift event tuning (plugin-side; the firmware-stored intensity
         // is `base-gearshift-vibration`). VibrateOnNeutral default is false so
         // H-pattern shifters bump on engagement only — the prior gear → "N"
@@ -221,7 +228,7 @@ namespace MozaPlugin
         // (no tier-def enable-handshake change — that broke binding); set back to
         // false before shipping until the feature is verified.
         [Newtonsoft.Json.JsonIgnore]
-        public bool EnableRadarTrackMapChannels { get; set; } = false;
+        public bool EnableRadarTrackMapChannels { get; set; } = true;
 
         [Newtonsoft.Json.JsonIgnore]
         public bool EnableAutoTestOnConnect { get; set; } = false;

@@ -161,13 +161,17 @@ namespace MozaPlugin.Telemetry
         /// </summary>
         internal static byte[] BuildRecord(
             Fsr1Dashboard dash,
-            System.Collections.Generic.IReadOnlyList<(Fsr1FieldDef field, int[] offsets, Fsr1Encoding enc)> partition,
-            Func<Fsr1FieldDef, Fsr1Encoding, long> valueFor)
+            System.Collections.Generic.IReadOnlyList<Fsr1Slot> partition,
+            Func<Fsr1Slot, long> valueFor)
         {
             if (dash == null) throw new ArgumentNullException(nameof(dash));
             var frame = NewFrame(dash.RecordType, dash.PayloadLen, dash.LiveB1, dash.LiveB2);
-            foreach (var (f, offsets, enc) in partition)
-                WriteField(frame, offsets, enc, valueFor(f, enc));
+            foreach (var slot in partition)
+            {
+                long v = valueFor(slot);
+                if (slot.IsByteAligned) WriteField(frame, slot.Offsets, slot.Enc, v);
+                else WriteBits(frame, slot.BitOffset, slot.BitWidth, v, slot.MsbFirst);
+            }
             Finish(frame);
             return frame;
         }
@@ -186,6 +190,32 @@ namespace MozaPlugin.Telemetry
             int max = dash.PayloadLen - 1;
             for (int o = startOff; o <= endOff; o++)
                 if (o >= 5 && o <= max) frame[4 + o] = (byte)(value & 0xFF);
+            Finish(frame);
+            return frame;
+        }
+
+        /// <summary>
+        /// Bit-packed field-span probe: pack the record with its REAL live values, then overlay the
+        /// ramp onto ONLY the probed field's bits. Because a packed field shares a byte with its
+        /// neighbour, zeroing the byte (as <see cref="BuildProbeSpanRecord"/> does) would blank the
+        /// neighbour's box too — the overlay leaves every other field showing steady telemetry so
+        /// exactly the probed box animates, which is what lets the user tell the two apart.
+        /// </summary>
+        internal static byte[] BuildBitProbeRecord(
+            Fsr1Dashboard dash,
+            System.Collections.Generic.IReadOnlyList<Fsr1Slot> partition,
+            Func<Fsr1Slot, long> valueFor,
+            int bitOffset, int bitWidth, int probeValue, bool msbFirst)
+        {
+            if (dash == null) throw new ArgumentNullException(nameof(dash));
+            var frame = NewFrame(dash.RecordType, dash.PayloadLen, dash.LiveB1, dash.LiveB2);
+            foreach (var slot in partition)
+            {
+                long v = valueFor(slot);
+                if (slot.IsByteAligned) WriteField(frame, slot.Offsets, slot.Enc, v);
+                else WriteBits(frame, slot.BitOffset, slot.BitWidth, v, slot.MsbFirst);
+            }
+            WriteBits(frame, bitOffset, bitWidth, probeValue, msbFirst);   // overlay AFTER live pack, BEFORE checksum
             Finish(frame);
             return frame;
         }
@@ -238,6 +268,26 @@ namespace MozaPlugin.Telemetry
                     frame[4 + offsets[1]] = (byte)((v >> 8) & 0xFF);
                     frame[4 + offsets[2]] = (byte)(v & 0xFF);
                     break;
+            }
+        }
+
+        // Pack a sub-byte / bit-packed value into [bitOffset, bitOffset+bitWidth) via read-
+        // modify-write, so a shared byte's OTHER fields and any spare bits survive. bitOffset/
+        // bitWidth are absolute over the payload; payload bit b sits at frame[4 + (b>>3)],
+        // mask 0x80 >> (b & 7) (MSB-first). msbFirst=false emits the value LSB-first instead.
+        private static void WriteBits(byte[] frame, int bitOffset, int bitWidth, long value, bool msbFirst)
+        {
+            long max = Fsr1DashboardCatalog.BitOutputMax(bitWidth, 0);
+            if (value < 0) value = 0; else if (value > max) value = max;
+            for (int i = 0; i < bitWidth; i++)
+            {
+                int src = msbFirst ? (bitWidth - 1 - i) : i;   // i=0 → the field's bit at bitOffset
+                int abs = bitOffset + i;
+                int fi = 4 + (abs >> 3);
+                if (fi < 0 || fi >= frame.Length) continue;    // defensive: clamp to frame
+                int mask = 0x80 >> (abs & 7);
+                if (((value >> src) & 1) != 0) frame[fi] |= (byte)mask;
+                else frame[fi] &= (byte)~mask;                 // clear-then-set: correct even if pre-set
             }
         }
 

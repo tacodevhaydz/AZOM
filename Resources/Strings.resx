@@ -162,21 +162,45 @@
   <data name="Section_MBoosterPedals" xml:space="preserve"><value>MBOOSTER PEDALS</value></data>
   <data name="Subtitle_MBoosterPedals" xml:space="preserve"><value>// host-rendered effects · per-device role + position</value></data>
   <data name="SliderLabel_Device" xml:space="preserve"><value>Device</value></data>
-  <data name="Status_NoMBooster" xml:space="preserve"><value>No mBooster connected</value></data>
-  <data name="Section_PedalRole" xml:space="preserve"><value>PEDAL ROLE</value></data>
   <data name="SliderLabel_Role" xml:space="preserve"><value>Role</value></data>
   <data name="Option_Disabled" xml:space="preserve"><value>Disabled</value></data>
   <data name="Option_Throttle" xml:space="preserve"><value>Throttle</value></data>
   <data name="Option_Brake" xml:space="preserve"><value>Brake</value></data>
   <data name="Option_Clutch" xml:space="preserve"><value>Clutch</value></data>
+  <data name="Section_PedalFeel" xml:space="preserve"><value>PEDAL FEEL</value></data>
+  <data name="Subtitle_PedalFeel" xml:space="preserve"><value>// shape how the pedal feels, independent of the output curve below</value></data>
+  <data name="SliderLabel_DeadzoneKg" xml:space="preserve"><value>Deadzone (kg)</value></data>
+  <data name="SliderLabel_MaxForceKg" xml:space="preserve"><value>Max Force (kg)</value></data>
+  <data name="Hint_DeadzoneScaleAssumption" xml:space="preserve"><value>Host-side only. Deadzone and Max Force are in kg out of the device's Max Threshold (Sim Input Mapping) — or 0-200kg if you haven't set that yet. Max Force sets where the input curve below reaches 100%.</value></data>
+  <data name="SliderLabel_TravelRangeMm" xml:space="preserve"><value>Start / End of Travel (mm)</value></data>
+  <data name="Hint_TravelRangeMm" xml:space="preserve"><value>Writes real hardware calibration (cmdIds 0x84/0x85) — reverse-engineered from Pit House captures, not confirmed by Moza. Drag the two nodes to set the physical start/end of pedal travel, then verify it behaves correctly on your hardware.</value></data>
+  <data name="SliderLabel_EndstopFrontStiffness" xml:space="preserve"><value>Front Limit Stiffness</value></data>
+  <data name="SliderLabel_EndstopEndStiffness" xml:space="preserve"><value>End Limit Stiffness</value></data>
+  <data name="Hint_EndstopStiffness" xml:space="preserve"><value>Writes real hardware calibration (cmdId 0xB2) — reverse-engineered from Pit House captures, not confirmed by Moza. Sets how hard the pedal feels when it hits the start/end of its physical travel.</value></data>
+  <data name="Hint_InputCurveHostOnly" xml:space="preserve"><value>Host-side only: reshapes the reported pedal position before it reaches the game (and before the Sim Input Mapping output curve below). Nothing is written to the device.</value></data>
+  <data name="Section_SimInputMapping" xml:space="preserve"><value>SIM INPUT MAPPING</value></data>
+  <data name="Subtitle_SimInputMapping" xml:space="preserve"><value>// map the load cell / pedal signal to the game, Pit House-style</value></data>
+  <data name="SliderLabel_MaxThresholdKg" xml:space="preserve"><value>Max Threshold (kg)</value></data>
+  <data name="Hint_MaxThresholdReverseEngineered" xml:space="preserve"><value>Reverse-engineered from a Pit House capture (cmdId 0xB3) — not confirmed by Moza. Please verify it behaves correctly on your hardware.</value></data>
+  <data name="Hint_OutputCurveDragX" xml:space="preserve"><value>Drag a node sideways to move where it sits on the input axis — e.g. drag the last node left so 100% output is reached before 100% input.</value></data>
   <data name="Section_Effects" xml:space="preserve"><value>EFFECTS</value></data>
   <data name="Subtitle_EffectsTriggers" xml:space="preserve"><value>// triggers: ABS on game signal · Lockup on brake&gt;0.8 · Threshold on edge · Engine continuous</value></data>
   <data name="Section_Abs" xml:space="preserve"><value>ABS</value></data>
+  <data name="Section_RoadTexture" xml:space="preserve"><value>Road Texture</value></data>
+  <data name="Section_BrakeFade" xml:space="preserve"><value>Brake Fade (Experimental)</value></data>
   <data name="Label_Enable" xml:space="preserve"><value>Enable</value></data>
   <data name="Button_Test1s" xml:space="preserve"><value>Test 1s</value></data>
+  <data name="Label_Test" xml:space="preserve"><value>Test</value></data>
   <data name="Section_Lockup" xml:space="preserve"><value>Lockup</value></data>
   <data name="Section_Threshold" xml:space="preserve"><value>Threshold</value></data>
-  <data name="Section_EngineContinuous" xml:space="preserve"><value>Engine (continuous — auto-clamped to 10%)</value></data>
+  <data name="Section_EngineContinuous" xml:space="preserve"><value>Engine vibration</value></data>
+  <data name="SliderLabel_FrequencyHz" xml:space="preserve"><value>Frequency (Hz)</value></data>
+  <data name="SliderLabel_Smoothness" xml:space="preserve"><value>Smoothness</value></data>
+  <data name="SliderLabel_TriggerLevel" xml:space="preserve"><value>Trigger Input Level</value></data>
+  <data name="SliderLabel_VibrationDecay" xml:space="preserve"><value>Vibration Decay</value></data>
+  <data name="SliderLabel_OnsetTempC" xml:space="preserve"><value>Onset Temperature (°C)</value></data>
+  <data name="Hint_BrakeFadeExperimental" xml:space="preserve"><value>Experimental — writes the real Travel End and Max Threshold hardware calibrations while active (more travel and more force needed), then restores your configured values as brakes cool. Requires those already set in Pedal Feel / Sim Input Mapping — has no effect otherwise.</value></data>
+  <data name="Label_PedalTrace" xml:space="preserve"><value>Pedal Trace (last 5s)</value></data>
   <data name="Subtitle_CalibrationExperimental" xml:space="preserve"><value>// experimental — may not be honored by mBooster firmware</value></data>
   <data name="Label_ReversedDirection" xml:space="preserve"><value>Reversed direction</value></data>
   <data name="SliderLabel_MinRaw" xml:space="preserve"><value>Min (raw)</value></data>
@@ -270,9 +294,11 @@
   <data name="Button_Github" xml:space="preserve"><value>GitHub</value></data>
   <data name="Button_JoinDiscord" xml:space="preserve"><value>Join the Discord</value></data>
   <data name="Button_SponsorDevelopment" xml:space="preserve"><value>Sponsor Development</value></data>
+  <data name="Button_Kofi" xml:space="preserve"><value>Support me on Ko-fi</value></data>
   <data name="Tooltip_Github" xml:space="preserve"><value>github.com/giantorth/moza-simhub-plugin</value></data>
   <data name="Tooltip_JoinDiscord" xml:space="preserve"><value>Join the project Discord</value></data>
   <data name="Tooltip_Sponsor" xml:space="preserve"><value>github.com/sponsors/giantorth</value></data>
+  <data name="Tooltip_Kofi" xml:space="preserve"><value>ko-fi.com/giantorth</value></data>
   <data name="Label_UpdateAvailable" xml:space="preserve"><value>Update available</value></data>
   <data name="Button_OpenReleaseNotes" xml:space="preserve"><value>Open release notes</value></data>
   <data name="Button_SkipThisVersion" xml:space="preserve"><value>Skip this version</value></data>
@@ -415,9 +441,14 @@
   <data name="Button_ResetToDefaults" xml:space="preserve"><value>RESET TO DEFAULTS</value></data>
   <data name="Button_ResetField" xml:space="preserve"><value>RESET FIELD</value></data>
   <data name="Button_SplitField" xml:space="preserve"><value>SPLIT FIELD</value></data>
+  <data name="Button_BitSplit" xml:space="preserve"><value>BIT-SPLIT</value></data>
+  <data name="Button_MergePrev" xml:space="preserve"><value>MERGE ◀</value></data>
+  <data name="Button_MergeNext" xml:space="preserve"><value>MERGE ▶</value></data>
   <data name="Button_RemoveSplit" xml:space="preserve"><value>REMOVE SPLIT</value></data>
   <data name="Viz_Title" xml:space="preserve"><value>LIVE FSR1 DATA</value></data>
   <data name="Edit_StartByte" xml:space="preserve"><value>Start byte</value></data>
+  <data name="Edit_StartBit" xml:space="preserve"><value>Start bit</value></data>
+  <data name="Edit_BitWidth" xml:space="preserve"><value>Bit width</value></data>
   <data name="Edit_EndByte" xml:space="preserve"><value>End byte</value></data>
   <data name="Edit_Endian_LE" xml:space="preserve"><value>Little-endian</value></data>
   <data name="Edit_Scale" xml:space="preserve"><value>Scale</value></data>
@@ -549,7 +580,6 @@
   <data name="Status_TelemetrySenderUnavailableInit" xml:space="preserve"><value>Telemetry sender unavailable (plugin not initialised).</value></data>
   <data name="Status_PickMzdashFirst" xml:space="preserve"><value>Pick a .mzdash file or library entry first.</value></data>
   <data name="Status_NoConfigJsonState" xml:space="preserve"><value>(no configJson state received yet)</value></data>
-  <data name="Status_NoMBoosterSelected" xml:space="preserve"><value>No mBooster selected</value></data>
   <data name="Status_PluginNotLoaded" xml:space="preserve"><value>Plugin not loaded</value></data>
   <data name="Upload_CannotResolveBytes" xml:space="preserve"><value>Cannot resolve raw bytes for "{0}" — pick a local file instead.</value></data>
   <data name="Upload_FolderPrefix" xml:space="preserve"><value>Folder: {0}</value></data>

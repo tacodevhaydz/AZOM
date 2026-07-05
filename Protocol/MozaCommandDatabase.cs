@@ -415,6 +415,17 @@ namespace MozaPlugin.Protocol
             for (byte i = 0; i < 6; i++)
                 AddCommand($"cm2-flag-color{i + 1}", "cm2-main", 0xFF, 0x32, new byte[] { 0x0B, 0x02, i }, 3, "array");
 
+            // 2026-06 "indicator" meter firmware LIVE LED path (replaces the legacy
+            // 41 FD DE bitmask + 0B live-colour registers, which that firmware drops).
+            // Decoded from cm2(1).pcapng (PitHouse driving an updated CM2):
+            //   cm2-live-colors  = 32 13 00 + [idx,R,G,B]xN  (5 LEDs / 20-byte chunk,
+            //     4 chunks cover the 16-LED strip; last chunk short) — full 16-LED,
+            //     physical order [flag 1-3][RPM 1-10][flag 4-6].
+            //   cm2-live-bitmask = 32 14 00 + active(u32 LE) + window(u32 LE); window
+            //     is the fixed RPM band 0x00001FF8 (LEDs 3..12), active = lit RPM bits.
+            AddCommand("cm2-live-colors",  "cm2-main", 0xFF, 0x32, new byte[] { 0x13, 0x00 }, 20, "array");
+            AddCommand("cm2-live-bitmask", "cm2-main", 0xFF, 0x32, new byte[] { 0x14, 0x00 }, 8,  "array");
+
             // ===== HANDBRAKE (device: handbrake, read group 91, write group 92) =====
             AddCommand("handbrake-direction",        "handbrake", 91, 92, new byte[] { 1 },  2, "int");
             AddCommand("handbrake-min",              "handbrake", 91, 92, new byte[] { 2 },  2, "int");
@@ -500,6 +511,42 @@ namespace MozaPlugin.Protocol
             AddCommand("mbooster-clutch-min",   "mbooster", 35, 36, new byte[] { 8 }, 2, "int");
             AddCommand("mbooster-clutch-max",   "mbooster", 35, 36, new byte[] { 9 }, 2, "int");
             AddCommand("mbooster-brake-angle-ratio", "mbooster", 35, 36, new byte[] { 26 }, 4, "float");
+            // Pit House "Max Threshold (kg)" — reverse-engineered from a real
+            // capture (not in the protocol note): cmdId 0xB3, 4-byte BIG-ENDIAN
+            // UNSIGNED INT (not a float, unlike the other 4-byte commands above)
+            // encoding kg on a fixed 0-200kg scale over the same 0-65535 range
+            // as the raw Min/Max calibration: raw = round(kg * 65535 / 200).
+            // Two capture data points confirmed this: 4kg -> 1311 exactly, and
+            // an unlabeled capture decoded to 125.9998kg matching the user's
+            // independently-reported real Pit House setting of ~125kg. See
+            // docs/protocol/devices/mbooster.md "Sim Input Mapping".
+            AddCommand("mbooster-brake-threshold", "mbooster", 35, 36, new byte[] { 0xB3 }, 4, "int");
+            // Pit House "Start/End of Travel (mm)" — reverse-engineered from
+            // two real Pit House USB captures isolating each thumb of the
+            // dual-node slider (drags to 10/20/30mm on Start, 40/30mm on
+            // End). Both cmdIds are 2-byte ints (same shape as Min/Max
+            // above), encoding mm on a fixed 0-53.5mm scale over the same
+            // 0-65535 range: raw = round(mm * 65536 / 53.5). All 4 capture
+            // points matched within 1 raw unit (~0.001mm), and the shared
+            // 30mm target hit the identical raw value (0x8f8d) via both
+            // cmdIds, cross-confirming the scale. 53.5 = TravelMinMm (3.8)
+            // + TravelMaxMm (49.7), the slider's own bounds. See
+            // docs/protocol/devices/mbooster.md "Pedal Feel".
+            AddCommand("mbooster-brake-travel-start", "mbooster", 35, 36, new byte[] { 0x84 }, 2, "int");
+            AddCommand("mbooster-brake-travel-end",   "mbooster", 35, 36, new byte[] { 0x85 }, 2, "int");
+            // Pit House "End Stop Stiffness" (Front Limit / End Limit) —
+            // reverse-engineered from two real Pit House USB captures, each
+            // sweeping one slider through all 10 values (1-10). Both share
+            // ONE cmdId (0xB2) with a fixed 0x00 byte and a selector byte
+            // (0x00 = front/start limit, 0x01 = end limit) before the 2-byte
+            // value — a different shape from every other mbooster command
+            // (which use one cmdId per field). All 18 capture points (9 per
+            // slider) matched raw = round(value * 65535 / 10) exactly, using
+            // round-half-away-from-zero (two points landed on an exact .5
+            // tie and rounded up, not to even). See
+            // docs/protocol/devices/mbooster.md "Pedal Feel".
+            AddCommand("mbooster-brake-endstop-front", "mbooster", 35, 36, new byte[] { 0xB2, 0x00, 0x00 }, 2, "int");
+            AddCommand("mbooster-brake-endstop-end",   "mbooster", 35, 36, new byte[] { 0xB2, 0x00, 0x01 }, 2, "int");
             // 5-point output curves per pedal (4-byte float, read 35 / write 36)
             AddCommand("mbooster-throttle-y1", "mbooster", 35, 36, new byte[] { 14 }, 4, "float");
             AddCommand("mbooster-throttle-y2", "mbooster", 35, 36, new byte[] { 15 }, 4, "float");

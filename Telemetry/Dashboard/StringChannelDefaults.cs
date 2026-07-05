@@ -33,7 +33,13 @@ namespace MozaPlugin.Telemetry.Dashboard
                 ["v1/gameData/TrackId"]                    = "DataCorePlugin.GameData.TrackName",
                 ["v1/gameData/TrackCode"]                  = "DataCorePlugin.GameData.TrackCode",
                 ["v1/gameData/TrackConfig"]                = "DataCorePlugin.GameData.TrackConfig",
-                ["v1/gameData/patch/TrackName"]            = "DataCorePlugin.GameData.TrackName",
+                // patch/TrackName is the wheel's MAP KEY, not a display string —
+                // the track-map widget loads its background by this id. PitHouse
+                // sends "<gameprefix>/<track>" (verified: "ac/imola", "ac/spa");
+                // sending the bare track name leaves the map blank. Computed by
+                // @internal/TrackName (see GameNameMap.TrackPath). DisplayTrackName
+                // stays the friendly name for on-screen text.
+                ["v1/gameData/patch/TrackName"]            = "@internal/TrackName",
                 ["v1/gameData/patch/DisplayTrackName"]     = "DataCorePlugin.GameData.TrackName",
 
                 // Car identity.
