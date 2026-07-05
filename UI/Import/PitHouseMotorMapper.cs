@@ -101,10 +101,12 @@ namespace MozaPlugin.UI.Import
             AddGameGain(plan, dp, "setGameSpringValue", "Game Spring Gain",
                         () => profile.GameSpring, v => profile.GameSpring = v);
 
-            // constForceExtraMode is the 0-10 interpolation value; Interpolation
-            // stores it as display×10 (raw 0-100), like FfbStrength — scale ×10.
-            AddScaledInt(plan, dp, "constForceExtraMode", "Interpolation", "", 10,
-                         () => profile.Interpolation, v => profile.Interpolation = v);
+            // constForceExtraMode is the RAW wire value (0-100), same scale as
+            // MozaProfile.Interpolation — PitHouse stores it raw (like
+            // maximumSteeringAngle), NOT as its 0-10 slider value. Import 1:1;
+            // display divided by 10 to match the plugin's interpolation slider.
+            AddInterpolation(plan, dp, "constForceExtraMode", "Interpolation",
+                             () => profile.Interpolation, v => profile.Interpolation = v);
 
             AddSkipped(plan, dp, "gameForceFeedbackFilter", "no profile field");
             AddSkipped(plan, dp, "gearJoltLevel", "no profile field");
@@ -349,6 +351,30 @@ namespace MozaPlugin.UI.Import
             AddInt(plan, dp, pithouseKey, label, unit,
                    v => v * scale, v => v / scale,
                    getProfile, setProfile);
+        }
+
+        /// <summary>
+        /// Map PitHouse constForceExtraMode (raw 0-100 wire value) onto
+        /// MozaProfile.Interpolation with NO scaling — both store the raw wire
+        /// value. Shown to the user divided by 10 (0-10), matching the
+        /// interpolation slider (SettingsControl.xaml.cs). PitHouse stores this
+        /// raw like maximumSteeringAngle, not as its 0-10 display value, so a
+        /// ×10 here over-scales it 10× (the bug this replaces).
+        /// </summary>
+        private static void AddInterpolation(
+            ImportPlan plan, JObject dp, string pithouseKey, string label,
+            Func<int> getProfile, Action<int> setProfile)
+        {
+            plan.ConsideredKeys.Add(pithouseKey);
+            var pithouse = IntOrNull(dp, pithouseKey);
+            if (pithouse == null) return;
+
+            int newRaw = pithouse.Value;                 // identity — both store raw 0-100
+            int oldRaw = getProfile();
+            string Disp(int raw) => ((int)Math.Round(raw / 10.0)).ToString();
+            string oldDisplay = oldRaw < 0 ? "(unset)" : Disp(oldRaw);
+            string newDisplay = Disp(newRaw);
+            plan.Diffs.Add(new FieldDiff(label, oldDisplay, newDisplay, () => setProfile(newRaw)));
         }
 
         private static void AddBoolToInt(
