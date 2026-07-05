@@ -115,6 +115,10 @@
     </UserControl.Resources>
 
     <DockPanel>
+        <!-- Shared plugin status banners (port-locked, restart-required,
+             profile-not-added, telemetry parked/degraded) — surfaced here so
+             users who only visit the device page still see them. -->
+        <ui:PluginBanners DockPanel.Dock="Top" Margin="5,5,5,0"/>
         <!-- Header (always visible) -->
         <StackPanel DockPanel.Dock="Top" Margin="5">
 

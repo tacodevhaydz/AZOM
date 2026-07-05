@@ -53,6 +53,11 @@
     <!-- ScrollViewer removed: SimHub host already provides scrolling -->
         <StackPanel>
 
+            <!-- Shared plugin status banners (port-locked, restart-required,
+                 profile-not-added, telemetry parked/degraded) — surfaced here so
+                 users who only visit the device page still see them. -->
+            <ui:PluginBanners/>
+
             <!-- Device header -->
             <Border Background="{StaticResource BgCardBrush}"
                     BorderBrush="{StaticResource BorderBrush}"

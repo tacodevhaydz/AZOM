@@ -54,11 +54,6 @@ namespace MozaPlugin
         private Run[]? _activeButtonSeparatorRuns;
         private bool _activeButtonsShowingNone;
 
-        // Cache of the previous tick's hint list so RefreshDisplay only assigns
-        // ItemsSource when the set genuinely changes. ItemsControl rebuilds its
-        // visual tree on every assignment; the diff keeps it stable at 2 Hz.
-        private IReadOnlyList<StatusHint>? _lastHints;
-
         public SettingsControl(MozaPlugin plugin)
         {
             _plugin = plugin;
@@ -115,6 +110,16 @@ namespace MozaPlugin
             ImportTab.Content = importControl;
 
             Instance = this;
+
+            // Host the shared banner control (instantiated here — a generated
+            // typed field of MozaPlugin.UI.* collides with the MozaPlugin class
+            // name). Wire its in-app navigation; device-page hosts leave these
+            // null and fall back to the external URL / a hidden Configure button.
+            BannersHost.Content = new UI.PluginBanners
+            {
+                OpenReleaseNotesInApp = OpenReleaseNotes,
+                ConfigureSdkInApp = NavigateToSdkTab,
+            };
 
             _refreshTimer = new DispatcherTimer { Interval = TimeSpan.FromMilliseconds(500) };
             _refreshTimer.Tick += RefreshDisplay;
@@ -208,17 +213,8 @@ namespace MozaPlugin
 
         private void RefreshDisplay(object sender, EventArgs e)
         {
-            var hints = StatusHintBuilder.Build(_plugin, DateTime.UtcNow);
-            if (!StatusHint.ListEquals(_lastHints, hints))
-            {
-                HintBanners.ItemsSource = hints;
-                _lastHints = hints;
-            }
-
-            // Keep the cross-tab update banner live so it appears as soon as a
-            // background check finds a newer release, regardless of which tab
-            // the user is on. Cheap (a few string compares); no network.
-            try { RefreshHeaderBanner(); } catch { /* never let the banner break the refresh loop */ }
+            // All top-of-pane banners (status hints + update + SDK nudge) are
+            // owned by the self-refreshing PluginBanners control now.
 
             using (_suppressor.Begin())
             {
