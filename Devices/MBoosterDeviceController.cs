@@ -76,7 +76,8 @@ namespace MozaPlugin.Devices
             string portName,
             Func<MBoosterDeviceSettings?> settingsLookup,
             Func<bool> isShuttingDown,
-            Func<bool>? disableProbeFallback = null)
+            Func<bool>? disableProbeFallback = null,
+            Func<string, double>? customEffectFormulaEvaluator = null)
         {
             Identity = identity ?? throw new ArgumentNullException(nameof(identity));
             PortName = portName ?? throw new ArgumentNullException(nameof(portName));
@@ -108,7 +109,7 @@ namespace MozaPlugin.Devices
             // recovered device.
             _connection.Disconnected += OnConnectionDisconnected;
 
-            _worker = new MBoosterEffectWorker(this, _settingsLookup, _isShuttingDown);
+            _worker = new MBoosterEffectWorker(this, _settingsLookup, _isShuttingDown, customEffectFormulaEvaluator);
         }
 
         private void OnConnectionDisconnected()
@@ -406,6 +407,19 @@ namespace MozaPlugin.Devices
         {
             if (on && !_connection.IsConnected) return;
             _worker.SetBrakeFadeTestSustained(on);
+        }
+
+        /// <summary>
+        /// Continuously runs one custom effect (by id) at its currently
+        /// configured Frequency/Intensity while <paramref name="on"/> is
+        /// true, bypassing Enabled/Formula/Threshold entirely — same
+        /// always-allow-off, live-tracking semantics as
+        /// <see cref="SetEngineTestActive"/>.
+        /// </summary>
+        public void SetCustomEffectTestActive(string effectId, bool on)
+        {
+            if (on && !_connection.IsConnected) return;
+            _worker.SetCustomEffectTestSustained(effectId, on);
         }
 
         public void Dispose()

@@ -638,6 +638,83 @@ change: the pedal should visibly/physically require more travel and
 more force while the test is on, and snap back the moment it's
 switched off.
 
+### Custom Effects — user-defined NCalc/SimHub-driven vibration (Experimental)
+
+Seventh addition to the Effects card, and the first that isn't a fixed,
+pre-built effect: a user-addable list of custom effects
+(`MBoosterDeviceSettings.CustomEffects`, `List<MBoosterCustomEffect>`),
+each rendered as its own Expander in the "Custom Effects (Experimental)"
+card below the five built-in effects. Each entry has Name, Enable, a
+Formula text box (a bare SimHub property like `SpeedKmh` or a full NCalc
+`[prop]` formula — evaluated via the same `NCalcExpressionEvaluator`/
+`NCalcEngineBase` the telemetry channel-mapper already uses, see
+`docs/ncalc-channel-mapping.md`), an optional Threshold gate, and
+Frequency/Intensity sliders. A "+ Add Custom Effect" button creates a new
+blank entry; each entry's own "Delete Effect" button removes it.
+
+**Two modes**, mirroring the built-ins' pulse-vs-continuous split:
+
+- **Threshold off** (default) — the formula's value (clamped 0..1) scales
+  Intensity every tick, continuously, like Engine. The user's formula is
+  responsible for producing a sensible 0..1 range.
+- **Threshold on** — a pulse trigger: the effect vibrates at the
+  configured fixed Intensity whenever the formula's value is `>=`
+  Threshold, like Lockup/Threshold. No release hysteresis (unlike the
+  built-in Threshold effect's 30-point gap) — this is a v1 simplification.
+
+**Wire transport — no new protocol ID.** There is no verified wire effect
+type for arbitrary user content (only 1/2/3/4/9 are confirmed real — see
+"Effect IDs" above), so every custom effect is transmitted using the
+already-verified **Engine (effect type 4)** frame shape, `ParamKEngine`,
+and Engine's own plain-sine waveform
+(`MBoosterEffectSynthesizer.SynthesizeEngine`) —
+`MBoosterEffectWorker.ProcessCustomEffect`. This means a custom effect
+shares Engine's exact wire slot: if a custom effect and the real Engine
+effect (or another custom effect) are active in the same tick, only the
+last one processed reaches the motor (same latest-wins masking rule as
+every other pair in the priority ladder — see "Stream lane" above).
+Custom effects are emitted right after Engine/Road Texture and before
+Abs/Lockup/Threshold in `Tick()`, so a real safety-relevant braking cue
+always overrides an experimental custom effect, but a custom effect can
+override ambient Engine vibration.
+
+Capped at `CustomEffectScaleMax = 0.10` (same ceiling as Engine) since a
+continuous-mode custom effect can run indefinitely and would otherwise
+dominate the other effects, same rationale as Engine's own cap.
+
+**Per-effect state** lives in `MBoosterEffectWorker._customEffectStates`
+(`Dictionary<string, EffectState>` keyed by `MBoosterCustomEffect.Id`, a
+GUID stable across list edits/reorders). An effect deleted from the
+settings list has its worker state pruned each tick
+(`UpdateAndProcessCustomEffects`) — if it was still vibrating, a disable
+frame is sent first so the last-active waveform can't latch, same rule
+every other effect's deactivation edge follows.
+
+**Formula evaluation** reuses `SimHubPropertyResolver.ResolveAsDouble`
+(threaded into the worker via a `Func<string, double>` constructor
+parameter — `MozaMBoosterRegistry` → `MBoosterDeviceController` →
+`MBoosterEffectWorker`, mirroring the existing `settingsLookup`/
+`isShuttingDown` injection pattern) rather than the fixed
+`MBoosterTelemetrySnapshot` struct the built-in effects read — the whole
+point of NCalc formulas is access to *any* SimHub property, not just the
+9 fields the snapshot carries. Evaluated live every tick (not cached), so
+editing the formula text is felt immediately; a bad/unresolvable formula
+reads as `0` (fail-soft, matching every other NCalc consumer in this app)
+rather than throwing.
+
+Has the same sustained Test toggle pattern as the five built-ins
+(`MBoosterEffectWorker.SetCustomEffectTestSustained`, keyed by effect id
+in a `ConcurrentDictionary<string, bool>` rather than one bool field since
+the count is unbounded): while on, the effect runs continuously at its
+live Frequency/Intensity, bypassing Enabled/Formula/Threshold entirely —
+there's no live signal to preview a user's arbitrary formula against
+outside whatever it's actually wired to, same substitution Engine's own
+test toggle uses. Never persisted (fresh row instances always start
+unchecked); explicitly turned off when switching the selected mBooster
+device or closing the settings panel
+(`SettingsControl.StopAllCustomEffectTests`), same safety net the other
+five effects' tests have.
+
 ## Calibration surface (experimental)
 
 The protocol note marks the pedal-config command surface (group 35

@@ -1108,7 +1108,8 @@ namespace MozaPlugin
                     _data,
                     settingsLookup: id => GetOrCreateMBoosterSettings(id),
                     isShuttingDown: () => IsShuttingDown,
-                    onDeviceDetectedEdge: OnMBoosterDeviceDetected);
+                    onDeviceDetectedEdge: OnMBoosterDeviceDetected,
+                    customEffectFormulaEvaluator: ResolveMBoosterCustomEffectFormula);
                 // Initial walk so any mBooster plugged in BEFORE SimHub launched
                 // appears immediately — without this, the user waits up to 5 s
                 // for the reconnect timer to fire.
@@ -2990,6 +2991,22 @@ namespace MozaPlugin
         public IReadOnlyList<string> GetAllSimHubPropertyNames() => _propertyResolver.GetAllSimHubPropertyNames();
         public object? GetPropertyValueForDisplay(string? path) => _propertyResolver.GetValueForDisplay(path);
         internal string CurrentWheelKey() => _propertyResolver.CurrentWheelKey();
+
+        /// <summary>
+        /// Evaluate a user-supplied mBooster custom-effect formula (a bare
+        /// SimHub property path or an NCalc <c>[prop]</c> formula) to a
+        /// double; 0 on any failure or before <see cref="_propertyResolver"/>
+        /// exists. Reuses the same resolver the telemetry channel-mapper
+        /// uses, so the dialect/property resolution is identical — see
+        /// Telemetry/NCalcExpressionEvaluator.cs. Called from the mBooster
+        /// effect worker's own background tick thread (same threading model
+        /// as the telemetry sender's calls into this resolver).
+        /// </summary>
+        internal double ResolveMBoosterCustomEffectFormula(string? formula)
+        {
+            if (string.IsNullOrWhiteSpace(formula) || _propertyResolver == null) return 0.0;
+            return _propertyResolver.ResolveAsDouble(formula!);
+        }
 
         /// <summary>SimHub's shared formula engine for the channel-mapper's formula
         /// picker; null if engine construction failed (formulas then read as default).</summary>

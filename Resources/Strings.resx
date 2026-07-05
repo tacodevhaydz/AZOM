@@ -201,6 +201,17 @@
   <data name="SliderLabel_OnsetTempC" xml:space="preserve"><value>Onset Temperature (°C)</value></data>
   <data name="Hint_BrakeFadeExperimental" xml:space="preserve"><value>Experimental — writes the real Travel End and Max Threshold hardware calibrations while active (more travel and more force needed), then restores your configured values as brakes cool. Requires those already set in Pedal Feel / Sim Input Mapping — has no effect otherwise.</value></data>
   <data name="Label_PedalTrace" xml:space="preserve"><value>Pedal Trace (last 5s)</value></data>
+  <data name="Section_CustomEffects" xml:space="preserve"><value>Custom Effects (Experimental)</value></data>
+  <data name="Subtitle_CustomEffectsExperimental" xml:space="preserve"><value>// experimental — user-defined vibration driven by SimHub/NCalc formulas</value></data>
+  <data name="Hint_CustomEffectsExperimental" xml:space="preserve"><value>Experimental — each custom effect vibrates the motor using a SimHub property or NCalc formula you supply. All custom effects (and the built-in Engine effect) share one wire channel, so only one can drive the motor at a time; the most recently processed active effect wins. Frequency/Intensity behave like Engine's own sliders.</value></data>
+  <data name="Hint_CustomEffectFormula" xml:space="preserve"><value>A SimHub property (e.g. SpeedKmh) or NCalc formula (e.g. [Rpms] / [CarSettings_MaxRPM]). With "Use Threshold" off, the value (clamped 0..1) scales Intensity continuously. With it on, the effect pulses at the configured Intensity whenever the value is at or above Threshold.</value></data>
+  <data name="Label_UseThreshold" xml:space="preserve"><value>Use Threshold</value></data>
+  <data name="SliderLabel_Name" xml:space="preserve"><value>Name</value></data>
+  <data name="SliderLabel_Formula" xml:space="preserve"><value>Formula</value></data>
+  <data name="SliderLabel_Threshold" xml:space="preserve"><value>Threshold</value></data>
+  <data name="Button_AddCustomEffect" xml:space="preserve"><value>+ Add Custom Effect</value></data>
+  <data name="Button_DeleteCustomEffect" xml:space="preserve"><value>Delete Effect</value></data>
+  <data name="DefaultName_CustomEffect" xml:space="preserve"><value>Custom Effect</value></data>
   <data name="Subtitle_CalibrationExperimental" xml:space="preserve"><value>// experimental — may not be honored by mBooster firmware</value></data>
   <data name="Label_ReversedDirection" xml:space="preserve"><value>Reversed direction</value></data>
   <data name="SliderLabel_MinRaw" xml:space="preserve"><value>Min (raw)</value></data>

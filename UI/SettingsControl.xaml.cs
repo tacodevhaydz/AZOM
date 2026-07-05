@@ -179,6 +179,7 @@ namespace MozaPlugin
                 CurrentMBoosterController()?.SetThresholdTestActive(false);
             if (MBoosterBrakeFadeTestToggle?.IsChecked == true)
                 CurrentMBoosterController()?.SetBrakeFadeTestActive(false);
+            StopAllCustomEffectTests();
             // SDK CoAP server fires RecentRequestAppended on its receive
             // thread; unsubscribe so a torn-down SettingsControl can be GC'd
             // without the server's event list pinning it. Re-subscribe
@@ -2471,6 +2472,12 @@ namespace MozaPlugin
         private string? _mboosterSeededProfileName;
         private string? _mboosterSeededIdentity;
 
+        // Custom Effects (Experimental) — dynamic per-device list, rebuilt
+        // (not incrementally synced) on every seed/device-switch. See
+        // PopulateMBoosterCustomEffectsList.
+        private readonly System.Collections.ObjectModel.ObservableCollection<MBoosterCustomEffectRow> _mboosterCustomEffectRows =
+            new System.Collections.ObjectModel.ObservableCollection<MBoosterCustomEffectRow>();
+
         private void RefreshMBoosterTab()
         {
             var registry = _plugin?.MBoosterRegistry;
@@ -2642,6 +2649,7 @@ namespace MozaPlugin
                 MBoosterMaxForceSlider.Value = s.MaxForceKg;
                 SetValueText(MBoosterMaxForceValue, s.MaxForceKg.ToString("F0"));
             }
+            PopulateMBoosterCustomEffectsList(s);
             _mboosterUiSeeded = true;
             _mboosterSeededProfileName = currentProfileName;
             _mboosterSeededIdentity = selected.Identity;
@@ -2674,6 +2682,71 @@ namespace MozaPlugin
             return _plugin?.MBoosterRegistry?.FindByIdentity(_mboosterSelectedIdentity ?? "");
         }
 
+        // ===== Custom Effects (Experimental) =====
+        // Dynamic per-device list — unlike the five built-in effects (static
+        // named XAML controls wired one-by-one), the count here is
+        // user-defined, so the ItemsControl is bound to an ObservableCollection
+        // of row view-models (MBoosterCustomEffectRow) instead. Rebuilt wholesale
+        // (not incrementally synced) whenever the tab reseeds — simpler than
+        // diffing, and this list is edited far less often than a slider is dragged.
+
+        private void PopulateMBoosterCustomEffectsList(MBoosterDeviceSettings? s)
+        {
+            MBoosterCustomEffectsList.ItemsSource = _mboosterCustomEffectRows;
+            _mboosterCustomEffectRows.Clear();
+            var list = s?.CustomEffects;
+            if (list == null) return;
+            for (int i = 0; i < list.Count; i++)
+                _mboosterCustomEffectRows.Add(new MBoosterCustomEffectRow(list[i], () => _plugin.SaveSettings(), OnCustomEffectTestToggle));
+        }
+
+        private void OnCustomEffectTestToggle(string effectId, bool on)
+        {
+            // Resolved at call time (not captured at row-construction time) so
+            // this always targets whichever device is currently selected —
+            // matters for StopAllCustomEffectTests, called just BEFORE the
+            // selected device changes.
+            CurrentMBoosterController()?.SetCustomEffectTestActive(effectId, on);
+        }
+
+        /// <summary>
+        /// Turn off every custom effect's sustained Test toggle for the
+        /// currently-selected device — mirrors the explicit stop calls for
+        /// the five built-in effects' Test toggles in
+        /// <see cref="MBoosterDeviceCombo_Changed"/> and
+        /// <see cref="OnUnloadedStopTimers"/>, so a forgotten toggle doesn't
+        /// leave the pedal buzzing with no UI left to turn it off.
+        /// </summary>
+        private void StopAllCustomEffectTests()
+        {
+            foreach (var row in _mboosterCustomEffectRows)
+                if (row.TestActive) row.TestActive = false;
+        }
+
+        private void MBoosterAddCustomEffectButton_Click(object sender, RoutedEventArgs e)
+        {
+            var s = CurrentMBoosterSettings();
+            if (s == null) return;
+            s.CustomEffects ??= new List<MBoosterCustomEffect>();
+            var effect = new MBoosterCustomEffect
+            {
+                Name = $"{Strings.DefaultName_CustomEffect} {s.CustomEffects.Count + 1}",
+            };
+            s.CustomEffects.Add(effect);
+            _plugin.SaveSettings();
+            _mboosterCustomEffectRows.Add(new MBoosterCustomEffectRow(effect, () => _plugin.SaveSettings(), OnCustomEffectTestToggle));
+        }
+
+        private void MBoosterDeleteCustomEffect_Click(object sender, RoutedEventArgs e)
+        {
+            if ((sender as FrameworkElement)?.Tag is not MBoosterCustomEffectRow row) return;
+            if (row.TestActive) CurrentMBoosterController()?.SetCustomEffectTestActive(row.Id, false);
+            var s = CurrentMBoosterSettings();
+            s?.CustomEffects?.RemoveAll(c => string.Equals(c.Id, row.Id, StringComparison.Ordinal));
+            _plugin.SaveSettings();
+            _mboosterCustomEffectRows.Remove(row);
+        }
+
         private void MBoosterDeviceCombo_Changed(object sender, SelectionChangedEventArgs e)
         {
             if (_suppressEvents) return;
@@ -2697,6 +2770,7 @@ namespace MozaPlugin
                 CurrentMBoosterController()?.SetThresholdTestActive(false);
             if (MBoosterBrakeFadeTestToggle.IsChecked == true)
                 CurrentMBoosterController()?.SetBrakeFadeTestActive(false);
+            StopAllCustomEffectTests();
             // Reset the pedal trace to a flat baseline rather than carrying
             // over the previous device's history into the new one's graph.
             for (int i = 0; i < _mboosterPedalTraceSamples.Count; i++)
