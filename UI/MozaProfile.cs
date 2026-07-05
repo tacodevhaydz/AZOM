@@ -338,7 +338,11 @@ namespace MozaPlugin
         public int Equalizer5 { get; set; } = -1000;
         public int Equalizer6 { get; set; } = -1000;
 
-        // ===== FFB Curve (Y outputs at fixed 20/40/60/80/100% breakpoints) =====
+        // ===== FFB Curve (X input positions of points 1-4 + Y outputs; point 5 fixed at input=100%) =====
+        public int FfbCurveX1 { get; set; } = -1;
+        public int FfbCurveX2 { get; set; } = -1;
+        public int FfbCurveX3 { get; set; } = -1;
+        public int FfbCurveX4 { get; set; } = -1;
         public int FfbCurveY1 { get; set; } = -1;
         public int FfbCurveY2 { get; set; } = -1;
         public int FfbCurveY3 { get; set; } = -1;
@@ -525,6 +529,7 @@ namespace MozaPlugin
             Equalizer4 = p.Equalizer4; Equalizer5 = p.Equalizer5; Equalizer6 = p.Equalizer6;
 
             // FFB Curve
+            FfbCurveX1 = p.FfbCurveX1; FfbCurveX2 = p.FfbCurveX2; FfbCurveX3 = p.FfbCurveX3; FfbCurveX4 = p.FfbCurveX4;
             FfbCurveY1 = p.FfbCurveY1; FfbCurveY2 = p.FfbCurveY2; FfbCurveY3 = p.FfbCurveY3; FfbCurveY4 = p.FfbCurveY4; FfbCurveY5 = p.FfbCurveY5;
 
             // Handbrake
@@ -710,6 +715,7 @@ namespace MozaPlugin
             Equalizer4 = data.Equalizer4; Equalizer5 = data.Equalizer5; Equalizer6 = data.Equalizer6;
 
             // FFB Curve
+            FfbCurveX1 = data.FfbCurveX1; FfbCurveX2 = data.FfbCurveX2; FfbCurveX3 = data.FfbCurveX3; FfbCurveX4 = data.FfbCurveX4;
             FfbCurveY1 = data.FfbCurveY1; FfbCurveY2 = data.FfbCurveY2; FfbCurveY3 = data.FfbCurveY3; FfbCurveY4 = data.FfbCurveY4; FfbCurveY5 = data.FfbCurveY5;
 
             // Handbrake

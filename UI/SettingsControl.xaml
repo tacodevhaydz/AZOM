@@ -761,6 +761,7 @@
                                               AccentBrush="{StaticResource GreenBrush}" Margin="7,0,0,14">
                                 <StackPanel>
                                     <ctrl:MozaCurveEditor x:Name="FfbCurveEditor" Height="280"
+                                                          AllowHorizontalDrag="True" LockLastNodeX="True"
                                                           AccentBrush="{StaticResource GreenBrush}"/>
                                     <StackPanel Orientation="Horizontal" Margin="0,12,0,0">
                                         <Button Content="{x:Static res:Strings.Button_Linear}" Margin="0,0,8,0" Click="FfbCurvePreset_Linear"/>
@@ -788,6 +789,14 @@
                             <TextBox x:Name="Eq5Value" Text="100%"/>
                             <Slider x:Name="Eq6Slider" Minimum="0" Maximum="400" TickFrequency="1" ValueChanged="Eq6Slider_ValueChanged"/>
                             <TextBox x:Name="Eq6Value" Text="100%"/>
+                            <Slider x:Name="FfbCurveX1Slider" Minimum="0" Maximum="100" TickFrequency="1" ValueChanged="FfbCurveX1Slider_ValueChanged"/>
+                            <TextBox x:Name="FfbCurveX1Value" Text="20"/>
+                            <Slider x:Name="FfbCurveX2Slider" Minimum="0" Maximum="100" TickFrequency="1" ValueChanged="FfbCurveX2Slider_ValueChanged"/>
+                            <TextBox x:Name="FfbCurveX2Value" Text="40"/>
+                            <Slider x:Name="FfbCurveX3Slider" Minimum="0" Maximum="100" TickFrequency="1" ValueChanged="FfbCurveX3Slider_ValueChanged"/>
+                            <TextBox x:Name="FfbCurveX3Value" Text="60"/>
+                            <Slider x:Name="FfbCurveX4Slider" Minimum="0" Maximum="100" TickFrequency="1" ValueChanged="FfbCurveX4Slider_ValueChanged"/>
+                            <TextBox x:Name="FfbCurveX4Value" Text="80"/>
                             <Slider x:Name="FfbCurveY1Slider" Minimum="0" Maximum="100" TickFrequency="1" ValueChanged="FfbCurveY1Slider_ValueChanged"/>
                             <TextBox x:Name="FfbCurveY1Value" Text="20"/>
                             <Slider x:Name="FfbCurveY2Slider" Minimum="0" Maximum="100" TickFrequency="1" ValueChanged="FfbCurveY2Slider_ValueChanged"/>

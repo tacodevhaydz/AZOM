@@ -850,7 +850,11 @@ namespace MozaPlugin.Hardware
             ApplyEq(profile.Equalizer5, v => _data.Equalizer5 = v, "base-equalizer5");
             ApplyEq(profile.Equalizer6, v => _data.Equalizer6 = v, "base-equalizer6");
 
-            // FFB Curve Y values: mirror always; write when live.
+            // FFB Curve X/Y values: mirror always; write when live.
+            if (profile.FfbCurveX1 >= 0) _data.FfbCurveX1 = profile.FfbCurveX1;
+            if (profile.FfbCurveX2 >= 0) _data.FfbCurveX2 = profile.FfbCurveX2;
+            if (profile.FfbCurveX3 >= 0) _data.FfbCurveX3 = profile.FfbCurveX3;
+            if (profile.FfbCurveX4 >= 0) _data.FfbCurveX4 = profile.FfbCurveX4;
             if (profile.FfbCurveY1 >= 0) _data.FfbCurveY1 = profile.FfbCurveY1;
             if (profile.FfbCurveY2 >= 0) _data.FfbCurveY2 = profile.FfbCurveY2;
             if (profile.FfbCurveY3 >= 0) _data.FfbCurveY3 = profile.FfbCurveY3;
@@ -859,11 +863,15 @@ namespace MozaPlugin.Hardware
             // Persisted BaseDetected gate (see ApplyBaseSettingIfSet comment).
             if (!_detectionState.BaseDetected) return;
             // The device doesn't persist the X breakpoints, so they have to ride
-            // every curve write — but the curve only needs re-sending when a Y
-            // value actually changed. Gate the whole curve as a unit (X + Y) on
-            // the Y hash so an unchanged re-apply (e.g. a wheel hot-attach) sends
-            // nothing — re-pushing it bounces the motor mode on some bases.
+            // every curve write — but the curve only needs re-sending when a
+            // point actually changed. Gate the whole curve as a unit (X + Y) on
+            // the X+Y hash so an unchanged re-apply (e.g. a wheel hot-attach)
+            // sends nothing — re-pushing it bounces the motor mode on some bases.
             long curveHash = unchecked((long)1469598103934665603UL);
+            curveHash = Fnv(curveHash, _data.FfbCurveX1);
+            curveHash = Fnv(curveHash, _data.FfbCurveX2);
+            curveHash = Fnv(curveHash, _data.FfbCurveX3);
+            curveHash = Fnv(curveHash, _data.FfbCurveX4);
             curveHash = Fnv(curveHash, _data.FfbCurveY1);
             curveHash = Fnv(curveHash, _data.FfbCurveY2);
             curveHash = Fnv(curveHash, _data.FfbCurveY3);
@@ -871,10 +879,10 @@ namespace MozaPlugin.Hardware
             curveHash = Fnv(curveHash, _data.FfbCurveY5);
             if (BaseCfgChanged("base-ffb-curve", curveHash))
             {
-                BaseManager.WriteSetting("base-ffb-curve-x1", 20);
-                BaseManager.WriteSetting("base-ffb-curve-x2", 40);
-                BaseManager.WriteSetting("base-ffb-curve-x3", 60);
-                BaseManager.WriteSetting("base-ffb-curve-x4", 80);
+                BaseManager.WriteSetting("base-ffb-curve-x1", _data.FfbCurveX1);
+                BaseManager.WriteSetting("base-ffb-curve-x2", _data.FfbCurveX2);
+                BaseManager.WriteSetting("base-ffb-curve-x3", _data.FfbCurveX3);
+                BaseManager.WriteSetting("base-ffb-curve-x4", _data.FfbCurveX4);
                 BaseManager.WriteSetting("base-ffb-curve-y1", _data.FfbCurveY1);
                 BaseManager.WriteSetting("base-ffb-curve-y2", _data.FfbCurveY2);
                 BaseManager.WriteSetting("base-ffb-curve-y3", _data.FfbCurveY3);

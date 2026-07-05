@@ -500,7 +500,12 @@ namespace MozaPlugin
             SetSliderRaw(Eq5Slider, Eq5Value, _data.Equalizer5, 0, 400, "%");
             SetSliderRaw(Eq6Slider, Eq6Value, _data.Equalizer6, 0, 400, "%");
 
-            // FFB Curve (X breakpoints are fixed at 20/40/60/80; only Y output values are user-adjustable)
+            // FFB Curve — X1..X4 are the draggable input positions of points 1-4
+            // (point 5 fixed at input=100%); Y1..Y5 the output values.
+            SetSliderRaw(FfbCurveX1Slider, FfbCurveX1Value, _data.FfbCurveX1, 0, 100, "");
+            SetSliderRaw(FfbCurveX2Slider, FfbCurveX2Value, _data.FfbCurveX2, 0, 100, "");
+            SetSliderRaw(FfbCurveX3Slider, FfbCurveX3Value, _data.FfbCurveX3, 0, 100, "");
+            SetSliderRaw(FfbCurveX4Slider, FfbCurveX4Value, _data.FfbCurveX4, 0, 100, "");
             SetSliderRaw(FfbCurveY1Slider, FfbCurveY1Value, _data.FfbCurveY1, 0, 100, "");
             SetSliderRaw(FfbCurveY2Slider, FfbCurveY2Value, _data.FfbCurveY2, 0, 100, "");
             SetSliderRaw(FfbCurveY3Slider, FfbCurveY3Value, _data.FfbCurveY3, 0, 100, "");
@@ -1254,6 +1259,12 @@ namespace MozaPlugin
         {
             using (_suppressor.Begin())
             {
+                // Presets are Y-shapes defined at the standard breakpoints, so
+                // snap any dragged X positions back to 20/40/60/80.
+                FfbCurveX1Slider.Value = 20; FfbCurveX1Value.Text = "20"; _data.FfbCurveX1 = 20;
+                FfbCurveX2Slider.Value = 40; FfbCurveX2Value.Text = "40"; _data.FfbCurveX2 = 40;
+                FfbCurveX3Slider.Value = 60; FfbCurveX3Value.Text = "60"; _data.FfbCurveX3 = 60;
+                FfbCurveX4Slider.Value = 80; FfbCurveX4Value.Text = "80"; _data.FfbCurveX4 = 80;
                 FfbCurveY1Slider.Value = p[0]; FfbCurveY1Value.Text = $"{p[0]}"; _data.FfbCurveY1 = p[0];
                 FfbCurveY2Slider.Value = p[1]; FfbCurveY2Value.Text = $"{p[1]}"; _data.FfbCurveY2 = p[1];
                 FfbCurveY3Slider.Value = p[2]; FfbCurveY3Value.Text = $"{p[2]}"; _data.FfbCurveY3 = p[2];
@@ -1274,6 +1285,10 @@ namespace MozaPlugin
         private void FfbCurvePreset_Exponential(object s, RoutedEventArgs e) => ApplyFfbCurvePreset(FfbCurvePresets[2]);
         private void FfbCurvePreset_Parabolic(object s, RoutedEventArgs e) => ApplyFfbCurvePreset(FfbCurvePresets[3]);
 
+        private void FfbCurveX1Slider_ValueChanged(object s, RoutedPropertyChangedEventArgs<double> e) => OnIntSliderChanged(e.NewValue, FfbCurveX1Value, "", v => { _data.FfbCurveX1 = v; _plugin.WriteIfBaseConnected("base-ffb-curve-x1", v); });
+        private void FfbCurveX2Slider_ValueChanged(object s, RoutedPropertyChangedEventArgs<double> e) => OnIntSliderChanged(e.NewValue, FfbCurveX2Value, "", v => { _data.FfbCurveX2 = v; _plugin.WriteIfBaseConnected("base-ffb-curve-x2", v); });
+        private void FfbCurveX3Slider_ValueChanged(object s, RoutedPropertyChangedEventArgs<double> e) => OnIntSliderChanged(e.NewValue, FfbCurveX3Value, "", v => { _data.FfbCurveX3 = v; _plugin.WriteIfBaseConnected("base-ffb-curve-x3", v); });
+        private void FfbCurveX4Slider_ValueChanged(object s, RoutedPropertyChangedEventArgs<double> e) => OnIntSliderChanged(e.NewValue, FfbCurveX4Value, "", v => { _data.FfbCurveX4 = v; _plugin.WriteIfBaseConnected("base-ffb-curve-x4", v); });
         private void FfbCurveY1Slider_ValueChanged(object s, RoutedPropertyChangedEventArgs<double> e) => OnIntSliderChanged(e.NewValue, FfbCurveY1Value, "", v => { _data.FfbCurveY1 = v; _plugin.WriteIfBaseConnected("base-ffb-curve-y1", v); });
         private void FfbCurveY2Slider_ValueChanged(object s, RoutedPropertyChangedEventArgs<double> e) => OnIntSliderChanged(e.NewValue, FfbCurveY2Value, "", v => { _data.FfbCurveY2 = v; _plugin.WriteIfBaseConnected("base-ffb-curve-y2", v); });
         private void FfbCurveY3Slider_ValueChanged(object s, RoutedPropertyChangedEventArgs<double> e) => OnIntSliderChanged(e.NewValue, FfbCurveY3Value, "", v => { _data.FfbCurveY3 = v; _plugin.WriteIfBaseConnected("base-ffb-curve-y3", v); });
