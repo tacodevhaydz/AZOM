@@ -239,6 +239,11 @@ namespace MozaPlugin.Devices.WheelUi
         /// share a byte — the shared-byte packing the wheel actually uses for tyre/brake temps.</summary>
         public bool CanBitSplit => IsFsr1 && CurrentBits >= 2;
 
+        /// <summary>Byte-boundary steppers apply to byte-aligned FSR1 fields only. Once a field is
+        /// bit-packed its geometry is defined by BitOffset/BitWidth, so the byte steppers are hidden
+        /// (they'd show a "moved" byte span and, if used, clobber the bit layout).</summary>
+        public bool ShowByteSteppers => IsFsr1 && !IsBitPacked;
+
         // Independent bit-stepper guards — fenced by Lower/UpperBitBound so a step can never
         // overlap a neighbour's bits (shrinking just leaves spare bits, which is allowed).
         public bool CanBitOffsetMinus => IsBitPacked && BitOffset > LowerBitBound;
@@ -263,6 +268,7 @@ namespace MozaPlugin.Devices.WheelUi
             PropertyChanged?.Invoke(this, new PropertyChangedEventArgs(nameof(CanEndPlus)));
             PropertyChanged?.Invoke(this, new PropertyChangedEventArgs(nameof(CanMergePrev)));
             PropertyChanged?.Invoke(this, new PropertyChangedEventArgs(nameof(CanMergeNext)));
+            PropertyChanged?.Invoke(this, new PropertyChangedEventArgs(nameof(ShowByteSteppers)));
             PropertyChanged?.Invoke(this, new PropertyChangedEventArgs(nameof(BitRangeText)));
             PropertyChanged?.Invoke(this, new PropertyChangedEventArgs(nameof(CanBitSplit)));
             PropertyChanged?.Invoke(this, new PropertyChangedEventArgs(nameof(CanBitOffsetMinus)));

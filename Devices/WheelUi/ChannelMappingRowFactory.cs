@@ -122,8 +122,11 @@ namespace MozaPlugin.Devices.WheelUi
                         UpperBitBound = upperBit,
                     };
                     rows.Add(row);
-                    if (prevRow != null) { prevRow.NextField = row; row.PrevField = prevRow; }
-                    prevRow = row;
+                    // Couple the byte-divider steppers only between consecutive BYTE-ALIGNED fields.
+                    // A packed field is bit-defined (no shared byte divider), so it breaks the chain
+                    // like an anchor — its neighbours stay uncoupled and use bit steppers instead.
+                    if (prevRow != null && !packed) { prevRow.NextField = row; row.PrevField = prevRow; }
+                    prevRow = packed ? null : row;
                 }
             }
             string status = followingActive

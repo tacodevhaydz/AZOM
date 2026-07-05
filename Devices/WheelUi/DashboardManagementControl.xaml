@@ -389,7 +389,7 @@
                                              Width is held to 1..3 bytes; BE/LE toggle shows at width 2;
                                              Scale/Bias apply raw·Scale+Bias before packing. -->
                                         <StackPanel Orientation="Horizontal" Margin="0,8,0,0"
-                                                    Visibility="{Binding IsFsr1,
+                                                    Visibility="{Binding ShowByteSteppers,
                                                                 Converter={StaticResource BoolToVisibility}}">
                                             <TextBlock Text="{x:Static res:Strings.Edit_StartByte}"
                                                        VerticalAlignment="Center"
