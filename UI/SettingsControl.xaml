@@ -17,6 +17,10 @@
                 <ResourceDictionary Source="pack://application:,,,/MozaPlugin;component/Themes/MozaIcons.xaml"/>
             </ResourceDictionary.MergedDictionaries>
 
+            <!-- Custom Effects' inline formula editor (mirrors DashboardManagementControl.xaml's
+                 channel-mapping editor) needs this to show/hide its panel based on row.IsEditing. -->
+            <BooleanToVisibilityConverter x:Key="BoolToVisibility"/>
+
             <!-- Legacy keys preserved so the hidden Wheel/AB9/mBooster/Hub tabs (kept in
                  the visual tree but Visibility=Collapsed in Phase 1) still resolve.
                  They route to the new design's brushes + typography so any pixels they
@@ -1876,6 +1880,16 @@
                                         <ComboBoxItem Content="{x:Static res:Strings.Option_Clutch}"    Tag="3"/>
                                     </ComboBox>
                                 </Grid>
+                                <Grid Margin="0,8,0,0">
+                                    <Grid.ColumnDefinitions>
+                                        <ColumnDefinition Width="Auto"/>
+                                        <ColumnDefinition Width="*"/>
+                                    </Grid.ColumnDefinitions>
+                                    <TextBlock Grid.Column="0" Text="{x:Static res:Strings.SliderLabel_DisplayName}" Style="{StaticResource LabelText}" Margin="0,0,10,0"/>
+                                    <TextBox Grid.Column="1" x:Name="MBoosterDisplayNameBox" MaxWidth="320" HorizontalAlignment="Left"
+                                             ToolTip="{x:Static res:Strings.Hint_MBoosterDisplayName}"
+                                             KeyDown="MBoosterDisplayNameBox_KeyDown" LostFocus="MBoosterDisplayNameBox_LostFocus"/>
+                                </Grid>
                             </StackPanel>
                         </ctrl:SectionCard>
 
@@ -2322,15 +2336,91 @@
                                                             <ctrl:OffOnToggle Content="{x:Static res:Strings.Label_Enable}" IsChecked="{Binding Enabled}" VerticalAlignment="Center"/>
                                                             <ctrl:OffOnToggle Content="{x:Static res:Strings.Label_Test}" IsChecked="{Binding TestActive}" VerticalAlignment="Center" Margin="24,0,0,0"/>
                                                         </StackPanel>
-                                                        <Grid Margin="0,4">
+                                                        <Grid Margin="0,4" ToolTip="{x:Static res:Strings.Hint_CustomEffectFormula}">
                                                             <Grid.ColumnDefinitions>
                                                                 <ColumnDefinition Width="Auto"/>
                                                                 <ColumnDefinition Width="*"/>
+                                                                <ColumnDefinition Width="Auto"/>
+                                                                <ColumnDefinition Width="Auto"/>
                                                             </Grid.ColumnDefinitions>
                                                             <TextBlock Grid.Column="0" Text="{x:Static res:Strings.SliderLabel_Formula}" Style="{StaticResource SliderLabel}"/>
-                                                            <TextBox Grid.Column="1" Text="{Binding Formula, UpdateSourceTrigger=LostFocus}"
-                                                                     ToolTip="{x:Static res:Strings.Hint_CustomEffectFormula}"/>
+                                                            <TextBlock Grid.Column="1" Text="{Binding Formula}"
+                                                                       VerticalAlignment="Center"
+                                                                       FontFamily="{DynamicResource FontMono}"
+                                                                       Foreground="{DynamicResource TextBrush}"
+                                                                       TextTrimming="CharacterEllipsis"/>
+                                                            <!-- Same dual-mode editor as the telemetry channel-mapper:
+                                                                 pencil = simple SimHub property picker, ƒₓ = SimHub's
+                                                                 own NCalc/js: formula dialog (BindingEditor). -->
+                                                            <Button Grid.Column="2"
+                                                                    Click="MBoosterEditFormula_Click"
+                                                                    Tag="{Binding}"
+                                                                    ToolTip="{x:Static res:Strings.Tooltip_EditMapping}"
+                                                                    Width="26" Height="22" Padding="2" Margin="6,0,0,0"
+                                                                    Background="Transparent" BorderThickness="0" Cursor="Hand">
+                                                                <Path Data="{StaticResource IconEdit}"
+                                                                      Stretch="Uniform" Width="14" Height="14"
+                                                                      Stroke="{DynamicResource TextDimBrush}"
+                                                                      StrokeThickness="1.5" Fill="{x:Null}"
+                                                                      StrokeLineJoin="Round"
+                                                                      StrokeStartLineCap="Round"
+                                                                      StrokeEndLineCap="Round"/>
+                                                            </Button>
+                                                            <Button Grid.Column="3"
+                                                                    Click="MBoosterAdvancedEditFormula_Click"
+                                                                    Tag="{Binding}"
+                                                                    ToolTip="{x:Static res:Strings.Tooltip_EditFormula}"
+                                                                    Width="34" Height="22" Padding="2" Margin="4,0,0,0"
+                                                                    Background="Transparent" BorderThickness="0" Cursor="Hand">
+                                                                <TextBlock Text="𝑓(𝑥)" FontFamily="Cambria Math, Segoe UI" FontSize="14"
+                                                                           HorizontalAlignment="Center" VerticalAlignment="Center"
+                                                                           Foreground="{DynamicResource TextDimBrush}"/>
+                                                            </Button>
                                                         </Grid>
+                                                        <!-- Inline simple editor — visible when row.IsEditing. -->
+                                                        <Border Margin="0,0,0,8"
+                                                                Background="{DynamicResource BgCard2Brush}"
+                                                                BorderBrush="{DynamicResource BorderBrightBrush}"
+                                                                BorderThickness="1" CornerRadius="4" Padding="10"
+                                                                Visibility="{Binding IsEditing, Converter={StaticResource BoolToVisibility}}">
+                                                            <StackPanel>
+                                                                <Grid Margin="0,0,0,8">
+                                                                    <Grid.ColumnDefinitions>
+                                                                        <ColumnDefinition Width="*"/>
+                                                                        <ColumnDefinition Width="Auto"/>
+                                                                        <ColumnDefinition Width="Auto"/>
+                                                                    </Grid.ColumnDefinitions>
+                                                                    <TextBox Grid.Column="0"
+                                                                             Text="{Binding EditFilter, UpdateSourceTrigger=PropertyChanged}"
+                                                                             FontFamily="{DynamicResource FontMono}" Padding="8,4"
+                                                                             Foreground="{DynamicResource TextBrush}"
+                                                                             Background="{DynamicResource BgDeepBrush}"
+                                                                             BorderBrush="{DynamicResource BorderBrush}" BorderThickness="1"/>
+                                                                    <Button Grid.Column="1" Content="{x:Static res:Strings.Button_Cancel}"
+                                                                            Margin="6,0,0,0" Click="MBoosterCancelFormula_Click" Tag="{Binding}"/>
+                                                                    <Button Grid.Column="2" Content="{x:Static res:Strings.Button_Ok}"
+                                                                            MinWidth="60" Margin="6,0,0,0"
+                                                                            Click="MBoosterCommitFormula_Click" Tag="{Binding}"/>
+                                                                </Grid>
+                                                                <ListBox ItemsSource="{Binding FilteredProperties}"
+                                                                         SelectedItem="{Binding PendingProperty, Mode=TwoWay}"
+                                                                         MaxHeight="240"
+                                                                         Background="{DynamicResource BgDeepBrush}"
+                                                                         Foreground="{DynamicResource TextBrush}"
+                                                                         BorderBrush="{DynamicResource BorderBrush}" BorderThickness="1"
+                                                                         VirtualizingStackPanel.IsVirtualizing="True"
+                                                                         VirtualizingStackPanel.VirtualizationMode="Recycling"
+                                                                         ScrollViewer.HorizontalScrollBarVisibility="Disabled"
+                                                                         ScrollViewer.VerticalScrollBarVisibility="Auto">
+                                                                    <ListBox.ItemTemplate>
+                                                                        <DataTemplate>
+                                                                            <TextBlock Text="{Binding}" FontFamily="{DynamicResource FontMono}"
+                                                                                       FontSize="12" Foreground="{DynamicResource TextBrush}" Padding="6,3"/>
+                                                                        </DataTemplate>
+                                                                    </ListBox.ItemTemplate>
+                                                                </ListBox>
+                                                            </StackPanel>
+                                                        </Border>
                                                         <StackPanel Orientation="Horizontal" Margin="0,8,0,0">
                                                             <ctrl:OffOnToggle Content="{x:Static res:Strings.Label_UseThreshold}" IsChecked="{Binding ThresholdEnabled}" VerticalAlignment="Center"/>
                                                         </StackPanel>

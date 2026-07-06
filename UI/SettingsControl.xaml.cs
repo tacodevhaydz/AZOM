@@ -13,6 +13,10 @@ using MozaPlugin.Telemetry;
 using MozaPlugin.Telemetry.Dashboard;
 using MozaPlugin.Telemetry.Era;
 using MozaPlugin.UI;
+using SimHub.Plugins.OutputPlugins.Dash.GLCDTemplating;
+using SimHub.Plugins.OutputPlugins.Dash.TemplatingCommon;
+using SimHub.Plugins.OutputPlugins.EditorControls;
+using SimHub.Plugins.OutputPlugins.GraphicalDash.Models;
 using static MozaPlugin.UI.UiHelpers;
 using SerialTrafficCapture = MozaPlugin.Diagnostics.SerialTrafficCapture;
 
@@ -2521,7 +2525,7 @@ namespace MozaPlugin
                         var c = devices[i];
                         var item = new ComboBoxItem
                         {
-                            Content = $"{MBoosterDeviceController.ShortIdentity(c.Identity)} ({c.PortName})",
+                            Content = BuildMBoosterComboLabel(c),
                             Tag = c.Identity,
                         };
                         MBoosterDeviceCombo.Items.Add(item);
@@ -2565,6 +2569,7 @@ namespace MozaPlugin
             using (_suppressor.Begin())
             {
                 SetMBoosterRoleCombo(s.Role);
+                MBoosterDisplayNameBox.Text = s.DisplayName ?? "";
                 MBoosterAbsEnable.IsChecked       = s.Abs?.Enabled          ?? false;
                 MBoosterAbsFrequencySlider.Value  = s.Abs?.FrequencyHz      ?? MBoosterUiConstants.AbsFreqMinHz;
                 SetValueText(MBoosterAbsFrequencyValue, MBoosterAbsFrequencySlider.Value.ToString("F0"));
@@ -2682,6 +2687,42 @@ namespace MozaPlugin
             return _plugin?.MBoosterRegistry?.FindByIdentity(_mboosterSelectedIdentity ?? "");
         }
 
+        /// <summary>
+        /// Device combo label: port/identity, prefixed with the user's
+        /// DisplayName when set — the whole point of that field is telling
+        /// two same-role mBoosters apart in this exact list. See
+        /// MBoosterDeviceSettings.DisplayName.
+        /// </summary>
+        private string BuildMBoosterComboLabel(MBoosterDeviceController c)
+        {
+            string baseLabel = $"{MBoosterDeviceController.ShortIdentity(c.Identity)} ({c.PortName})";
+            var name = _plugin?.GetOrCreateMBoosterSettings(c.Identity)?.DisplayName;
+            return string.IsNullOrWhiteSpace(name) ? baseLabel : $"{name} — {baseLabel}";
+        }
+
+        private void MBoosterDisplayNameBox_KeyDown(object sender, KeyEventArgs e)
+        {
+            if (e.Key != Key.Enter && e.Key != Key.Return) return;
+            (sender as TextBox)?.MoveFocus(new TraversalRequest(FocusNavigationDirection.Next));
+            e.Handled = true;
+        }
+
+        private void MBoosterDisplayNameBox_LostFocus(object sender, RoutedEventArgs e)
+        {
+            if (_suppressEvents) return;
+            var s = CurrentMBoosterSettings();
+            if (s == null) return;
+            var v = (MBoosterDisplayNameBox.Text ?? "").Trim();
+            if (s.DisplayName == v) return;
+            s.DisplayName = v;
+            _plugin.SaveSettings();
+            // Reflect the new name in the device combo immediately rather
+            // than waiting for the next 500ms refresh tick / device add-drop.
+            var controller = CurrentMBoosterController();
+            if (controller != null && MBoosterDeviceCombo.SelectedItem is ComboBoxItem item)
+                item.Content = BuildMBoosterComboLabel(controller);
+        }
+
         // ===== Custom Effects (Experimental) =====
         // Dynamic per-device list — unlike the five built-in effects (static
         // named XAML controls wired one-by-one), the count here is
@@ -2695,9 +2736,21 @@ namespace MozaPlugin
             MBoosterCustomEffectsList.ItemsSource = _mboosterCustomEffectRows;
             _mboosterCustomEffectRows.Clear();
             var list = s?.CustomEffects;
-            if (list == null) return;
+            if (list == null || _plugin == null) return;
+            // Snapshot once so every row shares one backing list for the
+            // simple editor, same as ChannelMappingRowFactory.Build does for
+            // the (unrelated) telemetry channel-mapping rows.
+            var plugin = _plugin;
+            var props = plugin.GetAllSimHubPropertyNames();
+            var engine = plugin.ChannelFormulaEngine;
             for (int i = 0; i < list.Count; i++)
-                _mboosterCustomEffectRows.Add(new MBoosterCustomEffectRow(list[i], () => _plugin.SaveSettings(), OnCustomEffectTestToggle));
+            {
+                _mboosterCustomEffectRows.Add(new MBoosterCustomEffectRow(list[i], () => plugin.SaveSettings(), OnCustomEffectTestToggle)
+                {
+                    AllProperties = props,
+                    Engine = engine,
+                });
+            }
         }
 
         private void OnCustomEffectTestToggle(string effectId, bool on)
@@ -2734,7 +2787,11 @@ namespace MozaPlugin
             };
             s.CustomEffects.Add(effect);
             _plugin.SaveSettings();
-            _mboosterCustomEffectRows.Add(new MBoosterCustomEffectRow(effect, () => _plugin.SaveSettings(), OnCustomEffectTestToggle));
+            _mboosterCustomEffectRows.Add(new MBoosterCustomEffectRow(effect, () => _plugin.SaveSettings(), OnCustomEffectTestToggle)
+            {
+                AllProperties = _plugin?.GetAllSimHubPropertyNames() ?? Array.Empty<string>(),
+                Engine = _plugin?.ChannelFormulaEngine,
+            });
         }
 
         private void MBoosterDeleteCustomEffect_Click(object sender, RoutedEventArgs e)
@@ -2745,6 +2802,83 @@ namespace MozaPlugin
             s?.CustomEffects?.RemoveAll(c => string.Equals(c.Id, row.Id, StringComparison.Ordinal));
             _plugin.SaveSettings();
             _mboosterCustomEffectRows.Remove(row);
+        }
+
+        // ── Formula editing — same dual-mode (pencil + ƒₓ) handlers as
+        // DashboardManagementControl's channel-mapping list, scoped to the
+        // custom-effects row collection instead. See
+        // MBoosterCustomEffectRow's "Formula editing" region.
+
+        private void MBoosterEditFormula_Click(object sender, RoutedEventArgs e)
+        {
+            if ((sender as FrameworkElement)?.Tag is not MBoosterCustomEffectRow row) return;
+            // Only one inline editor expanded at a time, same as the channel mapper.
+            foreach (var r in _mboosterCustomEffectRows)
+                if (!ReferenceEquals(r, row) && r.IsEditing) r.CancelEdit();
+            row.BeginEdit();
+        }
+
+        private void MBoosterCommitFormula_Click(object sender, RoutedEventArgs e)
+        {
+            if ((sender as FrameworkElement)?.Tag is not MBoosterCustomEffectRow row) return;
+            row.CommitEdit();
+        }
+
+        private void MBoosterCancelFormula_Click(object sender, RoutedEventArgs e)
+        {
+            if ((sender as FrameworkElement)?.Tag is not MBoosterCustomEffectRow row) return;
+            row.CancelEdit();
+        }
+
+        /// <summary>
+        /// Advanced edit: open SimHub's own formula editor (BindingEditor)
+        /// against the shared engine and a working copy of the row's
+        /// formula. On OK, write the result back through the row (which
+        /// serializes it into Formula and persists). Mirrors
+        /// DashboardManagementControl.AdvancedEditMapping_Click.
+        /// </summary>
+        private async void MBoosterAdvancedEditFormula_Click(object sender, RoutedEventArgs e)
+        {
+            if ((sender as FrameworkElement)?.Tag is not MBoosterCustomEffectRow row) return;
+            var engine = row.Engine;
+            if (engine == null)
+            {
+                MozaLog.Warn("[AZOM] mBooster custom-effect formula editor unavailable (SimHub engine not loaded)");
+                return;
+            }
+
+            // Work on a throwaway ExpressionValue so the dialog never mutates
+            // the row's live Expression mid-edit; copy back only on OK.
+            var src = row.Expression;
+            var working = new ExpressionValue
+            {
+                UseJavascript = src.UseJavascript,
+                Expression = src.Expression,
+                PreExpression = src.PreExpression,
+            };
+
+            var data = new DashboardBindingData
+            {
+                Formula = working,
+                Mode = string.IsNullOrWhiteSpace(working.Expression) ? BindingMode.None : BindingMode.Formula,
+                TargetPropertyName = row.Name,
+                TargetType = typeof(double),
+            };
+
+            try
+            {
+                var editor = new BindingEditor(engine) { DataContext = data };
+                var result = await editor.ShowDialogWindowAsync(this);
+                if ((int)result != 1) return; // not OK
+                if (data.Mode == BindingMode.Formula)
+                    row.ApplyEditedFormula(data.Formula?.Expression, data.Formula?.UseJavascript ?? false);
+                else
+                    row.ApplyEditedFormula("", false); // cleared
+            }
+            catch (Exception ex)
+            {
+                MozaLog.Warn("[AZOM] mBooster custom-effect formula editor failed: " + ex.Message);
+            }
         }
 
         private void MBoosterDeviceCombo_Changed(object sender, SelectionChangedEventArgs e)

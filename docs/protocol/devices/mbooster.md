@@ -645,12 +645,40 @@ pre-built effect: a user-addable list of custom effects
 (`MBoosterDeviceSettings.CustomEffects`, `List<MBoosterCustomEffect>`),
 each rendered as its own Expander in the "Custom Effects (Experimental)"
 card below the five built-in effects. Each entry has Name, Enable, a
-Formula text box (a bare SimHub property like `SpeedKmh` or a full NCalc
-`[prop]` formula — evaluated via the same `NCalcExpressionEvaluator`/
-`NCalcEngineBase` the telemetry channel-mapper already uses, see
-`docs/ncalc-channel-mapping.md`), an optional Threshold gate, and
-Frequency/Intensity sliders. A "+ Add Custom Effect" button creates a new
-blank entry; each entry's own "Delete Effect" button removes it.
+Formula field, an optional Threshold gate, and Frequency/Intensity
+sliders. A "+ Add Custom Effect" button creates a new blank entry; each
+entry's own "Delete Effect" button removes it.
+
+**Formula editing reuses SimHub's own property-binding UI verbatim** —
+the same dual-mode pencil/ƒₓ editor `docs/ncalc-channel-mapping.md`
+already built for the telemetry channel-mapper, applied to
+`MBoosterCustomEffect.Formula` instead of a channel's `SimHubProperty`.
+`MBoosterCustomEffectRow` (`UI/MBoosterCustomEffectRow.cs`) carries its
+own copy of the sync/serialize logic
+(`Expression`/`ApplyEditedFormula`/`MakeExpression`/
+`ApplyStoredToExpression`/`SerializeExpression`) mirroring
+`Devices/WheelUi/ChannelMappingRow.cs` line-for-line minus the FSR1/CM1
+boundary-stepper baggage that doesn't apply here:
+
+- **Pencil** → the simple inline editor: a filterable, virtualized list
+  of every live SimHub property name (`MozaPlugin.GetAllSimHubPropertyNames()`,
+  snapshotted once per tab repopulate so every row shares one backing
+  list). Picking one commits a bare property path.
+- **ƒₓ** → SimHub's own `BindingEditor` dialog (`SimHub.Plugins
+  .OutputPlugins.EditorControls`), opened against the shared
+  `NCalcEngineBase` (`MozaPlugin.ChannelFormulaEngine`) and a throwaway
+  copy of the row's `ExpressionValue` so the dialog never mutates the
+  live formula mid-edit — full NCalc `[prop]` expressions or a `js:`
+  JavaScript escape, exactly as in the dashboard/channel-mapper formula
+  dialog. `SettingsControl.MBoosterAdvancedEditFormula_Click` is a
+  byte-for-byte port of `DashboardManagementControl
+  .AdvancedEditMapping_Click`, retargeted at the custom-effects row
+  collection.
+
+Formula stays a single persisted string (`MBoosterCustomEffect.Formula`)
+exactly like `ChannelDefinition.SimHubProperty` — no schema/persistence
+change from either editor path, both just write back through the row's
+`Formula` setter.
 
 **Two modes**, mirroring the built-ins' pulse-vs-continuous split:
 
