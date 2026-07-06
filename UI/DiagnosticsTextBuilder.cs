@@ -206,6 +206,26 @@ namespace MozaPlugin.UI
                     $"CM2 dash lane:     {cm2.TargetDescription} on {cm2.ConnectionRef?.CaptureLabel} pipe " +
                     $"(frames={cm2.FramesSent}, {cm2.Phase})");
             }
+
+            // Dash LED driver (SimHub effects → CM2 bitmask/colour bridge).
+            // Separates "SimHub feeds black" (everLit=no, sends=0) from
+            // "colors produced but writes dropped" (everLit=yes, sends>0).
+            var led = MozaDashLedDeviceManager.Latest;
+            if (led != null)
+            {
+                var snap = led.DiagSnapshot;
+                long nowTicks = DateTime.UtcNow.Ticks;
+                string Age(long ticks) => ticks == 0
+                    ? "never"
+                    : $"{TimeSpan.FromTicks(nowTicks - ticks).TotalSeconds:F1}s ago";
+                string mask = snap.LastBitmask < 0 ? "(none)" : $"0x{snap.LastBitmask:X3}";
+                string fw = (plugin?.Settings?.Cm2NewLedFirmware ?? false) ? "indicator" : "legacy";
+                sb.AppendLine();
+                sb.Append(
+                    $"CM2 LED driver:    fw={fw} engaged={(snap.Engaged ? "yes" : "no")} everLit={(snap.EverLit ? "yes" : "no")} " +
+                    $"lastNonBlack={Age(snap.LastNonBlackTicks)} lastBitmask={mask} sentAgo={Age(snap.LastBitmaskSendTicks)} " +
+                    $"sends: bitmask={snap.BitmaskSends} rpmColor={snap.RpmColorSends} flag={snap.FlagSends}");
+            }
             return sb.ToString();
         }
 

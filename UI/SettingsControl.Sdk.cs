@@ -75,7 +75,6 @@ namespace MozaPlugin
             RefreshSdkStatus();
             RefreshSdkRecentRequests(force: true);
             RefreshControlUdpRecentRequests(force: true);
-            RefreshSdkPromptBanner();
         }
 
         /// <summary>
@@ -369,9 +368,8 @@ namespace MozaPlugin
                 catch { /* helper logs its own failures; status reflects them */ }
             });
             RefreshSdkStatus();
-            // Enabling SDK support live removes the reason for the nudge — hide
-            // it immediately (it won't return: dismissal is persisted below).
-            RefreshSdkPromptBanner();
+            // The SDK nudge (now in the shared PluginBanners control) self-hides
+            // within its 500 ms tick once SdkEmulationEnabled flips.
         }
 
         private void UdpControlEnabledCheck_Changed(object sender, RoutedEventArgs e)
@@ -397,39 +395,14 @@ namespace MozaPlugin
 
         // ===== One-time "enable SDK support" nudge banner =====
 
-        // Show the cross-tab nudge only when the CoAP SDK server is off AND the
-        // user hasn't dismissed it. Dismissal is persisted (unlike the update
-        // banner's session-only flag) so it never reappears once acted on.
-        // Re-evaluated on construction, on the SDK toggle, and on dismiss — the
-        // only paths that change either input — so no refresh-tick hook needed.
-        private void RefreshSdkPromptBanner()
-        {
-            if (SdkPromptBanner == null) return;
-            var s = _plugin?.Settings;
-            bool show = s != null && !s.SdkEmulationEnabled && !s.SdkPromptDismissed;
-            SdkPromptBanner.Visibility = show ? Visibility.Visible : Visibility.Collapsed;
-        }
-
-        // Persist the dismissal once and repaint. Idempotent — a second call
-        // (e.g. Configure then a stray Dismiss) won't reschedule a save.
-        private void DismissSdkPrompt()
-        {
-            var s = _plugin?.Settings;
-            if (s != null && !s.SdkPromptDismissed)
-            {
-                s.SdkPromptDismissed = true;
-                try { _plugin!.PersistSettings(); } catch { /* best-effort */ }
-            }
-            RefreshSdkPromptBanner();
-        }
-
-        private void SdkPromptConfigure_Click(object sender, RoutedEventArgs e)
+        // The SDK-setup nudge banner + its Configure/Dismiss handlers now live in
+        // the shared PluginBanners control. The plugin pane wires that control's
+        // ConfigureSdkInApp delegate to NavigateToSdkTab (below) so Configure
+        // still switches to the SDK tab here.
+        internal void NavigateToSdkTab()
         {
             try { if (MainTabs != null && SdkTab != null) MainTabs.SelectedItem = SdkTab; }
             catch (Exception ex) { MozaLog.Debug($"[SdkPrompt] navigate failed: {ex.Message}"); }
-            DismissSdkPrompt();   // both buttons dismiss permanently
         }
-
-        private void SdkPromptDismiss_Click(object sender, RoutedEventArgs e) => DismissSdkPrompt();
     }
 }

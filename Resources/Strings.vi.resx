@@ -283,9 +283,11 @@
   <data name="Button_Github" xml:space="preserve"><value>GitHub</value></data>
   <data name="Button_JoinDiscord" xml:space="preserve"><value>Tham gia Discord</value></data>
   <data name="Button_SponsorDevelopment" xml:space="preserve"><value>Tài trợ phát triển</value></data>
+  <data name="Button_Kofi" xml:space="preserve"><value>Ủng hộ tôi trên Ko-fi</value></data>
   <data name="Tooltip_Github" xml:space="preserve"><value>github.com/giantorth/moza-simhub-plugin</value></data>
   <data name="Tooltip_JoinDiscord" xml:space="preserve"><value>Tham gia Discord của dự án</value></data>
   <data name="Tooltip_Sponsor" xml:space="preserve"><value>github.com/sponsors/giantorth</value></data>
+  <data name="Tooltip_Kofi" xml:space="preserve"><value>ko-fi.com/giantorth</value></data>
   <data name="Hint_ThanksToTesters" xml:space="preserve"><value>Xin gửi lời cảm ơn chân thành đến tất cả các tester alpha và beta đầu tiên — những người đã bỏ thời gian và sự kiên nhẫn của mình trong khi tôi tìm ra cách làm cho giao thức MOZA hoạt động. Plugin này sẽ không tồn tại nếu không có các bạn.</value></data>
   <data name="Label_UpdateAvailable" xml:space="preserve"><value>Có bản cập nhật</value></data>
   <data name="Button_OpenReleaseNotes" xml:space="preserve"><value>Mở ghi chú phát hành</value></data>
@@ -429,9 +431,14 @@
   <data name="Button_ResetToDefaults" xml:space="preserve"><value>ĐẶT LẠI MẶC ĐỊNH</value></data>
   <data name="Button_ResetField" xml:space="preserve"><value>ĐẶT LẠI TRƯỜNG</value></data>
   <data name="Button_SplitField" xml:space="preserve"><value>TÁCH TRƯỜNG</value></data>
+  <data name="Button_BitSplit" xml:space="preserve"><value>TÁCH BIT</value></data>
+  <data name="Button_MergePrev" xml:space="preserve"><value>GỘP ◀</value></data>
+  <data name="Button_MergeNext" xml:space="preserve"><value>GỘP ▶</value></data>
   <data name="Button_RemoveSplit" xml:space="preserve"><value>GỠ TÁCH</value></data>
   <data name="Viz_Title" xml:space="preserve"><value>DỮ LIỆU FSR1 TRỰC TIẾP</value></data>
   <data name="Edit_StartByte" xml:space="preserve"><value>Byte bắt đầu</value></data>
+  <data name="Edit_StartBit" xml:space="preserve"><value>Bit bắt đầu</value></data>
+  <data name="Edit_BitWidth" xml:space="preserve"><value>Độ rộng bit</value></data>
   <data name="Edit_EndByte" xml:space="preserve"><value>Byte kết thúc</value></data>
   <data name="Edit_Endian_LE" xml:space="preserve"><value>Little-endian</value></data>
   <data name="Edit_Scale" xml:space="preserve"><value>Tỷ lệ</value></data>

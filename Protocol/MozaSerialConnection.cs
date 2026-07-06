@@ -714,20 +714,67 @@ namespace MozaPlugin.Protocol
                     $"[AZOM] Port wedged after {count} consecutive I/O errors — closing for reconnect");
                 RecordRuntimeFailure(ConnectionFailureKind.IoFailureAfterOpen,
                     $"{label}: {ex.Message} (after {count} consecutive I/O errors — port wedged)");
-                lock (_lock)
-                {
-                    try { _port?.Close(); } catch { }
-                    _port = null;
-                }
-                while (_priorityQueue.TryDequeue(out _)) { }
-                while (_oneShotQueue.TryDequeue(out _)) { }
-                for (int k = 0; k < _streamSlots.Length; k++)
-                    Interlocked.Exchange(ref _streamSlots[k], null);
-                try { Disconnected?.Invoke(); } catch (Exception dex)
-                {
-                    MozaLog.Debug($"[AZOM] Disconnected handler: {dex.Message}");
-                }
+                ClosePortAndNotify();
             }
+        }
+
+        // Close the port (so IsConnected goes false and the owner's reconnect
+        // timer reopens it), drain queued/streamed frames, and raise
+        // Disconnected so subscribers run their detection/telemetry resets.
+        // Keeps _running true: the read/write loops stay alive and spin on the
+        // null port until Connect() reopens. Callers MUST win the
+        // _portFailureLogged CAS first so this can't race a double-close/notify.
+        private void ClosePortAndNotify()
+        {
+            lock (_lock)
+            {
+                try { _port?.Close(); } catch { }
+                _port = null;
+            }
+            while (_priorityQueue.TryDequeue(out _)) { }
+            while (_oneShotQueue.TryDequeue(out _)) { }
+            for (int k = 0; k < _streamSlots.Length; k++)
+                Interlocked.Exchange(ref _streamSlots[k], null);
+            try { Disconnected?.Invoke(); } catch (Exception dex)
+            {
+                MozaLog.Debug($"[AZOM] Disconnected handler: {dex.Message}");
+            }
+        }
+
+        /// <summary>
+        /// Force this connection through its disconnect→reconnect recovery cycle
+        /// without waiting for the consecutive-I/O-error threshold: close the
+        /// port and raise <see cref="Disconnected"/> so the owner resets
+        /// detection/telemetry and its reconnect timer reopens a fresh port.
+        ///
+        /// <para>Unlike <see cref="Disconnect"/> (which sets <c>_running=false</c>
+        /// and stays silent) this keeps the I/O threads alive and DOES notify, so
+        /// it drives the same tested path as a wedged port.</para>
+        ///
+        /// <para>Used on system resume: after sleep the wheel firmware
+        /// power-cycles and silently tears down its display/telemetry sessions,
+        /// but the host tty can stay <c>.IsOpen==true</c> (or the wheel resumes
+        /// talking before the ~30 s half-open detector fires), so nothing else
+        /// would trigger a clean session rebuild and the display stays blank.</para>
+        /// </summary>
+        public void ForceReconnect(string reason)
+        {
+            if (!_running) return;
+            // Single-winner gate shared with HandleIoFailure so a concurrent
+            // threshold breach can't double-close/notify. If a failure path
+            // already owns the close, let it run — the effect is identical.
+            if (Interlocked.CompareExchange(ref _portFailureLogged, 1, 0) != 0)
+                return;
+            if (_port == null)
+            {
+                // Already closed by a prior force/failure and not yet reopened —
+                // nothing to do. Release the gate so a real reopen can re-arm it.
+                Interlocked.Exchange(ref _portFailureLogged, 0);
+                return;
+            }
+            MozaLog.Info($"[AZOM] {reason} — forcing reconnect");
+            RecordRuntimeFailure(ConnectionFailureKind.IoFailureAfterOpen, reason);
+            ClosePortAndNotify();
         }
 
         private void ReadLoop()

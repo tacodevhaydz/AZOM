@@ -46,6 +46,7 @@ namespace MozaPlugin.Devices.WheelUi
             sb.Append(rec.Type).Append(':');
             foreach (var f in rec.Fields)
                 sb.Append(f.Label).Append('[').Append(f.Start).Append('-').Append(f.End)
+                  .Append(f.IsPacked ? $"@{f.BitOffset}+{f.BitWidth}" : "")
                   .Append(f.IsSynthetic ? "s" : "").Append(']');
             return sb.ToString();
         }
@@ -80,7 +81,9 @@ namespace MozaPlugin.Devices.WheelUi
         public Fsr1VizFieldVm(Fsr1VizField f)
         {
             Label = f.Label;
-            RangeText = $"[{f.Start}..{f.End}] {f.Encoding.Replace('_', ' ')}";
+            RangeText = f.IsPacked
+                ? $"b{f.BitOffset >> 3}.{f.BitOffset & 7} +{f.BitWidth}b"
+                : $"[{f.Start}..{f.End}] {f.Encoding.Replace('_', ' ')}";
             BoxBrush = f.IsSynthetic ? SyntheticBrush : CatalogBrush;
             Update(f);
         }

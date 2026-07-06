@@ -27,26 +27,13 @@ namespace MozaPlugin
     // button is the live, manual path.
     public partial class SettingsControl
     {
-        // Guards "Dismiss" — set true when the user clicks Dismiss so the
-        // banner stays hidden for the rest of this session even if every
-        // condition for showing it still holds. Cleared on plugin reload
-        // (because we're a new SettingsControl instance).
-        private bool _updateBannerDismissedThisSession;
-
         // Token source for the in-flight manual "Check now" call. Cancelled
         // on Unload so a slow request doesn't try to update a torn-down UI.
         private CancellationTokenSource? _updateCheckCts;
 
-        // Same idea for the in-flight install (download + extract + swap).
-        // Cancelled on Unload — but note that if the cancel lands AFTER the
-        // file swap, the install completed and the banner just won't update;
-        // RefreshUpdateNotifications re-detects the .old file next open.
-        private CancellationTokenSource? _updateInstallCts;
-
-        // True while a download+install is running. Gates the banner repaint
-        // paths (the 500ms tick and RefreshUpdateNotifications) so they don't
-        // clobber the live "Downloading…/Installing…" progress UI mid-flight.
-        private bool _installInProgress;
+        // The install flow + its "in progress" / "dismissed this session" state
+        // live on UpdateInstallCoordinator (shared with the cross-page
+        // PluginBanners control), so both surfaces stay in sync.
 
         private void InitUpdateBannerControls()
         {
@@ -65,6 +52,8 @@ namespace MozaPlugin
 
                 RefreshUpdateNotifications();
                 RefreshLastCheckedText();
+                UpdateInstallCoordinator.Instance.Progress += OnAboutInstallProgress;
+                UpdateInstallCoordinator.Instance.Completed += OnAboutInstallCompleted;
                 Unloaded += OnUnloadedCancelUpdateCheck;
             }
             catch (Exception ex)
@@ -76,83 +65,29 @@ namespace MozaPlugin
         private void OnUnloadedCancelUpdateCheck(object sender, RoutedEventArgs e)
         {
             try { _updateCheckCts?.Cancel(); } catch { }
-            try { _updateInstallCts?.Cancel(); } catch { }
+            // Unsubscribe from the shared install coordinator, but don't cancel
+            // an in-flight install — it runs to completion regardless of UI.
+            UpdateInstallCoordinator.Instance.Progress -= OnAboutInstallProgress;
+            UpdateInstallCoordinator.Instance.Completed -= OnAboutInstallCompleted;
         }
 
-        // An install completed earlier this SimHub session (or in a prior
-        // session that wasn't followed by a restart) — the rename-aside
-        // dropped a MozaPlugin.dll.old next to the loaded DLL. Until SimHub
-        // restarts, we can't safely install again because the .old file is
-        // the rollback target for the previous install.
-        private static bool IsInstallPending()
-        {
-            try
-            {
-                string p = UpdateInstallService.GetPluginAssemblyPath();
-                return !string.IsNullOrEmpty(p)
-                    && File.Exists(p + UpdateInstallService.OldSuffix);
-            }
-            catch { return false; }
-        }
-
-        // Computes whether an update notification should be shown right now and
-        // in which mode. Pure read of persisted state + the .old pending-file
-        // probe; never touches the network. `pendingRestart` means an install
-        // already completed this/last session and SimHub must restart to load
-        // it — in that mode we never offer another install (it would fail with
-        // OldPending) and instead surface the Restart button.
-        private void ComputeUpdateVisibility(
-            string current, string latest,
-            out bool visible, out bool pendingRestart, out bool hasAsset)
-        {
-            visible = false;
-            pendingRestart = false;
-            hasAsset = false;
-
-            var s = _plugin?.Settings;
-            if (s == null) return;
-            if (_updateBannerDismissedThisSession || !s.UpdateCheckEnabled) return;
-            if (string.IsNullOrEmpty(latest)) return;
-            if (!UpdateCheckService.IsUpdateAvailable(latest, current, s.UpdateChannel)) return;
-            if (!string.IsNullOrEmpty(s.LastSkippedVersion)
-                && string.Equals(s.LastSkippedVersion, latest, StringComparison.Ordinal)) return;
-
-            visible = true;
-            hasAsset = !string.IsNullOrEmpty(s.LastSeenAssetUrl);
-            pendingRestart = IsInstallPending();
-        }
-
-        // Full repaint of every update surface: the cross-tab header banner,
-        // the About > Updates card banner, and the release-notes panel. Called
-        // on construction and after every user action / check / install. Safe
-        // on the UI thread; no-ops while an install is mid-flight so it doesn't
-        // wipe the live progress UI.
+        // Repaints the About > Updates card banner + release-notes panel. Called
+        // on construction and after every user action / check / install. Safe on
+        // the UI thread; no-ops while an install is mid-flight so it doesn't wipe
+        // the live progress UI. The cross-tab header banner is the separate
+        // self-refreshing PluginBanners control.
         internal void RefreshUpdateNotifications()
         {
-            if (_installInProgress) return;
+            if (UpdateInstallCoordinator.Instance.InstallInProgress) return;
 
             string current = DiagnosticsTextBuilder.GetPluginVersion();
-            string latest = _plugin?.Settings?.LastSeenLatestVersion ?? "";
-            ComputeUpdateVisibility(current, latest, out bool visible, out bool pendingRestart, out bool hasAsset);
+            var s = _plugin?.Settings;
+            string latest = s?.LastSeenLatestVersion ?? "";
+            UpdateInstallCoordinator.Instance.Compute(
+                s, current, latest, out bool visible, out bool pendingRestart, out bool hasAsset);
 
             PaintAboutBanner(visible, pendingRestart, hasAsset, current, latest);
-            PaintHeaderBanner(visible, pendingRestart, hasAsset, current, latest);
             RefreshReleaseNotes(visible, latest);
-        }
-
-        // Repaints ONLY the header banner. Driven by the 500ms RefreshDisplay
-        // tick so the cross-tab notification appears/updates live (e.g. when
-        // the background auto-check completes while the user is on another
-        // tab). The heavier About-card banner + notes stay on the
-        // construct/user-action cadence to keep transient error text readable.
-        internal void RefreshHeaderBanner()
-        {
-            if (_installInProgress) return;
-
-            string current = DiagnosticsTextBuilder.GetPluginVersion();
-            string latest = _plugin?.Settings?.LastSeenLatestVersion ?? "";
-            ComputeUpdateVisibility(current, latest, out bool visible, out bool pendingRestart, out bool hasAsset);
-            PaintHeaderBanner(visible, pendingRestart, hasAsset, current, latest);
         }
 
         private void PaintAboutBanner(
@@ -171,43 +106,6 @@ namespace MozaPlugin
                 if (UpdateBannerText != null)
                     UpdateBannerText.Text = $"{Strings.Label_UpdateAvailable}: v{current} → v{latest}";
                 SetBannerState_Available(hasAsset);
-            }
-        }
-
-        private void PaintHeaderBanner(
-            bool visible, bool pendingRestart, bool hasAsset, string current, string latest)
-        {
-            if (HeaderUpdateBanner == null) return;
-            if (!visible) { HeaderUpdateBanner.Visibility = Visibility.Collapsed; return; }
-
-            HeaderUpdateBanner.Visibility = Visibility.Visible;
-            if (HeaderUpdateBannerProgressText != null)
-                HeaderUpdateBannerProgressText.Visibility = Visibility.Collapsed;
-
-            if (pendingRestart)
-            {
-                if (HeaderUpdateBannerText != null)
-                    HeaderUpdateBannerText.Text = string.Format(
-                        Strings.Status_InstalledRestartRequired, latest);
-                if (HeaderUpdateInstallButton != null)
-                    HeaderUpdateInstallButton.Visibility = Visibility.Collapsed;
-                if (HeaderUpdateRestartButton != null)
-                {
-                    HeaderUpdateRestartButton.Visibility = Visibility.Visible;
-                    HeaderUpdateRestartButton.IsEnabled = true;
-                }
-            }
-            else
-            {
-                if (HeaderUpdateBannerText != null)
-                    HeaderUpdateBannerText.Text = $"{Strings.Label_UpdateAvailable}: v{current} → v{latest}";
-                if (HeaderUpdateInstallButton != null)
-                {
-                    HeaderUpdateInstallButton.Visibility = hasAsset ? Visibility.Visible : Visibility.Collapsed;
-                    HeaderUpdateInstallButton.IsEnabled = true;
-                }
-                if (HeaderUpdateRestartButton != null)
-                    HeaderUpdateRestartButton.Visibility = Visibility.Collapsed;
             }
         }
 
@@ -456,22 +354,6 @@ namespace MozaPlugin
                 UpdateBannerProgressText.Visibility = Visibility.Collapsed;
         }
 
-        // Header-banner equivalent of SetBannerState_Installing: disable the
-        // Install button and show an indeterminate progress line while the
-        // download/extract/swap runs.
-        private void SetHeaderState_Installing()
-        {
-            if (HeaderUpdateBanner == null) return;
-            HeaderUpdateBanner.Visibility = Visibility.Visible;
-            if (HeaderUpdateInstallButton != null) HeaderUpdateInstallButton.IsEnabled = false;
-            if (HeaderUpdateRestartButton != null) HeaderUpdateRestartButton.Visibility = Visibility.Collapsed;
-            if (HeaderUpdateBannerProgressText != null)
-            {
-                HeaderUpdateBannerProgressText.Visibility = Visibility.Visible;
-                HeaderUpdateBannerProgressText.Text = Strings.Status_DownloadingStart;
-            }
-        }
-
         // Install failed — re-enable actions and show what went wrong.
         // Cancellation just clears the progress line silently.
         private void SetBannerState_Failed(InstallErrorKind kind, string detail)
@@ -586,7 +468,7 @@ namespace MozaPlugin
 
         private void UpdateBanner_Dismiss_Click(object sender, RoutedEventArgs e)
         {
-            _updateBannerDismissedThisSession = true;
+            UpdateInstallCoordinator.Instance.DismissedThisSession = true;
             RefreshUpdateNotifications();
         }
 
@@ -634,7 +516,7 @@ namespace MozaPlugin
             // status, so it overrides a prior Dismiss — otherwise the banner
             // would stay hidden for the rest of the session even when the check
             // finds an available update.
-            _updateBannerDismissedThisSession = false;
+            UpdateInstallCoordinator.Instance.DismissedThisSession = false;
 
             // Cancel any in-flight manual check before kicking off a new one.
             try { _updateCheckCts?.Cancel(); } catch { }
@@ -725,138 +607,38 @@ namespace MozaPlugin
 
         // ----- Install flow -----
 
-        // Both the About-card and header Install buttons route here so the
-        // download/install logic lives in exactly one place.
+        // The About-card Install button starts the shared install flow. The
+        // coordinator owns the download/swap; progress + completion come back
+        // via OnAboutInstallProgress / OnAboutInstallCompleted.
         private async void UpdateBanner_Install_Click(object sender, RoutedEventArgs e)
-            => await RunInstallAsync();
-
-        private async void HeaderUpdateInstall_Click(object sender, RoutedEventArgs e)
-            => await RunInstallAsync();
-
-        private async Task RunInstallAsync()
         {
             var s = _plugin?.Settings;
-            if (s == null) return;
-            if (string.IsNullOrEmpty(s.LastSeenAssetUrl)) return;
-            if (_installInProgress) return;
-
-            // Defensive: if a previous install is still pending the swap
-            // would fail with OldPending. Surface the restart-required UI
-            // instead of even attempting the network call.
-            if (IsInstallPending())
-            {
-                RefreshUpdateNotifications();
-                return;
-            }
-
-            try { _updateInstallCts?.Cancel(); } catch { }
-            _updateInstallCts = new CancellationTokenSource();
-            var ct = _updateInstallCts.Token;
-
-            _installInProgress = true;
+            if (s == null || string.IsNullOrEmpty(s.LastSeenAssetUrl)) return;
+            if (UpdateInstallCoordinator.Instance.InstallInProgress) return;
             SetBannerState_Installing();
-            SetHeaderState_Installing();
-
-            // Progress is delivered on the Task scheduler; Progress<T>
-            // captures the originating SynchronizationContext (WPF dispatcher)
-            // so the callback marshals back to the UI thread automatically.
-            var progress = new Progress<InstallProgress>(OnInstallProgress);
-
-            InstallResult result;
-            try
-            {
-                result = await Task.Run(
-                    () => UpdateInstallService.DownloadAndInstallAsync(
-                        s.LastSeenAssetUrl,
-                        UpdateCheckService.Http,
-                        progress,
-                        ct),
-                    ct).ConfigureAwait(true);
-            }
-            catch (OperationCanceledException)
-            {
-                _installInProgress = false;
-                SetBannerState_Failed(InstallErrorKind.Cancelled, "");
-                RefreshHeaderBanner();
-                return;
-            }
-            catch (Exception ex)
-            {
-                _installInProgress = false;
-                MozaLog.Warn($"[UpdateInstall] threw: {ex.GetType().Name}: {ex.Message}");
-                SetBannerState_Failed(InstallErrorKind.Unknown, ex.Message);
-                RefreshHeaderBanner();
-                return;
-            }
-
-            _installInProgress = false;
-
-            if (result.Success)
-            {
-                MozaLog.Info($"[UpdateInstall] installed v{s.LastSeenLatestVersion} — restart required");
-                // Repaint both surfaces into the pending-restart state: clears
-                // the "update available" wording and shows the Restart button.
-                RefreshUpdateNotifications();
-            }
-            else
-            {
-                MozaLog.Warn($"[UpdateInstall] failed: {result.ErrorKind} {result.ErrorMessage}");
-                // About card keeps the detailed error; header resets to its
-                // available/pending state (it doesn't surface install errors).
-                SetBannerState_Failed(result.ErrorKind, result.ErrorMessage);
-                RefreshHeaderBanner();
-            }
+            await UpdateInstallCoordinator.Instance.RunInstallAsync(s);
         }
 
         // ----- Restart flow (one-click, post-install) -----
 
         private void UpdateBanner_Restart_Click(object sender, RoutedEventArgs e) => DoRestart();
-        private void HeaderUpdateRestart_Click(object sender, RoutedEventArgs e) => DoRestart();
-
-        // Restart button on the device-definition-deployed status-hint banner.
-        // The button lives inside the HintBanners ItemsControl template (no
-        // x:Name), so disable the clicked button directly to block a double-fire,
-        // re-enabling it only if the exit request couldn't be issued.
-        private void HintRestart_Click(object sender, RoutedEventArgs e)
-        {
-            var button = sender as Button;
-            if (button != null) button.IsEnabled = false;
-            bool ok = _plugin?.RestartSimHub() ?? false;
-            if (!ok && button != null) button.IsEnabled = true;
-        }
 
         // Asks SimHub to exit and relaunch so the freshly-installed DLL loads.
-        // Disables the Restart buttons first so a double-click can't fire two
-        // exit requests; re-enables them if the request couldn't be issued so
-        // the user can retry or restart manually.
+        // Disables the Restart button first so a double-click can't fire two
+        // exit requests; re-enables it if the request couldn't be issued so the
+        // user can retry or restart manually.
         private void DoRestart()
         {
             if (UpdateBannerRestartButton != null) UpdateBannerRestartButton.IsEnabled = false;
-            if (HeaderUpdateRestartButton != null) HeaderUpdateRestartButton.IsEnabled = false;
-
             bool ok = _plugin?.RestartSimHub() ?? false;
-            if (!ok)
-            {
-                if (UpdateBannerRestartButton != null) UpdateBannerRestartButton.IsEnabled = true;
-                if (HeaderUpdateRestartButton != null) HeaderUpdateRestartButton.IsEnabled = true;
-            }
+            if (!ok && UpdateBannerRestartButton != null) UpdateBannerRestartButton.IsEnabled = true;
         }
 
-        // ----- Header banner button handlers -----
+        // ----- Shared install coordinator callbacks (About-card painting) -----
 
-        private void HeaderUpdateNotes_Click(object sender, RoutedEventArgs e) => OpenReleaseNotes();
-
-        private void HeaderUpdateDismiss_Click(object sender, RoutedEventArgs e)
+        private void OnAboutInstallProgress(InstallProgress p)
         {
-            // One dismiss flag hides both the header and the About-card banner
-            // for the rest of the session (cleared on plugin reload).
-            _updateBannerDismissedThisSession = true;
-            RefreshUpdateNotifications();
-        }
-
-        private void OnInstallProgress(InstallProgress p)
-        {
-            string? text = null;
+            string? text;
             switch (p.Phase)
             {
                 case InstallPhase.Downloading:
@@ -874,15 +656,21 @@ namespace MozaPlugin
                 case InstallPhase.Installing:
                     text = Strings.Status_Installing;
                     break;
-                case InstallPhase.Done:
-                    // Final UI state is set by RefreshUpdateNotifications after
-                    // the await completes — no-op here.
-                    return;
+                default:
+                    return; // Done/Idle/Failed — final state set by OnAboutInstallCompleted
             }
-
-            if (text == null) return;
             if (UpdateBannerProgressText != null) UpdateBannerProgressText.Text = text;
-            if (HeaderUpdateBannerProgressText != null) HeaderUpdateBannerProgressText.Text = text;
+        }
+
+        // Install finished (or a synthesized cancel/error). Success and the
+        // "already pending" guard both repaint into the restart-required state;
+        // everything else surfaces the error on the About card.
+        private void OnAboutInstallCompleted(InstallResult r)
+        {
+            if (r.Success || r.ErrorKind == InstallErrorKind.OldPending)
+                RefreshUpdateNotifications();
+            else
+                SetBannerState_Failed(r.ErrorKind, r.ErrorMessage);
         }
     }
 }

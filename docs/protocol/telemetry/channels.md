@@ -29,7 +29,7 @@ Master reference for all compression types.
 | `int32_t` | 32 | 0x08 inferred | `raw = value` | raw | signed 32 | 3 |
 | `uint32_t` | 32 | 0x09 inferred | `raw = value` | raw | 0–2³²-1 | 65 |
 | `double` | 64 | 0x0A inferred | IEEE 754 double bits | IEEE 754 reinterpret | full double | — |
-| `location_t` | 64 | 0x0B inferred | IEEE 754 double bits | IEEE 754 reinterpret | track coords | 65 |
+| `location_t` | 64 | 0x09 ✓ | packed fixed-point `[u16 Y\|u24 Z\|u24 X]` | per-axis `(field−center)/scale` | track coords — see [`track-map.md`](track-map.md) | 65 |
 | `int64_t` / `uint64_t` | 64 | — | raw | raw | 64-bit | — |
 | `string` | var | — | — | — | names | 15 |
 

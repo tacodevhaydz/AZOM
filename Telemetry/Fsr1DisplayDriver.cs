@@ -202,12 +202,16 @@ namespace MozaPlugin.Telemetry
                 return Clamp((long)Math.Round(t * outMax), 0, outMax);
             }
 
-            // A field's value given the encoding the partition resolved for it — the partition
-            // owns offsets/encoding; this applies the field's mapping + output ceiling.
-            long ValueForSlot(Fsr1Dashboard dash, Fsr1FieldDef f, Fsr1Encoding enc)
+            // A field's value given the geometry the partition resolved for it — the partition
+            // owns offsets/encoding/bits; this applies the field's mapping + output ceiling.
+            // Byte-aligned slots clamp to the byte-width cap; packed slots to their bit-width cap.
+            long ValueForSlot(Fsr1Dashboard dash, Fsr1Slot slot)
             {
+                var f = slot.Field;
                 var m = plugin?.GetFsr1FieldMapping(dash.Key, f.FieldId);
-                long outMax = Fsr1DashboardCatalog.OutputMaxFor(enc, f.FullScale);
+                long outMax = slot.IsByteAligned
+                    ? Fsr1DashboardCatalog.OutputMaxFor(slot.Enc, f.FullScale)
+                    : Fsr1DashboardCatalog.BitOutputMax(slot.BitWidth, f.FullScale);
                 return ValueFor(dash, f, m, outMax);
             }
 
@@ -231,16 +235,26 @@ namespace MozaPlugin.Telemetry
             byte[] RecordFor(Fsr1Dashboard dash)
             {
                 if (fieldProbe is { } fp)
-                    return dash.RecordType == fp.type
-                        ? Fsr1DisplayEmitter.BuildProbeSpanRecord(dash, fp.startOff, fp.endOff, probeValue)
-                        : Fsr1DisplayEmitter.BuildProbeRecord(dash, -1, 0); // other records: all-zero
+                {
+                    if (dash.RecordType != fp.type)
+                        return Fsr1DisplayEmitter.BuildProbeRecord(dash, -1, 0); // other records: all-zero
+                    if (fp.packed)
+                    {
+                        // Overlay the ramp on just this field's bits over the live record, so the
+                        // byte it shares with a neighbour keeps the neighbour's real value visible.
+                        var live = Fsr1DashboardCatalog.ResolvePartition(plugin, dash);
+                        return Fsr1DisplayEmitter.BuildBitProbeRecord(dash, live, slot => ValueForSlot(dash, slot),
+                            fp.bitOffset, fp.bitWidth, probeValue, fp.msbFirst);
+                    }
+                    return Fsr1DisplayEmitter.BuildProbeSpanRecord(dash, fp.startOff, fp.endOff, probeValue);
+                }
                 if (probe)
                     return Fsr1DisplayEmitter.BuildProbeRecord(
                         dash, dash.RecordType == probeType ? probeOff : -1, probeValue);
                 // Resolve the gapless partition (catalog + synthetic splits, broken configs
                 // auto-repaired) and pack each slot's value — never a gap/overlap on the wire.
                 var partition = Fsr1DashboardCatalog.ResolvePartition(plugin, dash);
-                return Fsr1DisplayEmitter.BuildRecord(dash, partition, (f, enc) => ValueForSlot(dash, f, enc));
+                return Fsr1DisplayEmitter.BuildRecord(dash, partition, slot => ValueForSlot(dash, slot));
             }
 
             // Build the live numeric-viz record for one dash from its REAL telemetry values
@@ -248,20 +262,23 @@ namespace MozaPlugin.Telemetry
             Fsr1VizRecord BuildVizRecord(Fsr1Dashboard dash)
             {
                 var partition = Fsr1DashboardCatalog.ResolvePartition(plugin, dash);
-                var frame = Fsr1DisplayEmitter.BuildRecord(dash, partition, (f, enc) => ValueForSlot(dash, f, enc));
+                var frame = Fsr1DisplayEmitter.BuildRecord(dash, partition, slot => ValueForSlot(dash, slot));
                 var vfields = new List<Fsr1VizField>(partition.Count);
-                foreach (var (f, offsets, enc) in partition)
+                foreach (var slot in partition)
                 {
-                    int start = offsets[0], end = offsets[offsets.Length - 1];
+                    var f = slot.Field;
+                    int start = slot.ByteStart, end = slot.ByteEnd;
                     var bytes = new byte[end - start + 1];
                     for (int o = start; o <= end; o++)
                     {
                         int idx = 4 + o;
                         bytes[o - start] = (idx >= 0 && idx < frame.Length) ? frame[idx] : (byte)0;
                     }
-                    long value = ValueForSlot(dash, f, enc);
+                    long value = ValueForSlot(dash, slot);
                     bool synth = Fsr1FieldComposer.IsSynthetic(plugin, dash.Key, f.FieldId);
-                    vfields.Add(new Fsr1VizField(f.Label, start, end, enc.ToString(), value, bytes, synth));
+                    string encStr = slot.IsByteAligned ? slot.Enc.ToString() : $"{slot.BitWidth}b.{slot.BitOffset & 7}";
+                    vfields.Add(new Fsr1VizField(f.Label, start, end, encStr, value, bytes, synth,
+                        slot.IsByteAligned ? -1 : slot.BitOffset, slot.IsByteAligned ? 0 : slot.BitWidth));
                 }
                 vfields.Sort((a, b) => a.Start.CompareTo(b.Start));
                 return new Fsr1VizRecord(dash.RecordType, dash.Label, dash.PayloadLen, vfields.ToArray());

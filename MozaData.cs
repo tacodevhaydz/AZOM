@@ -325,8 +325,10 @@ namespace MozaPlugin
         public volatile int Equalizer5 = 100;
         public volatile int Equalizer6 = 100;
 
-        // ===== FFB Curve (5 Y output values at fixed 20/40/60/80/100% input breakpoints) =====
-        // X breakpoints are always written as [20, 40, 60, 80] — not user-adjustable.
+        // ===== FFB Curve (5 output points; point 5 fixed at input=100%) =====
+        // X1..X4 are the input-axis positions of the first four points, sent via
+        // base-ffb-curve-x1..x4 (default 20/40/60/80); Y1..Y5 the output values.
+        public volatile int FfbCurveX1 = 20, FfbCurveX2 = 40, FfbCurveX3 = 60, FfbCurveX4 = 80;
         public volatile int FfbCurveY1 = 20, FfbCurveY2 = 40, FfbCurveY3 = 60, FfbCurveY4 = 80, FfbCurveY5 = 100;
 
         // ===== Main device =====
@@ -521,7 +523,11 @@ namespace MozaPlugin
                 case "base-equalizer5": Equalizer5 = value; break;
                 case "base-equalizer6": Equalizer6 = value; break;
 
-                // FFB Curve (X breakpoints are fixed, only Y values read back)
+                // FFB Curve (X input positions + Y output values)
+                case "base-ffb-curve-x1": FfbCurveX1 = value; break;
+                case "base-ffb-curve-x2": FfbCurveX2 = value; break;
+                case "base-ffb-curve-x3": FfbCurveX3 = value; break;
+                case "base-ffb-curve-x4": FfbCurveX4 = value; break;
                 case "base-ffb-curve-y1": FfbCurveY1 = value; break;
                 case "base-ffb-curve-y2": FfbCurveY2 = value; break;
                 case "base-ffb-curve-y3": FfbCurveY3 = value; break;

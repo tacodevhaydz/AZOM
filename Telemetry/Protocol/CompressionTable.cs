@@ -151,10 +151,18 @@ namespace MozaPlugin.Telemetry.Protocol
             // (bridge-20260514-170002 idx=15); the inferred int32_t code 0x08
             // isn't decoded by the wheel (TimeAbsolute rendered 00:00). 0x05 is
             // int16_t at width 16 and a 32-bit int at width 32 — same code,
-            // width-dependent, like 0x09 (uint32/location). Raw value through.
+            // width-dependent, like 0x09 (location_t at width 64). Raw value through.
             Add(new Entry("int32_5", 0x05, 32,
                 v => (ulong)(uint)(int)Sanitize(v), (0, 86400)));
-            Add(new Entry("uint32_t", 0x09, 32,
+            // PitHouse emits code 0x06 width 32 for uint32_t — CONFIRMED from the
+            // AC radar/track-map capture (patch/ri* = uint32_t = code 0x06). The
+            // previously-inferred 0x09 collided with location_t (0x09/width-64) and
+            // broke binding: the wheel rejects a tier-def whose ri channels carry the
+            // wrong compression code, freezing the WHOLE track-map dashboard, while
+            // standard dashboards (no uint32_t channels — 64 of the 65 uint32_t
+            // channels are patch/ri*) bound fine. location_t keeps 0x09 at width 64;
+            // the two are distinct codes, not width variants of 0x09.
+            Add(new Entry("uint32_t", 0x06, 32,
                 v => (ulong)(uint)(int)Sanitize(v), (0, 10000)));
             Add(new Entry("uint24_t", 0x18, 24,
                 v => (ulong)((uint)(int)Sanitize(v) & 0xFFFFFFu), (0, 10000)));

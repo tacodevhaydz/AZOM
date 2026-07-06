@@ -75,13 +75,25 @@ namespace MozaPlugin.Devices.WheelUi
                 // one ONLY when they are consecutive partition slots — a non-mappable anchor
                 // between two mappable fields breaks the chain (its bytes are fixed, no shared
                 // divider to step), so the rows on either side stay uncoupled.
+                var slots = Telemetry.Fsr1DashboardCatalog.ResolvePartition(plugin, dash);
                 ChannelMappingRow? prevRow = null;
-                foreach (var (f, offsets, enc) in Telemetry.Fsr1DashboardCatalog.ResolvePartition(plugin, dash))
+                for (int i = 0; i < slots.Count; i++)
                 {
+                    var slot = slots[i];
+                    var f = slot.Field;
+                    var enc = slot.Enc;
                     if (!f.IsUserMappable) { prevRow = null; continue; }  // anchor breaks coupling
                     var m = plugin.GetFsr1FieldMapping(dash.Key, f.FieldId);
                     bool direct = f.Kind == Telemetry.Fsr1FieldKind.Direct;
                     bool synthetic = Telemetry.Fsr1FieldComposer.IsSynthetic(plugin, dash.Key, f.FieldId);
+                    bool packed = !slot.IsByteAligned;
+                    long cap = packed
+                        ? Telemetry.Fsr1DashboardCatalog.BitOutputMax(slot.BitWidth, f.FullScale)
+                        : Telemetry.Fsr1DashboardCatalog.OutputMaxFor(enc, f.FullScale);
+                    // Bit-stepper fences: expand left only into the previous slot's spare bits,
+                    // right only up to the next slot's start (record edges are 5*8 and PayloadLen*8).
+                    int lowerBit = i > 0 ? slots[i - 1].BitOffset + slots[i - 1].BitWidth : 5 * 8;
+                    int upperBit = i < slots.Count - 1 ? slots[i + 1].BitOffset : dash.PayloadLen * 8;
                     var row = new ChannelMappingRow
                     {
                         AllProperties = props,
@@ -92,21 +104,29 @@ namespace MozaPlugin.Devices.WheelUi
                         FieldId = f.FieldId,
                         Name = $"{dash.Label} · {f.Label}" + (f.Decoded ? "" : "  (raw)"),
                         Url = dash.Key + "/" + f.FieldId,
-                        Compression = enc.ToString(),
-                        CapabilityText = direct ? "direct value" : $"0–{Telemetry.Fsr1DashboardCatalog.OutputMaxFor(enc, f.FullScale)}",
+                        Compression = packed ? $"{slot.BitWidth}-bit" : enc.ToString(),
+                        CapabilityText = direct ? "direct value" : $"0–{cap}",
                         InMin = m?.InMin ?? f.DefaultInMin,
                         InMax = m?.InMax ?? f.DefaultInMax,
                         SimHubProperty = m?.Property ?? f.DefaultProperty,
                         PayloadLen = dash.PayloadLen,
-                        Start = offsets[0],
-                        End = offsets[offsets.Length - 1],
+                        Start = slot.ByteStart,
+                        End = slot.ByteEnd,
                         LittleEndian = enc == Telemetry.Fsr1Encoding.U16_LE,
                         Scale = m?.Scale ?? 1.0,
                         Bias = m?.Bias ?? 0.0,
+                        IsBitPacked = packed,
+                        BitOffset = slot.BitOffset,
+                        BitWidth = slot.BitWidth,
+                        LowerBitBound = lowerBit,
+                        UpperBitBound = upperBit,
                     };
                     rows.Add(row);
-                    if (prevRow != null) { prevRow.NextField = row; row.PrevField = prevRow; }
-                    prevRow = row;
+                    // Couple the byte-divider steppers only between consecutive BYTE-ALIGNED fields.
+                    // A packed field is bit-defined (no shared byte divider), so it breaks the chain
+                    // like an anchor — its neighbours stay uncoupled and use bit steppers instead.
+                    if (prevRow != null && !packed) { prevRow.NextField = row; row.PrevField = prevRow; }
+                    prevRow = packed ? null : row;
                 }
             }
             string status = followingActive
@@ -174,6 +194,10 @@ namespace MozaPlugin.Devices.WheelUi
             foreach (var url in catalog.OrderBy(u => u, StringComparer.OrdinalIgnoreCase))
             {
                 if (string.IsNullOrEmpty(url)) continue;
+                // Radar / track-map channels (patch/Location*, patch/riN) are driven
+                // entirely by the plugin's own position/radar pipeline — users have no
+                // reason to remap them, so keep them out of the channel mapper.
+                if (DashboardProfileStore.IsRadarTrackMapChannel(url)) continue;
                 rows.Add(new ChannelMappingRow
                 {
                     AllProperties = props,
@@ -202,6 +226,9 @@ namespace MozaPlugin.Devices.WheelUi
                 foreach (var ch in tier.Channels.OrderBy(c => c.Url, StringComparer.OrdinalIgnoreCase))
                 {
                     if (DashboardProfileStore.IsInternalChannel(ch.SimHubProperty)) continue;
+                    // Radar / track-map channels (patch/Location*, patch/riN) are plugin-
+                    // driven; users don't remap them — suppress from the channel mapper.
+                    if (DashboardProfileStore.IsRadarTrackMapChannel(ch.Url)) continue;
                     if (!seen.Add(ch.Url)) continue;
                     rows.Add(new ChannelMappingRow
                     {

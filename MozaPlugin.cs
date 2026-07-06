@@ -182,6 +182,12 @@ namespace MozaPlugin
         private Timer _pollTimer = null!;
         private Timer _retryTimer = null!;
         private Timer _reconnectTimer = null!;
+        // 1 once SystemEvents.PowerModeChanged is subscribed, so End()/
+        // CleanupPartialInit unsubscribe exactly once. PowerModeChanged is a
+        // STATIC event — a live subscription leaks this plugin instance (and
+        // double-fires the resume handler) across the game-switch reload if not
+        // detached. See OnPowerModeChanged.
+        private int _powerModeHooked;
         // Hub detection belongs ONLY to the dedicated hub connection (_hubManager),
         // which probes for a Universal Hub on the hub's OWN port and skips the
         // wheelbase port. The base/wheelbase connection must NEVER emit hub calls
@@ -191,8 +197,18 @@ namespace MozaPlugin
         private PluginManager _pluginManager = null!;
         private SimHubPropertyResolver _propertyResolver = null!;
         internal SimHubPropertyResolver PropertyResolver => _propertyResolver;
+        private int _headProbeTick;   // diagnostic heading-probe pacing
+        private int _headProbeCount;
         private HardwareApplier _hardwareApplier = null!;
         internal HardwareApplier HardwareApplier => _hardwareApplier;
+        // SimHub's shared/master LED-brightness slider (0..100), published by the
+        // active wheel LED driver from LedModuleSettings.GlobalBrightnessPreset. The
+        // driver reads it per-frame off SimHub's LED thread; DataUpdate applies it on
+        // the data thread. -1 until the user first moves the slider — the wheel's
+        // device-stored brightness is left untouched until then. Drives the firmware
+        // group brightness (rpm/buttons/knobs) equally via ApplyMasterWheelLedBrightness.
+        internal volatile int WheelLedMasterBrightness = -1;
+        private int _masterLedBrightnessApplied = -2; // DataUpdate-thread-local change gate
         private DeviceProber _deviceProber = null!;
         internal DeviceProber DeviceProber => _deviceProber;
         // Peripheral-enumeration prober for the dedicated hub pipe. Shares
@@ -670,6 +686,63 @@ namespace MozaPlugin
                 : _deviceManager.WriteArrayForDevice($"dash-rpm-color{index + 1}", Cm2TargetDeviceId, rgb);
         }
 
+        /// <summary>True when the CM2's meter firmware is the 2026-06 indicator
+        /// stack that takes wheel-style group-0x3F live LED commands instead of
+        /// the legacy 41 FD DE / 32 0B registers. Auto-detected + persisted; see
+        /// <see cref="DetectCm2LedFirmwareEra"/>.</summary>
+        internal bool Cm2HasNewLedFirmware => Settings?.Cm2NewLedFirmware ?? false;
+
+        /// <summary>
+        /// CM2 meter firmware era detection from the meter's 0x0E heartbeat text
+        /// (src=0x41). The 2026-06 firmware rework replaced the autonomous
+        /// threshold RPM ramp (RpmMode / RpmNumber[0~9] / RpmPercent[0~9]) with
+        /// the wheel-style indicator-group stack (IndicatorMode / StandbyMode,
+        /// meter_diag.c:89 → :88) and stopped honoring the legacy live LED
+        /// registers. Both directions are detected so a firmware downgrade
+        /// recovers too. Persisted because the heartbeat only arrives ~1/min —
+        /// the next boot starts on the right LED path immediately.
+        /// </summary>
+        private void DetectCm2LedFirmwareEra(string text)
+        {
+            bool isNew;
+            if (text.Contains("RpmNumber[") || text.Contains("RpmMode:")) isNew = false;
+            else if (text.Contains("IndicatorMode:") || text.Contains("StandbyMode:")) isNew = true;
+            else return;
+            if (Settings == null || Settings.Cm2NewLedFirmware == isNew) return;
+            Settings.Cm2NewLedFirmware = isNew;
+            PersistSettings();
+            MozaLog.Info("[AZOM] CM2 meter firmware era detected: " +
+                         (isNew ? "indicator stack — wheel-style LED commands" : "legacy RPM ramp") +
+                         " — dash LED path switched");
+        }
+
+        /// <summary>New-firmware CM2 live LED colour chunk (group 0x32 cmd 13 00,
+        /// idx/R/G/B records) addressed to the CM2. Rides the same coalescing slots
+        /// the legacy per-LED colour path used (DashRpmColor0+).</summary>
+        internal bool WriteCm2LiveLedColorChunk(byte[] chunk, int chunkIdx)
+        {
+            var slot = (Protocol.StreamKind)((int)Protocol.StreamKind.DashRpmColor0 + chunkIdx);
+            bool inRange = chunkIdx >= 0 && (int)slot <= (int)Protocol.StreamKind.DashRpmColor9;
+            if (DashboardUsbConnected)
+                return inRange
+                    ? _dashboardManager.WriteArrayForDeviceStream("cm2-live-colors", Cm2TargetDeviceId, chunk, slot)
+                    : _dashboardManager.WriteArrayForDevice("cm2-live-colors", Cm2TargetDeviceId, chunk);
+            return inRange
+                ? _deviceManager.WriteArrayForDeviceStream("cm2-live-colors", Cm2TargetDeviceId, chunk, slot)
+                : _deviceManager.WriteArrayForDevice("cm2-live-colors", Cm2TargetDeviceId, chunk);
+        }
+
+        /// <summary>New-firmware CM2 live LED bitmask (group 0x32 cmd 14 00, 8-byte
+        /// active(u32 LE) + window(u32 LE) form) addressed to the CM2.</summary>
+        internal bool WriteCm2LiveLedBitmask(byte[] activeWindow8)
+        {
+            if (DashboardUsbConnected)
+                return _dashboardManager.WriteArrayForDeviceStream(
+                    "cm2-live-bitmask", Cm2TargetDeviceId, activeWindow8, Protocol.StreamKind.DashRpmBitmask);
+            return _deviceManager.WriteArrayForDeviceStream(
+                "cm2-live-bitmask", Cm2TargetDeviceId, activeWindow8, Protocol.StreamKind.DashRpmBitmask);
+        }
+
         /// <summary>
         /// Route a one-shot CM2 meter-config write (group 0x32: modes, thresholds,
         /// indicator brightness, stored idle colours) to the CM2's OWN pipe + device.
@@ -901,6 +974,11 @@ namespace MozaPlugin
                 MozaProfile.UnpackColorsInto(_settings.DashRpmBlinkColors, _data.DashRpmBlinkColors);
 
                 MozaLog.Info("[AZOM] Initializing plugin");
+                // Build marker so we can confirm WHICH DLL SimHub actually loaded
+                // (plugin DLLs load only at SimHub process start; a telemetry toggle /
+                // game switch re-runs Init on the already-loaded assembly). Bump on
+                // each radar build so a restart is verifiable from the log.
+                MozaLog.Info("[AZOM] BUILD radar-2026-06-29Y: suppress radar/track-map channels (patch/Location*, patch/riN) from the channel mapper UI");
 
                 // Bridge-format JSONL wire trace at SimHub/Logs/moza-wire-*.jsonl.
                 // Opt-in via _settings.EnableWireTraceFileSink. Fresh file per launch.
@@ -1092,6 +1170,27 @@ namespace MozaPlugin
                     _baseManager.Connection.LastPortName = _settings.LastBaseAuxPort;
                 _baseManager.MessageReceived += OnBaseMessageReceived;
                 _baseManager.Connection.Disconnected += OnBaseDisconnected;
+
+                // System sleep/resume recovery. On resume the wheel firmware has
+                // power-cycled and silently dropped its display/telemetry sessions,
+                // but the host serial tty can stay .IsOpen==true (half-open) — or
+                // the wheel resumes talking before the connection's ~30 s half-open
+                // detector fires — so neither the reconnect timer nor the dead-tty
+                // detector would rebuild the session and the display stays blank.
+                // The resume handler forces a clean reconnect to rebuild it. Static
+                // event ⇒ unsubscribe in End()/CleanupPartialInit (see _powerModeHooked).
+                try
+                {
+                    Microsoft.Win32.SystemEvents.PowerModeChanged += OnPowerModeChanged;
+                    Interlocked.Exchange(ref _powerModeHooked, 1);
+                }
+                catch (Exception ex)
+                {
+                    // SystemEvents needs a message pump; under Wine/Proton it can be
+                    // absent. Harmless — a Linux host's sleep doesn't raise Windows
+                    // power events anyway.
+                    MozaLog.Debug($"[AZOM] PowerModeChanged hook unavailable: {ex.Message}");
+                }
 
                 // AB9 engine-vibration worker — tick gates on connection/detection state.
                 _ab9Worker = new Ab9EngineVibrationWorker(
@@ -1432,6 +1531,7 @@ namespace MozaPlugin
         /// </summary>
         private void CleanupPartialInit()
         {
+            UnhookPowerMode();
             try { _pollTimer?.Stop(); } catch { }
             try { _retryTimer?.Stop(); } catch { }
             try { _reconnectTimer?.Stop(); } catch { }
@@ -1665,6 +1765,15 @@ namespace MozaPlugin
             // doesn't make the feed look quiet.
             Interlocked.Exchange(ref _autoStandbyLastDataUpdateTicks, DateTime.UtcNow.Ticks);
             _autoStandbyLastGameRunning = data.GameRunning;
+            // Heading probe (diagnostic): dump SimHub heading/radar/spotter props a
+            // handful of times while a game runs so we can identify AC's live heading
+            // source for the radar preamble. Self-limits to ~20 logs (~once/sec).
+            if (data.GameRunning && _headProbeCount < 20 && ++_headProbeTick >= 60)
+            {
+                _headProbeTick = 0;
+                _headProbeCount++;
+                try { _propertyResolver?.LogHeadingProbe(); } catch { }
+            }
             // Keep the process responsive in the background (EcoQoS opt-out + 1 ms timer)
             // the moment a game is active. Idempotent; the PollStatus backstop handles
             // release if DataUpdate goes quiet on game exit.
@@ -1695,6 +1804,20 @@ namespace MozaPlugin
             _cm1Driver?.SetGameRunning(data.GameRunning);
             CheckGearshiftEvent(data);
             CheckAb9GearshiftEvent(data);
+
+            // Push SimHub's shared/master LED brightness to the wheel firmware group
+            // brightness (rpm/buttons/knobs) when the user moves the slider. The wheel
+            // LED driver publishes the settled value into WheelLedMasterBrightness off
+            // the LED thread; apply it here (change-gated) so the firmware write runs on
+            // the data thread and shares HardwareApplier's per-wheel cfg cache with the
+            // connect/profile brightness path (no fight, no redundant flash).
+            int masterLedBri = WheelLedMasterBrightness;
+            if (masterLedBri != _masterLedBrightnessApplied)
+            {
+                _masterLedBrightnessApplied = masterLedBri;
+                if (masterLedBri >= 0)
+                    _hardwareApplier?.ApplyMasterWheelLedBrightness(masterLedBri);
+            }
 
             // Hand the latest RPM, MaxRpm + engine-on flag to the AB9 engine-vib
             // worker. GameRunning stays true while paused or in menu, so we'd
@@ -2167,6 +2290,9 @@ namespace MozaPlugin
 
             // 3. Detach event subscriptions so any in-flight callback from a still-running
             //    background thread (HID/serial reader) cannot reach the plugin during teardown.
+            //    PowerModeChanged is static — detach first so a resume mid-teardown can't
+            //    schedule a ForceReconnect against tearing-down state.
+            UnhookPowerMode();
             try
             {
                 if (_connection != null)
@@ -2852,20 +2978,24 @@ namespace MozaPlugin
         /// <summary>Disarm the field-span probe (row editor closed).</summary>
         internal void ClearFsr1FieldProbe() => _fsr1FieldProbe = null;
 
-        /// <summary>The field-span probe's CURRENT resolved target — record type + the
-        /// contiguous byte span (start..end inclusive) the field occupies after applying
-        /// its user override — or null when the field-span probe is not armed / unresolvable.</summary>
-        internal (byte type, int startOff, int endOff)? Fsr1FieldProbeTarget()
+        /// <summary>The field-span probe's CURRENT resolved target — record type, the contiguous
+        /// byte span (start..end inclusive), and (for a bit-packed field) its exact bit run — after
+        /// applying its user override, or null when not armed / unresolvable. <c>packed</c> selects
+        /// the overlay probe (ramp only the field's bits over live data) vs the byte-span probe.</summary>
+        internal (byte type, int startOff, int endOff, bool packed, int bitOffset, int bitWidth, bool msbFirst)? Fsr1FieldProbeTarget()
         {
             var p = _fsr1FieldProbe;
             if (p == null) return null;
             var dash = Telemetry.Fsr1DashboardCatalog.ByKey(p.RecordKey);
-            var def = dash?.Fields.FirstOrDefault(x => x.FieldId == p.FieldId);
-            if (dash == null || def == null) return null;
-            var m = GetFsr1FieldMapping(p.RecordKey, p.FieldId);
-            var (offsets, _) = Telemetry.Fsr1DashboardCatalog.ResolveLayout(def, m, dash.PayloadLen);
-            if (offsets.Length == 0) return null;
-            return (dash.RecordType, offsets[0], offsets[offsets.Length - 1]);
+            if (dash == null) return null;
+            // Resolve through the SAME gapless partition the driver emits — so the lit span
+            // matches the wire exactly, and synthetic split fields (absent from dash.Fields)
+            // are found too. Using the raw override here diverged from the tiled output.
+            foreach (var slot in Telemetry.Fsr1DashboardCatalog.ResolvePartition(this, dash))
+                if (slot.Field.FieldId == p.FieldId)
+                    return (dash.RecordType, slot.ByteStart, slot.ByteEnd,
+                            !slot.IsByteAligned, slot.BitOffset, slot.BitWidth, slot.MsbFirst);
+            return null;
         }
 
         // ── FSR1 live numeric visualization channel ─────────────────────────
@@ -3211,6 +3341,46 @@ namespace MozaPlugin
         // and reset wheel detection right now rather than waiting for the
         // next reconnect-timer tick — otherwise the sender keeps firing and
         // accumulating ack waiters / catalog state for ~5 s.
+        // System power-state notification (sleep/resume). Fires on the dedicated
+        // SystemEvents notification thread — keep it non-blocking. Only Resume is
+        // handled: after sleep the wheel power-cycles and drops its display/
+        // telemetry sessions while the host tty can stay half-open, so we force a
+        // clean reconnect on the display-bearing pipes (primary wheel + standalone
+        // CM2). ForceReconnect raises Disconnected → OnSerialDisconnected /
+        // OnDashboardDisconnected, which reset detection + Stop the sender; the
+        // reconnect timer then reopens a fresh port and the session pipeline
+        // rebuilds. Config-only lanes (hub/base-aux/AB9/peripherals) self-heal via
+        // the connection's ~30 s half-open detector — a stale config lane is benign.
+        private void OnPowerModeChanged(object? sender, Microsoft.Win32.PowerModeChangedEventArgs e)
+        {
+            if (IsShuttingDown) return;
+            if (e.Mode != Microsoft.Win32.PowerModes.Resume) return;
+            MozaLog.Info("[AZOM] System resume — forcing reconnect to rebuild display sessions");
+            // ForceReconnect can take a beat (raises the full detection/telemetry
+            // reset chain); get off the SystemEvents thread so we don't stall other
+            // power-event subscribers.
+            ThreadPool.QueueUserWorkItem(_ =>
+            {
+                if (IsShuttingDown) return;
+                try { _connection?.ForceReconnect("System resume"); }
+                catch (Exception ex) { MozaLog.Warn($"[AZOM] Resume reconnect (primary): {ex.Message}"); }
+                try { _dashboardManager?.Connection?.ForceReconnect("System resume"); }
+                catch (Exception ex) { MozaLog.Warn($"[AZOM] Resume reconnect (dashboard): {ex.Message}"); }
+            });
+        }
+
+        // Detach the static PowerModeChanged subscription exactly once. Safe to
+        // call from both End() and CleanupPartialInit (the Interlocked.Exchange
+        // gate makes the second call a no-op).
+        private void UnhookPowerMode()
+        {
+            if (Interlocked.Exchange(ref _powerModeHooked, 0) == 1)
+            {
+                try { Microsoft.Win32.SystemEvents.PowerModeChanged -= OnPowerModeChanged; }
+                catch (Exception ex) { MozaLog.Debug($"[AZOM] PowerModeChanged unhook: {ex.Message}"); }
+            }
+        }
+
         private void OnSerialDisconnected()
         {
             if (IsShuttingDown) return;
@@ -3248,14 +3418,22 @@ namespace MozaPlugin
         {
             MozaLog.Debug($"[AZOM] {reason}");
             _telemetrySender?.Stop();
-            // Preserve dash detection when this serial connection is a
-            // standalone dashboard (CM2). Wheel hot-swap shouldn't blank a
-            // CM2's detection — the dash is the connection, not a wheel
-            // peripheral. ResetWheel() clears DashDetected unconditionally,
-            // so re-assert it for standalone-USB dashboards.
-            bool preserveStandaloneDash = IsStandaloneDashboardUsbConnection;
+            // Preserve dash detection across a WHEEL-rim reset: the dash (CM2/CM1)
+            // is reached through the CONNECTION, not the wheel rim, so a hot-swap or
+            // presence-miss of the rim must NOT blank it. Two cases:
+            //   • standalone-USB dash — lives on its own pipe (IsStandaloneDashboardUsbConnection);
+            //   • base-bridged (bus) dash — lives on the still-live wheelbase connection.
+            // ResetWheel() clears DashDetected unconditionally; re-assert it for both.
+            // CRITICAL: a bus CM2 behind the base is independent of which rim is
+            // attached. Letting a rim miss clear DashDetected flips the dual-display
+            // `want` false, and the periodic EnsureCm2Pipeline reconcile then tears
+            // down a perfectly healthy CM2 dashboard (LEDs survive on a separate path,
+            // so the symptom is "CM2 dash dead, LEDs fine"). Only a real connection
+            // loss (Connection.IsConnected false) should drop a bus dash.
+            bool preserveDash = IsStandaloneDashboardUsbConnection
+                || (DetectionState.DashDetected && _connection?.IsConnected == true);
             DetectionState.ResetWheel();
-            if (preserveStandaloneDash)
+            if (preserveDash)
                 DetectionState.DashDetected = true;
             WheelModelInfo = null;
             _data.ClearWheelIdentity();
@@ -3632,6 +3810,10 @@ namespace MozaPlugin
                 // "Table 7, Param 6 Written: N" log on dev 0x41 (0x14 swapped). Follow it.
                 if (rawDeviceId == 0x41 && DashIsCm1)
                     _fsr1Cm1Mapping.TryFollowCm1DashboardLog(text);
+                // CM2 meter heartbeat vocabulary identifies its firmware era (LED
+                // command family) — see DetectCm2LedFirmwareEra.
+                if (rawDeviceId == 0x41 && !DashIsCm1)
+                    DetectCm2LedFirmwareEra(text);
                 // The main bridge logs steering-wheel (rim) attach/detach edges
                 // here as "steer_connected <N>" / "Gpw Wheel Disconnected". A rim
                 // pull is NOT a USB/serial disconnect, so the poll-miss hot-swap
@@ -4016,8 +4198,11 @@ namespace MozaPlugin
         // FSR1 synthetic split fields (net-new fields carved out of a catalog field).
         internal System.Collections.Generic.List<Fsr1SyntheticField> GetSyntheticFields(string recordKey) => _fsr1Cm1Mapping.GetSyntheticFields(recordKey);
         internal bool SplitFsr1Field(string recordKey, string fieldId) => _fsr1Cm1Mapping.SplitFsr1Field(recordKey, fieldId);
+        internal bool BitSplitFsr1Field(string recordKey, string fieldId) => _fsr1Cm1Mapping.BitSplitFsr1Field(recordKey, fieldId);
         internal bool RemoveFsr1Split(string recordKey, string fieldId) => _fsr1Cm1Mapping.RemoveFsr1Split(recordKey, fieldId);
+        internal bool MergeFsr1Field(string recordKey, string fieldId, bool mergeNext) => _fsr1Cm1Mapping.MergeFsr1Field(recordKey, fieldId, mergeNext);
         internal void ClearSyntheticFields(string recordKey) => _fsr1Cm1Mapping.ClearSyntheticFields(recordKey);
+        internal void ClearFsr1FieldOverrides(string recordKey) => _fsr1Cm1Mapping.ClearFsr1FieldOverrides(recordKey);
         internal Fsr1FieldDef? FindFsr1Field(string recordKey, string fieldId) => Fsr1FieldComposer.FindField(this, recordKey, fieldId);
 
         internal Fsr1FieldMapping? GetCm1FieldMapping(string fieldId) => _fsr1Cm1Mapping.GetCm1FieldMapping(fieldId);

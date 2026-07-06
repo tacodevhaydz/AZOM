@@ -21,12 +21,10 @@ namespace MozaPlugin.Telemetry.Frames
         }
 
         // Pre-cached frames (built once per Start, reused every tick)
-        private byte[] _cachedEnableFrame = null!;
         private byte[] _cachedModeFrame = null!;
         private byte[] _cachedSequenceFrame = null!;
         private byte[][] _cachedHeartbeatFrames = null!;
 
-        internal byte[] EnableFrame => _cachedEnableFrame;
         internal byte[] ModeFrame => _cachedModeFrame;
         internal byte[][] HeartbeatFrames => _cachedHeartbeatFrames;
 
@@ -92,11 +90,6 @@ namespace MozaPlugin.Telemetry.Frames
                 MozaProtocol.MessageStart, 4,
                 MozaProtocol.TelemetryModeGroup, MozaProtocol.DeviceWheel,
                 0x28, 0x02, 0x01, 0x00 });
-
-            _cachedEnableFrame = BuildStaticFrame(new byte[] {
-                MozaProtocol.MessageStart, 6,
-                MozaProtocol.BaseSendTelemetry, MozaProtocol.DeviceWheel,
-                0xFD, 0xDE, 0x00, 0x00, 0x00, 0x00 });
 
             _cachedSequenceFrame = BuildStaticFrame(new byte[] {
                 MozaProtocol.MessageStart, 6,

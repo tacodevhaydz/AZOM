@@ -46,6 +46,13 @@ namespace MozaPlugin.Telemetry.Dashboard
         /// observe TelemetrySender.WheelReportedSlot instead.</summary>
         public WheelDashboardState? LastState => _lastState ?? _cachedLastState;
 
+        /// <summary>State decoded from THIS session's wheel push, with NO
+        /// cross-session cache fallback (unlike <see cref="LastState"/>). Null until
+        /// the wheel actually pushes its configJson on 0x09 this connection — the
+        /// signal the sess=0x09 retry needs so it keeps re-requesting until the real
+        /// list lands rather than stopping on a stale cache.</summary>
+        internal WheelDashboardState? LiveState => _lastState;
+
         /// <summary>Highest contiguous-received chunk seq, suitable for use
         /// as a cumulative session-ack value. -1 before the first chunk.
         /// Proxy to the internal <see cref="SessionDataReassembler.HighWaterSeq"/>

@@ -20,6 +20,7 @@ namespace MozaPlugin.Telemetry
         private readonly MozaHidReader _hidReader;
         private readonly NCalcExpressionEvaluator _formula = new NCalcExpressionEvaluator();
         private bool _allPropertiesNamesWarned;
+        private static bool s_trackNameLogged;
 
         public SimHubPropertyResolver(PluginManager pluginManager, MozaData data, MozaHidReader hidReader)
         {
@@ -121,6 +122,37 @@ namespace MozaPlugin.Telemetry
             return KnownSimHubProperties.Paths;
         }
 
+        // One-off diagnostic: dump every SimHub property whose name hints at
+        // heading / orientation / radar / spotter, with its current value, so we
+        // can find the live source AC populates for the radar's preamble Heading.
+        // Logged a few times while a game runs (turn the car so the right one
+        // visibly sweeps). Remove once the Heading source is wired.
+        public void LogHeadingProbe()
+        {
+            try
+            {
+                var sb = new StringBuilder();
+                foreach (var n in GetAllSimHubPropertyNames())
+                {
+                    var nl = n.ToLowerInvariant();
+                    if (nl.IndexOf("head", StringComparison.Ordinal) < 0
+                        && nl.IndexOf("yaw", StringComparison.Ordinal) < 0
+                        && nl.IndexOf("orient", StringComparison.Ordinal) < 0
+                        && nl.IndexOf("direction", StringComparison.Ordinal) < 0
+                        && nl.IndexOf("rotation", StringComparison.Ordinal) < 0
+                        && nl.IndexOf("bearing", StringComparison.Ordinal) < 0
+                        && nl.IndexOf("compass", StringComparison.Ordinal) < 0
+                        && nl.IndexOf("radar", StringComparison.Ordinal) < 0
+                        && nl.IndexOf("spotter", StringComparison.Ordinal) < 0)
+                        continue;
+                    object? raw = GetValueForDisplay(n);
+                    sb.Append(n).Append('=').Append(raw?.ToString() ?? "null").Append(" | ");
+                }
+                MozaLog.Info("[AZOM][HEADPROBE] " + sb.ToString());
+            }
+            catch (Exception e) { MozaLog.Info("[AZOM][HEADPROBE] failed: " + e.Message); }
+        }
+
         /// <summary>
         /// Resolve the raw value of a SimHub property for UI display. Returns null
         /// when the path is empty or unresolvable; <c>@internal/</c> paths return
@@ -153,6 +185,26 @@ namespace MozaPlugin.Telemetry
                     try { game = _pluginManager?.GameName; }
                     catch { /* older SimHub / not yet running a game */ }
                     return Dashboard.GameNameMap.Resolve(game);
+                }
+                case "@internal/TrackName":
+                {
+                    // The wheel's track-map MAP KEY "<gameprefix>/<track>"
+                    // (e.g. "ac/imola"), not a display string — without the
+                    // game prefix the wheel can't locate the map and the
+                    // track-map widget renders blank.
+                    string? game = null; object? track = null, propGame = null;
+                    try { game = _pluginManager?.GameName; } catch { }
+                    try { propGame = _pluginManager?.GetPropertyValue("DataCorePlugin.GameName"); } catch { }
+                    try { track = _pluginManager?.GetPropertyValue("DataCorePlugin.GameData.TrackName"); }
+                    catch { /* unresolvable → empty track name */ }
+                    string result = Dashboard.GameNameMap.TrackPath(game, track?.ToString());
+                    if (!s_trackNameLogged)
+                    {
+                        s_trackNameLogged = true;
+                        MozaLog.Info($"[AZOM] @internal/TrackName resolve: GameName={game ?? "<null>"} " +
+                            $"prop.GameName={propGame ?? "<null>"} TrackName={track ?? "<null>"} -> '{result}'");
+                    }
+                    return result;
                 }
                 default:
                     return null;
