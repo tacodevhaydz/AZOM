@@ -20,6 +20,18 @@ namespace MozaPlugin.Protocol
         public const uint KindDashStandbyMs = 10;
 
         /// <summary>
+        /// Property `kind` for the VGS display-rotation mode (single-byte value:
+        /// 0=off, 1=smooth, 2=immediate). The wheel senses its own rotation with
+        /// an internal IMU and counter-rotates the dashboard to keep it upright;
+        /// this push only selects <i>how</i> it counter-rotates. Reverse-engineered
+        /// from VGS PitHouse captures — see
+        /// docs/protocol/sessions/session-0x02-ff-init.md § Runtime property pushes.
+        /// Unlike brightness (u32) / standby (u64) this carries a 1-byte value
+        /// (wire size=5); build with <see cref="BuildU8Body"/>.
+        /// </summary>
+        public const uint KindDashDisplayRotation = 5;
+
+        /// <summary>
         /// Field1 constant for the dashboard-switch FF-record. Verified
         /// in capture <c>automobilista-switch-dashboard-many-ends-on-grids-1.2.6.17.pcapng</c>
         /// and <c>wireshark/csp/startup, change knob colors, ...pcapng</c>.
@@ -35,6 +47,19 @@ namespace MozaPlugin.Protocol
             var kv = new byte[8];
             WriteU32LE(kv, 0, kind);
             WriteU32LE(kv, 4, value);
+            return WrapFfRecord(kv);
+        }
+
+        /// <summary>
+        /// Build the net-data body for a single-byte-valued property (e.g. the
+        /// VGS display-rotation mode). Wire size = kind(4) + value(1) = 5.
+        /// </summary>
+        public static byte[] BuildU8Body(uint kind, byte value)
+        {
+            // size = kind(4) + value(1) = 5
+            var kv = new byte[5];
+            WriteU32LE(kv, 0, kind);
+            kv[4] = value;
             return WrapFfRecord(kv);
         }
 

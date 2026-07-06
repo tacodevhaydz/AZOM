@@ -645,4 +645,7 @@ Id: {2}</value></data>
   <data name="Option_Ab9FlightSim" xml:space="preserve"><value>Flight Simulation</value></data>
   <data name="SliderLabel_KeepaliveTimeout" xml:space="preserve"><value>Keepalive timeout</value></data>
   <data name="Hint_KeepaliveTimeout" xml:space="preserve"><value>How long to keep refreshing the LEDs after telemetry stops before the wheel can sleep. 0 = stop immediately.</value></data>
+  <data name="SliderLabel_DisplayRotation" xml:space="preserve"><value>Display Rotation</value></data>
+  <data name="Option_RotationSmooth" xml:space="preserve"><value>Smooth</value></data>
+  <data name="Option_RotationImmediate" xml:space="preserve"><value>Immediate</value></data>
 </root>

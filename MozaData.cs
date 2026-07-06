@@ -289,6 +289,9 @@ namespace MozaPlugin
         public volatile int DashFlagsBrightness;
         public volatile int DashDisplayBrightness = -1;
         public volatile int DashDisplayStandbyMin;
+        // VGS display-rotation mode (0=off, 1=smooth, 2=immediate). Sentinel -1 =
+        // not yet populated; UI mirror only (push-only setting, wheel never reports it).
+        public volatile int DashDisplayRotation = -1;
 
         public readonly byte[][] DashRpmColors = InitRpmColorArray();
         public readonly byte[][] DashRpmBlinkColors = InitRpmColorArray();

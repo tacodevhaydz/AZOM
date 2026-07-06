@@ -60,6 +60,70 @@ master tables. Until the host receives both kind=10 and kind=16, the
 wheel will not echo `kind=4` dashboard-switch records and will not bind
 post-switch tier-defs to display widgets.
 
+## Runtime property pushes (post-handshake)
+
+After the init handshake, the host pushes individual wheel-integrated-display
+settings as one-shot FF records on session 0x02 — one record per user change,
+**not** retransmitted periodically (distinct from the kind=9/14/15 heartbeats).
+Each rides the same envelope above and its own chunk CRC. The inner CRC is
+`zlib.crc32(kindAndValue)` and is a deterministic integrity check over
+`(kind ‖ value)`, not a nonce (see
+[`../findings/2026-04-29-session-01-property-push.md`](../findings/2026-04-29-session-01-property-push.md)).
+
+| Kind | Name | Value width | Encoding | Builder |
+|-----:|------|-------------|----------|---------|
+| 1  | display brightness | u32 LE (0–100) | `size=8`  | `BuildU32Body` |
+| 10 | display standby     | u64 LE (ms)   | `size=12` | `BuildU64Body` |
+| 5  | display rotation    | **u8** (0/1/2)| `size=5`  | `BuildU8Body`  |
+
+### kind=5 — VGS display-rotation mode
+
+The **VGS (Vision GS)** wheel has an internal IMU and can counter-rotate its
+dashboard so it stays upright as the rim turns. `kind=5` selects the mode; the
+wheel does all the angle sensing itself — the host streams no angle data.
+
+```
+7e <N> 43 17  7c 00 02 01 <seq:u16 LE>   ff 05 00 00 00  <inner_crc32 LE>  05 00 00 00  <mode:u8>   <chunk_crc32 LE> <chk>
+                          │                │  └ size = 5 (kind u32 + 1-byte value)      │           └ mode: 0=off, 1=smooth, 2=immediate
+                          │                └ FF property record                         └ kind = 5
+                          └ sess=0x02, type=0x01 (data)
+```
+
+| `mode` | Meaning | inner CRC32 (LE) |
+|-------:|---------|------------------|
+| 0 | Off — display fixed to the rim (no counter-rotation) | `6d 78 c2 0e` *(inferred, see below)* |
+| 1 | Smooth — gradual counter-rotation | `fb 48 c5 79` |
+| 2 | Immediate — snap counter-rotation | `41 19 cc e0` |
+
+Capture-verified: `mode=1` and `mode=2` observed on the wire in both VGS
+rotation captures (`VGS-rotation-off-smooth-immediate-horizontal{Off,On}.pcapng`,
+PitHouse), each sent once at the moment the user changed the setting. Their inner
+CRCs match `crc32(struct.pack("<I",5)+bytes([mode]))` exactly, confirming the
+record is genuine.
+
+`mode=0` (off) is **inferred, not observed**: it was the pre-capture starting
+state and was never re-emitted. `6d 78 c2 0e` is the computed inner CRC for
+`crc32(5‖0)` if/when the host emits it.
+
+### Open item — "horizontal" toggle
+
+The two capture files differ only by the PitHouse "horizontal" on/off toggle,
+yet are **byte-identical on the wire** apart from session seq/ack counters — the
+`kind=5` records (`mode=1`, `mode=2`) are the same in both. So toggling
+"horizontal" produced **no distinct wire command** in either capture; it was a
+fixed precondition set before recording, not exercised during it. It is a
+separate PitHouse on/off toggle that likely sends its own small FF flag (an
+un-captured `kind`), but that has **not** been observed. Do not guess its kind
+number — capture a session that actually toggles it during recording, then add
+it here.
+
+Plugin support: `TelemetrySender.SendDashDisplayRotation(mode)` →
+`SessionPropertyPushBuilder.BuildU8Body(kind=5, mode)`; gated to VGS via
+`WheelModelInfo.SupportsDisplayRotation`. UI: the display-rotation dropdown in
+`DashboardManagementControl` (VGS wheels only). Decode tooling:
+`tools/pcap_to_jsonl.py` + `tools/moza_trace.py` (the `verify.py` scratch script
+that confirmed the inner CRCs is reproducible from those two primitives).
+
 ## Why the host must send kind=8 / kind=11
 
 `kind=2` (`init_nonce`) and `kind=7` (`init_enum`) alone are insufficient.

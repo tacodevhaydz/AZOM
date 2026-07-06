@@ -2069,6 +2069,10 @@ namespace MozaPlugin.Telemetry
                 public void SendSessionPropertyU64(uint kind, ulong value)
             => _propertyPushQueue.SendU64(kind, value);
 
+        /// <summary>Push a single-byte-valued property (e.g. VGS display-rotation mode).</summary>
+                public void SendSessionPropertyU8(uint kind, byte value)
+            => _propertyPushQueue.SendU8(kind, value);
+
         /// <summary>
         /// Send a session-data chunk via <see cref="_connection"/> and register
         /// it with the retransmit queue so it gets re-emitted until acked. For
@@ -2644,6 +2648,24 @@ namespace MozaPlugin.Telemetry
             SendSessionPropertyU64(
                 global::MozaPlugin.Protocol.SessionPropertyPushBuilder.KindDashStandbyMs,
                 ms);
+        }
+
+        /// <summary>
+        /// Convenience: push the VGS display-rotation mode (0=off, 1=smooth,
+        /// 2=immediate). The wheel senses its own angle with an internal IMU and
+        /// counter-rotates the dashboard; this only selects how. Sent once per
+        /// change (not periodic), matching PitHouse. Values outside 0..2 are
+        /// clamped. Only VGS-family wheels act on it — see the VGS gate in
+        /// <c>HardwareApplier.ApplyWheelToHardware</c> and the VGS-only UI in
+        /// <c>DashboardManagementControl</c>.
+        /// </summary>
+        public void SendDashDisplayRotation(int mode)
+        {
+            if (mode < 0) mode = 0;
+            if (mode > 2) mode = 2;
+            SendSessionPropertyU8(
+                global::MozaPlugin.Protocol.SessionPropertyPushBuilder.KindDashDisplayRotation,
+                (byte)mode);
         }
 
         /// <summary>

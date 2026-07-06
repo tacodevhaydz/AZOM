@@ -117,6 +117,19 @@ namespace MozaPlugin.Devices
         public int MaxLedFps { get; }
 
         /// <summary>
+        /// Whether this wheel has the display-rotation feature: an internal IMU
+        /// that lets the wheel counter-rotate its dashboard so it stays upright as
+        /// the rim turns. When <c>true</c>, the plugin exposes the rotation-mode
+        /// control (off / smooth / immediate) and pushes the mode via the
+        /// session-0x02 FF property record (<c>kind=5</c>,
+        /// <see cref="Protocol.SessionPropertyPushBuilder.KindDashDisplayRotation"/>).
+        /// Only the VGS (Vision GS) is known to have the sensor; other display
+        /// wheels ignore the push. Default <c>false</c>; flip to <c>true</c> on any
+        /// model confirmed to carry the rotation IMU.
+        /// </summary>
+        public bool SupportsDisplayRotation { get; }
+
+        /// <summary>
         /// Drive RPM LEDs the PitHouse "old rim" way: a fixed colour palette
         /// (<c>0x19</c>, sent only on palette change) + a streamed lit-state
         /// bitmask (<c>wheel-send-rpm-telemetry</c> 0x1a and the old-protocol
@@ -186,7 +199,10 @@ namespace MozaPlugin.Devices
             // the explicit MozaPlugin.IsFsr1DisplayWheel bypass. The 10 RPM + 10
             // button LEDs use the standard group-0x3F SimHub LED path unchanged.
             ("FSR",     "FSR V1",     new WheelModelInfo(10, 10, false, null, 0, hasDisplay: false)),
-            ("VGS",     "Vision GS",  new WheelModelInfo(10, 8,  false, null, 0, hasDisplay: true)),
+            // VGS (Vision GS): has the display-rotation IMU — supportsDisplayRotation:true
+            // exposes the off/smooth/immediate rotation-mode control (session-0x02 FF
+            // kind=5 push). Verified from VGS PitHouse captures.
+            ("VGS",     "Vision GS",  new WheelModelInfo(10, 8,  false, null, 0, hasDisplay: true, supportsDisplayRotation: true)),
             ("TSW",     "TSW",        new WheelModelInfo(10, 14, false, null, 0, hasDisplay: false)),
             // RS V2 referenced in Telemetry/EraPolicy.cs:187 but not yet measured.
             // LED dimensions are best-guess from the Default profile; HasDisplay=false
@@ -212,8 +228,9 @@ namespace MozaPlugin.Devices
             ("ES",      "ES",         new WheelModelInfo(10, 0,  false, null, 0, hasDisplay: false, hasSleepLight: false)),
         };
 
-        public WheelModelInfo(int rpmLedCount, int buttonLedCount, bool hasFlagLeds, int[]? buttonLedMap, int knobCount = 0, int[]? knobRingLeds = null, bool? hasDisplay = null, int browSegmentSize = 0, bool hasSleepLight = true, int maxLedFps = 0, bool usesLegacyRpmTelemetry = false, int[]? knobSignalModeOrder = null)
+        public WheelModelInfo(int rpmLedCount, int buttonLedCount, bool hasFlagLeds, int[]? buttonLedMap, int knobCount = 0, int[]? knobRingLeds = null, bool? hasDisplay = null, int browSegmentSize = 0, bool hasSleepLight = true, int maxLedFps = 0, bool usesLegacyRpmTelemetry = false, int[]? knobSignalModeOrder = null, bool supportsDisplayRotation = false)
         {
+            SupportsDisplayRotation = supportsDisplayRotation;
             RpmLedCount = rpmLedCount;
             ButtonLedCount = buttonLedCount;
             HasFlagLeds = hasFlagLeds;

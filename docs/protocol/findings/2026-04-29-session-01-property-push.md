@@ -86,6 +86,7 @@ entirely different record formats.
 | 1      | brightness (slider) | u32 LE (0–100) | User-driven slider updates. Transient — PitHouse only sends while slider moves |
 | 2      | session init | 12B: `[unix_ts:u32] [0:u32] [tz_offset_sec:i32]` | Sent once at startup (seq=3). tz_offset observed: -25200 = UTC-7 |
 | 4      | dashboard switch | 12B: `[field1=4:u32] [slot:u32] [0:u32]` | Slot = 0-based configJsonList index. See `2026-04-30-dashboard-switch-3f27.md` |
+| 5      | display rotation (VGS) | 1B: `[mode:u8]` (size=5) | 0=off, 1=smooth, 2=immediate. VGS-only IMU display counter-rotation. One-shot on change. See [`../sessions/session-0x02-ff-init.md`](../sessions/session-0x02-ff-init.md) § Runtime property pushes |
 | 7      | init command | 8B: `[3:u32] [0:u32]` | Always val=3. Sent once at startup (seq=4). Precedes channel catalog |
 | 8      | channel catalog | ~2 KB zlib | Compressed master channel catalog: UTF-16LE channel names (RpmAbsolute1, etc). 12,708 bytes decompressed. Multi-chunk FF record spanning ~40 session-data chunks. Sent once at startup |
 | 9      | LED color push (18B) | `[00] [addr:1B] [00 00 00 43 00 01 FF FF] [c0 c0 c1 c1 c2 c2 00 00]` | Push LED/knob colors. addr=target controller (0x6C, 0x97, 0xA4). Color bytes doubled. Periodic + around switches |

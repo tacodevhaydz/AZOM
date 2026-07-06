@@ -696,5 +696,8 @@ namespace MozaPlugin.Resources
         public static string Section_Ab9InputMode => Get("Section_Ab9InputMode");
         public static string Option_Ab9Shifter => Get("Option_Ab9Shifter");
         public static string Option_Ab9FlightSim => Get("Option_Ab9FlightSim");
+        public static string SliderLabel_DisplayRotation => Get("SliderLabel_DisplayRotation");
+        public static string Option_RotationSmooth => Get("Option_RotationSmooth");
+        public static string Option_RotationImmediate => Get("Option_RotationImmediate");
     }
 }

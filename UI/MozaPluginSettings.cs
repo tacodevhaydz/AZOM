@@ -81,6 +81,9 @@ namespace MozaPlugin
         // see docs/protocol/findings/2026-04-29-session-01-property-push.md.
         public int DashDisplayBrightness { get; set; } = 100;
         public int DashDisplayStandbyMin { get; set; } = 5;
+        // VGS wheel display-rotation mode baseline (0=off, 1=smooth, 2=immediate).
+        // Pushed via session-0x02 ff-record kind=5; VGS-only. Default off.
+        public int DashDisplayRotation { get; set; } = 0;
 
         // CM2 dash (dual-screen): the dashboard the user selected for the CM2's
         // own pipeline, independent of the wheel's selection. Empty = catalog default.

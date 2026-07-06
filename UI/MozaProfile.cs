@@ -325,6 +325,10 @@ namespace MozaPlugin
         public int DashFlagsBrightness { get; set; } = -1;
         public int DashDisplayBrightness { get; set; } = -1;
         public int DashDisplayStandbyMin { get; set; } = -1;
+        // VGS display-rotation mode (0=off, 1=smooth, 2=immediate). Sentinel -1 =
+        // fall through to the plugin-settings baseline. Pushed via session-0x02
+        // ff-record kind=5; VGS-only (see WheelModelInfo.SupportsDisplayRotation).
+        public int DashDisplayRotation { get; set; } = -1;
         // Indicator/display modes (raw device-stored values, sentinel = leave alone).
         public int DashRpmIndicatorMode { get; set; } = -1;
         public int DashRpmDisplayMode { get; set; } = -1;
@@ -521,6 +525,7 @@ namespace MozaPlugin
             // Dashboard
             DashRpmBrightness = p.DashRpmBrightness; DashFlagsBrightness = p.DashFlagsBrightness;
             DashDisplayBrightness = p.DashDisplayBrightness; DashDisplayStandbyMin = p.DashDisplayStandbyMin;
+            DashDisplayRotation = p.DashDisplayRotation;
             DashRpmIndicatorMode = p.DashRpmIndicatorMode; DashRpmDisplayMode = p.DashRpmDisplayMode;
             DashFlagsIndicatorMode = p.DashFlagsIndicatorMode;
 
@@ -764,6 +769,7 @@ namespace MozaPlugin
             if (DashFlagsBrightness   < 0) DashFlagsBrightness   = settings.DashFlagsBrightness;
             if (DashDisplayBrightness < 0) DashDisplayBrightness = settings.DashDisplayBrightness;
             if (DashDisplayStandbyMin < 0) DashDisplayStandbyMin = settings.DashDisplayStandbyMin;
+            if (DashDisplayRotation   < 0) DashDisplayRotation   = settings.DashDisplayRotation;
             if (DashRpmBlinkColors == null && settings.DashRpmBlinkColors != null)
                 DashRpmBlinkColors = (int[])settings.DashRpmBlinkColors.Clone();
 
