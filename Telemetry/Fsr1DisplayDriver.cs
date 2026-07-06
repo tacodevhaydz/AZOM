@@ -187,7 +187,8 @@ namespace MozaPlugin.Telemetry
                 if (string.IsNullOrEmpty(prop)) return 0;
 
                 double raw = resolve != null ? resolve(prop) : 0.0;
-                raw = raw * (m?.Scale ?? 1.0) + (m?.Bias ?? 0.0);
+                // User override wins; otherwise the catalog default (tyre +300, lap time ×1000).
+                raw = raw * (m?.Scale ?? f.DefaultScale) + (m?.Bias ?? f.DefaultBias);
                 if (f.Kind == Fsr1FieldKind.Direct)
                     // Send the scaled value's digits as an integer — truncate, don't round.
                     // Precision is carried by Scale (shift the wanted decimals into the integer,
