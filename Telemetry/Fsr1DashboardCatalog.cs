@@ -144,8 +144,8 @@ namespace MozaPlugin.Telemetry
 
             private Fields Add(Fsr1FieldDef f, int bits) { _list.Add(f); _bit += bits; return this; }
 
-            public Fields U8(string id, string label, string prop = "") =>
-                Add(MakeByte(id, label, _bit >> 3, Fsr1Encoding.U8, prop), 8);
+            public Fields U8(string id, string label, string prop = "", double bias = 0.0) =>
+                Add(MakeByte(id, label, _bit >> 3, Fsr1Encoding.U8, prop, bias: bias), 8);
             public Fields U16(string id, string label, string prop = "", long fullScale = 0) =>
                 Add(MakeByte(id, label, _bit >> 3, Fsr1Encoding.U16_BE, prop, fullScale), 16);
             public Fields U24(string id, string label, string prop = "", double scale = 1.0) =>
@@ -165,18 +165,19 @@ namespace MozaPlugin.Telemetry
             public Fields GearDrsErs(string idp)
             {
                 int b = _bit;
-                _list.Add(MakeBits(idp + "Gear", "Gear", b, 4, "DataCorePlugin.GameData.Gear"));
+                // Gear wire value = SimHub gear + 1 (firmware: 0=R, 1=N, 2=1st…); verified from capture.
+                _list.Add(MakeBits(idp + "Gear", "Gear", b, 4, "DataCorePlugin.GameData.Gear", bias: 1.0));
                 _list.Add(MakeBits(idp + "Ers", "ERS mode", b + 4, 2, ""));
                 _list.Add(MakeBits(idp + "Drs", "DRS", b + 6, 1, "DataCorePlugin.GameData.DRSEnabled"));
                 _bit += 8;
                 return this;
             }
             /// <summary>Compact&lt;4,4&gt;: two 4-bit LSB values in one byte.</summary>
-            public Fields Nibbles(string id0, string l0, string p0, string id1, string l1, string p1)
+            public Fields Nibbles(string id0, string l0, string p0, string id1, string l1, string p1, double bias0 = 0.0, double bias1 = 0.0)
             {
                 int b = _bit;
-                _list.Add(MakeBits(id0, l0, b, 4, p0));
-                _list.Add(MakeBits(id1, l1, b + 4, 4, p1));
+                _list.Add(MakeBits(id0, l0, b, 4, p0, bias: bias0));
+                _list.Add(MakeBits(id1, l1, b + 4, 4, p1, bias: bias1));
                 _bit += 8;
                 return this;
             }
@@ -325,7 +326,7 @@ namespace MozaPlugin.Telemetry
                     .U8("cars", "Car count", G + "OpponentsCount")
                     .U8("lap", "Lap", G + "CurrentLap")
                     .U8("laps", "Lap count", G + "TotalLaps")
-                    .U8("gear", "Gear", G + "Gear")
+                    .U8("gear", "Gear", G + "Gear", bias: 1.0)
                     .Done(),
             },
             new()
@@ -372,7 +373,7 @@ namespace MozaPlugin.Telemetry
                     .U8("ersR", "ERS remaining", G + "ERSPercent")
                     .U8("tc", "TC level", G + "TCLevel")
                     .U8("abs", "ABS level", G + "ABSLevel")
-                    .U8("gear", "Gear", G + "Gear")
+                    .U8("gear", "Gear", G + "Gear", bias: 1.0)
                     .Done(),
             },
             new()
@@ -396,7 +397,7 @@ namespace MozaPlugin.Telemetry
                     .U16("spd", "Speed", G + "SpeedKmh")
                     .U16("rpm", "RPM", G + "Rpms")
                     .U16("maxRpm", "Max RPM", G + "MaxRpm")
-                    .U8("gear", "Gear", G + "Gear")
+                    .U8("gear", "Gear", G + "Gear", bias: 1.0)
                     .Done(),
             },
             new()
@@ -432,7 +433,7 @@ namespace MozaPlugin.Telemetry
                     .U8("ecu", "ECU map", G + "EngineMap")
                     .U8("tc2", "TC2", "")
                     .U8("fuelClass", "Fuel class", "")
-                    .U8("gear", "Gear", G + "Gear")
+                    .U8("gear", "Gear", G + "Gear", bias: 1.0)
                     .Done(),
             },
             new()
@@ -446,7 +447,7 @@ namespace MozaPlugin.Telemetry
                     .U16("rpm", "RPM", G + "Rpms")
                     .U16("spd", "Speed", G + "SpeedKmh")
                     .U16("frl", "Fuel remain laps", "")
-                    .Nibbles("gear", "Gear", G + "Gear", "abs", "ABS level", G + "ABSLevel")
+                    .Nibbles("gear", "Gear", G + "Gear", "abs", "ABS level", G + "ABSLevel", bias0: 1.0)
                     .U8("pos", "Position", G + "Position")
                     .U8("clutch", "Clutch", G + "Clutch")
                     .U8("brake", "Brake", G + "Brake")
