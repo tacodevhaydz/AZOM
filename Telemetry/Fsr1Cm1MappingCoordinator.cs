@@ -32,10 +32,27 @@ namespace MozaPlugin.Telemetry
         internal Dictionary<string, Dictionary<string, Fsr1FieldMapping>>? GetActiveFsr1Mappings()
         {
             var profile = _plugin.Settings?.ProfileStore?.CurrentProfile;
+            EnsureFsr1Migrated(profile);
             if (profile?.Fsr1DashboardMappings == null) return null;
             var g = _plugin.GetCurrentWheelPageGuid();
             if (!g.HasValue) return null;
             return profile.Fsr1DashboardMappings.TryGetValue(g.Value, out var m) ? m : null;
+        }
+
+        // One-time-per-profile wipe of FSR1 mapper overrides when the catalog schema advances. The
+        // ground-truth rebuild (v2) changed every fieldId, the field geometry (byte → 10-bit LSB),
+        // and the bit convention (MSB → LSB), so stored overrides + synthetic split fields are stale
+        // and would corrupt the new partition (old "split1" fields would be composed in). Clears the
+        // two FSR1 dicts and bumps the profile version; runs lazily the first time a profile is read
+        // after upgrade. FSR1-only — CM1/CM2/LED/FFB settings are untouched.
+        private void EnsureFsr1Migrated(MozaProfile? profile)
+        {
+            if (profile == null || profile.Fsr1CatalogVersion >= Fsr1DashboardCatalog.CatalogVersion) return;
+            profile.Fsr1DashboardMappings?.Clear();
+            profile.Fsr1SyntheticFields?.Clear();
+            profile.Fsr1CatalogVersion = Fsr1DashboardCatalog.CatalogVersion;
+            _plugin.SaveSettings();
+            MozaLog.Info($"[AZOM] FSR1 catalog upgraded to v{Fsr1DashboardCatalog.CatalogVersion} — cleared stale dashboard field overrides for this profile.");
         }
 
         /// <summary>Resolve one FSR1 field's user mapping, or null to use the catalog default.
@@ -143,6 +160,7 @@ namespace MozaPlugin.Telemetry
         {
             if (string.IsNullOrEmpty(recordKey)) return _emptySynthetic;
             var profile = _plugin.Settings?.ProfileStore?.CurrentProfile;
+            EnsureFsr1Migrated(profile);
             if (profile?.Fsr1SyntheticFields == null) return _emptySynthetic;
             var g = _plugin.GetCurrentWheelPageGuid();
             if (!g.HasValue) return _emptySynthetic;
