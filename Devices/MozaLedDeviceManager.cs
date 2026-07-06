@@ -66,6 +66,16 @@ namespace MozaPlugin.Devices
         // keepalive fires) still keeps the gate engaged.
         internal static readonly TimeSpan LivePathActiveWindow = TimeSpan.FromMilliseconds(750);
 
+        // Catalog-negotiation LED throttle. During cold-start / post-switch catalog
+        // (re)advertisement the half-duplex 115200 link is contended (our tier-def
+        // burst + the wheel's inbound catalog chunks); a ~60 Hz LED stream on top
+        // saturates it and drops inbound catalog chunks (radar/track-map dashes →
+        // missing channels / stuck gear). While the wheel is negotiating we cap LED
+        // writes to one per this interval so chunks get through; racing LEDs resume
+        // full-rate the instant negotiation completes (a few seconds).
+        private const int CatalogNegotiationLedThrottleMs = 150;
+        private int _lastNegotiationLedTickMs;
+
         /// <summary>
         /// True if any live LED frame went out within <see cref="LivePathActiveWindow"/>.
         /// Static writers (HardwareApplier, UI handlers) check this before touching wheel
@@ -188,6 +198,20 @@ namespace MozaPlugin.Devices
         public LedDeviceState LastState => _lastState;
 
         private bool _wasConnected;
+
+        // Shared/master LED-brightness tracking. SimHub's per-device master slider is
+        // LedModuleSettings.GlobalBrightnessPreset.Brightness (0..100) — the value the
+        // per-channel Display() factors are all scaled by. We publish settled changes
+        // to MozaPlugin.WheelLedMasterBrightness so the data thread can write the wheel
+        // firmware group brightness. The first observed value is a BASELINE (never
+        // written) so connecting doesn't overwrite the wheel's device-stored brightness
+        // with SimHub's default; only a subsequent change engages the firmware write.
+        // Changes are debounced so a slider drag doesn't spam flash-backed writes.
+        private bool _masterBriSeeded;
+        private int _masterBriRaw = -1;
+        private DateTime _masterBriRawUtc = DateTime.MinValue;
+        private int _masterBriPublished = -1;
+        private const double MasterBrightnessDebounceMs = 350.0;
 
         public event EventHandler? BeforeDisplay;
         public event EventHandler? AfterDisplay;
@@ -402,6 +426,21 @@ namespace MozaPlugin.Devices
                 if (!IsConnected())
                     return;
 
+                // Catalog-negotiation LED throttle: while the wheel is (re)advertising
+                // its catalog (cold-start or a post-switch hot-reneg burst) the link is
+                // saturated by our tier-def burst + the wheel's inbound catalog chunks.
+                // A 60 Hz LED stream on top drops those chunks — the root of radar/track
+                // channel loss on a saturated link. Cap LED writes to ~7/s during the
+                // window; full rate resumes the instant negotiation completes. _lastState
+                // is already captured above, so the UI preview is unaffected.
+                if (plugin.TelemetrySender?.WheelInCatalogNegotiation == true)
+                {
+                    int nowMs = Environment.TickCount;
+                    if (nowMs - _lastNegotiationLedTickMs < CatalogNegotiationLedThrottleMs)
+                        return;
+                    _lastNegotiationLedTickMs = nowMs;
+                }
+
                 // IsConnected() above already matched this device to the connected
                 // wheel, so the global detection flag tells us its protocol. ES is
                 // an identified old-protocol wheel with a specific prefix, so derive
@@ -410,6 +449,12 @@ namespace MozaPlugin.Devices
                 bool isNewWheel = !isOldWheel && plugin.IsNewWheelDetected;
                 if (!isNewWheel && !isOldWheel)
                     return;
+
+                // Track SimHub's shared/master LED-brightness slider for this (active)
+                // wheel and publish settled changes to the firmware group brightness.
+                // Runs before the empty-channel / throttle early-returns below so a
+                // master change is caught even while the wheel sits idle.
+                TrackMasterBrightness(plugin);
 
                 // Merge SimHub Individual-LED overrides (rawState channel) over the
                 // per-segment logical channels. Physical order per device.json:
@@ -495,7 +540,12 @@ namespace MozaPlugin.Devices
                 // Per-frame brightness from SimHub's wheel LED-brightness slider.
                 // Scales the outgoing RGB rather than writing the wheel's stored
                 // firmware brightness — see ScaleColorsForBrightness for why.
-                rpmColors = ScaleColorsForBrightness(rpmColors, rpmBrightness);
+                // MasterCompensated divides the master back out once the firmware
+                // group brightness is tracking it (WheelLedMasterBrightness >= 0), so
+                // the master — a hardware master control that also scales these live
+                // frames — isn't applied twice.
+                rpmColors = ScaleColorsForBrightness(
+                    rpmColors, MasterCompensated(rpmBrightness, plugin.WheelLedMasterBrightness));
 
                 // --- RPM LEDs ---
                 bool rpmChanged = !ColorsEqual(rpmColors, _lastLeds);
@@ -656,7 +706,8 @@ namespace MozaPlugin.Devices
                     // Per-frame brightness (SimHub's buttons LED-brightness
                     // slider). Applied after the default-during-telemetry
                     // override so the static fallback colours dim too.
-                    buttonColors = ScaleColorsForBrightness(buttonColors, buttonsBrightness);
+                    buttonColors = ScaleColorsForBrightness(
+                        buttonColors, MasterCompensated(buttonsBrightness, plugin.WheelLedMasterBrightness));
 
                     bool buttonsChanged = !ColorsEqual(buttonColors, _lastButtons);
                     bool shouldSendButtons = !ledThrottled && (buttonsChanged || (!limitUpdates && forceRefresh && AnyLit(buttonColors)));
@@ -725,7 +776,8 @@ namespace MozaPlugin.Devices
                     }
 
                     // Per-frame brightness (SimHub's encoders/knob LED-brightness slider).
-                    knobColors = ScaleColorsForBrightness(knobColors, encodersBrightness);
+                    knobColors = ScaleColorsForBrightness(
+                        knobColors, MasterCompensated(encodersBrightness, plugin.WheelLedMasterBrightness));
 
                     int count = Math.Min(knobColors.Length, knobCount);
                     int knobBitmask = 0;
@@ -990,6 +1042,73 @@ namespace MozaPlugin.Devices
         /// When <paramref name="indexMap"/> is provided, each entry maps the source array
         /// position to the protocol LED index (for non-contiguous button layouts).
         /// </summary>
+        /// <summary>
+        /// Observe SimHub's shared/master LED-brightness slider for this wheel and
+        /// publish settled changes to <see cref="MozaPlugin.WheelLedMasterBrightness"/>
+        /// so the data thread can push it to the firmware group brightness. The master
+        /// is <c>GlobalBrightnessPreset.Brightness</c> (0..100) — the value SimHub scales
+        /// every per-channel Display() factor by, distinct from the per-frame factors
+        /// (which transiently drop to 0 and must never reach EEPROM — see
+        /// <see cref="ScaleColorsForBrightness"/>). The first observation seeds a baseline
+        /// and is never written, so connecting leaves the wheel's device-stored brightness
+        /// alone; only a later change engages the firmware write. Debounced so a drag
+        /// doesn't spam flash writes. Full 0..100 is honoured (SimHub brightness-mode
+        /// automation that dims to 0 is written through as chosen).
+        /// </summary>
+        private void TrackMasterBrightness(MozaPlugin plugin)
+        {
+            int cur;
+            try
+            {
+                var preset = LedModuleSettings?.GlobalBrightnessPreset;
+                if (preset == null) return;
+                cur = (int)Math.Round(preset.Brightness);
+            }
+            catch { return; }
+            if (cur < 0) cur = 0; else if (cur > 100) cur = 100;
+
+            var now = DateTime.UtcNow;
+            if (!_masterBriSeeded)
+            {
+                // First sample = baseline; do not write (preserve device brightness).
+                _masterBriSeeded = true;
+                _masterBriRaw = cur;
+                _masterBriPublished = cur;
+                return;
+            }
+            if (cur != _masterBriRaw)
+            {
+                _masterBriRaw = cur;
+                _masterBriRawUtc = now;
+            }
+            if (cur != _masterBriPublished
+                && (now - _masterBriRawUtc).TotalMilliseconds >= MasterBrightnessDebounceMs)
+            {
+                _masterBriPublished = cur;
+                plugin.WheelLedMasterBrightness = cur;
+            }
+        }
+
+        /// <summary>
+        /// Compensate SimHub's per-frame LED-brightness factor for the wheel firmware
+        /// master control. SimHub hands us <c>effective = (globalMaster/100) ×
+        /// (perChannel/100)</c>. When the firmware group brightness is tracking the
+        /// master (<paramref name="master"/> >= 0 — the value we pushed via
+        /// <c>1B [G] FF</c>), the firmware already applies that master to these live
+        /// frames, so software must apply only the per-channel term — otherwise the
+        /// master dims the wheel twice. Dividing by the PUBLISHED master (not the live
+        /// global) keeps software and firmware referencing the same value, so the
+        /// hand-off across the debounce window is smooth. <paramref name="master"/> &lt; 0
+        /// (user hasn't engaged the master) or 0 (firmware already fully dark) → apply
+        /// the factor unchanged, matching the pre-feature behaviour. The result is
+        /// clamped downstream in <see cref="ScaleColorsForBrightness"/>.
+        /// </summary>
+        private static double MasterCompensated(double effectiveFactor, int master)
+        {
+            if (master > 0) return effectiveFactor * 100.0 / master;
+            return effectiveFactor;
+        }
+
         /// <summary>
         /// Scale a per-frame colour array by SimHub's 0..1 LED-brightness factor
         /// (the wheel's SimHub LED-brightness sliders feed this via the

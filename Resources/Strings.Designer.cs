@@ -370,9 +370,11 @@ namespace MozaPlugin.Resources
         public static string Button_Github => Get("Button_Github");
         public static string Button_JoinDiscord => Get("Button_JoinDiscord");
         public static string Button_SponsorDevelopment => Get("Button_SponsorDevelopment");
+        public static string Button_Kofi => Get("Button_Kofi");
         public static string Tooltip_Github => Get("Tooltip_Github");
         public static string Tooltip_JoinDiscord => Get("Tooltip_JoinDiscord");
         public static string Tooltip_Sponsor => Get("Tooltip_Sponsor");
+        public static string Tooltip_Kofi => Get("Tooltip_Kofi");
         public static string Label_UpdateAvailable => Get("Label_UpdateAvailable");
         public static string Button_OpenReleaseNotes => Get("Button_OpenReleaseNotes");
         public static string Button_SkipThisVersion => Get("Button_SkipThisVersion");
@@ -525,9 +527,14 @@ namespace MozaPlugin.Resources
         public static string Button_ResetToDefaults => Get("Button_ResetToDefaults");
         public static string Button_ResetField => Get("Button_ResetField");
         public static string Button_SplitField => Get("Button_SplitField");
+        public static string Button_BitSplit => Get("Button_BitSplit");
         public static string Button_RemoveSplit => Get("Button_RemoveSplit");
+        public static string Button_MergePrev => Get("Button_MergePrev");
+        public static string Button_MergeNext => Get("Button_MergeNext");
         public static string Viz_Title => Get("Viz_Title");
         public static string Edit_StartByte => Get("Edit_StartByte");
+        public static string Edit_StartBit => Get("Edit_StartBit");
+        public static string Edit_BitWidth => Get("Edit_BitWidth");
         public static string Edit_EndByte => Get("Edit_EndByte");
         public static string Edit_Endian_LE => Get("Edit_Endian_LE");
         public static string Edit_Scale => Get("Edit_Scale");

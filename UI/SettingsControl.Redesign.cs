@@ -79,6 +79,11 @@ namespace MozaPlugin
                     FfbCurveY1Slider, FfbCurveY2Slider, FfbCurveY3Slider,
                     FfbCurveY4Slider, FfbCurveY5Slider
                 });
+                // X1..X4 draggable (point 5 pinned at input=100 via LockLastNodeX).
+                BindEditorXToSliders(FfbCurveEditor, new[]
+                {
+                    FfbCurveX1Slider, FfbCurveX2Slider, FfbCurveX3Slider, FfbCurveX4Slider
+                });
                 BindEditorToSliders(HandbrakeCurveEditor, new[]
                 {
                     HbY1Slider, HbY2Slider, HbY3Slider, HbY4Slider, HbY5Slider
@@ -226,19 +231,21 @@ namespace MozaPlugin
             }
         }
 
-        // Two-way bind a MozaCurveEditor's X1..X5 dependency properties to
-        // sliders — only meaningful when the editor has
-        // AllowHorizontalDrag="True" (currently just the Sim Input Mapping
-        // output curve). 5 slots only, unlike BindEditorToSliders — no X6,
-        // since horizontal drag isn't offered on the 6-band EQ.
+        // Two-way bind a MozaCurveEditor's X dependency properties to sliders —
+        // only meaningful when the editor has AllowHorizontalDrag="True". Accepts
+        // 5 sliders (mBooster Sim Input Mapping — all nodes draggable) or 4 (the
+        // wheelbase FFB curve, whose last node is pinned at input=100 via
+        // LockLastNodeX so X5 keeps its DP default). No X6 — horizontal drag
+        // isn't offered on the 6-band EQ.
         private void BindEditorXToSliders(MozaControls.MozaCurveEditor editor, Slider[] sliders)
         {
-            if (editor == null || sliders == null || sliders.Length < 5) return;
+            if (editor == null || sliders == null || sliders.Length < 4) return;
             var xs = new[] {
                 MozaControls.MozaCurveEditor.X1Property, MozaControls.MozaCurveEditor.X2Property,
                 MozaControls.MozaCurveEditor.X3Property, MozaControls.MozaCurveEditor.X4Property,
                 MozaControls.MozaCurveEditor.X5Property };
-            for (int i = 0; i < xs.Length; i++)
+            int n = Math.Min(sliders.Length, xs.Length);
+            for (int i = 0; i < n; i++)
             {
                 var b = new Binding(nameof(Slider.Value))
                 {

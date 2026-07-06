@@ -424,7 +424,26 @@ namespace MozaPlugin.Telemetry.Watchdog
             if (_sender.CatalogCount <= 0)
                 return (true, $"no channel catalog past {EngagementGraceMs} ms grace");
             if (!_sender.ConfigJsonHasLastState)
-                return (true, "no configJson device-init/state past grace");
+            {
+                // The catalog is present (checked above): the display has already
+                // bound the channel/tier-def catalog and is rendering the current
+                // dashboard. The configJson device-init/state push (sess=0x09) is
+                // SUPPLEMENTARY — it carries the dashboard LIST for switching — and
+                // lags badly for slow-to-establish dashboards (radar/track-map). The
+                // watchdog nudges it every tick (RetryS09IfNotEstablished /
+                // DriveConfigJsonGapRetransmit), so it arrives without a restart.
+                //
+                // Force-restarting a BOUND display over a late state repeatedly broke
+                // the working radar (2026-06-25, W17/CS-Pro): boundComplete + slot
+                // rendering, state not yet pushed (and WheelReportedSlot can still be
+                // -1 mid-bind, so a slot check alone doesn't save it) — and the
+                // restart was the ONLY thing provoking the state, so patience + the
+                // nudges get there without the damage. A late state on a
+                // catalog-bound display is not a restart-worthy failure: genuine
+                // non-establishment is the no-catalog check above, and genuine
+                // rejection is the wheel-CLOSE-storm backstop.
+                return (false, "");
+            }
 
             // Context B — slot round-trip is POSITIVE confirmation only, never a
             // restart trigger. The wheel's reported slot is AUTHORITATIVE: any
@@ -464,8 +483,23 @@ namespace MozaPlugin.Telemetry.Watchdog
                 return;
             }
 
-            var s09 = _sender.SessionsGetOrCreate(0x09);
-            if (s09.DeviceInitiated) return;
+            // Stop retrying ONLY once the wheel has actually PUSHED its dashboard
+            // list this session — NOT merely opened 0x09. On a slow-bring-up wheel
+            // (radar/track-map dash on a CS-Pro base) the wheel device-inits 0x09
+            // within ~1 s of our open request but only pushes the list once its
+            // dashboard has finished loading (~35-40 s later). The old gate stopped
+            // at DeviceInitiated (the open itself), so the request landed ~35 s too
+            // early, the wheel opened 0x09 with nothing to enumerate, and the list
+            // never arrived — dropdown "(none)", UI stuck on "wheel state not yet
+            // ready" (wire trace: 6c80 request at t=5.7s, wheel 0x09 open type=0x81
+            // at t=6.0s, dashboard load at t=41s, no list ever pushed). Re-emit
+            // prime+open across the full backoff window (~56 s) until the LIVE
+            // (this-session, not cross-session-cached) list lands. A screenless wheel
+            // never pushes one and falls through to MaybeParkScreenless at
+            // S09RetryMaxRounds below, unchanged.
+            bool liveListArrived =
+                (_sender.ConfigJson?.LiveState?.ConfigJsonList?.Count ?? 0) > 0;
+            if (liveListArrived) return;
 
             int now = Environment.TickCount;
             if (_s09RetryRounds > 0)

@@ -101,10 +101,12 @@ namespace MozaPlugin.UI.Import
             AddGameGain(plan, dp, "setGameSpringValue", "Game Spring Gain",
                         () => profile.GameSpring, v => profile.GameSpring = v);
 
-            // constForceExtraMode is the 0-10 interpolation value; Interpolation
-            // stores it as display×10 (raw 0-100), like FfbStrength — scale ×10.
-            AddScaledInt(plan, dp, "constForceExtraMode", "Interpolation", "", 10,
-                         () => profile.Interpolation, v => profile.Interpolation = v);
+            // constForceExtraMode is the RAW wire value (0-100), same scale as
+            // MozaProfile.Interpolation — PitHouse stores it raw (like
+            // maximumSteeringAngle), NOT as its 0-10 slider value. Import 1:1;
+            // display divided by 10 to match the plugin's interpolation slider.
+            AddInterpolation(plan, dp, "constForceExtraMode", "Interpolation",
+                             () => profile.Interpolation, v => profile.Interpolation = v);
 
             AddSkipped(plan, dp, "gameForceFeedbackFilter", "no profile field");
             AddSkipped(plan, dp, "gearJoltLevel", "no profile field");
@@ -351,6 +353,30 @@ namespace MozaPlugin.UI.Import
                    getProfile, setProfile);
         }
 
+        /// <summary>
+        /// Map PitHouse constForceExtraMode (raw 0-100 wire value) onto
+        /// MozaProfile.Interpolation with NO scaling — both store the raw wire
+        /// value. Shown to the user divided by 10 (0-10), matching the
+        /// interpolation slider (SettingsControl.xaml.cs). PitHouse stores this
+        /// raw like maximumSteeringAngle, not as its 0-10 display value, so a
+        /// ×10 here over-scales it 10× (the bug this replaces).
+        /// </summary>
+        private static void AddInterpolation(
+            ImportPlan plan, JObject dp, string pithouseKey, string label,
+            Func<int> getProfile, Action<int> setProfile)
+        {
+            plan.ConsideredKeys.Add(pithouseKey);
+            var pithouse = IntOrNull(dp, pithouseKey);
+            if (pithouse == null) return;
+
+            int newRaw = pithouse.Value;                 // identity — both store raw 0-100
+            int oldRaw = getProfile();
+            string Disp(int raw) => ((int)Math.Round(raw / 10.0)).ToString();
+            string oldDisplay = oldRaw < 0 ? "(unset)" : Disp(oldRaw);
+            string newDisplay = Disp(newRaw);
+            plan.Diffs.Add(new FieldDiff(label, oldDisplay, newDisplay, () => setProfile(newRaw)));
+        }
+
         private static void AddBoolToInt(
             ImportPlan plan, JObject dp, string pithouseKey,
             string label,
@@ -398,10 +424,12 @@ namespace MozaPlugin.UI.Import
         }
 
         /// <summary>
-        /// Decode the 12-char <c>forceFeedbackMaping</c> string. Foxblat reads
-        /// 5 Y points at byte offsets [3,5,7,9,11]; X breakpoints are fixed at
-        /// 20/40/60/80% in both PitHouse and the plugin. We emit one combined
-        /// diff row + one apply closure that writes all five Y fields.
+        /// Decode the 12-char <c>forceFeedbackMaping</c> string, which is six
+        /// interleaved (X,Y) pairs: index [0,1] is the origin, then points 1-5
+        /// at [2,3]…[10,11]. We import the four adjustable X positions
+        /// (x1..x4 at offsets [2,4,6,8]) and the five Y outputs (offsets
+        /// [3,5,7,9,11]); point 5's X is fixed at input=100 (no x5 command).
+        /// One combined diff row + apply closure writes all nine fields.
         /// </summary>
         private static void AddFfbCurve(ImportPlan plan, JObject dp, MozaProfile profile)
         {
@@ -415,18 +443,23 @@ namespace MozaPlugin.UI.Import
                 return;
             }
 
+            int x1 = s[2], x2 = s[4], x3 = s[6], x4 = s[8];
             int y1 = s[3], y2 = s[5], y3 = s[7], y4 = s[9], y5 = s[11];
 
-            int o1 = profile.FfbCurveY1, o2 = profile.FfbCurveY2, o3 = profile.FfbCurveY3,
-                o4 = profile.FfbCurveY4, o5 = profile.FfbCurveY5;
             string Old(int v) => v < 0 ? "?" : v.ToString();
-            string oldDisplay = $"{Old(o1)}/{Old(o2)}/{Old(o3)}/{Old(o4)}/{Old(o5)}";
-            string newDisplay = $"{y1}/{y2}/{y3}/{y4}/{y5}";
+            string oldDisplay =
+                $"X {Old(profile.FfbCurveX1)}/{Old(profile.FfbCurveX2)}/{Old(profile.FfbCurveX3)}/{Old(profile.FfbCurveX4)}  " +
+                $"Y {Old(profile.FfbCurveY1)}/{Old(profile.FfbCurveY2)}/{Old(profile.FfbCurveY3)}/{Old(profile.FfbCurveY4)}/{Old(profile.FfbCurveY5)}";
+            string newDisplay = $"X {x1}/{x2}/{x3}/{x4}  Y {y1}/{y2}/{y3}/{y4}/{y5}";
 
-            plan.Diffs.Add(new FieldDiff("FFB Curve (Y at 20/40/60/80/100%)",
+            plan.Diffs.Add(new FieldDiff("FFB Curve (X + Y points)",
                 oldDisplay, newDisplay,
                 () =>
                 {
+                    profile.FfbCurveX1 = x1;
+                    profile.FfbCurveX2 = x2;
+                    profile.FfbCurveX3 = x3;
+                    profile.FfbCurveX4 = x4;
                     profile.FfbCurveY1 = y1;
                     profile.FfbCurveY2 = y2;
                     profile.FfbCurveY3 = y3;

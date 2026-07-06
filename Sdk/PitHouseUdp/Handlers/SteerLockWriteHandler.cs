@@ -93,8 +93,16 @@ namespace MozaPlugin.Sdk.PitHouseUdp.Handlers
             }
 
             // Apply each field independently — the wire allows either or both.
-            if (appliedMaxRaw.HasValue) _hardware.WriteIfBaseConnected("base-max-angle", appliedMaxRaw.Value);
+            // ORDER IS LOAD-BEARING: write base-limit BEFORE base-max-angle. The
+            // wheelbase clamps max-angle to >= the current limit, so when LOWERING the
+            // lock (RBR's usual 2700°->per-car case) a max-angle write issued while the
+            // old, higher limit still stands is silently rejected — the new range only
+            // "takes" on a later write/FFB re-init (the alt-tab symptom). Lowering the
+            // limit first lets the max-angle write land live, in one shot. Matches the
+            // UI rotation slider (SettingsControl) and button action (SimHubRegistrar).
+            // Capture-confirmed 2026-06-23 (Param 33 stuck at 1350 with max-first).
             if (appliedLimitRaw.HasValue) _hardware.WriteIfBaseConnected("base-limit", appliedLimitRaw.Value);
+            if (appliedMaxRaw.HasValue) _hardware.WriteIfBaseConnected("base-max-angle", appliedMaxRaw.Value);
 
             string summary = $"applied max={appliedMaxDeg?.ToString() ?? "-"}° limit={appliedLimitDeg?.ToString() ?? "-"}° (raw {appliedMaxRaw?.ToString() ?? "-"}/{appliedLimitRaw?.ToString() ?? "-"})";
             ctx.Summary = summary;

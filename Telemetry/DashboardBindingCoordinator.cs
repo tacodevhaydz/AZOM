@@ -452,6 +452,19 @@ namespace MozaPlugin.Telemetry
                 return true;
             }
 
+            // A wheel with no screen never activates the MAIN sender, so the
+            // readiness gate below would defer forever ("sender=not-Active" retry
+            // loop). Apply the profile's dashboard to the CM2 lane instead
+            // (screenless wheel / no wheel + CM2 rigs).
+            if (!_plugin.ShouldDriveDashboard())
+            {
+                if (_plugin.ActiveCm2Sender != null || _plugin.IsCm2Present)
+                    return ApplyProfileDashboardToCm2(key!);
+                MozaLog.Info("[AZOM] Profile dashboard key " + key +
+                             " has no display lane (screenless wheel, no CM2) — leaving current selection");
+                return true;
+            }
+
             // Channel-readiness gate: kind=4 before preamble reaches Active is dropped
             // silently; defer during post-emit cooldown too.
             var sender = _plugin.TelemetrySender;
@@ -631,6 +644,115 @@ namespace MozaPlugin.Telemetry
             _plugin.ActiveTelemetryMzdashPath = "";
             _plugin.PersistSettings();
             OnDashboardSwitched();
+            _plugin.RaiseDashboardSelectionChangedInternal();
+            SetLastAppliedKey(key);
+            return true;
+        }
+
+        /// <summary>
+        /// CM2-lane counterpart of <see cref="ApplyTelemetryDashboardFromProfile"/>
+        /// for rigs whose MAIN sender never runs (screenless wheel / no wheel).
+        /// Resolves the profile key against the CM2's own catalog and switches via
+        /// OnCm2DashboardSwitched — the same path the CM2 UI combo uses. Never
+        /// touches the wheel-lane ActiveTelemetryProfileName/MzdashPath fields.
+        /// </summary>
+        private bool ApplyProfileDashboardToCm2(string key)
+        {
+            var cm2 = _plugin.ActiveCm2Sender;
+            if (cm2 == null || !cm2.IsActive || cm2.IsInSilenceCooldown)
+            {
+                string reason = $"cm2Sender={(cm2 == null ? "null" : (cm2.IsActive ? "Active" : "not-Active"))} " +
+                                $"cooldown={cm2?.IsInSilenceCooldown}";
+                if (RecordDeferReason(reason))
+                    MozaLog.Debug($"[AZOM] ApplyTelemetryDashboardFromProfile deferring to CM2 lane (key={key}): {reason}");
+                return false;
+            }
+            var state = cm2.WheelState;
+            if (state == null || state.ConfigJsonList == null || state.ConfigJsonList.Count == 0)
+            {
+                if (RecordDeferReason("CM2 catalog not yet advertised"))
+                    MozaLog.Debug($"[AZOM] ApplyTelemetryDashboardFromProfile deferring to CM2 lane (key={key}): no CM2 catalog yet");
+                return false;
+            }
+            ClearDeferReason();
+
+            // Resolve key → name against the CM2's own catalog. file: keys match by
+            // bare name only — the CM2 is catalog-only, no mzdash side-load.
+            string targetName;
+            if (key.StartsWith("wheel:", StringComparison.OrdinalIgnoreCase))
+            {
+                string id = key.Substring("wheel:".Length);
+                WheelDashboardEntry? match = null;
+                if (state.EnabledDashboards != null)
+                {
+                    foreach (var entry in state.EnabledDashboards)
+                    {
+                        if (entry != null && string.Equals(entry.Id, id, StringComparison.OrdinalIgnoreCase))
+                        {
+                            match = entry;
+                            break;
+                        }
+                    }
+                }
+                if (match == null)
+                {
+                    MozaLog.Info("[AZOM] Profile dashboard key not found in CM2 catalog (id=" +
+                                 id + "); leaving CM2 selection");
+                    return true;
+                }
+                targetName = match.Title;
+            }
+            else if (key.StartsWith("file:", StringComparison.OrdinalIgnoreCase))
+            {
+                string remainder = key.Substring("file:".Length);
+                int colon = remainder.LastIndexOf(':');
+                targetName = Path.GetFileNameWithoutExtension(colon > 0 ? remainder.Substring(0, colon) : remainder);
+            }
+            else if (key.StartsWith("builtin:", StringComparison.OrdinalIgnoreCase))
+            {
+                targetName = key.Substring("builtin:".Length);
+            }
+            else
+            {
+                MozaLog.Warn("[AZOM] Unknown TelemetryDashboardKey prefix: " + key);
+                return true;
+            }
+            if (string.IsNullOrEmpty(targetName))
+            {
+                MozaLog.Warn("[AZOM] ApplyProfileDashboardToCm2: empty target name for key " + key);
+                return true;
+            }
+
+            int slot = -1;
+            for (int i = 0; i < state.ConfigJsonList.Count; i++)
+            {
+                var name = state.ConfigJsonList[i];
+                if (string.IsNullOrEmpty(name)) continue;
+                if (string.Equals(name, targetName, StringComparison.OrdinalIgnoreCase))
+                {
+                    slot = i;
+                    break;
+                }
+            }
+            if (slot < 0)
+            {
+                MozaLog.Info($"[AZOM] Profile dashboard '{targetName}' not in CM2 catalog; leaving CM2 selection");
+                return true;
+            }
+
+            bool hostEverEngaged = cm2.LastEmittedKind4Slot >= 0;
+            if ((cm2.WheelReportedSlot == slot || cm2.LastEmittedKind4Slot == slot) && hostEverEngaged)
+            {
+                MozaLog.Info($"[AZOM] Profile dashboard '{targetName}' (CM2 slot {slot}) already bound; no wire action needed");
+                _plugin.ActiveCm2DashboardName = targetName;
+                _plugin.PersistSettings();
+                SetLastAppliedKey(key);
+                return true;
+            }
+            MozaLog.Info($"[AZOM] Applying profile dashboard '{targetName}' to CM2 lane (slot {slot}, key={key})");
+            _plugin.ActiveCm2DashboardName = targetName;
+            _plugin.PersistSettings();
+            _plugin.OnCm2DashboardSwitched((uint)slot);
             _plugin.RaiseDashboardSelectionChangedInternal();
             SetLastAppliedKey(key);
             return true;

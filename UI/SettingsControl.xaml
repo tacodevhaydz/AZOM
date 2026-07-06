@@ -219,7 +219,6 @@
                     <ColumnDefinition Width="Auto"/>
                     <ColumnDefinition Width="Auto"/>
                     <ColumnDefinition Width="Auto"/>
-                    <ColumnDefinition Width="Auto"/>
                     <ColumnDefinition Width="*"/>
                 </Grid.ColumnDefinitions>
                 <!-- Brand block -->
@@ -256,13 +255,10 @@
                                   Unchecked="ConnectionToggle_Changed"
                                   VerticalAlignment="Center"/>
 
-                <Button Grid.Column="3" x:Name="RefreshButton" Content="{x:Static res:Strings.Button_Refresh}"
-                        Click="RefreshButton_Click" VerticalAlignment="Center"/>
-
                 <!-- Right-aligned profile selector. Preset import now lives in
                      its own "Import" tab, so the top bar carries just the
                      active-profile dropdown here. -->
-                <StackPanel Grid.Column="4" Orientation="Horizontal"
+                <StackPanel Grid.Column="3" Orientation="Horizontal"
                             HorizontalAlignment="Right"
                             VerticalAlignment="Center">
                     <profilescommon:ProfileList x:Name="ProfileListControl"
@@ -271,133 +267,12 @@
             </Grid>
         </Border>
 
-        <!-- Status hint banners: port-locked-by-other-app, restart notice,
-             profile-not-added-in-SimHub. Items bound by code-behind every
-             ~500ms; the list diff suppresses unchanged-tick rebuilds. -->
-        <ItemsControl x:Name="HintBanners" DockPanel.Dock="Top"
-                      Margin="22,0,22,0" KeyboardNavigation.TabNavigation="None">
-            <ItemsControl.Style>
-                <Style TargetType="ItemsControl">
-                    <Style.Triggers>
-                        <Trigger Property="HasItems" Value="False">
-                            <Setter Property="Visibility" Value="Collapsed"/>
-                        </Trigger>
-                    </Style.Triggers>
-                </Style>
-            </ItemsControl.Style>
-            <ItemsControl.ItemTemplate>
-                <DataTemplate DataType="{x:Type ui:StatusHint}">
-                    <Border Style="{StaticResource BannerBorder}" Margin="0,8,0,0">
-                        <StackPanel>
-                            <TextBlock Text="{Binding Title}" FontWeight="Bold"
-                                       Foreground="#FFD7A0"/>
-                            <TextBlock Text="{Binding Body}" Foreground="#FFD7A0"
-                                       TextWrapping="Wrap" Margin="0,2,0,0"/>
-                            <!-- Restart button: only the device-definition-deployed
-                                 banner shows it (ShowRestartButton). Wired to
-                                 MozaPlugin.RestartSimHub() via HintRestart_Click. -->
-                            <Button Content="{x:Static res:Strings.Button_RestartSimHub}"
-                                    Click="HintRestart_Click"
-                                    HorizontalAlignment="Left" Margin="0,8,0,0">
-                                <Button.Style>
-                                    <Style TargetType="Button" BasedOn="{StaticResource MozaButton}">
-                                        <Setter Property="Visibility" Value="Collapsed"/>
-                                        <Style.Triggers>
-                                            <DataTrigger Binding="{Binding ShowRestartButton}" Value="True">
-                                                <Setter Property="Visibility" Value="Visible"/>
-                                            </DataTrigger>
-                                        </Style.Triggers>
-                                    </Style>
-                                </Button.Style>
-                            </Button>
-                        </StackPanel>
-                    </Border>
-                </DataTemplate>
-            </ItemsControl.ItemTemplate>
-        </ItemsControl>
-
-        <!-- Update notification banner: shows on every tab when a newer release
-             is available (or an install is pending a restart). Dismissable for
-             the session; the full controls (channel, skip, check-now, release
-             notes) live in About > Updates. Driven by
-             SettingsControl.UpdateBanner.cs via RefreshUpdateNotifications(). -->
-        <Border x:Name="HeaderUpdateBanner" DockPanel.Dock="Top"
-                Visibility="Collapsed"
-                Margin="22,8,22,0"
-                BorderBrush="{StaticResource CyanBrush}"
-                BorderThickness="1"
-                Background="{StaticResource BgDeepBrush}"
-                CornerRadius="4"
-                Padding="12,8">
-            <Grid>
-                <Grid.ColumnDefinitions>
-                    <ColumnDefinition Width="*"/>
-                    <ColumnDefinition Width="Auto"/>
-                </Grid.ColumnDefinitions>
-                <StackPanel Grid.Column="0" VerticalAlignment="Center">
-                    <TextBlock x:Name="HeaderUpdateBannerText"
-                               FontFamily="{StaticResource FontUi}"
-                               FontSize="12.5" FontWeight="SemiBold"
-                               Foreground="{StaticResource CyanBrush}"
-                               TextWrapping="Wrap"/>
-                    <TextBlock x:Name="HeaderUpdateBannerProgressText"
-                               Style="{StaticResource MutedHintText}"
-                               TextWrapping="Wrap"
-                               Visibility="Collapsed"
-                               Margin="0,2,0,0"/>
-                </StackPanel>
-                <StackPanel Grid.Column="1" Orientation="Horizontal"
-                            VerticalAlignment="Center" Margin="12,0,0,0">
-                    <Button x:Name="HeaderUpdateInstallButton"
-                            Content="{x:Static res:Strings.Button_InstallUpdate}"
-                            Click="HeaderUpdateInstall_Click"
-                            Margin="0,0,8,0"/>
-                    <Button x:Name="HeaderUpdateRestartButton"
-                            Content="{x:Static res:Strings.Button_RestartSimHub}"
-                            Click="HeaderUpdateRestart_Click"
-                            Visibility="Collapsed"
-                            Margin="0,0,8,0"/>
-                    <Button x:Name="HeaderUpdateNotesButton"
-                            Content="{x:Static res:Strings.Button_OpenReleaseNotes}"
-                            Click="HeaderUpdateNotes_Click"
-                            Margin="0,0,8,0"/>
-                    <Button x:Name="HeaderUpdateDismissButton"
-                            Content="{x:Static res:Strings.Button_DismissUpdate}"
-                            Click="HeaderUpdateDismiss_Click"/>
-                </StackPanel>
-            </Grid>
-        </Border>
-
-        <!-- One-time nudge for users without SDK support enabled: enabling it
-             lets the plugin stand in for MOZA Pit House so SDK apps don't
-             launch it. Cross-tab like the update banner above; dismissal is
-             persisted (SdkPromptDismissed) so it never reappears once acted on.
-             Driven by SettingsControl.Sdk.cs via RefreshSdkPromptBanner(). -->
-        <Border x:Name="SdkPromptBanner" DockPanel.Dock="Top"
-                Visibility="Collapsed" Margin="22,8,22,0"
-                BorderBrush="{StaticResource CyanBrush}" BorderThickness="1"
-                Background="{StaticResource BgDeepBrush}" CornerRadius="4" Padding="12,8">
-            <Grid>
-                <Grid.ColumnDefinitions>
-                    <ColumnDefinition Width="*"/>
-                    <ColumnDefinition Width="Auto"/>
-                </Grid.ColumnDefinitions>
-                <TextBlock Grid.Column="0"
-                           Text="{x:Static res:Strings.Banner_SdkSuggestionText}"
-                           FontFamily="{StaticResource FontUi}" FontSize="12.5" FontWeight="SemiBold"
-                           Foreground="{StaticResource CyanBrush}"
-                           TextWrapping="Wrap" VerticalAlignment="Center"/>
-                <StackPanel Grid.Column="1" Orientation="Horizontal"
-                            VerticalAlignment="Center" Margin="12,0,0,0">
-                    <Button x:Name="SdkPromptConfigureButton"
-                            Content="{x:Static res:Strings.Button_ConfigureSdk}"
-                            Click="SdkPromptConfigure_Click" Margin="0,0,8,0"/>
-                    <Button x:Name="SdkPromptDismissButton"
-                            Content="{x:Static res:Strings.Button_Dismiss}"
-                            Click="SdkPromptDismiss_Click"/>
-                </StackPanel>
-            </Grid>
-        </Border>
+        <!-- Unified banner stack: status hints + update notification + SDK
+             nudge. Self-contained shared control (also hosted on every device
+             page) — refreshes itself every ~500ms. Instantiated in code-behind
+             (a generated typed field of MozaPlugin.UI.* collides with the
+             MozaPlugin class name) and its in-app nav delegates wired there. -->
+        <ContentControl x:Name="BannersHost" DockPanel.Dock="Top" Margin="22,0,22,0"/>
 
         <!-- Tabs -->
         <TabControl x:Name="MainTabs" Style="{StaticResource MozaTabControl}">
@@ -890,6 +765,7 @@
                                               AccentBrush="{StaticResource GreenBrush}" Margin="7,0,0,14">
                                 <StackPanel>
                                     <ctrl:MozaCurveEditor x:Name="FfbCurveEditor" Height="280"
+                                                          AllowHorizontalDrag="True" LockLastNodeX="True"
                                                           AccentBrush="{StaticResource GreenBrush}"/>
                                     <StackPanel Orientation="Horizontal" Margin="0,12,0,0">
                                         <Button Content="{x:Static res:Strings.Button_Linear}" Margin="0,0,8,0" Click="FfbCurvePreset_Linear"/>
@@ -917,6 +793,14 @@
                             <TextBox x:Name="Eq5Value" Text="100%"/>
                             <Slider x:Name="Eq6Slider" Minimum="0" Maximum="400" TickFrequency="1" ValueChanged="Eq6Slider_ValueChanged"/>
                             <TextBox x:Name="Eq6Value" Text="100%"/>
+                            <Slider x:Name="FfbCurveX1Slider" Minimum="0" Maximum="100" TickFrequency="1" ValueChanged="FfbCurveX1Slider_ValueChanged"/>
+                            <TextBox x:Name="FfbCurveX1Value" Text="20"/>
+                            <Slider x:Name="FfbCurveX2Slider" Minimum="0" Maximum="100" TickFrequency="1" ValueChanged="FfbCurveX2Slider_ValueChanged"/>
+                            <TextBox x:Name="FfbCurveX2Value" Text="40"/>
+                            <Slider x:Name="FfbCurveX3Slider" Minimum="0" Maximum="100" TickFrequency="1" ValueChanged="FfbCurveX3Slider_ValueChanged"/>
+                            <TextBox x:Name="FfbCurveX3Value" Text="60"/>
+                            <Slider x:Name="FfbCurveX4Slider" Minimum="0" Maximum="100" TickFrequency="1" ValueChanged="FfbCurveX4Slider_ValueChanged"/>
+                            <TextBox x:Name="FfbCurveX4Value" Text="80"/>
                             <Slider x:Name="FfbCurveY1Slider" Minimum="0" Maximum="100" TickFrequency="1" ValueChanged="FfbCurveY1Slider_ValueChanged"/>
                             <TextBox x:Name="FfbCurveY1Value" Text="20"/>
                             <Slider x:Name="FfbCurveY2Slider" Minimum="0" Maximum="100" TickFrequency="1" ValueChanged="FfbCurveY2Slider_ValueChanged"/>
@@ -2603,6 +2487,33 @@
                             </ctrl:SectionCard>
                         </Grid>
 
+                        <ctrl:SectionCard Title="{x:Static res:Strings.Section_SerialTrafficCapture}"
+                                          Subtitle="{x:Static res:Strings.Subtitle_SerialTrafficCapture}"
+                                          Icon="{StaticResource IconDiag}">
+                            <StackPanel>
+                                <TextBlock TextWrapping="Wrap" Style="{StaticResource MutedHintText}" Margin="0,0,0,10"
+                                           Text="{x:Static res:Strings.Hint_CaptureDataInMemory}"/>
+                                <StackPanel Orientation="Horizontal" Margin="0,0,0,10">
+                                    <Button x:Name="SerialCaptureToggleButton" Content="{x:Static res:Strings.Button_StartCapture}"
+                                            Click="SerialCaptureToggle_Click" MinWidth="120"/>
+                                    <TextBlock x:Name="SerialCaptureStatusText" Text="{x:Static res:Strings.Status_Idle}"
+                                               Style="{StaticResource MutedHintText}" Margin="14,0,0,0"/>
+                                </StackPanel>
+                                <ctrl:OffOnToggle x:Name="AlwaysCaptureOnStartupCheck"
+                                          Content="{x:Static res:Strings.Label_AlwaysCaptureOnStartup}"
+                                          Click="AlwaysCaptureOnStartup_Click"
+                                          Margin="0,0,0,10"
+                                          ToolTip="{x:Static res:Strings.Tooltip_AlwaysCaptureOnStartup}"/>
+                                <StackPanel Orientation="Horizontal">
+                                    <Button x:Name="SerialCaptureExportButton" Content="{x:Static res:Strings.Button_ExportBundle}"
+                                            Click="SerialCaptureExport_Click" IsEnabled="False"/>
+                                    <Button x:Name="SerialCaptureCopyButton" Content="{x:Static res:Strings.Button_CopyCapture}"
+                                            Click="SerialCaptureCopy_Click"
+                                            Margin="8,0,0,0" IsEnabled="False"/>
+                                </StackPanel>
+                            </StackPanel>
+                        </ctrl:SectionCard>
+
                         <ctrl:SectionCard Title="{x:Static res:Strings.Section_WheelLedOutput}"
                                           Subtitle="{x:Static res:Strings.Subtitle_WheelLedOutput}"
                                           Icon="{StaticResource IconLed}">
@@ -2998,7 +2909,11 @@
                                             Click="AboutSponsorButton_Click"
                                             Foreground="{StaticResource GreenBrush}"
                                             BorderBrush="#6639FF88"
+                                            Margin="0,0,8,0"
                                             ToolTip="{x:Static res:Strings.Tooltip_Sponsor}"/>
+                                    <Button Content="{x:Static res:Strings.Button_Kofi}"
+                                            Click="AboutKofiButton_Click"
+                                            ToolTip="{x:Static res:Strings.Tooltip_Kofi}"/>
                                 </StackPanel>
                             </StackPanel>
                         </ctrl:SectionCard>
@@ -3117,39 +3032,7 @@
                         <!-- Bandwidth visualization was moved to the Base tab's live header
                              (next to the temperature graph) as a single dual-line sparkline. -->
 
-                        <ctrl:SectionCard Title="{x:Static res:Strings.Section_SerialTrafficCapture}"
-                                          Subtitle="{x:Static res:Strings.Subtitle_SerialTrafficCapture}"
-                                          Icon="{StaticResource IconDiag}">
-                            <StackPanel>
-                                <TextBlock TextWrapping="Wrap" Style="{StaticResource MutedHintText}" Margin="0,0,0,10"
-                                           Text="{x:Static res:Strings.Hint_CaptureDataInMemory}"/>
-                                <StackPanel Orientation="Horizontal" Margin="0,0,0,10">
-                                    <Button x:Name="SerialCaptureToggleButton" Content="{x:Static res:Strings.Button_StartCapture}"
-                                            Click="SerialCaptureToggle_Click" MinWidth="120"/>
-                                    <TextBlock x:Name="SerialCaptureStatusText" Text="{x:Static res:Strings.Status_Idle}"
-                                               Style="{StaticResource MutedHintText}" Margin="14,0,0,0"/>
-                                </StackPanel>
-                                <ctrl:OffOnToggle x:Name="AlwaysCaptureOnStartupCheck"
-                                          Content="{x:Static res:Strings.Label_AlwaysCaptureOnStartup}"
-                                          Click="AlwaysCaptureOnStartup_Click"
-                                          Margin="0,0,0,10"
-                                          ToolTip="{x:Static res:Strings.Tooltip_AlwaysCaptureOnStartup}"/>
-                                <TextBox x:Name="SerialCaptureOutputBox" FontFamily="{StaticResource FontMono}" FontSize="11"
-                                         IsReadOnly="True" TextWrapping="NoWrap" AcceptsReturn="True"
-                                         Background="{StaticResource BgDeepBrush}"
-                                         Foreground="{StaticResource TextDimBrush}"
-                                         BorderBrush="{StaticResource BorderBrush}" BorderThickness="1"
-                                         VerticalScrollBarVisibility="Auto" HorizontalScrollBarVisibility="Auto"
-                                         Height="220" Margin="0,0,0,10" Padding="10" Visibility="Collapsed"/>
-                                <StackPanel Orientation="Horizontal">
-                                    <Button x:Name="SerialCaptureExportButton" Content="{x:Static res:Strings.Button_ExportBundle}"
-                                            Click="SerialCaptureExport_Click" IsEnabled="False"/>
-                                    <Button x:Name="SerialCaptureCopyButton" Content="{x:Static res:Strings.Button_CopyCapture}"
-                                            Click="SerialCaptureCopy_Click"
-                                            Margin="8,0,0,0" IsEnabled="False"/>
-                                </StackPanel>
-                            </StackPanel>
-                        </ctrl:SectionCard>
+                        <!-- Serial Traffic Capture moved to the Options tab. -->
 
                         <!-- ============ Full Diagnostic Report (expandable) ============ -->
                         <ctrl:SectionCard Title="{x:Static res:Strings.Section_FullDiagReport}"

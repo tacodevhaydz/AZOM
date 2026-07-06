@@ -91,6 +91,17 @@ namespace MozaControls
                     (d, e) => ((MozaCurveEditor)d).Recompute()));
         public bool AllowHorizontalDrag { get => (bool)GetValue(AllowHorizontalDragProperty); set => SetValue(AllowHorizontalDragProperty, value); }
 
+        // When true (with AllowHorizontalDrag), the LAST node is pinned in X and
+        // can only move vertically — used by the wheelbase FFB output curve,
+        // whose final point is fixed at input=100 (the hardware has x1..x4
+        // commands but no x5). Off by default so the mBooster curve, which
+        // resamples all five nodes host-side, keeps dragging its last node.
+        public static readonly DependencyProperty LockLastNodeXProperty =
+            DependencyProperty.Register(nameof(LockLastNodeX), typeof(bool), typeof(MozaCurveEditor),
+                new FrameworkPropertyMetadata(false, FrameworkPropertyMetadataOptions.AffectsRender,
+                    (d, e) => ((MozaCurveEditor)d).Recompute()));
+        public bool LockLastNodeX { get => (bool)GetValue(LockLastNodeXProperty); set => SetValue(LockLastNodeXProperty, value); }
+
         // -------- Configuration DPs --------
 
         public static readonly DependencyProperty NodeCountProperty =
@@ -482,7 +493,9 @@ namespace MozaControls
             // can never cross, which would make the curve's X non-monotonic
             // and the Bezier-inversion evaluators (EvaluateInputCurve-style)
             // ill-defined.
-            if (AllowHorizontalDrag && _dragNode >= 0 && _dragNode < 5)
+            int lastNode = ClampedNodeCount() - 1;
+            if (AllowHorizontalDrag && _dragNode >= 0 && _dragNode < 5
+                && !(LockLastNodeX && _dragNode == lastNode))
             {
                 double w = _canvas?.ActualWidth ?? ActualWidth;
                 double plotW = Math.Max(1, w - PadLeft - PadRight);

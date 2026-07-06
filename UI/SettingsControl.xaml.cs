@@ -58,11 +58,6 @@ namespace MozaPlugin
         private Run[]? _activeButtonSeparatorRuns;
         private bool _activeButtonsShowingNone;
 
-        // Cache of the previous tick's hint list so RefreshDisplay only assigns
-        // ItemsSource when the set genuinely changes. ItemsControl rebuilds its
-        // visual tree on every assignment; the diff keeps it stable at 2 Hz.
-        private IReadOnlyList<StatusHint>? _lastHints;
-
         public SettingsControl(MozaPlugin plugin)
         {
             _plugin = plugin;
@@ -119,6 +114,16 @@ namespace MozaPlugin
             ImportTab.Content = importControl;
 
             Instance = this;
+
+            // Host the shared banner control (instantiated here — a generated
+            // typed field of MozaPlugin.UI.* collides with the MozaPlugin class
+            // name). Wire its in-app navigation; device-page hosts leave these
+            // null and fall back to the external URL / a hidden Configure button.
+            BannersHost.Content = new UI.PluginBanners
+            {
+                OpenReleaseNotesInApp = OpenReleaseNotes,
+                ConfigureSdkInApp = NavigateToSdkTab,
+            };
 
             _refreshTimer = new DispatcherTimer { Interval = TimeSpan.FromMilliseconds(500) };
             _refreshTimer.Tick += RefreshDisplay;
@@ -213,17 +218,8 @@ namespace MozaPlugin
 
         private void RefreshDisplay(object sender, EventArgs e)
         {
-            var hints = StatusHintBuilder.Build(_plugin, DateTime.UtcNow);
-            if (!StatusHint.ListEquals(_lastHints, hints))
-            {
-                HintBanners.ItemsSource = hints;
-                _lastHints = hints;
-            }
-
-            // Keep the cross-tab update banner live so it appears as soon as a
-            // background check finds a newer release, regardless of which tab
-            // the user is on. Cheap (a few string compares); no network.
-            try { RefreshHeaderBanner(); } catch { /* never let the banner break the refresh loop */ }
+            // All top-of-pane banners (status hints + update + SDK nudge) are
+            // owned by the self-refreshing PluginBanners control now.
 
             using (_suppressor.Begin())
             {
@@ -509,7 +505,12 @@ namespace MozaPlugin
             SetSliderRaw(Eq5Slider, Eq5Value, _data.Equalizer5, 0, 400, "%");
             SetSliderRaw(Eq6Slider, Eq6Value, _data.Equalizer6, 0, 400, "%");
 
-            // FFB Curve (X breakpoints are fixed at 20/40/60/80; only Y output values are user-adjustable)
+            // FFB Curve — X1..X4 are the draggable input positions of points 1-4
+            // (point 5 fixed at input=100%); Y1..Y5 the output values.
+            SetSliderRaw(FfbCurveX1Slider, FfbCurveX1Value, _data.FfbCurveX1, 0, 100, "");
+            SetSliderRaw(FfbCurveX2Slider, FfbCurveX2Value, _data.FfbCurveX2, 0, 100, "");
+            SetSliderRaw(FfbCurveX3Slider, FfbCurveX3Value, _data.FfbCurveX3, 0, 100, "");
+            SetSliderRaw(FfbCurveX4Slider, FfbCurveX4Value, _data.FfbCurveX4, 0, 100, "");
             SetSliderRaw(FfbCurveY1Slider, FfbCurveY1Value, _data.FfbCurveY1, 0, 100, "");
             SetSliderRaw(FfbCurveY2Slider, FfbCurveY2Value, _data.FfbCurveY2, 0, 100, "");
             SetSliderRaw(FfbCurveY3Slider, FfbCurveY3Value, _data.FfbCurveY3, 0, 100, "");
@@ -1056,13 +1057,6 @@ namespace MozaPlugin
             _plugin.SetConnectionEnabled(ConnectionToggle.IsChecked == true);
         }
 
-        // ===== Refresh button =====
-
-        private void RefreshButton_Click(object sender, RoutedEventArgs e)
-        {
-            RequestAllSettings();
-        }
-
         private void SoftRebootButton_Click(object sender, RoutedEventArgs e)
         {
             var result = MessageBox.Show(
@@ -1270,6 +1264,12 @@ namespace MozaPlugin
         {
             using (_suppressor.Begin())
             {
+                // Presets are Y-shapes defined at the standard breakpoints, so
+                // snap any dragged X positions back to 20/40/60/80.
+                FfbCurveX1Slider.Value = 20; FfbCurveX1Value.Text = "20"; _data.FfbCurveX1 = 20;
+                FfbCurveX2Slider.Value = 40; FfbCurveX2Value.Text = "40"; _data.FfbCurveX2 = 40;
+                FfbCurveX3Slider.Value = 60; FfbCurveX3Value.Text = "60"; _data.FfbCurveX3 = 60;
+                FfbCurveX4Slider.Value = 80; FfbCurveX4Value.Text = "80"; _data.FfbCurveX4 = 80;
                 FfbCurveY1Slider.Value = p[0]; FfbCurveY1Value.Text = $"{p[0]}"; _data.FfbCurveY1 = p[0];
                 FfbCurveY2Slider.Value = p[1]; FfbCurveY2Value.Text = $"{p[1]}"; _data.FfbCurveY2 = p[1];
                 FfbCurveY3Slider.Value = p[2]; FfbCurveY3Value.Text = $"{p[2]}"; _data.FfbCurveY3 = p[2];
@@ -1290,6 +1290,10 @@ namespace MozaPlugin
         private void FfbCurvePreset_Exponential(object s, RoutedEventArgs e) => ApplyFfbCurvePreset(FfbCurvePresets[2]);
         private void FfbCurvePreset_Parabolic(object s, RoutedEventArgs e) => ApplyFfbCurvePreset(FfbCurvePresets[3]);
 
+        private void FfbCurveX1Slider_ValueChanged(object s, RoutedPropertyChangedEventArgs<double> e) => OnIntSliderChanged(e.NewValue, FfbCurveX1Value, "", v => { _data.FfbCurveX1 = v; _plugin.WriteIfBaseConnected("base-ffb-curve-x1", v); });
+        private void FfbCurveX2Slider_ValueChanged(object s, RoutedPropertyChangedEventArgs<double> e) => OnIntSliderChanged(e.NewValue, FfbCurveX2Value, "", v => { _data.FfbCurveX2 = v; _plugin.WriteIfBaseConnected("base-ffb-curve-x2", v); });
+        private void FfbCurveX3Slider_ValueChanged(object s, RoutedPropertyChangedEventArgs<double> e) => OnIntSliderChanged(e.NewValue, FfbCurveX3Value, "", v => { _data.FfbCurveX3 = v; _plugin.WriteIfBaseConnected("base-ffb-curve-x3", v); });
+        private void FfbCurveX4Slider_ValueChanged(object s, RoutedPropertyChangedEventArgs<double> e) => OnIntSliderChanged(e.NewValue, FfbCurveX4Value, "", v => { _data.FfbCurveX4 = v; _plugin.WriteIfBaseConnected("base-ffb-curve-x4", v); });
         private void FfbCurveY1Slider_ValueChanged(object s, RoutedPropertyChangedEventArgs<double> e) => OnIntSliderChanged(e.NewValue, FfbCurveY1Value, "", v => { _data.FfbCurveY1 = v; _plugin.WriteIfBaseConnected("base-ffb-curve-y1", v); });
         private void FfbCurveY2Slider_ValueChanged(object s, RoutedPropertyChangedEventArgs<double> e) => OnIntSliderChanged(e.NewValue, FfbCurveY2Value, "", v => { _data.FfbCurveY2 = v; _plugin.WriteIfBaseConnected("base-ffb-curve-y2", v); });
         private void FfbCurveY3Slider_ValueChanged(object s, RoutedPropertyChangedEventArgs<double> e) => OnIntSliderChanged(e.NewValue, FfbCurveY3Value, "", v => { _data.FfbCurveY3 = v; _plugin.WriteIfBaseConnected("base-ffb-curve-y3", v); });
@@ -1725,10 +1729,12 @@ namespace MozaPlugin
         private const string AboutGitHubUrl  = "https://github.com/giantorth/moza-simhub-plugin";
         private const string AboutDiscordUrl = "https://discord.gg/J4enw43e62";
         private const string AboutSponsorUrl = "https://github.com/sponsors/giantorth";
+        private const string AboutKofiUrl    = "https://ko-fi.com/giantorth";
 
         private void AboutGitHubButton_Click(object sender, System.Windows.RoutedEventArgs e)  => OpenExternalUrl(AboutGitHubUrl);
         private void AboutDiscordButton_Click(object sender, System.Windows.RoutedEventArgs e) => OpenExternalUrl(AboutDiscordUrl);
         private void AboutSponsorButton_Click(object sender, System.Windows.RoutedEventArgs e) => OpenExternalUrl(AboutSponsorUrl);
+        private void AboutKofiButton_Click(object sender, System.Windows.RoutedEventArgs e)    => OpenExternalUrl(AboutKofiUrl);
 
         // Open a URL via the OS shell. On Windows this hits the default
         // browser; under Wine/Proton it routes through winebrowser which
@@ -1819,8 +1825,6 @@ namespace MozaPlugin
                 _serialCaptureRendered = null;
                 _serialCaptureSnapshot = null;
                 SerialCaptureToggleButton.Content = "Stop capture";
-                SerialCaptureOutputBox.Visibility = System.Windows.Visibility.Collapsed;
-                SerialCaptureOutputBox.Text = string.Empty;
                 SerialCaptureExportButton.IsEnabled = false;
                 SerialCaptureCopyButton.IsEnabled = false;
                 SerialCaptureStatusText.Text = Strings.Status_CapturingOpenTab;
@@ -1832,8 +1836,6 @@ namespace MozaPlugin
             _serialCaptureRendered = SerialTrafficCapture.Format(snap);
             SerialCaptureToggleButton.Content = "Start capture";
             SerialCaptureStatusText.Text = string.Format(Strings.Status_CaptureStopped, snap.Count);
-            SerialCaptureOutputBox.Text = _serialCaptureRendered;
-            SerialCaptureOutputBox.Visibility = System.Windows.Visibility.Visible;
             SerialCaptureExportButton.IsEnabled = true;
             SerialCaptureCopyButton.IsEnabled = snap.Count > 0;
         }

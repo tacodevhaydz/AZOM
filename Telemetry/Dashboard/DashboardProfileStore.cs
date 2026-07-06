@@ -108,11 +108,12 @@ namespace MozaPlugin.Telemetry.Dashboard
             return IsRadarRiChannel(url);
         }
 
-        // Radar ri* subset (patch/riN): uint32 slots carrying the player-relative
-        // positions of nearby cars (two int16, packed by
-        // TelemetryFrameBuilder.RadarPair). Used to re-tier ri* off the advertised
-        // 30 ms fast tier onto a slower emit rate (RadarRiPackageLevelMs) so
-        // 24 × uint32 fits the serial budget when the feature is enabled.
+        // Radar ri* subset (patch/riN): uint32 slots in the radar tier. ri0 is a
+        // constant magic header (0x1687FDFF); ri1..riN carry one packed value per
+        // opponent (carId N), bit-packed after the CurrentLapTime/Gear/Heading/
+        // Rpm/Location preamble. Gates the feature (track-map + radar) behind
+        // EnableRadarTrackMapChannels; ri0..8 are re-tiered onto the radar fast level
+        // (RadarFastLevelMs) and ri9+ onto the overflow level — see BuildProfileFromCatalog.
         internal static bool IsRadarRiChannel(string url)
         {
             if (string.IsNullOrEmpty(url) || url.IndexOf("/patch/", StringComparison.Ordinal) < 0)
@@ -129,6 +130,82 @@ namespace MozaPlugin.Telemetry.Dashboard
             for (int i = start; i < s.Length; i++)
                 if (s[i] < '0' || s[i] > '9') return false;
             return true;
+        }
+
+        // Largest radar ri / track-map Location_N slot index we subscribe to. The
+        // wheel advertises a huge fixed array for the Radar/Map widgets — observed
+        // ri0..ri183 (184 ri) + many Location_N — but it MASKS every slot past
+        // OpponentCount, so only the first ~grid-size are ever shown. Emitting all
+        // 184 ri (175 of them on the overflow tier) is ~5.7 kB/s of pure waste that
+        // saturated the 115200-baud link (PitHouse subscribes to ~20 ri for a full
+        // AC grid). Cap at 47 (48 slots) — well above any real grid (AC ≤ 32) and the
+        // dashboard's own Location capacity, so nothing visible is lost while the
+        // wire load stays bounded regardless of how large an array the wheel declares.
+        internal const int MaxRadarSlotIndex = 47;
+
+        // True for a radar ri / track-map Location_N channel whose slot index is past
+        // MaxRadarSlotIndex (so it should be dropped from the subscription). The
+        // player's bare patch/Location (the preamble, no index) is never capped.
+        internal static bool IsRadarSlotPastCap(string url)
+        {
+            if (IsRadarRiChannel(url))
+                return RadarRiIndex(url) > MaxRadarSlotIndex;
+            if (string.IsNullOrEmpty(url) || url.IndexOf("/patch/", StringComparison.Ordinal) < 0)
+                return false;
+            string suffix = url.Substring(url.LastIndexOf('/') + 1);
+            return suffix.StartsWith("Location_", StringComparison.Ordinal)
+                && int.TryParse(suffix.Substring("Location_".Length), out int n)
+                && n > MaxRadarSlotIndex;
+        }
+
+        // Numeric index N of a patch/riN channel (ri0 -> 0), else -1. Call only
+        // for URLs already matched by IsRadarRiChannel.
+        internal static int RadarRiIndex(string url)
+        {
+            int slash = url.LastIndexOf('/');
+            return slash >= 0 && slash + 3 <= url.Length
+                && int.TryParse(url.Substring(slash + 3), out int n) ? n : -1;
+        }
+
+        // Per-car slot index of a radar (patch/riN) or track-map (patch/Location_N)
+        // channel — the carId/opponent slot it carries. Returns -1 for anything else
+        // (incl. the player's bare patch/Location preamble). Used to gate per-tick
+        // emission to the slots that actually have a live car this session.
+        internal static int RadarTrackMapSlotIndex(string url)
+        {
+            if (IsRadarRiChannel(url))
+                return RadarRiIndex(url);
+            if (string.IsNullOrEmpty(url) || url.IndexOf("/patch/", StringComparison.Ordinal) < 0)
+                return -1;
+            string suffix = url.Substring(url.LastIndexOf('/') + 1);
+            return suffix.StartsWith("Location_", StringComparison.Ordinal)
+                && int.TryParse(suffix.Substring("Location_".Length), out int n) ? n : -1;
+        }
+
+        // The 5 channels PitHouse co-packs ahead of ri0 in the radar fast tier (the
+        // 131-bit preamble = CurrentLapTime f32 / Gear / Heading / Rpm u16 / player
+        // patch/Location location_t). They must ride the SAME tier as ri0..ri8 so the
+        // wheel's radar widget reads them, and at the SAME slowed rate. The four
+        // general channels are only re-tiered when the catalog actually carries radar
+        // ri (see hasRadarRi), so an ordinary dashboard keeps lap-time/gear/rpm fast.
+        internal static bool IsRadarPreambleChannel(string url)
+        {
+            if (string.IsNullOrEmpty(url)) return false;
+            string suffix = url.Substring(url.LastIndexOf('/') + 1);
+            return suffix == "CurrentLapTime" || suffix == "Gear"
+                || suffix == "Heading" || suffix == "Rpm"
+                || (suffix == "Location" && url.IndexOf("/patch/", StringComparison.Ordinal) >= 0);
+        }
+
+        // True when the catalog contains at least one radar ri channel — the signal
+        // that this is a Radar-widget dashboard and the preamble should be re-tiered
+        // onto the radar fast level alongside ri0..ri8.
+        private static bool CatalogHasRadarRi(IReadOnlyList<string> catalog)
+        {
+            for (int i = 0; i < catalog.Count; i++)
+                if (!string.IsNullOrEmpty(catalog[i]) && IsRadarRiChannel(catalog[i]))
+                    return true;
+            return false;
         }
 
         // The v1/preset/* namespace (TimeStamp, CurrentTorque,
@@ -148,10 +225,25 @@ namespace MozaPlugin.Telemetry.Dashboard
             => !string.IsNullOrEmpty(url)
                && url.IndexOf("/preset/", StringComparison.Ordinal) >= 0;
 
-        // Host-side emit rate for the radar ri* channels, overriding their
-        // advertised 30 ms fast tier. Keeps 24 × uint32 within the serial budget
-        // while staying smooth enough for the close-proximity radar.
-        private const int RadarRiPackageLevelMs = 100;
+        // Emit rates (ms) for the radar tiers, overriding the channels' advertised
+        // pkg-30 so the host emits them at PitHouse's measured cadence instead of the
+        // 33 Hz base tick. The tier-def carries NO package level (it is host-side
+        // only), so this changes emit RATE without altering what the wheel binds.
+        //
+        // RadarFastLevelMs — the radar FAST tier = the 131-bit preamble
+        // (CurrentLapTime, Gear, Heading, Rpm, player Location) + ri0..ri8, packed as
+        // ONE tier the wheel's radar widget reads (PitHouse tier flag 0x11, ~13 Hz).
+        // 66 ms => TickInterval 2 at a 30-33 ms base (~15-16 Hz), or 1 (~13-15 Hz)
+        // when the radar dash has no faster channel setting the base. Forcing the
+        // preamble + ri0..8 to a SHARED level both co-packs them into one tier AND
+        // halves the radar's wire cost vs the per-tick base — the feature's main
+        // bandwidth win (the all-pkg-30 fast set otherwise ran ~33 Hz and, with the
+        // full grid split across sub-tiers, overran the 115200-baud link).
+        private const int RadarFastLevelMs = 66;
+        // RadarOverflowLevelMs — ri9+ spill to a slower tier (no preamble) so a full
+        // grid doesn't saturate the link. PitHouse runs the overflow ~7.6 Hz; 132 ms
+        // => TickInterval ~4 at a 33 ms base (~8 Hz).
+        private const int RadarOverflowLevelMs = 132;
 
         public MultiStreamProfile BuildProfileFromCatalog(
             IReadOnlyList<string> catalog,
@@ -174,15 +266,23 @@ namespace MozaPlugin.Telemetry.Dashboard
             // which lags the wheel's per-tick render. Keep the first
             // occurrence; genuinely-new URLs in later batches still pass.
             var seenUrls = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+            // Re-tier the radar preamble (general lap/gear/heading/rpm + player
+            // Location) onto the radar fast level ONLY when the catalog actually
+            // carries radar ri channels, so an ordinary dashboard's lap-time/rpm keep
+            // their advertised fast rate.
+            bool hasRadarRi = includeRadarTrackMap && CatalogHasRadarRi(catalog);
             foreach (var url in catalog)
             {
                 if (string.IsNullOrEmpty(url)) continue;
                 // Track-map (patch/Location*) + radar (patch/ri*) channels are
                 // gated behind EnableRadarTrackMapChannels (default off) while the
-                // feature is under test. When enabled, ri* is re-tiered slower
-                // below (see the package_level override) so 24 × uint32 doesn't
-                // saturate the serial link.
+                // feature is under test.
                 if (!includeRadarTrackMap && IsRadarTrackMapChannel(url)) continue;
+                // Cap the radar/track-map slots to a realistic grid (see
+                // MaxRadarSlotIndex). The wheel advertises a huge array (ri0..ri183
+                // observed) but masks everything past OpponentCount; emitting it all
+                // floods the link. Drop the over-cap slots from the subscription.
+                if (includeRadarTrackMap && IsRadarSlotPastCap(url)) continue;
                 if (IsWheelInternalPresetChannel(url)) continue;
                 if (!seenUrls.Add(url)) continue;
                 string suffix = url.Substring(url.LastIndexOf('/') + 1);
@@ -191,14 +291,21 @@ namespace MozaPlugin.Telemetry.Dashboard
                 if (telemetryMap.TryGetValue(url, out var info))
                 {
                     packageLevel = info.PackageLevel;
-                    // Radar ri* channels are advertised at the 30 ms fast tier
-                    // (33 fps). 24 × uint32 at 33 fps ≈ 3.2 kB/s on a tier that
-                    // fires every tick (can't be staggered), which re-saturates
-                    // the 115200-baud link. "Cars passing nearby" doesn't need
-                    // 33 fps — re-tier ri* to ~10 Hz so it stays within budget
-                    // and phases across ticks like the track-map sub-tiers.
-                    if (IsRadarRiChannel(url) && packageLevel < RadarRiPackageLevelMs)
-                        packageLevel = RadarRiPackageLevelMs;
+                    // Radar tiering matches PitHouse: the radar FAST tier is a
+                    // DEDICATED tier carrying the 131-bit preamble (CurrentLapTime,
+                    // Gear, Heading, Rpm, player Location) + ri0..ri8 — the layout the
+                    // wheel's radar widget reads (preamble then ri0..riN at bit
+                    // 131+32k; PitHouse tier flag 0x11). ri9+ spill to a SLOWER
+                    // overflow tier (no preamble). Forcing the preamble + ri0..8 onto a
+                    // SHARED RadarFastLevelMs (a) keeps them co-packed in ONE tier —
+                    // isolating ri left the wheel reading 131 bits off and rendering
+                    // static — and (b) slows the tier from the 33 Hz base to PitHouse's
+                    // ~13 Hz, the feature's main wire-budget win. Preamble re-tiered
+                    // only when the catalog actually carries radar ri (hasRadarRi).
+                    if (IsRadarRiChannel(url))
+                        packageLevel = RadarRiIndex(url) > 8 ? RadarOverflowLevelMs : RadarFastLevelMs;
+                    else if (hasRadarRi && IsRadarPreambleChannel(url))
+                        packageLevel = RadarFastLevelMs;
                     if (string.Equals(info.Compression, "string", StringComparison.OrdinalIgnoreCase))
                     {
                         stringChannels.Add(BuildStringChannel(url, info));
