@@ -29,12 +29,16 @@ namespace MozaPlugin.Devices
         // numbers as the suggested *applied* scale, so user 100 % maps to those
         // ceilings; user 0 % is silent. Matches PitHouse's perceived loudness at
         // equivalent slider positions.
+        //
+        // Engine is the exception: its intensity slider is meant to be fully
+        // parametric like AB9's engine-vibration slider (0-100 % maps ~1:1 to
+        // the device's full 0..1 amplitude range), so it has no scale ceiling
+        // of its own — see UpdateEngineRequest.
         private const double AbsScaleMax       = 0.10;
         private const double LockupScaleMax    = 0.15;
         private const double ThresholdScaleMax = 0.10;
-        private const double EngineScaleMax    = 0.10;
         // Custom effects share Engine's verified wire shape (see
-        // ProcessCustomEffect) so they share its scale cap too — a
+        // ProcessCustomEffect) so they share a scale cap too — a
         // continuous-mode custom effect (no Threshold gate) can run
         // indefinitely just like Engine does, and would otherwise dominate.
         private const double CustomEffectScaleMax = 0.10;
@@ -326,8 +330,7 @@ namespace MozaPlugin.Devices
             // drags are felt immediately while testing.
             if (_engineTestSustained)
             {
-                double testScale = ((settings?.Engine?.IntensityPct ?? 0) / 100.0) * EngineScaleMax;
-                st.IntensityRequest = Clamp01(testScale);
+                st.IntensityRequest = Clamp01((settings?.Engine?.IntensityPct ?? 0) / 100.0);
                 st.FreqHz = freqHz;
                 return;
             }
@@ -349,9 +352,11 @@ namespace MozaPlugin.Devices
             }
 
             st.FreqHz = freqHz;
-            // Engine continuous-effect: user 0..100 % maps to scale 0..EngineScaleMax.
-            double engineScale = (settings.Engine.IntensityPct / 100.0) * EngineScaleMax;
-            st.IntensityRequest = Clamp01(engineScale);
+            // Engine continuous-effect: user 0..100 % maps ~1:1 to output
+            // amplitude 0..1, matching AB9's parametric engine-vibration
+            // intensity slider (no artificial ceiling — see the constants
+            // block above).
+            st.IntensityRequest = Clamp01(settings.Engine.IntensityPct / 100.0);
         }
 
         private static double ClampEngineFreq(double hz)
