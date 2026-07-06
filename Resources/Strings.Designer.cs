@@ -699,5 +699,24 @@ namespace MozaPlugin.Resources
         public static string SliderLabel_DisplayRotation => Get("SliderLabel_DisplayRotation");
         public static string Option_RotationSmooth => Get("Option_RotationSmooth");
         public static string Option_RotationImmediate => Get("Option_RotationImmediate");
+        public static string TabHeader_Stalks => Get("TabHeader_Stalks");
+        public static string Section_Stalks => Get("Section_Stalks");
+        public static string Status_SearchingForStalks => Get("Status_SearchingForStalks");
+        public static string Status_StalksConnected => Get("Status_StalksConnected");
+        public static string Section_StalkMode => Get("Section_StalkMode");
+        public static string Option_StalkButtonBox => Get("Option_StalkButtonBox");
+        public static string Option_StalkTruckSim => Get("Option_StalkTruckSim");
+        public static string Hint_StalksTruckSim => Get("Hint_StalksTruckSim");
+        public static string Section_StalksKeyMapping => Get("Section_StalksKeyMapping");
+        public static string Subtitle_StalksInteractiveMap => Get("Subtitle_StalksInteractiveMap");
+        public static string Section_StalksWiperSync => Get("Section_StalksWiperSync");
+        public static string Subtitle_StalksWiperSync => Get("Subtitle_StalksWiperSync");
+        public static string SliderLabel_WiperStageCount => Get("SliderLabel_WiperStageCount");
+        public static string Label_WiperForwardWraps => Get("Label_WiperForwardWraps");
+        public static string SliderLabel_LightStageCount => Get("SliderLabel_LightStageCount");
+        public static string Button_ResyncWipers => Get("Button_ResyncWipers");
+        public static string Hint_ResyncWipers => Get("Hint_ResyncWipers");
+        public static string Label_StalksLastPressed => Get("Label_StalksLastPressed");
+        public static string Button_LoadEts2Defaults => Get("Button_LoadEts2Defaults");
     }
 }

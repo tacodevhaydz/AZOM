@@ -105,6 +105,16 @@ namespace MozaPlugin
         public readonly bool[] ButtonStates = new bool[MaxButtons];
         public volatile int ButtonCount;
 
+        // MOZA Stalks buttons — kept on a separate surface from the wheel's so
+        // the 28-button stalks never collide with wheel button indices. Written
+        // only by the Stalks HID device; consumed by the truck-sim keyboard feature.
+        public const int MaxStalksButtons = 32;
+        public readonly bool[] StalksButtonStates = new bool[MaxStalksButtons];
+        public volatile int StalksButtonCount;
+        // True while a MOZA Stalks HID device is present on the bus (drives the
+        // Stalks settings tab's visibility).
+        public volatile bool IsStalksConnected;
+
         // Handbrake button (separate HID device, only fires in button mode)
         public volatile bool HandbrakeButtonPressed;
 

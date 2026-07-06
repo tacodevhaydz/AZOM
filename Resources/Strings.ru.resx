@@ -638,4 +638,23 @@ Id: {2}</value></data>
   <data name="SliderLabel_DisplayRotation" xml:space="preserve"><value>Поворот дисплея</value></data>
   <data name="Option_RotationSmooth" xml:space="preserve"><value>Плавный</value></data>
   <data name="Option_RotationImmediate" xml:space="preserve"><value>Мгновенный</value></data>
+  <data name="TabHeader_Stalks" xml:space="preserve"><value>Подрулевые</value></data>
+  <data name="Section_Stalks" xml:space="preserve"><value>Многофункциональные подрулевые</value></data>
+  <data name="Status_SearchingForStalks" xml:space="preserve"><value>Поиск подрулевых…</value></data>
+  <data name="Status_StalksConnected" xml:space="preserve"><value>Подрулевые подключены</value></data>
+  <data name="Section_StalkMode" xml:space="preserve"><value>Режим подрулевых</value></data>
+  <data name="Option_StalkButtonBox" xml:space="preserve"><value>Кнопочная панель</value></data>
+  <data name="Option_StalkTruckSim" xml:space="preserve"><value>Симулятор грузовика (ETS2/ATS)</value></data>
+  <data name="Hint_StalksTruckSim" xml:space="preserve"><value>В режиме симулятора грузовика плагин преобразует нажатия подрулевых в клавиши клавиатуры для Euro/American Truck Simulator. В режиме кнопочной панели подрулевые работают как обычные кнопки.</value></data>
+  <data name="Section_StalksKeyMapping" xml:space="preserve"><value>Назначение кнопок</value></data>
+  <data name="Subtitle_StalksInteractiveMap" xml:space="preserve"><value>Нажмите орган управления, чтобы подсветить его кнопку, затем назначьте клавишу или ступень стеклоочистителей/света.</value></data>
+  <data name="Section_StalksWiperSync" xml:space="preserve"><value>Стеклоочистители и свет</value></data>
+  <data name="Subtitle_StalksWiperSync" xml:space="preserve"><value>Игра переключает стеклоочистители/свет клавишами цикла; плагин отправляет нужное число нажатий для достижения положения переключателя.</value></data>
+  <data name="SliderLabel_WiperStageCount" xml:space="preserve"><value>Ступени стеклоочистителей</value></data>
+  <data name="Label_WiperForwardWraps" xml:space="preserve"><value>Клавиша стеклоочистителей зациклена</value></data>
+  <data name="SliderLabel_LightStageCount" xml:space="preserve"><value>Ступени света</value></data>
+  <data name="Button_ResyncWipers" xml:space="preserve"><value>Пересинхронизировать стеклоочистители</value></data>
+  <data name="Hint_ResyncWipers" xml:space="preserve"><value>Возвращает стеклоочистители в игре в выключенное состояние для выравнивания со ступенью, отслеживаемой плагином.</value></data>
+  <data name="Label_StalksLastPressed" xml:space="preserve"><value>Последнее нажатие: кнопка {0}</value></data>
+  <data name="Button_LoadEts2Defaults" xml:space="preserve"><value>Загрузить настройки ETS2/ATS по умолчанию</value></data>
 </root>

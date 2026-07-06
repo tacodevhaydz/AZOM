@@ -2283,6 +2283,145 @@
             </TabItem>
 
             <!-- ==================== OPTIONS TAB ==================== -->
+            <TabItem x:Name="StalksTab" Header="{x:Static res:Strings.TabHeader_Stalks}" Visibility="Collapsed">
+                <ScrollViewer VerticalScrollBarVisibility="Auto" Padding="22,18,22,8">
+                    <StackPanel>
+
+                        <!-- Status header -->
+                        <Border Background="{StaticResource BgCardBrush}"
+                                BorderBrush="{StaticResource BorderBrush}"
+                                BorderThickness="1" CornerRadius="8"
+                                Padding="18,14" Margin="0,0,0,14">
+                            <StackPanel Orientation="Horizontal">
+                                <Ellipse x:Name="StalksStatusDot" Width="10" Height="10" Fill="Gray"
+                                         VerticalAlignment="Center" Margin="0,0,12,0"/>
+                                <TextBlock Text="{x:Static res:Strings.Section_Stalks}" FontWeight="SemiBold" FontSize="13"
+                                           VerticalAlignment="Center" Margin="0,0,18,0"/>
+                                <TextBlock x:Name="StalksStatusLabel" Text="{x:Static res:Strings.Status_SearchingForStalks}"
+                                           Style="{StaticResource MutedHintText}" VerticalAlignment="Center"/>
+                            </StackPanel>
+                        </Border>
+
+                        <!-- Mode selector -->
+                        <ctrl:SectionCard Title="{x:Static res:Strings.Section_StalkMode}" Icon="{StaticResource IconShift}">
+                            <StackPanel>
+                                <Grid Margin="0,4">
+                                    <Grid.ColumnDefinitions>
+                                        <ColumnDefinition Width="*"/>
+                                        <ColumnDefinition Width="Auto"/>
+                                    </Grid.ColumnDefinitions>
+                                    <TextBlock Grid.Column="0" Text="{x:Static res:Strings.SliderLabel_Mode}" Style="{StaticResource SliderLabel}"/>
+                                    <ctrl:SegmentedControl Grid.Column="1" x:Name="StalksModeCombo"
+                                                           HorizontalAlignment="Right"
+                                                           SelectionChanged="StalksModeCombo_Changed">
+                                        <ListBoxItem Content="{x:Static res:Strings.Option_StalkButtonBox}"/>
+                                        <ListBoxItem Content="{x:Static res:Strings.Option_StalkTruckSim}"/>
+                                    </ctrl:SegmentedControl>
+                                </Grid>
+                                <TextBlock Text="{x:Static res:Strings.Hint_StalksTruckSim}"
+                                           Style="{StaticResource MutedHintText}" TextWrapping="Wrap" Margin="0,8,0,0"/>
+                            </StackPanel>
+                        </ctrl:SectionCard>
+
+                        <!-- Truck-sim config (visible only in truck-sim mode) -->
+                        <StackPanel x:Name="StalksTruckSimPanel" Visibility="Collapsed">
+
+                            <ctrl:SectionCard Title="{x:Static res:Strings.Section_StalksKeyMapping}"
+                                              Subtitle="{x:Static res:Strings.Subtitle_StalksInteractiveMap}"
+                                              Icon="{StaticResource IconShift}">
+                                <StackPanel>
+                                    <TextBlock x:Name="StalksLastPressedLabel"
+                                               Style="{StaticResource MutedHintText}" Margin="0,0,0,8"/>
+                                    <Button x:Name="StalksLoadDefaultsButton"
+                                            Content="{x:Static res:Strings.Button_LoadEts2Defaults}"
+                                            Click="StalksLoadDefaultsButton_Click"
+                                            HorizontalAlignment="Left" Padding="14,6" Margin="0,0,0,10"/>
+                                    <ItemsControl x:Name="StalksButtonList">
+                                        <ItemsControl.ItemTemplate>
+                                            <DataTemplate>
+                                                <Grid Margin="0,2">
+                                                    <Grid.ColumnDefinitions>
+                                                        <ColumnDefinition Width="72"/>
+                                                        <ColumnDefinition Width="*"/>
+                                                    </Grid.ColumnDefinitions>
+                                                    <StackPanel Grid.Column="0" Orientation="Horizontal" VerticalAlignment="Center">
+                                                        <Ellipse Width="9" Height="9" Margin="0,0,6,0" VerticalAlignment="Center">
+                                                            <Ellipse.Style>
+                                                                <Style TargetType="Ellipse">
+                                                                    <Setter Property="Fill" Value="#3A3A3A"/>
+                                                                    <Style.Triggers>
+                                                                        <DataTrigger Binding="{Binding IsPressed}" Value="True">
+                                                                            <Setter Property="Fill" Value="LimeGreen"/>
+                                                                        </DataTrigger>
+                                                                    </Style.Triggers>
+                                                                </Style>
+                                                            </Ellipse.Style>
+                                                        </Ellipse>
+                                                        <TextBlock Text="{Binding Label}" VerticalAlignment="Center"
+                                                                   Style="{StaticResource SliderLabel}"/>
+                                                    </StackPanel>
+                                                    <ComboBox Grid.Column="1" Margin="4,1"
+                                                              ItemsSource="{Binding Options}"
+                                                              SelectedItem="{Binding Selected, Mode=TwoWay}"/>
+                                                </Grid>
+                                            </DataTemplate>
+                                        </ItemsControl.ItemTemplate>
+                                    </ItemsControl>
+                                </StackPanel>
+                            </ctrl:SectionCard>
+
+                            <ctrl:SectionCard Title="{x:Static res:Strings.Section_StalksWiperSync}"
+                                              Subtitle="{x:Static res:Strings.Subtitle_StalksWiperSync}"
+                                              Icon="{StaticResource IconShift}">
+                                <StackPanel>
+                                    <Grid Margin="0,4">
+                                        <Grid.ColumnDefinitions>
+                                            <ColumnDefinition Width="Auto"/>
+                                            <ColumnDefinition Width="*"/>
+                                            <ColumnDefinition Width="Auto"/>
+                                        </Grid.ColumnDefinitions>
+                                        <TextBlock Grid.Column="0" Text="{x:Static res:Strings.SliderLabel_WiperStageCount}" Style="{StaticResource SliderLabel}"/>
+                                        <Slider Grid.Column="1" x:Name="StalksWiperStageSlider" Style="{StaticResource SettingSlider}" Minimum="2" Maximum="8" TickFrequency="1" IsSnapToTickEnabled="True" ValueChanged="StalksWiperStageSlider_ValueChanged"/>
+                                        <TextBox Grid.Column="2" x:Name="StalksWiperStageValue" Style="{StaticResource SliderValueEditBox}"
+                                                 Tag="{Binding ElementName=StalksWiperStageSlider}"
+                                                 KeyDown="SliderValueBox_KeyDown" LostFocus="SliderValueBox_LostFocus" Text="4"/>
+                                    </Grid>
+                                    <Grid Margin="0,4">
+                                        <Grid.ColumnDefinitions>
+                                            <ColumnDefinition Width="*"/>
+                                            <ColumnDefinition Width="Auto"/>
+                                        </Grid.ColumnDefinitions>
+                                        <TextBlock Grid.Column="0" Text="{x:Static res:Strings.Label_WiperForwardWraps}" Style="{StaticResource SliderLabel}"/>
+                                        <ctrl:OffOnToggle Grid.Column="1" x:Name="StalksWiperWrapToggle"
+                                                          Checked="StalksWiperWrapToggle_Changed" Unchecked="StalksWiperWrapToggle_Changed"/>
+                                    </Grid>
+                                    <Grid Margin="0,4">
+                                        <Grid.ColumnDefinitions>
+                                            <ColumnDefinition Width="Auto"/>
+                                            <ColumnDefinition Width="*"/>
+                                            <ColumnDefinition Width="Auto"/>
+                                        </Grid.ColumnDefinitions>
+                                        <TextBlock Grid.Column="0" Text="{x:Static res:Strings.SliderLabel_LightStageCount}" Style="{StaticResource SliderLabel}"/>
+                                        <Slider Grid.Column="1" x:Name="StalksLightStageSlider" Style="{StaticResource SettingSlider}" Minimum="2" Maximum="6" TickFrequency="1" IsSnapToTickEnabled="True" ValueChanged="StalksLightStageSlider_ValueChanged"/>
+                                        <TextBox Grid.Column="2" x:Name="StalksLightStageValue" Style="{StaticResource SliderValueEditBox}"
+                                                 Tag="{Binding ElementName=StalksLightStageSlider}"
+                                                 KeyDown="SliderValueBox_KeyDown" LostFocus="SliderValueBox_LostFocus" Text="3"/>
+                                    </Grid>
+                                    <DockPanel Margin="0,10,0,0">
+                                        <Button x:Name="StalksResyncButton" DockPanel.Dock="Left"
+                                                Content="{x:Static res:Strings.Button_ResyncWipers}"
+                                                Click="StalksResyncButton_Click" Padding="14,6"/>
+                                        <TextBlock Text="{x:Static res:Strings.Hint_ResyncWipers}"
+                                                   Style="{StaticResource MutedHintText}" TextWrapping="Wrap"
+                                                   VerticalAlignment="Center" Margin="12,0,0,0"/>
+                                    </DockPanel>
+                                </StackPanel>
+                            </ctrl:SectionCard>
+                        </StackPanel>
+                    </StackPanel>
+                </ScrollViewer>
+            </TabItem>
+
             <TabItem Header="{x:Static res:Strings.TabHeader_Options}">
                 <ScrollViewer VerticalScrollBarVisibility="Auto" Padding="22,18,22,8">
                     <StackPanel>

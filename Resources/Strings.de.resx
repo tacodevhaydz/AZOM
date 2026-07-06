@@ -638,4 +638,23 @@ Id: {2}</value></data>
   <data name="SliderLabel_DisplayRotation" xml:space="preserve"><value>Displayrotation</value></data>
   <data name="Option_RotationSmooth" xml:space="preserve"><value>Sanft</value></data>
   <data name="Option_RotationImmediate" xml:space="preserve"><value>Sofort</value></data>
+  <data name="TabHeader_Stalks" xml:space="preserve"><value>Hebel</value></data>
+  <data name="Section_Stalks" xml:space="preserve"><value>Multifunktions-Lenkstockhebel</value></data>
+  <data name="Status_SearchingForStalks" xml:space="preserve"><value>Suche nach Hebeln…</value></data>
+  <data name="Status_StalksConnected" xml:space="preserve"><value>Hebel verbunden</value></data>
+  <data name="Section_StalkMode" xml:space="preserve"><value>Hebelmodus</value></data>
+  <data name="Option_StalkButtonBox" xml:space="preserve"><value>Button-Box</value></data>
+  <data name="Option_StalkTruckSim" xml:space="preserve"><value>Truck-Sim (ETS2/ATS)</value></data>
+  <data name="Hint_StalksTruckSim" xml:space="preserve"><value>Im Truck-Sim-Modus wandelt das Plugin Hebelbetätigungen in Tastatureingaben für Euro/American Truck Simulator um. Im Button-Box-Modus wirken die Hebel als einfache Tasten.</value></data>
+  <data name="Section_StalksKeyMapping" xml:space="preserve"><value>Tastenzuordnung</value></data>
+  <data name="Subtitle_StalksInteractiveMap" xml:space="preserve"><value>Betätige einen Hebel, um seine Taste hervorzuheben, und weise dann eine Taste oder Wischer-/Lichtstufe zu.</value></data>
+  <data name="Section_StalksWiperSync" xml:space="preserve"><value>Scheibenwischer &amp; Licht</value></data>
+  <data name="Subtitle_StalksWiperSync" xml:space="preserve"><value>Das Spiel schaltet Wischer/Licht per Zyklustaste; das Plugin sendet die passende Anzahl Tastendrücke bis zur Hebelposition.</value></data>
+  <data name="SliderLabel_WiperStageCount" xml:space="preserve"><value>Wischerstufen</value></data>
+  <data name="Label_WiperForwardWraps" xml:space="preserve"><value>Wischertaste läuft um</value></data>
+  <data name="SliderLabel_LightStageCount" xml:space="preserve"><value>Lichtstufen</value></data>
+  <data name="Button_ResyncWipers" xml:space="preserve"><value>Wischer neu abgleichen</value></data>
+  <data name="Hint_ResyncWipers" xml:space="preserve"><value>Schaltet die Spielwischer auf Aus, um sie mit der vom Plugin verfolgten Stufe abzugleichen.</value></data>
+  <data name="Label_StalksLastPressed" xml:space="preserve"><value>Zuletzt gedrückt: Taste {0}</value></data>
+  <data name="Button_LoadEts2Defaults" xml:space="preserve"><value>ETS2/ATS-Standard laden</value></data>
 </root>

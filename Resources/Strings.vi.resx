@@ -638,4 +638,23 @@ Id: {2}</value></data>
   <data name="SliderLabel_DisplayRotation" xml:space="preserve"><value>Xoay màn hình</value></data>
   <data name="Option_RotationSmooth" xml:space="preserve"><value>Mượt</value></data>
   <data name="Option_RotationImmediate" xml:space="preserve"><value>Tức thì</value></data>
+  <data name="TabHeader_Stalks" xml:space="preserve"><value>Cần gạt</value></data>
+  <data name="Section_Stalks" xml:space="preserve"><value>Cần gạt đa chức năng</value></data>
+  <data name="Status_SearchingForStalks" xml:space="preserve"><value>Đang tìm cần gạt…</value></data>
+  <data name="Status_StalksConnected" xml:space="preserve"><value>Đã kết nối cần gạt</value></data>
+  <data name="Section_StalkMode" xml:space="preserve"><value>Chế độ cần gạt</value></data>
+  <data name="Option_StalkButtonBox" xml:space="preserve"><value>Hộp nút</value></data>
+  <data name="Option_StalkTruckSim" xml:space="preserve"><value>Mô phỏng xe tải (ETS2/ATS)</value></data>
+  <data name="Hint_StalksTruckSim" xml:space="preserve"><value>Ở chế độ mô phỏng xe tải, plugin chuyển thao tác cần gạt thành phím bàn phím cho Euro/American Truck Simulator. Ở chế độ hộp nút, cần gạt hoạt động như các nút thường.</value></data>
+  <data name="Section_StalksKeyMapping" xml:space="preserve"><value>Gán nút</value></data>
+  <data name="Subtitle_StalksInteractiveMap" xml:space="preserve"><value>Nhấn một điều khiển cần gạt để làm nổi bật nút của nó, rồi gán một phím hoặc cấp gạt mưa/đèn.</value></data>
+  <data name="Section_StalksWiperSync" xml:space="preserve"><value>Gạt mưa &amp; đèn</value></data>
+  <data name="Subtitle_StalksWiperSync" xml:space="preserve"><value>Trò chơi chuyển gạt mưa/đèn bằng phím xoay vòng; plugin gửi đúng số lần nhấn để đạt vị trí cần gạt.</value></data>
+  <data name="SliderLabel_WiperStageCount" xml:space="preserve"><value>Cấp gạt mưa</value></data>
+  <data name="Label_WiperForwardWraps" xml:space="preserve"><value>Phím gạt mưa xoay vòng</value></data>
+  <data name="SliderLabel_LightStageCount" xml:space="preserve"><value>Cấp đèn</value></data>
+  <data name="Button_ResyncWipers" xml:space="preserve"><value>Đồng bộ lại gạt mưa</value></data>
+  <data name="Hint_ResyncWipers" xml:space="preserve"><value>Đưa gạt mưa trong trò chơi về tắt để khớp lại với cấp mà plugin đang theo dõi.</value></data>
+  <data name="Label_StalksLastPressed" xml:space="preserve"><value>Lần nhấn cuối: nút {0}</value></data>
+  <data name="Button_LoadEts2Defaults" xml:space="preserve"><value>Tải mặc định ETS2/ATS</value></data>
 </root>

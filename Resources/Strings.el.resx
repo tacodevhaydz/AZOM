@@ -637,4 +637,23 @@ Id: {2}</value></data>
   <data name="SliderLabel_DisplayRotation" xml:space="preserve"><value>Περιστροφή οθόνης</value></data>
   <data name="Option_RotationSmooth" xml:space="preserve"><value>Ομαλή</value></data>
   <data name="Option_RotationImmediate" xml:space="preserve"><value>Άμεση</value></data>
+  <data name="TabHeader_Stalks" xml:space="preserve"><value>Διακόπτες</value></data>
+  <data name="Section_Stalks" xml:space="preserve"><value>Διακόπτες πολλαπλών λειτουργιών</value></data>
+  <data name="Status_SearchingForStalks" xml:space="preserve"><value>Αναζήτηση διακοπτών…</value></data>
+  <data name="Status_StalksConnected" xml:space="preserve"><value>Οι διακόπτες συνδέθηκαν</value></data>
+  <data name="Section_StalkMode" xml:space="preserve"><value>Λειτουργία διακόπτη</value></data>
+  <data name="Option_StalkButtonBox" xml:space="preserve"><value>Κουτί κουμπιών</value></data>
+  <data name="Option_StalkTruckSim" xml:space="preserve"><value>Truck sim (ETS2/ATS)</value></data>
+  <data name="Hint_StalksTruckSim" xml:space="preserve"><value>Στη λειτουργία truck sim το πρόσθετο μετατρέπει τα πατήματα των διακοπτών σε πλήκτρα πληκτρολογίου για το Euro/American Truck Simulator. Στη λειτουργία κουτιού κουμπιών οι διακόπτες λειτουργούν ως απλά κουμπιά.</value></data>
+  <data name="Section_StalksKeyMapping" xml:space="preserve"><value>Αντιστοίχιση κουμπιών</value></data>
+  <data name="Subtitle_StalksInteractiveMap" xml:space="preserve"><value>Πάτησε έναν διακόπτη για να επισημανθεί το κουμπί του και μετά αντιστοίχισε ένα πλήκτρο ή στάδιο υαλοκαθαριστήρων/φώτων.</value></data>
+  <data name="Section_StalksWiperSync" xml:space="preserve"><value>Υαλοκαθαριστήρες &amp; Φώτα</value></data>
+  <data name="Subtitle_StalksWiperSync" xml:space="preserve"><value>Το παιχνίδι αλλάζει υαλοκαθαριστήρες/φώτα με πλήκτρα κύκλου· το πρόσθετο στέλνει τον σωστό αριθμό πατημάτων ώστε να φτάσει στη θέση του διακόπτη.</value></data>
+  <data name="SliderLabel_WiperStageCount" xml:space="preserve"><value>Στάδια υαλοκαθαριστήρων</value></data>
+  <data name="Label_WiperForwardWraps" xml:space="preserve"><value>Το πλήκτρο υαλοκαθαριστήρων κυκλώνει</value></data>
+  <data name="SliderLabel_LightStageCount" xml:space="preserve"><value>Στάδια φώτων</value></data>
+  <data name="Button_ResyncWipers" xml:space="preserve"><value>Επανασυγχρονισμός υαλοκαθαριστήρων</value></data>
+  <data name="Hint_ResyncWipers" xml:space="preserve"><value>Επαναφέρει τους υαλοκαθαριστήρες του παιχνιδιού στο κλειστό για ευθυγράμμιση με το στάδιο που παρακολουθεί το πρόσθετο.</value></data>
+  <data name="Label_StalksLastPressed" xml:space="preserve"><value>Τελευταίο πάτημα: κουμπί {0}</value></data>
+  <data name="Button_LoadEts2Defaults" xml:space="preserve"><value>Φόρτωση προεπιλογών ETS2/ATS</value></data>
 </root>

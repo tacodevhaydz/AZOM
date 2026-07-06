@@ -168,6 +168,7 @@ namespace MozaPlugin
             _refreshTimer.Stop();
             _steeringAngleTimer.Stop();
             _bandwidthTimer?.Stop();
+            UnsubscribeStalks();
             // Closing the settings panel takes the sustained Engine/ABS/
             // Road Texture/Lockup/Threshold/Brake Fade test toggles out of
             // view — stop them so a forgotten toggle doesn't leave the pedal
@@ -224,6 +225,7 @@ namespace MozaPlugin
                 RefreshPedalsTab();
                 RefreshHubTab();
                 RefreshAb9Tab();
+                RefreshStalksTab();
                 RefreshMBoosterTab();
                 InitTelemetryTab();
                 RefreshDashboardUploadTab();

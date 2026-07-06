@@ -638,4 +638,23 @@ Id : {2}</value></data>
   <data name="SliderLabel_DisplayRotation" xml:space="preserve"><value>Rotation de l'écran</value></data>
   <data name="Option_RotationSmooth" xml:space="preserve"><value>Fluide</value></data>
   <data name="Option_RotationImmediate" xml:space="preserve"><value>Immédiate</value></data>
+  <data name="TabHeader_Stalks" xml:space="preserve"><value>Commodos</value></data>
+  <data name="Section_Stalks" xml:space="preserve"><value>Commodos multifonctions</value></data>
+  <data name="Status_SearchingForStalks" xml:space="preserve"><value>Recherche des commodos…</value></data>
+  <data name="Status_StalksConnected" xml:space="preserve"><value>Commodos connectés</value></data>
+  <data name="Section_StalkMode" xml:space="preserve"><value>Mode commodo</value></data>
+  <data name="Option_StalkButtonBox" xml:space="preserve"><value>Boîte à boutons</value></data>
+  <data name="Option_StalkTruckSim" xml:space="preserve"><value>Simu camion (ETS2/ATS)</value></data>
+  <data name="Hint_StalksTruckSim" xml:space="preserve"><value>En mode simu camion, le plugin convertit les actions des commodos en touches clavier pour Euro/American Truck Simulator. En mode boîte à boutons, les commodos agissent comme de simples boutons.</value></data>
+  <data name="Section_StalksKeyMapping" xml:space="preserve"><value>Affectation des boutons</value></data>
+  <data name="Subtitle_StalksInteractiveMap" xml:space="preserve"><value>Actionnez un commodo pour surligner son bouton, puis affectez une touche ou une position d'essuie-glaces/feux.</value></data>
+  <data name="Section_StalksWiperSync" xml:space="preserve"><value>Essuie-glaces et feux</value></data>
+  <data name="Subtitle_StalksWiperSync" xml:space="preserve"><value>Le jeu change les essuie-glaces/feux avec des touches de cycle ; le plugin envoie le bon nombre d'appuis pour atteindre la position du commodo.</value></data>
+  <data name="SliderLabel_WiperStageCount" xml:space="preserve"><value>Vitesses d'essuie-glaces</value></data>
+  <data name="Label_WiperForwardWraps" xml:space="preserve"><value>La touche d'essuie-glaces boucle</value></data>
+  <data name="SliderLabel_LightStageCount" xml:space="preserve"><value>Niveaux de feux</value></data>
+  <data name="Button_ResyncWipers" xml:space="preserve"><value>Resynchroniser les essuie-glaces</value></data>
+  <data name="Hint_ResyncWipers" xml:space="preserve"><value>Ramène les essuie-glaces du jeu à l'arrêt pour les réaligner sur le niveau suivi par le plugin.</value></data>
+  <data name="Label_StalksLastPressed" xml:space="preserve"><value>Dernier appui : bouton {0}</value></data>
+  <data name="Button_LoadEts2Defaults" xml:space="preserve"><value>Charger les valeurs par défaut ETS2/ATS</value></data>
 </root>

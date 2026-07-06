@@ -638,4 +638,23 @@ Id: {2}</value></data>
   <data name="SliderLabel_DisplayRotation" xml:space="preserve"><value>屏幕旋转</value></data>
   <data name="Option_RotationSmooth" xml:space="preserve"><value>平滑</value></data>
   <data name="Option_RotationImmediate" xml:space="preserve"><value>立即</value></data>
+  <data name="TabHeader_Stalks" xml:space="preserve"><value>拨杆</value></data>
+  <data name="Section_Stalks" xml:space="preserve"><value>多功能拨杆</value></data>
+  <data name="Status_SearchingForStalks" xml:space="preserve"><value>正在搜索拨杆…</value></data>
+  <data name="Status_StalksConnected" xml:space="preserve"><value>拨杆已连接</value></data>
+  <data name="Section_StalkMode" xml:space="preserve"><value>拨杆模式</value></data>
+  <data name="Option_StalkButtonBox" xml:space="preserve"><value>按键盒</value></data>
+  <data name="Option_StalkTruckSim" xml:space="preserve"><value>卡车模拟 (ETS2/ATS)</value></data>
+  <data name="Hint_StalksTruckSim" xml:space="preserve"><value>在卡车模拟模式下，插件会将拨杆操作转换为 Euro/American Truck Simulator 的键盘按键。在按键盒模式下，拨杆作为普通按键使用。</value></data>
+  <data name="Section_StalksKeyMapping" xml:space="preserve"><value>按键映射</value></data>
+  <data name="Subtitle_StalksInteractiveMap" xml:space="preserve"><value>按下某个拨杆控制以高亮其按键，然后分配按键或雨刮/灯光挡位。</value></data>
+  <data name="Section_StalksWiperSync" xml:space="preserve"><value>雨刮与灯光</value></data>
+  <data name="Subtitle_StalksWiperSync" xml:space="preserve"><value>游戏用循环键切换雨刮/灯光；插件会发送相应次数的按键以到达拨杆位置。</value></data>
+  <data name="SliderLabel_WiperStageCount" xml:space="preserve"><value>雨刮挡位数</value></data>
+  <data name="Label_WiperForwardWraps" xml:space="preserve"><value>雨刮键循环</value></data>
+  <data name="SliderLabel_LightStageCount" xml:space="preserve"><value>灯光挡位数</value></data>
+  <data name="Button_ResyncWipers" xml:space="preserve"><value>重新同步雨刮</value></data>
+  <data name="Hint_ResyncWipers" xml:space="preserve"><value>将游戏雨刮调回关闭，以与插件跟踪的挡位重新对齐。</value></data>
+  <data name="Label_StalksLastPressed" xml:space="preserve"><value>上次按下：按键 {0}</value></data>
+  <data name="Button_LoadEts2Defaults" xml:space="preserve"><value>加载 ETS2/ATS 默认值</value></data>
 </root>

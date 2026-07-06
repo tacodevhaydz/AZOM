@@ -28,6 +28,14 @@ namespace MozaPlugin.Protocol
         /// paddle/brake fields. This class maps them to throttle/brake/clutch.
         /// </summary>
         Pedals = 2,
+        /// <summary>
+        /// MOZA Multi-Function Stalks (PID 0x0024) — a 28-button HID joystick.
+        /// Its buttons are routed to <c>MozaData.StalksButtonStates</c> (NOT the
+        /// shared wheel button array) and surfaced as edge events via
+        /// <c>StalksButtonChanged</c> so the truck-sim keyboard feature can read
+        /// them without colliding with the wheel's own button indices.
+        /// </summary>
+        Stalks = 3,
     }
 
     /// <summary>Reads physical input positions from Moza HID devices (VID 0x346E).</summary>
@@ -60,6 +68,14 @@ namespace MozaPlugin.Protocol
         /// merges per-device positions into MozaData by role.
         /// </summary>
         public event Action<string, double>? MBoosterAxisChanged;
+
+        /// <summary>
+        /// Fires on every MOZA Stalks button edge: (0-based button index, pressed).
+        /// Raised on the HID read thread. Consumed by the truck-sim keyboard
+        /// controller (<c>StalksTruckSimController</c>) for low-latency momentary
+        /// key output; also mirrored into <c>MozaData.StalksButtonStates</c>.
+        /// </summary>
+        public event Action<int, bool>? StalksButtonChanged;
 
         // Live HidStreams so Dispose can force-close silent devices' blocked reads.
         private readonly object _streamsLock = new object();
@@ -149,6 +165,7 @@ namespace MozaPlugin.Protocol
             while (!_stop)
             {
                 var devices = FindMozaDevices();
+                _data.IsStalksConnected = devices.Any(d => d.Item3 == MozaHidClass.Stalks);
                 if (devices.Count == 0)
                 {
                     _data.IsHidConnected = false;
@@ -305,6 +322,7 @@ namespace MozaPlugin.Protocol
                     {
                         var kind = isMBooster ? MozaHidClass.MBooster
                                  : category == MozaDeviceCategory.Pedals ? MozaHidClass.Pedals
+                                 : category == MozaDeviceCategory.Stalks ? MozaHidClass.Stalks
                                  : MozaHidClass.Standard;
                         string identity = isMBooster ? ExtractUsbParentInstance(dev) : "";
                         if (isMBooster)
@@ -458,6 +476,26 @@ namespace MozaPlugin.Protocol
                                     if (kind == MozaHidClass.MBooster) continue;
 
                                     bool pressed = value.GetLogicalValue() != 0;
+
+                                    // MOZA Stalks buttons ride their own surface so they
+                                    // never collide with wheel button indices — route to
+                                    // StalksButtonStates and raise an edge event on change.
+                                    if (kind == MozaHidClass.Stalks)
+                                    {
+                                        int stalkIndex = (int)(usage & 0xFFFF) - 1;
+                                        if (stalkIndex >= 0 && stalkIndex < MozaData.MaxStalksButtons)
+                                        {
+                                            if (_data.StalksButtonStates[stalkIndex] != pressed)
+                                            {
+                                                _data.StalksButtonStates[stalkIndex] = pressed;
+                                                if (stalkIndex >= _data.StalksButtonCount)
+                                                    _data.StalksButtonCount = stalkIndex + 1;
+                                                try { StalksButtonChanged?.Invoke(stalkIndex, pressed); } catch { }
+                                            }
+                                        }
+                                        continue;
+                                    }
+
                                     if (isHandbrake)
                                     {
                                         _data.HandbrakeButtonPressed = pressed;

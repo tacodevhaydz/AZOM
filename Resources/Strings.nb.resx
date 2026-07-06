@@ -643,4 +643,23 @@ Id: {2}</value></data>
   <data name="SliderLabel_DisplayRotation" xml:space="preserve"><value>Skjermrotasjon</value></data>
   <data name="Option_RotationSmooth" xml:space="preserve"><value>Jevn</value></data>
   <data name="Option_RotationImmediate" xml:space="preserve"><value>Umiddelbar</value></data>
+  <data name="TabHeader_Stalks" xml:space="preserve"><value>Spaker</value></data>
+  <data name="Section_Stalks" xml:space="preserve"><value>Multifunksjonsspaker</value></data>
+  <data name="Status_SearchingForStalks" xml:space="preserve"><value>Søker etter spaker…</value></data>
+  <data name="Status_StalksConnected" xml:space="preserve"><value>Spaker tilkoblet</value></data>
+  <data name="Section_StalkMode" xml:space="preserve"><value>Spakmodus</value></data>
+  <data name="Option_StalkButtonBox" xml:space="preserve"><value>Knappeboks</value></data>
+  <data name="Option_StalkTruckSim" xml:space="preserve"><value>Truck sim (ETS2/ATS)</value></data>
+  <data name="Hint_StalksTruckSim" xml:space="preserve"><value>I truck sim-modus gjør programtillegget spakbevegelser om til tastaturtaster for Euro/American Truck Simulator. I knappeboks-modus fungerer spakene som vanlige knapper.</value></data>
+  <data name="Section_StalksKeyMapping" xml:space="preserve"><value>Knappetilordning</value></data>
+  <data name="Subtitle_StalksInteractiveMap" xml:space="preserve"><value>Trykk på en spakkontroll for å utheve knappen, og tildel deretter en tast eller vindusvisker-/lystrinn.</value></data>
+  <data name="Section_StalksWiperSync" xml:space="preserve"><value>Vindusviskere og lys</value></data>
+  <data name="Subtitle_StalksWiperSync" xml:space="preserve"><value>Spillet bytter viskere/lys med syklustaster; programtillegget sender riktig antall trykk for å nå spakposisjonen.</value></data>
+  <data name="SliderLabel_WiperStageCount" xml:space="preserve"><value>Viskertrinn</value></data>
+  <data name="Label_WiperForwardWraps" xml:space="preserve"><value>Viskertast går rundt</value></data>
+  <data name="SliderLabel_LightStageCount" xml:space="preserve"><value>Lystrinn</value></data>
+  <data name="Button_ResyncWipers" xml:space="preserve"><value>Synkroniser viskere på nytt</value></data>
+  <data name="Hint_ResyncWipers" xml:space="preserve"><value>Setter spillets viskere til av for å samstemme med trinnet programtillegget sporer.</value></data>
+  <data name="Label_StalksLastPressed" xml:space="preserve"><value>Sist trykket: knapp {0}</value></data>
+  <data name="Button_LoadEts2Defaults" xml:space="preserve"><value>Last inn ETS2/ATS-standard</value></data>
 </root>

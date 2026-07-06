@@ -11,6 +11,7 @@ using System.Windows.Media;
 using GameReaderCommon;
 using SimHub.Plugins;
 using MozaPlugin.Devices;
+using MozaPlugin.Devices.StalksTruckSim;
 using MozaPlugin.Hardware;
 using MozaPlugin.Protocol;
 using MozaPlugin.Resources;
@@ -194,6 +195,7 @@ namespace MozaPlugin
         // (hub-port-power / cmd 0x64): that device answered the base probe, so it is
         // a known wheelbase and rejects hub commands ("Unexpected cmd: 100").
         private MozaHidReader _hidReader = null!;
+        private StalksTruckSimController _stalksController = null!;
         private PluginManager _pluginManager = null!;
         private SimHubPropertyResolver _propertyResolver = null!;
         internal SimHubPropertyResolver PropertyResolver => _propertyResolver;
@@ -1344,6 +1346,12 @@ namespace MozaPlugin
                         catch (Exception ex) { MozaLog.Debug($"[AZOM/mBooster] HID dispatch: {ex.Message}"); }
                     };
                 }
+                // Truck-sim stalk keyboard emulation: subscribe before Start() so no
+                // button edges are missed. Only acts when the Stalks mode is TruckSim
+                // and an ETS2/ATS game is foreground (gated inside the controller).
+                _stalksController = new StalksTruckSimController();
+                _stalksController.ApplySettings(_settings.StalksMode, _settings.StalksTruckSim);
+                _hidReader.StalksButtonChanged += _stalksController.OnStalkButton;
                 _hidReader.Start();
                 _propertyResolver = new SimHubPropertyResolver(_pluginManager, _data, _hidReader);
                 _hardwareApplier = new HardwareApplier(this, _data, _deviceManager, _ab9Manager, DetectionState);
@@ -1605,6 +1613,7 @@ namespace MozaPlugin
             try { _profileCoordinator?.DetachProfileStore(); } catch { }
             try { _deviceManager?.Dispose(); } catch { }
             try { _hidReader?.Dispose(); } catch { }
+            try { _stalksController?.Dispose(); } catch { }
             if (ownTelemetrySender)
             {
                 try { _telemetrySender?.Dispose(); } catch { }
@@ -1764,6 +1773,9 @@ namespace MozaPlugin
             // doesn't make the feed look quiet.
             Interlocked.Exchange(ref _autoStandbyLastDataUpdateTicks, DateTime.UtcNow.Ticks);
             _autoStandbyLastGameRunning = data.GameRunning;
+            // Feed the truck-sim stalk controller the current game context so it can
+            // gate keyboard output to a running ETS2/ATS session.
+            try { _stalksController?.SetGameContext(pluginManager.GameName, data.GameRunning); } catch { }
             // Heading probe (diagnostic): dump SimHub heading/radar/spotter props a
             // handful of times while a game runs so we can identify AC's live heading
             // source for the radar preamble. Self-limits to ~20 logs (~once/sec).
@@ -2047,6 +2059,11 @@ namespace MozaPlugin
             var b = data.ButtonStates;
             for (int i = 0; i < b.Length; i++)
                 if (b[i]) h = (h * 31) + (i + 2);
+            // Stalks live on their own button surface (see MozaData.StalksButtonStates)
+            // but pressing them is still user activity — keep it counting toward standby.
+            var s = data.StalksButtonStates;
+            for (int i = 0; i < s.Length; i++)
+                if (s[i]) h = (h * 31) + (i + 1000);
             return h;
         }
 
@@ -2335,6 +2352,7 @@ namespace MozaPlugin
 
             // 6. Dispose I/O sources; skip sender+connection if keeping wire alive.
             _hidReader?.Dispose();
+            try { _stalksController?.Dispose(); } catch { }
             if (!keepWireAlive)
             {
                 _telemetrySender?.Dispose();
@@ -2599,6 +2617,17 @@ namespace MozaPlugin
         }
 
         internal MozaHidReader HidReader => _hidReader;
+
+        /// <summary>Live truck-sim stalk controller (for the settings UI's
+        /// "Re-sync wipers" action). Null until Init runs.</summary>
+        internal StalksTruckSimController StalksController => _stalksController;
+
+        /// <summary>Re-apply the current Stalks mode + truck-sim config to the live
+        /// controller. Call from the settings UI after editing + SaveSettings().</summary>
+        internal void ApplyStalksSettings()
+        {
+            try { _stalksController?.ApplySettings(_settings.StalksMode, _settings.StalksTruckSim); } catch { }
+        }
 
         // ===== ProfileCoordinator shims (external API surface) =====
         // Settings persistence + profile system live in Settings/ProfileCoordinator.cs.
