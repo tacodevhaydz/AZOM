@@ -123,7 +123,7 @@ Notes:
 
 ### Partial-class splits
 
-- **`UI/SettingsControl`** (plugin pane): `SettingsControl.xaml.cs` (main: tab refresh tick, base/pedals/options handlers, diagnostics), `.UpdateBanner.cs` (status-hint banners, update notifications, restart-required flow), `.Redesign.cs` (custom-control initialization/theming), `.Sdk.cs` (SDK tab handlers), `.ImportProfile.cs` (profile import dialog).
+- **`UI/SettingsControl`** (plugin pane): `SettingsControl.xaml.cs` (main: tab refresh tick, base/pedals/options handlers, diagnostics), `.UpdateBanner.cs` (status-hint banners, update notifications, restart-required flow), `.Redesign.cs` (custom-control initialization/theming), `.Sdk.cs` (SDK tab handlers), `.ImportProfile.cs` (profile import dialog). The PitHouse preset wizard (`UI/Import/`) accepts both legacy raw-JSON presets and the ZIP-wrapped `.mzpreset` container PitHouse 1.4+ writes (a zip holding `preset.json` + `metadata.json`); `PitHousePresetArchive` unwraps it, detecting the container by content (ZIP magic) rather than extension, so both read paths (`PitHousePresetReader` + `PitHouseFolderScanner`) stay format-agnostic.
 - **`Devices/MozaWheelSettingsControl`** (per-wheel device page): `.xaml.cs` (main refresh tick, telemetry section, RPM/Buttons/Flag swatches), `.Inputs.cs` (live paddles/buttons display + input-mode handlers), `.Knobs.cs` (knob ring grid + signal-mode editor). The dashboard combo / channel mapper / upload + file-inventory sections live in the shared `Devices/WheelUi/DashboardManagementControl` (+ its `.Files.cs` partial), hosted by both the wheel and dash pages.
 
 ## Architecture

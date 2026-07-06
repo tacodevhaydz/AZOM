@@ -142,7 +142,7 @@ namespace MozaPlugin.UI.Import
         {
             var dlg = new Microsoft.Win32.OpenFileDialog
             {
-                Filter = "PitHouse preset (*.json)|*.json|All files (*.*)|*.*",
+                Filter = "PitHouse preset (*.mzpreset;*.json)|*.mzpreset;*.json|All files (*.*)|*.*",
                 Title = Strings.Import_DialogTitle,
             };
             if (dlg.ShowDialog(Window.GetWindow(this)) != true) return;
