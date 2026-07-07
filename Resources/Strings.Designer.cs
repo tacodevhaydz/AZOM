@@ -221,6 +221,8 @@ namespace MozaPlugin.Resources
         public static string Subtitle_MBoosterPedals => Get("Subtitle_MBoosterPedals");
         public static string SliderLabel_Device => Get("SliderLabel_Device");
         public static string SliderLabel_Role => Get("SliderLabel_Role");
+        public static string SliderLabel_DisplayName => Get("SliderLabel_DisplayName");
+        public static string Hint_MBoosterDisplayName => Get("Hint_MBoosterDisplayName");
         public static string Option_Disabled => Get("Option_Disabled");
         public static string Option_Throttle => Get("Option_Throttle");
         public static string Option_Brake => Get("Option_Brake");
@@ -259,6 +261,17 @@ namespace MozaPlugin.Resources
         public static string SliderLabel_OnsetTempC => Get("SliderLabel_OnsetTempC");
         public static string Hint_BrakeFadeExperimental => Get("Hint_BrakeFadeExperimental");
         public static string Label_PedalTrace => Get("Label_PedalTrace");
+        public static string Section_CustomEffects => Get("Section_CustomEffects");
+        public static string Subtitle_CustomEffectsExperimental => Get("Subtitle_CustomEffectsExperimental");
+        public static string Hint_CustomEffectsExperimental => Get("Hint_CustomEffectsExperimental");
+        public static string Hint_CustomEffectFormula => Get("Hint_CustomEffectFormula");
+        public static string Label_UseThreshold => Get("Label_UseThreshold");
+        public static string SliderLabel_Name => Get("SliderLabel_Name");
+        public static string SliderLabel_Formula => Get("SliderLabel_Formula");
+        public static string SliderLabel_Threshold => Get("SliderLabel_Threshold");
+        public static string Button_AddCustomEffect => Get("Button_AddCustomEffect");
+        public static string Button_DeleteCustomEffect => Get("Button_DeleteCustomEffect");
+        public static string DefaultName_CustomEffect => Get("DefaultName_CustomEffect");
         public static string Subtitle_CalibrationExperimental => Get("Subtitle_CalibrationExperimental");
         public static string Label_ReversedDirection => Get("Label_ReversedDirection");
         public static string SliderLabel_MinRaw => Get("SliderLabel_MinRaw");

@@ -1,4 +1,5 @@
 using System;
+using System.Collections.Generic;
 using System.Diagnostics;
 using System.Threading;
 using MozaPlugin.Protocol;
@@ -28,14 +29,27 @@ namespace MozaPlugin.Devices
         // numbers as the suggested *applied* scale, so user 100 % maps to those
         // ceilings; user 0 % is silent. Matches PitHouse's perceived loudness at
         // equivalent slider positions.
+        //
+        // Engine is the exception: its intensity slider is meant to be fully
+        // parametric like AB9's engine-vibration slider (0-100 % maps ~1:1 to
+        // the device's full 0..1 amplitude range), so it has no scale ceiling
+        // of its own — see UpdateEngineRequest.
         private const double AbsScaleMax       = 0.10;
         private const double LockupScaleMax    = 0.15;
         private const double ThresholdScaleMax = 0.10;
-        private const double EngineScaleMax    = 0.10;
+        // Custom effects share Engine's verified wire shape (see
+        // ProcessCustomEffect) so they share a scale cap too — a
+        // continuous-mode custom effect (no Threshold gate) can run
+        // indefinitely just like Engine does, and would otherwise dominate.
+        private const double CustomEffectScaleMax = 0.10;
 
         private readonly MBoosterDeviceController _device;
         private readonly Func<MBoosterDeviceSettings?> _settingsLookup;
         private readonly Func<bool> _isShuttingDown;
+        // Evaluates a custom effect's Formula (bare SimHub property or NCalc
+        // expression) to a double each tick. Defaults to "always 0" (never
+        // active) if the caller didn't wire one up.
+        private readonly Func<string, double> _customEffectFormulaEvaluator;
 
         private Thread? _thread;
         private volatile bool _stop;
@@ -53,6 +67,13 @@ namespace MozaPlugin.Devices
         private EffectState _engine;
         private EffectState _roadTexture;
         private bool _thresholdLatched; // hysteresis flag for the Threshold effect (doc § 4)
+
+        // Custom (NCalc) effects — one EffectState per user-created effect,
+        // keyed by MBoosterCustomEffect.Id (stable across list edits/reorders,
+        // unlike an index). Pruned each tick against the live settings list —
+        // see UpdateAndProcessCustomEffects.
+        private readonly Dictionary<string, EffectState> _customEffectStates =
+            new Dictionary<string, EffectState>(StringComparer.Ordinal);
 
         // Brake Fade — NOT part of the vibration-motor effect pipeline
         // above; ramps TWO real hardware-calibration overrides in lockstep,
@@ -80,6 +101,16 @@ namespace MozaPlugin.Devices
         private volatile bool _lockupTestSustained;
         private volatile bool _thresholdTestSustained;
 
+        // Custom effects' sustained Test toggles — same semantics as the five
+        // built-ins above (runs indefinitely, live-tracks Frequency/Intensity,
+        // bypasses Enabled/Formula/Threshold entirely), but keyed by
+        // MBoosterCustomEffect.Id since the count is unbounded. A
+        // ConcurrentDictionary (value unused) rather than a plain HashSet +
+        // lock — set/cleared from the UI thread, read every tick from the
+        // worker thread. Presence = on.
+        private readonly System.Collections.Concurrent.ConcurrentDictionary<string, bool> _customEffectTestSustained =
+            new System.Collections.Concurrent.ConcurrentDictionary<string, bool>(StringComparer.Ordinal);
+
         // Keepalive tick counter (mod KeepaliveTickInterval).
         private int _keepaliveCounter;
 
@@ -98,11 +129,13 @@ namespace MozaPlugin.Devices
         public MBoosterEffectWorker(
             MBoosterDeviceController device,
             Func<MBoosterDeviceSettings?> settingsLookup,
-            Func<bool> isShuttingDown)
+            Func<bool> isShuttingDown,
+            Func<string, double>? customEffectFormulaEvaluator = null)
         {
             _device = device;
             _settingsLookup = settingsLookup;
             _isShuttingDown = isShuttingDown;
+            _customEffectFormulaEvaluator = customEffectFormulaEvaluator ?? (_ => 0.0);
         }
 
         public void Start()
@@ -176,6 +209,18 @@ namespace MozaPlugin.Devices
         /// <summary>Turn Brake Fade's sustained test toggle on/off. See <see cref="_brakeFadeTestActive"/>.</summary>
         public void SetBrakeFadeTestSustained(bool on) => _brakeFadeTestActive = on;
 
+        /// <summary>
+        /// Turn one custom effect's sustained test toggle on/off. See
+        /// <see cref="_customEffectTestSustained"/>. Effects with no id are
+        /// never testable (nothing to key the toggle on).
+        /// </summary>
+        public void SetCustomEffectTestSustained(string effectId, bool on)
+        {
+            if (string.IsNullOrEmpty(effectId)) return;
+            if (on) _customEffectTestSustained[effectId] = true;
+            else _customEffectTestSustained.TryRemove(effectId, out _);
+        }
+
         private void Loop()
         {
             long stopwatchFreq = Stopwatch.Frequency;
@@ -240,6 +285,15 @@ namespace MozaPlugin.Devices
             // threshold pulse that lands in the same tick as a bump always
             // wins instead of being masked by it.
             ProcessRoadTextureEffect(settings, ref _roadTexture);
+            // Custom (NCalc) effects — Experimental. Placed in the ambient
+            // tier (after Engine/Road Texture, before the braking cues) so a
+            // user-authored effect can override built-in ambient vibration
+            // but never masks a real ABS/Lockup/Threshold safety pulse. They
+            // also share Engine's wire slot (effect type 4 — see
+            // ProcessCustomEffect), so a custom effect active in the same
+            // tick as the real Engine effect wins on the wire, same
+            // last-write-wins masking rule as every other pair on this ladder.
+            UpdateAndProcessCustomEffects(settings);
             ProcessEffect(MBoosterEffectId.Abs,       ref _abs);
             ProcessEffect(MBoosterEffectId.Lockup,    ref _lockup);
             ProcessEffect(MBoosterEffectId.Threshold, ref _threshold);
@@ -276,8 +330,7 @@ namespace MozaPlugin.Devices
             // drags are felt immediately while testing.
             if (_engineTestSustained)
             {
-                double testScale = ((settings?.Engine?.IntensityPct ?? 0) / 100.0) * EngineScaleMax;
-                st.IntensityRequest = Clamp01(testScale);
+                st.IntensityRequest = Clamp01((settings?.Engine?.IntensityPct ?? 0) / 100.0);
                 st.FreqHz = freqHz;
                 return;
             }
@@ -299,9 +352,11 @@ namespace MozaPlugin.Devices
             }
 
             st.FreqHz = freqHz;
-            // Engine continuous-effect: user 0..100 % maps to scale 0..EngineScaleMax.
-            double engineScale = (settings.Engine.IntensityPct / 100.0) * EngineScaleMax;
-            st.IntensityRequest = Clamp01(engineScale);
+            // Engine continuous-effect: user 0..100 % maps ~1:1 to output
+            // amplitude 0..1, matching AB9's parametric engine-vibration
+            // intensity slider (no artificial ceiling — see the constants
+            // block above).
+            st.IntensityRequest = Clamp01(settings.Engine.IntensityPct / 100.0);
         }
 
         private static double ClampEngineFreq(double hz)
@@ -797,6 +852,165 @@ namespace MozaPlugin.Devices
             ushort smoothnessRaw = MozaMBoosterProtocol.EncodeRoadTextureLevel(settings?.RoadTexture?.SmoothnessPct ?? 0);
 
             var frame = MozaMBoosterProtocol.BuildRoadTextureFrame(true, intensityRaw, smoothnessRaw, noiseRaw);
+            _device.SendMotorStream(frame);
+        }
+
+        /// <summary>
+        /// Update + process every user-created custom effect for one tick
+        /// (Experimental — docs/protocol/devices/mbooster.md "Custom
+        /// Effects"). Each effect gets its own <see cref="EffectState"/>,
+        /// keyed by <see cref="MBoosterCustomEffect.Id"/> so per-effect phase/
+        /// elapsed-time state survives across ticks regardless of list
+        /// reordering. States whose effect was deleted from the settings list
+        /// are disabled on the wire (if still mid-vibration) and dropped —
+        /// same "always send a disable frame on removal" rule every other
+        /// effect follows so the last-active waveform can't latch.
+        /// </summary>
+        private void UpdateAndProcessCustomEffects(MBoosterDeviceSettings? settings)
+        {
+            var list = settings?.CustomEffects;
+
+            if (_customEffectStates.Count > 0)
+            {
+                List<string>? stale = null;
+                foreach (var kvp in _customEffectStates)
+                {
+                    bool exists = false;
+                    if (list != null)
+                    {
+                        for (int i = 0; i < list.Count; i++)
+                        {
+                            if (string.Equals(list[i].Id, kvp.Key, StringComparison.Ordinal)) { exists = true; break; }
+                        }
+                    }
+                    if (!exists) (stale ??= new List<string>()).Add(kvp.Key);
+                }
+                if (stale != null)
+                {
+                    foreach (var key in stale)
+                    {
+                        if (_customEffectStates[key].Active)
+                            _device.SendOneShot(MozaMBoosterProtocol.BuildDisableFrame(MBoosterEffectId.Engine));
+                        _customEffectStates.Remove(key);
+                        // Also drop a lingering test-toggle flag for a deleted
+                        // effect — otherwise a stale UI row's forgotten Test
+                        // toggle keeps forcing this id "active" forever
+                        // (harmless on its own since UpdateCustomEffectRequest
+                        // requires a matching settings-list entry too, but no
+                        // reason to keep the entry around).
+                        _customEffectTestSustained.TryRemove(key, out _);
+                    }
+                }
+            }
+
+            if (list == null || list.Count == 0) return;
+            for (int i = 0; i < list.Count; i++)
+            {
+                var effect = list[i];
+                if (string.IsNullOrEmpty(effect.Id)) continue;
+                _customEffectStates.TryGetValue(effect.Id, out var st);
+                UpdateCustomEffectRequest(effect, ref st);
+                ProcessCustomEffect(ref st);
+                _customEffectStates[effect.Id] = st;
+            }
+        }
+
+        /// <summary>
+        /// Compute one custom effect's intensity/frequency request for this
+        /// tick. <see cref="MBoosterCustomEffect.Formula"/> is evaluated live
+        /// every tick (not cached) via the injected formula evaluator, so
+        /// editing the formula text is felt immediately. Two modes:
+        /// <see cref="MBoosterCustomEffect.ThresholdEnabled"/> true = pulse
+        /// trigger (fixed Intensity while Formula's value clears Threshold,
+        /// like Lockup/Threshold); false = continuous proportional (Formula's
+        /// value, clamped 0..1, directly scales Intensity, like Engine). The
+        /// sustained Test toggle bypasses Enabled/Formula/Threshold entirely
+        /// and runs continuously at the live Frequency/Intensity sliders —
+        /// same substitution Engine's own test toggle uses (there's no live
+        /// signal to preview a user's arbitrary formula against outside
+        /// whatever it's actually wired to).
+        /// </summary>
+        private void UpdateCustomEffectRequest(MBoosterCustomEffect effect, ref EffectState st)
+        {
+            if (effect == null)
+            {
+                st.IntensityRequest = 0;
+                st.FreqHz = 0;
+                return;
+            }
+
+            double freqHz = effect.FrequencyHz;
+            if (freqHz < MBoosterUiConstants.CustomEffectFreqMinHz) freqHz = MBoosterUiConstants.CustomEffectFreqMinHz;
+            if (freqHz > MBoosterUiConstants.CustomEffectFreqMaxHz) freqHz = MBoosterUiConstants.CustomEffectFreqMaxHz;
+            double scale = Clamp01(effect.IntensityPct / 100.0) * CustomEffectScaleMax;
+
+            if (_customEffectTestSustained.ContainsKey(effect.Id))
+            {
+                st.IntensityRequest = scale;
+                st.FreqHz = freqHz;
+                return;
+            }
+
+            if (!effect.Enabled || string.IsNullOrWhiteSpace(effect.Formula))
+            {
+                st.IntensityRequest = 0;
+                st.FreqHz = 0;
+                return;
+            }
+
+            double raw = _customEffectFormulaEvaluator(effect.Formula);
+            st.IntensityRequest = effect.ThresholdEnabled
+                ? (raw >= effect.Threshold ? scale : 0.0)
+                : Clamp01(raw) * scale;
+            st.FreqHz = freqHz;
+        }
+
+        /// <summary>
+        /// Activation-edge + frame-emission path for one custom effect —
+        /// mirrors <see cref="ProcessEffect"/>, but since there is no
+        /// protocol-verified wire effect type for arbitrary user content,
+        /// every custom effect is transmitted using the already-verified
+        /// Engine (effect type 4) frame shape/ParamK and Engine's plain sine
+        /// waveform (<see cref="MBoosterEffectSynthesizer.SynthesizeEngine"/>).
+        /// This means a custom effect competes with the real Engine effect
+        /// (and any other simultaneously-active custom effect) for that one
+        /// wire slot — see the ordering note at this method's call site in
+        /// <see cref="Tick"/>.
+        /// </summary>
+        private void ProcessCustomEffect(ref EffectState st)
+        {
+            const MBoosterEffectId id = MBoosterEffectId.Engine;
+            bool wantActive = st.IntensityRequest > 0 && st.FreqHz > 0;
+
+            if (!wantActive && st.Active)
+            {
+                _device.SendOneShot(MozaMBoosterProtocol.BuildDisableFrame(id));
+                st.Active = false;
+                st.PhaseRad = 0;
+                st.ElapsedSec = 0;
+                return;
+            }
+            if (!wantActive) return;
+
+            if (!st.Active)
+            {
+                st.Active = true;
+                st.PhaseRad = 0;
+                st.ElapsedSec = 0;
+            }
+
+            st.ElapsedSec += TickPeriodSec;
+            st.PhaseRad += 2.0 * Math.PI * st.FreqHz * TickPeriodSec;
+            if (st.PhaseRad >= 2.0 * Math.PI)
+                st.PhaseRad -= 2.0 * Math.PI * Math.Floor(st.PhaseRad / (2.0 * Math.PI));
+
+            double amp01 = MBoosterEffectSynthesizer.SynthesizeEngine(st.IntensityRequest, st.PhaseRad);
+
+            byte param1 = MozaMBoosterProtocol.ComputeParam1(MozaMBoosterProtocol.ParamKFor(id), st.FreqHz);
+            ushort freqU16 = MozaMBoosterProtocol.EncodeFreq(st.FreqHz);
+            ushort ampU16 = MozaMBoosterProtocol.EncodeAmp(amp01);
+
+            var frame = MozaMBoosterProtocol.BuildMotorFrame(id, enable: true, param1, freqU16, ampU16);
             _device.SendMotorStream(frame);
         }
 

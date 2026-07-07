@@ -163,6 +163,8 @@
   <data name="Subtitle_MBoosterPedals" xml:space="preserve"><value>// host-rendered effects · per-device role + position</value></data>
   <data name="SliderLabel_Device" xml:space="preserve"><value>Device</value></data>
   <data name="SliderLabel_Role" xml:space="preserve"><value>Role</value></data>
+  <data name="SliderLabel_DisplayName" xml:space="preserve"><value>Display Name</value></data>
+  <data name="Hint_MBoosterDisplayName" xml:space="preserve"><value>Optional — helps tell two mBoosters with the same role apart in the device list above.</value></data>
   <data name="Option_Disabled" xml:space="preserve"><value>Disabled</value></data>
   <data name="Option_Throttle" xml:space="preserve"><value>Throttle</value></data>
   <data name="Option_Brake" xml:space="preserve"><value>Brake</value></data>
@@ -171,20 +173,20 @@
   <data name="Subtitle_PedalFeel" xml:space="preserve"><value>// shape how the pedal feels, independent of the output curve below</value></data>
   <data name="SliderLabel_DeadzoneKg" xml:space="preserve"><value>Deadzone (kg)</value></data>
   <data name="SliderLabel_MaxForceKg" xml:space="preserve"><value>Max Force (kg)</value></data>
-  <data name="Hint_DeadzoneScaleAssumption" xml:space="preserve"><value>Host-side only. Deadzone and Max Force are in kg out of the device's Max Threshold (Sim Input Mapping) — or 0-200kg if you haven't set that yet. Max Force sets where the input curve below reaches 100%.</value></data>
+  <data name="Hint_DeadzoneScaleAssumption" xml:space="preserve"><value></value></data>
   <data name="SliderLabel_TravelRangeMm" xml:space="preserve"><value>Start / End of Travel (mm)</value></data>
-  <data name="Hint_TravelRangeMm" xml:space="preserve"><value>Writes real hardware calibration (cmdIds 0x84/0x85) — reverse-engineered from Pit House captures, not confirmed by Moza. Drag the two nodes to set the physical start/end of pedal travel, then verify it behaves correctly on your hardware.</value></data>
+  <data name="Hint_TravelRangeMm" xml:space="preserve"><value></value></data>
   <data name="SliderLabel_EndstopFrontStiffness" xml:space="preserve"><value>Front Limit Stiffness</value></data>
   <data name="SliderLabel_EndstopEndStiffness" xml:space="preserve"><value>End Limit Stiffness</value></data>
-  <data name="Hint_EndstopStiffness" xml:space="preserve"><value>Writes real hardware calibration (cmdId 0xB2) — reverse-engineered from Pit House captures, not confirmed by Moza. Sets how hard the pedal feels when it hits the start/end of its physical travel.</value></data>
-  <data name="Hint_InputCurveHostOnly" xml:space="preserve"><value>Host-side only: reshapes the reported pedal position before it reaches the game (and before the Sim Input Mapping output curve below). Nothing is written to the device.</value></data>
+  <data name="Hint_EndstopStiffness" xml:space="preserve"><value></value></data>
+  <data name="Hint_InputCurveHostOnly" xml:space="preserve"><value></value></data>
   <data name="Section_SimInputMapping" xml:space="preserve"><value>SIM INPUT MAPPING</value></data>
-  <data name="Subtitle_SimInputMapping" xml:space="preserve"><value>// map the load cell / pedal signal to the game, Pit House-style</value></data>
+  <data name="Subtitle_SimInputMapping" xml:space="preserve"><value></value></data>
   <data name="SliderLabel_MaxThresholdKg" xml:space="preserve"><value>Max Threshold (kg)</value></data>
-  <data name="Hint_MaxThresholdReverseEngineered" xml:space="preserve"><value>Reverse-engineered from a Pit House capture (cmdId 0xB3) — not confirmed by Moza. Please verify it behaves correctly on your hardware.</value></data>
-  <data name="Hint_OutputCurveDragX" xml:space="preserve"><value>Drag a node sideways to move where it sits on the input axis — e.g. drag the last node left so 100% output is reached before 100% input.</value></data>
+  <data name="Hint_MaxThresholdReverseEngineered" xml:space="preserve"><value></value></data>
+  <data name="Hint_OutputCurveDragX" xml:space="preserve"><value>Drag a node left/right to move where it sits on the input axis — e.g. drag the last node left so 100% output is reached before 100% input.</value></data>
   <data name="Section_Effects" xml:space="preserve"><value>EFFECTS</value></data>
-  <data name="Subtitle_EffectsTriggers" xml:space="preserve"><value>// triggers: ABS on game signal · Lockup on brake&gt;0.8 · Threshold on edge · Engine continuous</value></data>
+  <data name="Subtitle_EffectsTriggers" xml:space="preserve"><value></value></data>
   <data name="Section_Abs" xml:space="preserve"><value>ABS</value></data>
   <data name="Section_RoadTexture" xml:space="preserve"><value>Road Texture</value></data>
   <data name="Section_BrakeFade" xml:space="preserve"><value>Brake Fade (Experimental)</value></data>
@@ -193,14 +195,25 @@
   <data name="Label_Test" xml:space="preserve"><value>Test</value></data>
   <data name="Section_Lockup" xml:space="preserve"><value>Lockup</value></data>
   <data name="Section_Threshold" xml:space="preserve"><value>Threshold</value></data>
-  <data name="Section_EngineContinuous" xml:space="preserve"><value>Engine vibration</value></data>
-  <data name="SliderLabel_FrequencyHz" xml:space="preserve"><value>Frequency (Hz)</value></data>
+  <data name="Section_EngineContinuous" xml:space="preserve"><value>Engine Vibration</value></data>
+  <data name="SliderLabel_FrequencyHz" xml:space="preserve"><value>Frequency (hz)</value></data>
   <data name="SliderLabel_Smoothness" xml:space="preserve"><value>Smoothness</value></data>
   <data name="SliderLabel_TriggerLevel" xml:space="preserve"><value>Trigger Input Level</value></data>
   <data name="SliderLabel_VibrationDecay" xml:space="preserve"><value>Vibration Decay</value></data>
   <data name="SliderLabel_OnsetTempC" xml:space="preserve"><value>Onset Temperature (°C)</value></data>
   <data name="Hint_BrakeFadeExperimental" xml:space="preserve"><value>Experimental — writes the real Travel End and Max Threshold hardware calibrations while active (more travel and more force needed), then restores your configured values as brakes cool. Requires those already set in Pedal Feel / Sim Input Mapping — has no effect otherwise.</value></data>
-  <data name="Label_PedalTrace" xml:space="preserve"><value>Pedal Trace (last 5s)</value></data>
+  <data name="Label_PedalTrace" xml:space="preserve"><value>Pedal Trace</value></data>
+  <data name="Section_CustomEffects" xml:space="preserve"><value>Custom Effects (Experimental)</value></data>
+  <data name="Subtitle_CustomEffectsExperimental" xml:space="preserve"><value>// experimental — user-defined vibration driven by SimHub/NCalc formulas</value></data>
+  <data name="Hint_CustomEffectsExperimental" xml:space="preserve"><value>Experimental — each custom effect vibrates the motor using a SimHub property or NCalc formula you supply. All custom effects (and the built-in Engine effect) share one wire channel, so only one can drive the motor at a time; the most recently processed active effect wins. Frequency/Intensity behave like Engine's own sliders.</value></data>
+  <data name="Hint_CustomEffectFormula" xml:space="preserve"><value>A SimHub property (e.g. SpeedKmh) or NCalc formula (e.g. [Rpms] / [CarSettings_MaxRPM]). With "Use Threshold" off, the value (clamped 0..1) scales Intensity continuously. With it on, the effect pulses at the configured Intensity whenever the value is at or above Threshold.</value></data>
+  <data name="Label_UseThreshold" xml:space="preserve"><value>Use Threshold</value></data>
+  <data name="SliderLabel_Name" xml:space="preserve"><value>Name</value></data>
+  <data name="SliderLabel_Formula" xml:space="preserve"><value>Formula</value></data>
+  <data name="SliderLabel_Threshold" xml:space="preserve"><value>Threshold</value></data>
+  <data name="Button_AddCustomEffect" xml:space="preserve"><value>+ Add Custom Effect</value></data>
+  <data name="Button_DeleteCustomEffect" xml:space="preserve"><value>Delete Effect</value></data>
+  <data name="DefaultName_CustomEffect" xml:space="preserve"><value>Custom Effect</value></data>
   <data name="Subtitle_CalibrationExperimental" xml:space="preserve"><value>// experimental — may not be honored by mBooster firmware</value></data>
   <data name="Label_ReversedDirection" xml:space="preserve"><value>Reversed direction</value></data>
   <data name="SliderLabel_MinRaw" xml:space="preserve"><value>Min (raw)</value></data>

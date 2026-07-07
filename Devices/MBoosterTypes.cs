@@ -1,4 +1,6 @@
 using System;
+using System.Collections.Generic;
+using System.Linq;
 
 namespace MozaPlugin.Devices
 {
@@ -60,6 +62,14 @@ namespace MozaPlugin.Devices
         // force as the device can represent. See MBoosterEffectWorker
         // .UpdateBrakeFadeThreshold.
         public const float BrakeFadeMaxThresholdKg = 200f;
+
+        // Custom (NCalc) effects — user-defined vibration effects driven by
+        // an arbitrary SimHub property/formula rather than a fixed protocol
+        // telemetry mapping. Wire transport reuses the verified Engine
+        // (effect type 4) frame shape/ParamK — see MBoosterEffectWorker
+        // .ProcessCustomEffect — so the frequency range matches Engine's.
+        public const float CustomEffectFreqMinHz = 5f;
+        public const float CustomEffectFreqMaxHz = 200f;
     }
 
     /// <summary>
@@ -157,6 +167,60 @@ namespace MozaPlugin.Devices
     }
 
     /// <summary>
+    /// One user-created, formula-driven vibration effect (Experimental —
+    /// see docs/protocol/devices/mbooster.md "Custom Effects"). Unlike the
+    /// five built-in effects, there is no protocol-verified wire effect
+    /// type for arbitrary user content, so the worker transmits these using
+    /// the already-verified Engine (effect type 4) frame shape — see
+    /// MBoosterEffectWorker.ProcessCustomEffect. <see cref="Formula"/> is
+    /// evaluated once per tick via the same SimHub NCalc engine the
+    /// telemetry channel-mapper uses (Telemetry/NCalcExpressionEvaluator.cs)
+    /// — either a bare SimHub property path (e.g. <c>SpeedKmh</c>) or a full
+    /// <c>[prop]</c> NCalc formula.
+    /// </summary>
+    public sealed class MBoosterCustomEffect
+    {
+        // Stable identity for the worker's per-effect synthesis state and
+        // for matching a UI row back to its model after a list edit —
+        // independent of list order/Name so renaming or reordering never
+        // loses in-progress vibration state.
+        public string Id { get; set; } = Guid.NewGuid().ToString("N");
+
+        public string Name { get; set; } = "Custom Effect";
+        public bool Enabled { get; set; } = false;
+
+        // A SimHub property path or NCalc formula — see
+        // Telemetry/NCalcExpressionEvaluator.LooksLikeExpression.
+        public string Formula { get; set; } = "";
+
+        // Optional trigger gate: when true, the effect vibrates at a fixed
+        // Intensity whenever Formula's value is >= Threshold (a pulse-style
+        // trigger, like the built-in Threshold/Lockup effects). When false,
+        // Formula's value (clamped 0..1) directly scales Intensity every
+        // tick instead (a continuous, proportional effect, like Engine).
+        // The user's formula is responsible for producing a sensible range
+        // for whichever mode they pick.
+        public bool ThresholdEnabled { get; set; } = false;
+        public double Threshold { get; set; } = 50;
+
+        public float FrequencyHz { get; set; } = 50;
+        public int IntensityPct { get; set; } = 50; // 0..100
+
+        public MBoosterCustomEffect Clone() =>
+            new MBoosterCustomEffect
+            {
+                Id = Id,
+                Name = Name,
+                Enabled = Enabled,
+                Formula = Formula,
+                ThresholdEnabled = ThresholdEnabled,
+                Threshold = Threshold,
+                FrequencyHz = FrequencyHz,
+                IntensityPct = IntensityPct,
+            };
+    }
+
+    /// <summary>
     /// All settings for ONE mBooster device, keyed by stable identity (USB
     /// instance ID) in the profile's per-device dictionary. Each effect has
     /// its own enable + intensity. Calibration values (group 35/36 — marked
@@ -210,6 +274,10 @@ namespace MozaPlugin.Devices
         // independently). Disabled by default given it writes real
         // hardware calibration, not merely a vibration amplitude.
         public MBoosterEffectSettings BrakeFade { get; set; } = new MBoosterEffectSettings { BrakeFadeOnsetC = 550 };
+
+        // User-created NCalc-driven vibration effects (Experimental). See
+        // MBoosterCustomEffect and MBoosterEffectWorker.ProcessCustomEffect.
+        public List<MBoosterCustomEffect> CustomEffects { get; set; } = new List<MBoosterCustomEffect>();
 
         // Calibration (experimental per protocol note § 6). -1 = "not yet
         // read / no override"; the worker treats -1 as "do not write".
@@ -327,6 +395,7 @@ namespace MozaPlugin.Devices
                 Engine = Engine?.Clone() ?? new MBoosterEffectSettings(),
                 RoadTexture = RoadTexture?.Clone() ?? new MBoosterEffectSettings(),
                 BrakeFade = BrakeFade?.Clone() ?? new MBoosterEffectSettings(),
+                CustomEffects = CustomEffects?.Select(c => c.Clone()).ToList() ?? new List<MBoosterCustomEffect>(),
                 Direction = Direction,
                 Min = Min,
                 Max = Max,

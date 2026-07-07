@@ -41,6 +41,7 @@ namespace MozaPlugin.Devices
         private readonly Func<string, MBoosterDeviceSettings?> _settingsLookup;
         private readonly Func<bool> _isShuttingDown;
         private readonly Action<MBoosterDeviceController>? _onDeviceDetectedEdge;
+        private readonly Func<string, double> _customEffectFormulaEvaluator;
 
         // Collision logging — emit at most one warning per (role, identity-tail)
         // combo per session to avoid spam.
@@ -78,12 +79,14 @@ namespace MozaPlugin.Devices
             MozaData data,
             Func<string, MBoosterDeviceSettings?> settingsLookup,
             Func<bool> isShuttingDown,
-            Action<MBoosterDeviceController>? onDeviceDetectedEdge = null)
+            Action<MBoosterDeviceController>? onDeviceDetectedEdge = null,
+            Func<string, double>? customEffectFormulaEvaluator = null)
         {
             _data = data ?? throw new ArgumentNullException(nameof(data));
             _settingsLookup = settingsLookup ?? throw new ArgumentNullException(nameof(settingsLookup));
             _isShuttingDown = isShuttingDown ?? (() => false);
             _onDeviceDetectedEdge = onDeviceDetectedEdge;
+            _customEffectFormulaEvaluator = customEffectFormulaEvaluator ?? (_ => 0.0);
         }
 
         /// <summary>
@@ -125,7 +128,8 @@ namespace MozaPlugin.Devices
                         identity: kvp.Key,
                         portName: kvp.Value.PortName,
                         settingsLookup: () => _settingsLookup(kvp.Key),
-                        isShuttingDown: _isShuttingDown);
+                        isShuttingDown: _isShuttingDown,
+                        customEffectFormulaEvaluator: _customEffectFormulaEvaluator);
                     // Wire rising-edge detection to the plugin-level handler
                     // (applies profile, reads calibration, etc.).
                     c.DetectedRisingEdge += () => OnControllerDetected(c);
