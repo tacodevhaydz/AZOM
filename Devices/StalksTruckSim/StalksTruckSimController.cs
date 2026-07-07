@@ -50,45 +50,58 @@ namespace MozaPlugin.Devices.StalksTruckSim
                 _kb.GapMs = Math.Max(0, _cfg.KeyGapMs);
             }
             _truckSimEnabled = mode == StalkMode.TruckSim;
-            if (mode != StalkMode.TruckSim) _kb.Flush();
+            if (mode != StalkMode.TruckSim) { _kb.ReleaseAll(); _kb.Flush(); }
         }
 
         /// <summary>Push the current game context each DataUpdate tick.</summary>
         public void SetGameContext(string gameName, bool gameRunning)
         {
             bool truck = gameRunning && IsTruckSimGame(gameName);
-            bool was = _truckGameRunning;
             _truckGameRunning = truck;
             if (!truck)
             {
+                _kb.ReleaseAll();
                 _kb.Flush();
             }
-            else if (!was)
-            {
-                // Entering a truck game: assume its cycling controls start at 0
-                // (wipers off / lights off at spawn). Re-home the open-loop trackers.
-                lock (_lock) { _wiperStage = 0; _lightStage = 0; _activeIndicator = 0; }
-            }
+            // Do NOT re-home the tracked stages when the game re-enters focus. Alt-
+            // tabbing flips GameRunning while the truck keeps its lights/wipers, so
+            // resetting to 0 here desynced them. Tracking persists across focus
+            // changes; a fresh spawn starts at 0 (field defaults) and the Re-sync
+            // button realigns if anything ever drifts.
         }
 
         /// <summary>Handle a stalk button edge (from the HID read thread).</summary>
         public void OnStalkButton(int index, bool pressed)
         {
-            if (!pressed || !Active) return;
-
-            StalkAction action;
+            StalkAction? action = null;
             StalkTruckSimSettings cfg;
             lock (_lock)
             {
-                if (_mode != StalkMode.TruckSim) return;
                 cfg = _cfg;
-                if (cfg.ButtonActions == null ||
-                    !cfg.ButtonActions.TryGetValue(index, out action) || action == null)
-                    return;
+                if (_mode == StalkMode.TruckSim && cfg.ButtonActions != null &&
+                    cfg.ButtonActions.TryGetValue(index, out var a))
+                    action = a;
             }
+
+            // Release edge: only held keys act — always send the key-up so a key can
+            // never stick down (a mode/game change also calls ReleaseAll()).
+            if (!pressed)
+            {
+                if (action != null && action.Kind == StalkActionKind.HeldKey)
+                    _kb.KeyUp(action.Key);
+                return;
+            }
+
+            // Press edge: gate on the game being active AND the foreground window.
+            // While alt-tabbed the key output is dropped, so processing the press
+            // would advance the tracked wiper/light stage and desync it — ignore it.
+            if (!Active || action == null || !_kb.IsGameForeground()) return;
 
             switch (action.Kind)
             {
+                case StalkActionKind.HeldKey:
+                    _kb.KeyDown(action.Key);
+                    break;
                 case StalkActionKind.Momentary:
                     _kb.Tap(action.Key);
                     break;
@@ -166,10 +179,15 @@ namespace MozaPlugin.Devices.StalksTruckSim
         {
             StalkTruckSimSettings cfg;
             lock (_lock) cfg = _cfg;
-            if (!Active) { lock (_lock) _wiperStage = 0; return; }
-            int backs = Math.Max(0, cfg.WiperStageCount - 1);
-            for (int i = 0; i < backs; i++) _kb.Tap(cfg.WiperBackKey);
-            lock (_lock) _wiperStage = 0;
+            // Drive the wipers to off (we have a back key); the light knob's cycle
+            // key is forward-only so we can't force it — just reset the light tracker
+            // and assume the user has set the lights off.
+            if (Active && _kb.IsGameForeground())
+            {
+                int backs = Math.Max(0, cfg.WiperStageCount - 1);
+                for (int i = 0; i < backs; i++) _kb.Tap(cfg.WiperBackKey);
+            }
+            lock (_lock) { _wiperStage = 0; _lightStage = 0; }
         }
 
         private static int WrapStage(int stage, int count)

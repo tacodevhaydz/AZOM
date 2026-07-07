@@ -662,4 +662,5 @@ Id: {2}</value></data>
   <data name="Hint_ResyncWipers" xml:space="preserve"><value>Setter spillets viskere til av for å samstemme med trinnet programtillegget sporer.</value></data>
   <data name="Label_StalksLastPressed" xml:space="preserve"><value>Sist trykket: knapp {0}</value></data>
   <data name="Button_LoadEts2Defaults" xml:space="preserve"><value>Last inn ETS2/ATS-standard</value></data>
+  <data name="Button_ResyncStages" xml:space="preserve"><value>Synkroniser viskere og lys på nytt</value></data>
 </root>

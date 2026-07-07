@@ -667,4 +667,5 @@ Id: {2}</value></data>
   <data name="Hint_ResyncWipers" xml:space="preserve"><value>Drives the game wipers back to off to re-align with the plugin's tracked stage.</value></data>
   <data name="Label_StalksLastPressed" xml:space="preserve"><value>Last pressed: button {0}</value></data>
   <data name="Button_LoadEts2Defaults" xml:space="preserve"><value>Load ETS2/ATS defaults</value></data>
+  <data name="Button_ResyncStages" xml:space="preserve"><value>Re-sync wipers &amp; lights</value></data>
 </root>

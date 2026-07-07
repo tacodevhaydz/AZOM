@@ -25,8 +25,11 @@ namespace MozaPlugin.Devices.StalksTruckSim
         // all (the controller still gates on game-running, but set this in practice).
         private volatile string[] _foregroundProcs = Array.Empty<string>();
 
-        private readonly BlockingCollection<ushort> _queue =
-            new BlockingCollection<ushort>(new ConcurrentQueue<ushort>());
+        private enum Op : byte { Tap, Down, Up }
+        private readonly BlockingCollection<(ushort scan, Op op)> _queue =
+            new BlockingCollection<(ushort, Op)>(new ConcurrentQueue<(ushort, Op)>());
+        private readonly object _downLock = new object();
+        private readonly HashSet<ushort> _down = new HashSet<ushort>();
         private readonly Thread _worker;
         private volatile bool _disposed;
 
@@ -42,14 +45,43 @@ namespace MozaPlugin.Devices.StalksTruckSim
             => _foregroundProcs = names ?? Array.Empty<string>();
 
         /// <summary>Queue a single key tap (down+up) by scan code. No-op for scan 0.</summary>
-        public void Tap(ushort scan)
-        {
-            if (scan != 0 && !_disposed && !_queue.IsAddingCompleted)
-                _queue.TryAdd(scan);
-        }
+        public void Tap(ushort scan) => Enqueue(scan, Op.Tap);
 
         /// <summary>Queue a key tap by key name (resolved via <see cref="ScanCode"/>).</summary>
         public void Tap(string keyName) => Tap(ScanCode(keyName));
+
+        /// <summary>Queue a key-down (held until <see cref="KeyUp"/>) by scan code.</summary>
+        public void KeyDown(ushort scan)
+        {
+            if (scan == 0) return;
+            lock (_downLock) _down.Add(scan);
+            Enqueue(scan, Op.Down);
+        }
+        public void KeyDown(string keyName) => KeyDown(ScanCode(keyName));
+
+        /// <summary>Queue a key-up by scan code.</summary>
+        public void KeyUp(ushort scan)
+        {
+            if (scan == 0) return;
+            lock (_downLock) _down.Remove(scan);
+            Enqueue(scan, Op.Up);
+        }
+        public void KeyUp(string keyName) => KeyUp(ScanCode(keyName));
+
+        /// <summary>Release every currently-held key — prevents a key getting stuck
+        /// down on disable / focus loss / game exit.</summary>
+        public void ReleaseAll()
+        {
+            ushort[] held;
+            lock (_downLock) { held = new ushort[_down.Count]; _down.CopyTo(held); _down.Clear(); }
+            foreach (var s in held) Enqueue(s, Op.Up);
+        }
+
+        private void Enqueue(ushort scan, Op op)
+        {
+            if (scan != 0 && !_disposed && !_queue.IsAddingCompleted)
+                _queue.TryAdd((scan, op));
+        }
 
         /// <summary>Drop any pending taps (e.g. on disable / focus loss).</summary>
         public void Flush()
@@ -61,14 +93,18 @@ namespace MozaPlugin.Devices.StalksTruckSim
         {
             try
             {
-                foreach (var scan in _queue.GetConsumingEnumerable())
+                foreach (var (scan, op) in _queue.GetConsumingEnumerable())
                 {
                     if (_disposed) break;
-                    // Drop the tap if the game isn't foreground — never inject elsewhere.
-                    if (!IsGameForeground()) continue;
                     try
                     {
-                        SendKey(scan, down: true);
+                        // Key-up always fires — even if the game isn't foreground — so a
+                        // held key can never get stuck down. Down/Tap only inject when
+                        // the game is the foreground window.
+                        if (op == Op.Up) { SendKey(scan, down: false); continue; }
+                        if (!IsGameForeground()) continue;
+                        if (op == Op.Down) { SendKey(scan, down: true); continue; }
+                        SendKey(scan, down: true);   // Tap
                         Thread.Sleep(HoldMs);
                         SendKey(scan, down: false);
                         Thread.Sleep(GapMs);
@@ -80,7 +116,10 @@ namespace MozaPlugin.Devices.StalksTruckSim
             catch (InvalidOperationException) { }
         }
 
-        private bool IsGameForeground()
+        /// <summary>True when a configured truck-game process owns the foreground
+        /// window. Used by the controller to avoid advancing tracked wiper/light
+        /// stages while alt-tabbed (when key output would be dropped).</summary>
+        internal bool IsGameForeground()
         {
             var procs = _foregroundProcs;
             if (procs.Length == 0) return true;
@@ -201,6 +240,15 @@ namespace MozaPlugin.Devices.StalksTruckSim
         {
             if (_disposed) return;
             _disposed = true;
+            // Release any held keys directly — the worker is stopping and won't drain
+            // queued key-ups.
+            try
+            {
+                ushort[] held;
+                lock (_downLock) { held = new ushort[_down.Count]; _down.CopyTo(held); _down.Clear(); }
+                foreach (var s in held) { try { SendKey(s, down: false); } catch { } }
+            }
+            catch { }
             try { _queue.CompleteAdding(); } catch { }
             try { _worker.Join(500); } catch { }
             try { _queue.Dispose(); } catch { }

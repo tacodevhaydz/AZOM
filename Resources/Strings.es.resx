@@ -662,4 +662,5 @@ Id: {2}</value></data>
   <data name="Hint_ResyncWipers" xml:space="preserve"><value>Lleva los limpiaparabrisas del juego a apagado para realinearlos con la etapa que sigue el complemento.</value></data>
   <data name="Label_StalksLastPressed" xml:space="preserve"><value>Último pulsado: botón {0}</value></data>
   <data name="Button_LoadEts2Defaults" xml:space="preserve"><value>Cargar valores por defecto ETS2/ATS</value></data>
+  <data name="Button_ResyncStages" xml:space="preserve"><value>Resincronizar limpiaparabrisas y luces</value></data>
 </root>

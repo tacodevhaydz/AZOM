@@ -718,5 +718,6 @@ namespace MozaPlugin.Resources
         public static string Hint_ResyncWipers => Get("Hint_ResyncWipers");
         public static string Label_StalksLastPressed => Get("Label_StalksLastPressed");
         public static string Button_LoadEts2Defaults => Get("Button_LoadEts2Defaults");
+        public static string Button_ResyncStages => Get("Button_ResyncStages");
     }
 }

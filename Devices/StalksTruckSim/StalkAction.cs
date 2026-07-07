@@ -49,6 +49,11 @@ namespace MozaPlugin.Devices.StalksTruckSim
         /// <summary>Wiper "single swipe" position: pulses the wipers on then off
         /// (forward + back cycle tap) without changing the tracked stage.</summary>
         WiperSingleSwipe = 7,
+
+        /// <summary>Hold a key down while the button is pressed and release it when the
+        /// button is released (e.g. high-beam flash / light horn on <c>J</c>), rather
+        /// than a single tap.</summary>
+        HeldKey = 8,
     }
 
     /// <summary>

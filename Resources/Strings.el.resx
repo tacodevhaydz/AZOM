@@ -656,4 +656,5 @@ Id: {2}</value></data>
   <data name="Hint_ResyncWipers" xml:space="preserve"><value>Επαναφέρει τους υαλοκαθαριστήρες του παιχνιδιού στο κλειστό για ευθυγράμμιση με το στάδιο που παρακολουθεί το πρόσθετο.</value></data>
   <data name="Label_StalksLastPressed" xml:space="preserve"><value>Τελευταίο πάτημα: κουμπί {0}</value></data>
   <data name="Button_LoadEts2Defaults" xml:space="preserve"><value>Φόρτωση προεπιλογών ETS2/ATS</value></data>
+  <data name="Button_ResyncStages" xml:space="preserve"><value>Επανασυγχρονισμός υαλοκαθαριστήρων &amp; φώτων</value></data>
 </root>

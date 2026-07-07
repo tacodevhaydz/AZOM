@@ -657,4 +657,5 @@ Id: {2}</value></data>
   <data name="Hint_ResyncWipers" xml:space="preserve"><value>Đưa gạt mưa trong trò chơi về tắt để khớp lại với cấp mà plugin đang theo dõi.</value></data>
   <data name="Label_StalksLastPressed" xml:space="preserve"><value>Lần nhấn cuối: nút {0}</value></data>
   <data name="Button_LoadEts2Defaults" xml:space="preserve"><value>Tải mặc định ETS2/ATS</value></data>
+  <data name="Button_ResyncStages" xml:space="preserve"><value>Đồng bộ lại gạt mưa và đèn</value></data>
 </root>

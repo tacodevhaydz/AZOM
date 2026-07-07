@@ -657,4 +657,5 @@ Id : {2}</value></data>
   <data name="Hint_ResyncWipers" xml:space="preserve"><value>Ramène les essuie-glaces du jeu à l'arrêt pour les réaligner sur le niveau suivi par le plugin.</value></data>
   <data name="Label_StalksLastPressed" xml:space="preserve"><value>Dernier appui : bouton {0}</value></data>
   <data name="Button_LoadEts2Defaults" xml:space="preserve"><value>Charger les valeurs par défaut ETS2/ATS</value></data>
+  <data name="Button_ResyncStages" xml:space="preserve"><value>Resynchroniser essuie-glaces et feux</value></data>
 </root>

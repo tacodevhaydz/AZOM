@@ -657,4 +657,5 @@ Id: {2}</value></data>
   <data name="Hint_ResyncWipers" xml:space="preserve"><value>Schaltet die Spielwischer auf Aus, um sie mit der vom Plugin verfolgten Stufe abzugleichen.</value></data>
   <data name="Label_StalksLastPressed" xml:space="preserve"><value>Zuletzt gedrückt: Taste {0}</value></data>
   <data name="Button_LoadEts2Defaults" xml:space="preserve"><value>ETS2/ATS-Standard laden</value></data>
+  <data name="Button_ResyncStages" xml:space="preserve"><value>Wischer &amp; Licht neu abgleichen</value></data>
 </root>

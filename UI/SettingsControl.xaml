@@ -2409,7 +2409,7 @@
                                     </Grid>
                                     <DockPanel Margin="0,10,0,0">
                                         <Button x:Name="StalksResyncButton" DockPanel.Dock="Left"
-                                                Content="{x:Static res:Strings.Button_ResyncWipers}"
+                                                Content="{x:Static res:Strings.Button_ResyncStages}"
                                                 Click="StalksResyncButton_Click" Padding="14,6"/>
                                         <TextBlock Text="{x:Static res:Strings.Hint_ResyncWipers}"
                                                    Style="{StaticResource MutedHintText}" TextWrapping="Wrap"

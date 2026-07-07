@@ -657,4 +657,5 @@ Id: {2}</value></data>
   <data name="Hint_ResyncWipers" xml:space="preserve"><value>将游戏雨刮调回关闭，以与插件跟踪的挡位重新对齐。</value></data>
   <data name="Label_StalksLastPressed" xml:space="preserve"><value>上次按下：按键 {0}</value></data>
   <data name="Button_LoadEts2Defaults" xml:space="preserve"><value>加载 ETS2/ATS 默认值</value></data>
+  <data name="Button_ResyncStages" xml:space="preserve"><value>重新同步雨刮与灯光</value></data>
 </root>

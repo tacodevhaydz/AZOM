@@ -656,4 +656,5 @@ Id: {2}</value></data>
   <data name="Hint_ResyncWipers" xml:space="preserve"><value>게임 와이퍼를 꺼짐으로 되돌려 플러그인이 추적하는 단계와 다시 맞춥니다.</value></data>
   <data name="Label_StalksLastPressed" xml:space="preserve"><value>마지막 입력: 버튼 {0}</value></data>
   <data name="Button_LoadEts2Defaults" xml:space="preserve"><value>ETS2/ATS 기본값 불러오기</value></data>
+  <data name="Button_ResyncStages" xml:space="preserve"><value>와이퍼 및 라이트 재동기화</value></data>
 </root>

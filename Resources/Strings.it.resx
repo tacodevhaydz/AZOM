@@ -660,4 +660,5 @@ Id: {2}</value></data>
   <data name="Hint_ResyncWipers" xml:space="preserve"><value>Riporta i tergicristalli del gioco su spento per riallinearli allo stadio tracciato dal plugin.</value></data>
   <data name="Label_StalksLastPressed" xml:space="preserve"><value>Ultimo premuto: pulsante {0}</value></data>
   <data name="Button_LoadEts2Defaults" xml:space="preserve"><value>Carica impostazioni predefinite ETS2/ATS</value></data>
+  <data name="Button_ResyncStages" xml:space="preserve"><value>Risincronizza tergicristalli e luci</value></data>
 </root>
