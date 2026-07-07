@@ -569,6 +569,25 @@ namespace MozaPlugin.Protocol
             AddCommand("mbooster-brake-output",    "mbooster", 37, 0xFF, new byte[] { 2 }, 2, "int");
             AddCommand("mbooster-clutch-output",   "mbooster", 37, 0xFF, new byte[] { 3 }, 2, "int");
 
+            // ===== mBooster IDENTITY (read-only) — the mBooster is a chain host,
+            // addressed like the wheelbase: same identity/serial/presence probe
+            // surface, just re-tagged under the "mbooster" bus so replies (all on
+            // device 0x12, group|0x80) don't cross-match wheel-*/base-*/ab9-*.
+            // CAPTURE-VERIFIED against a real Pit House startup (dev 0x12):
+            //   7e 01 10 12 00 -> reply 7e 11 90 21 00 <16 ASCII> (serial part A)
+            //   7e 01 10 12 01 -> reply 7e 11 90 21 01 <16 ASCII> (serial part B)
+            //   full serial = A + B (32 ASCII chars), identical shape to wheel-serial-a/b.
+            //   7e 00 09 12    -> reply 7e 02 89 21 00 NN         (presence: NN sub-devices)
+            //   7e 01 07 12 01 -> reply model-name "mBooster".
+            // Names MUST start with "mbooster-" (MBoosterDeviceController drops any
+            // other reply) and groups 7/9/16 are otherwise unused by mBooster so
+            // they never collide in the group-indexed parser scan.
+            AddCommand("mbooster-model-name", "mbooster",  7, 0xFF, new byte[] { 1 }, 0, "array");
+            AddCommand("mbooster-serial-a",   "mbooster", 16, 0xFF, new byte[] { 0 }, 0, "array");
+            AddCommand("mbooster-serial-b",   "mbooster", 16, 0xFF, new byte[] { 1 }, 0, "array");
+            AddCommand("mbooster-presence",   "mbooster",  9, 0xFF, new byte[] { },  0, "array");
+            AddCommand("mbooster-device-type","mbooster",  4, 0xFF, new byte[] { },  0, "array");
+
             // ===== BASE AMBIENT LEDS (dev 0x12, write grp 0x20, read grp 0x22) =====
             // Two 9-LED strips on R21/R25/R27 bodies; R9/R12 silently drop the read.
             // Detection gates on a 0xA2 response to base-ambient-brightness.

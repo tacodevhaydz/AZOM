@@ -60,14 +60,18 @@ namespace MozaPlugin.Protocol
         private long _hidParseErrorCount;
 
         /// <summary>
-        /// Fires when an mBooster's HID axis changes (one event per device per
-        /// report). String arg is the device identity (extracted USB parent
-        /// instance segment from <see cref="HidDevice.DevicePath"/>); double
-        /// arg is the normalized position in [0, 1].
-        /// Subscribed by <c>MozaMBoosterRegistry.OnHidAxisUpdate</c> which
-        /// merges per-device positions into MozaData by role.
+        /// Fires when an mBooster's HID axis changes. Args: device identity
+        /// (extracted USB parent instance segment from
+        /// <see cref="HidDevice.DevicePath"/>); Windows Container ID of the HID
+        /// interface (identical to the CDC lane's — used to pair HID↔CDC across
+        /// multiple lanes; "" when unavailable); axis index (0 = the master
+        /// unit's pedal, 1 = 2nd chained device, 2 = 3rd — a stable order by
+        /// ascending GenericDesktop usage id, since a chain host reports all
+        /// its pedals as separate axes on one HID report); normalized position
+        /// in [0, 1]. Subscribed by <c>MozaMBoosterRegistry.OnHidAxisUpdate</c>
+        /// which routes each axis into MozaData by its per-axis role.
         /// </summary>
-        public event Action<string, double>? MBoosterAxisChanged;
+        public event Action<string, string, int, double>? MBoosterAxisChanged;
 
         /// <summary>
         /// Fires on every MOZA Stalks button edge: (0-based button index, pressed).
@@ -332,9 +336,14 @@ namespace MozaPlugin.Protocol
                             // DevicePath alongside the extracted identity so a
                             // mismatch against the CDC InstanceId can be read
                             // straight out of a support-bundle export.
-                            string path = "";
+                            string path = "", hidSerial = "";
                             try { path = dev.DevicePath ?? ""; } catch { }
-                            MozaLog.Debug($"[AZOM/mBooster] HID identity extracted: '{identity}' from path '{path}'");
+                            // USB iSerialNumber (present on the mBooster — descriptor
+                            // index 3, capture-confirmed). If HidSharp surfaces it,
+                            // it's a per-unit key that matches across the HID + CDC
+                            // interfaces — a candidate HID↔CDC pairing token (Stage 4).
+                            try { hidSerial = dev.GetSerialNumber() ?? ""; } catch { }
+                            MozaLog.Debug($"[AZOM/mBooster] HID identity extracted: '{identity}' serial='{MozaLog.RedactId(hidSerial)}' from path '{path}'");
                         }
                         result.Add((dev, usages, kind, identity));
                     }
@@ -423,6 +432,30 @@ namespace MozaPlugin.Protocol
                 long mbReceivedCount = 0;
                 long mbParseFailCount = 0;
                 long mbChangeCount = 0;
+
+                // Stable axis order for an mBooster chain host: sort this
+                // device's GenericDesktop axis usages (0x30..0x37) ascending and
+                // map each to an index. Axis 0 = the master unit, 1 = 2nd
+                // chained device, etc. (the "deterministic order" the registry
+                // routes on). Computed once per device open.
+                Dictionary<uint, int>? mBoosterAxisIndex = null;
+                string mBoosterContainerId = "";
+                if (kind == MozaHidClass.MBooster)
+                {
+                    var axisUsages = usages.Keys
+                        .Where(u => (u >> 16) == 0x0001 && (u & 0xFFFF) >= 0x30 && (u & 0xFFFF) <= 0x37)
+                        .OrderBy(u => u)
+                        .ToList();
+                    mBoosterAxisIndex = new Dictionary<uint, int>(axisUsages.Count);
+                    for (int ai = 0; ai < axisUsages.Count; ai++)
+                        mBoosterAxisIndex[axisUsages[ai]] = ai;
+                    // Container ID (same across this device's HID + CDC interfaces)
+                    // so the registry can pair this axis stream to its CDC lane.
+                    try { mBoosterContainerId = MozaPortDiscovery.Instance.GetHidContainerId(device.DevicePath ?? ""); }
+                    catch { }
+                    MozaLog.Debug($"[AZOM/mBooster] {identity}: {axisUsages.Count} axis/axes " +
+                        $"[{string.Join(", ", axisUsages.Select(u => $"0x{u & 0xFFFF:X2}"))}] container='{mBoosterContainerId}'");
+                }
 
                 receiver.Received += (sender, e) =>
                 {
@@ -523,16 +556,17 @@ namespace MozaPlugin.Protocol
                                         if (kind == MozaHidClass.MBooster)
                                         {
                                             // mBooster axes route via the registry — never directly into
-                                            // MozaData. The registry maps the per-device position into
-                                            // throttle/brake/clutch based on the user-assigned role and
-                                            // merges across multiple devices with first-wins semantics.
-                                            // We accept the first GenericDesktop axis the device emits;
-                                            // additional axes (if any) on the same device are ignored.
+                                            // MozaData. A chain host reports EVERY hosted pedal as its own
+                                            // GenericDesktop axis on one report, so we emit ALL of them
+                                            // (each tagged with its stable index) rather than only the
+                                            // first; the registry routes each axis to throttle/brake/clutch
+                                            // by its per-axis role and merges across lanes first-wins.
                                             double raw = value.GetLogicalValue();
                                             double normalized01 = (raw - range.min) / (double)(range.max - range.min);
                                             if (normalized01 < 0) normalized01 = 0;
                                             if (normalized01 > 1) normalized01 = 1;
-                                            try { MBoosterAxisChanged?.Invoke(identity, normalized01); }
+                                            int axisIndex = (mBoosterAxisIndex != null && mBoosterAxisIndex.TryGetValue(usage, out var ai)) ? ai : 0;
+                                            try { MBoosterAxisChanged?.Invoke(identity, mBoosterContainerId, axisIndex, normalized01); }
                                             catch (Exception ex) { MozaLog.Debug($"[AZOM] mBooster axis handler: {ex.Message}"); }
                                             continue;
                                         }

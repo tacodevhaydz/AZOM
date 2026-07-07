@@ -661,4 +661,17 @@ Id: {2}</value></data>
   <data name="Label_StalksLastPressed" xml:space="preserve"><value>Ultimo premuto: pulsante {0}</value></data>
   <data name="Button_LoadEts2Defaults" xml:space="preserve"><value>Carica impostazioni predefinite ETS2/ATS</value></data>
   <data name="Button_ResyncStages" xml:space="preserve"><value>Risincronizza tergicristalli e luci</value></data>
+  <data name="SliderLabel_DisplayName" xml:space="preserve"><value>Nome visualizzato</value></data>
+  <data name="Hint_MBoosterDisplayName" xml:space="preserve"><value>Facoltativo — aiuta a distinguere due mBooster con lo stesso ruolo nell'elenco dei dispositivi sopra.</value></data>
+  <data name="Section_CustomEffects" xml:space="preserve"><value>Effetti personalizzati (sperimentale)</value></data>
+  <data name="Subtitle_CustomEffectsExperimental" xml:space="preserve"><value>// sperimentale — vibrazione definita dall'utente tramite formule SimHub/NCalc</value></data>
+  <data name="Hint_CustomEffectsExperimental" xml:space="preserve"><value>Sperimentale — ogni effetto personalizzato fa vibrare il motore usando una proprietà SimHub o una formula NCalc fornita da te. Tutti gli effetti personalizzati (e l'effetto Engine integrato) condividono un unico canale, quindi solo uno può pilotare il motore alla volta; vince l'ultimo effetto attivo elaborato. Frequenza/Intensità si comportano come i cursori dell'Engine.</value></data>
+  <data name="Hint_CustomEffectFormula" xml:space="preserve"><value>Una proprietà SimHub (es. SpeedKmh) o una formula NCalc (es. [Rpms] / [CarSettings_MaxRPM]). Con "Usa soglia" disattivato, il valore (limitato a 0..1) scala l'intensità in modo continuo. Attivato, l'effetto pulsa all'intensità configurata quando il valore è pari o superiore alla soglia.</value></data>
+  <data name="Label_UseThreshold" xml:space="preserve"><value>Usa soglia</value></data>
+  <data name="SliderLabel_Name" xml:space="preserve"><value>Nome</value></data>
+  <data name="SliderLabel_Formula" xml:space="preserve"><value>Formula</value></data>
+  <data name="SliderLabel_Threshold" xml:space="preserve"><value>Soglia</value></data>
+  <data name="Button_AddCustomEffect" xml:space="preserve"><value>+ Aggiungi effetto personalizzato</value></data>
+  <data name="Button_DeleteCustomEffect" xml:space="preserve"><value>Elimina effetto</value></data>
+  <data name="DefaultName_CustomEffect" xml:space="preserve"><value>Effetto personalizzato</value></data>
 </root>

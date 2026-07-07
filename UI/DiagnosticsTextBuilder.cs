@@ -142,6 +142,13 @@ namespace MozaPlugin.UI
                     $"  [{i}] {port,-6}  role={roleStr,-8}  state={state}  " +
                     $"hidPos={d.LastHidPosition.ToString("F3", CultureInfo.InvariantCulture)}  " +
                     $"name='{dispNameStr}'  id={id}");
+                // Device-reported identity (learned over the Moza wire) — confirms
+                // the serial-interrogation path on real hardware + shows the chain size.
+                string serialStr = string.IsNullOrEmpty(d.Serial) ? "—" : Redact(d.Serial!);
+                sb.AppendLine(
+                    $"        serial={serialStr}  " +
+                    $"model='{(string.IsNullOrEmpty(d.ModelName) ? "—" : d.ModelName)}'  " +
+                    $"subDevs={d.SubDeviceCount}  container={(string.IsNullOrEmpty(d.ContainerId) ? "—" : d.ContainerId)}");
             }
             return sb.ToString().TrimEnd();
         }

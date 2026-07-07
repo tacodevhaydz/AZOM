@@ -230,6 +230,17 @@ namespace MozaPlugin.Devices
     {
         public MBoosterRole Role { get; set; } = MBoosterRole.Disabled;
 
+        // Per-axis role for a multi-pedal chain: the mBooster hosts up to 3
+        // pedals on ONE lane, reported as HID axes in a deterministic order
+        // (axis 0 = the master unit, axis 1 = 2nd chained device, axis 2 =
+        // 3rd). null = use defaults — a single-axis device falls back to the
+        // legacy Role above (exact backward compat); a multi-axis chain
+        // defaults to [Brake, Throttle, Clutch] by axis order (a guess, since
+        // the physical axis→pedal wiring isn't reported — the UI lets the user
+        // remap). When the user edits any axis the UI writes the full array so
+        // every axis becomes explicit. See MozaMBoosterRegistry.ResolveAxisRole.
+        public MBoosterRole[]? AxisRoles { get; set; } = null;
+
         // FrequencyHz defaults to 22 — the exact value from the "known-good"
         // real Pit House capture (docs/protocol/devices/mbooster.md: "ABS on,
         // 22Hz, amp=0x08e8").
@@ -389,6 +400,7 @@ namespace MozaPlugin.Devices
             return new MBoosterDeviceSettings
             {
                 Role = Role,
+                AxisRoles = AxisRoles == null ? null : (MBoosterRole[])AxisRoles.Clone(),
                 Abs = Abs?.Clone() ?? new MBoosterEffectSettings(),
                 Lockup = Lockup?.Clone() ?? new MBoosterEffectSettings(),
                 Threshold = Threshold?.Clone() ?? new MBoosterEffectSettings(),

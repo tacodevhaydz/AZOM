@@ -1,4 +1,6 @@
 using System;
+using System.Collections.Generic;
+using System.Text;
 using MozaPlugin.Protocol;
 
 namespace MozaPlugin.Devices
@@ -38,6 +40,27 @@ namespace MozaPlugin.Devices
         // via Connection.LastPortName if needed.
         public string PortName { get; private set; }
 
+        // Windows Container ID (from MozaPortDiscovery) — identical across the
+        // CDC + HID interfaces of this one physical mBooster. Used by the
+        // registry to pair the HID axis stream to this CDC lane. Empty when the
+        // registry key had none (some driver stacks / Wine).
+        public string ContainerId { get; }
+
+        // Device-reported identity, learned over the Moza wire (group 0x10 serial
+        // read + group 7 model-name + group 9 presence). Capture-verified that the
+        // mBooster answers these exactly like the wheelbase — see
+        // docs/protocol/devices/mbooster.md. Null/0 until the reads reply (or if
+        // the firmware never answers, in which case identity stays the transport
+        // instance id).
+        public string? Serial { get; private set; }
+        public string? ModelName { get; private set; }
+        public int SubDeviceCount { get; private set; } = -1;
+
+        // Serial arrives in two halves (part A = selector 0, part B = selector 1);
+        // full serial = A + B (32 ASCII chars). Held until both land.
+        private string _serialPartA = "";
+        private string _serialPartB = "";
+
         public bool Detected => _detected;
         public bool IsConnected => _connection.IsConnected;
         public MozaSerialConnection Connection => _connection;
@@ -53,6 +76,22 @@ namespace MozaPlugin.Devices
         // LastHidPosition is already past that point. See
         // MozaMBoosterRegistry.OnHidAxisUpdate.
         public double LastRawPercentPreCurve { get; internal set; }
+
+        // GenericDesktop axis usages 0x30..0x37 — a chain host exposes at most
+        // this many pedal axes on one HID report.
+        public const int MaxAxes = 8;
+
+        // Per-axis normalized position (0..1) for a multi-pedal chain — axis 0
+        // is the master unit's pedal, axis 1 the 2nd chained device, etc.
+        // Written per axis by MozaMBoosterRegistry.OnHidAxisUpdate; read whole
+        // in MergePositions. LastHidPosition above mirrors axis 0 for the UI
+        // position bar. Element writes race benignly (last-value-wins, same as
+        // LastHidPosition) so no lock is needed.
+        public readonly double[] LastAxisPositions = new double[MaxAxes];
+
+        // Highest axis index + 1 the HID has reported for this lane: 1 for a
+        // lone pedal, up to 3 for a full chain. 0 until the first axis update.
+        public int AxisCount { get; internal set; }
 
         /// <summary>Latest per-identity settings (role, display name, calibration).
         /// Thin pass-through to the registry's settings lookup — returns null if no
@@ -77,10 +116,12 @@ namespace MozaPlugin.Devices
             Func<MBoosterDeviceSettings?> settingsLookup,
             Func<bool> isShuttingDown,
             Func<bool>? disableProbeFallback = null,
-            Func<string, double>? customEffectFormulaEvaluator = null)
+            Func<string, double>? customEffectFormulaEvaluator = null,
+            string containerId = "")
         {
             Identity = identity ?? throw new ArgumentNullException(nameof(identity));
             PortName = portName ?? throw new ArgumentNullException(nameof(portName));
+            ContainerId = containerId ?? string.Empty;
             _settingsLookup = settingsLookup ?? throw new ArgumentNullException(nameof(settingsLookup));
             _isShuttingDown = isShuttingDown ?? (() => false);
 
@@ -120,8 +161,16 @@ namespace MozaPlugin.Devices
         private void OnConnectionMessage(byte[] data)
         {
             if (_disposed || data == null || data.Length < 2) return;
-            // Silence firmware debug noise (same shape as the wheelbase path).
-            if (data[0] == MozaProtocol.FirmwareDebugGroup) return;
+            // Firmware debug/diagnostic group (0x0E) is normally silenced as noise,
+            // but the mBooster streams useful chain-layout lines here ("PD Linked:
+            // [T x B y C z]", "<pedal> is connected, type: active/passive pedal").
+            // Surface those once each so a support bundle shows the physical chain;
+            // drop the rest.
+            if (data[0] == MozaProtocol.FirmwareDebugGroup)
+            {
+                LogPedalDiagnosticIfRelevant(data);
+                return;
+            }
 
             var result = MozaResponseParser.Parse(data, busHint: "mbooster");
             if (!result.HasValue) return;
@@ -132,12 +181,73 @@ namespace MozaPlugin.Devices
             // First valid mbooster-* response latches detection (fires DetectedRisingEdge).
             MarkDetected();
 
-            // Calibration read-backs land here — log at Debug so the user can see
-            // in the support bundle what the device returned (or didn't). Actual
-            // mapping into MBoosterDeviceSettings happens in the plugin-level
-            // detection handler so the registry doesn't have to know about the
-            // settings shape.
-            MozaLog.Debug($"[AZOM/mBooster] {ShortIdentity(Identity)} {r.Name} = {r.IntValue}");
+            // Identity read-backs — the mBooster answers the wheelbase's own serial/
+            // model/presence probe surface (capture-verified). Reassemble the serial
+            // + capture model/presence here so the device is identified by its own
+            // stable serial rather than the port-topology instance id.
+            switch (r.Name)
+            {
+                case "mbooster-serial-a":
+                    _serialPartA = MozaData.ParseNullTerminatedString(r.ArrayValue ?? Array.Empty<byte>());
+                    TryCompleteSerial();
+                    break;
+                case "mbooster-serial-b":
+                    _serialPartB = MozaData.ParseNullTerminatedString(r.ArrayValue ?? Array.Empty<byte>());
+                    TryCompleteSerial();
+                    break;
+                case "mbooster-model-name":
+                    ModelName = MozaData.ParseNullTerminatedString(r.ArrayValue ?? Array.Empty<byte>());
+                    MozaLog.Debug($"[AZOM/mBooster] {ShortIdentity(Identity)} model='{ModelName}'");
+                    break;
+                case "mbooster-presence":
+                    // Sub-device COUNT byte offset isn't pinned yet (wheelbase reads
+                    // data[0]; a real 2-pedal chain capture shows "00 02", so the
+                    // count may be the last byte). Store the best-effort int and log
+                    // the raw bytes so the offset can be confirmed from a bundle.
+                    SubDeviceCount = r.IntValue;
+                    MozaLog.Debug($"[AZOM/mBooster] {ShortIdentity(Identity)} presence raw=[{ToHex(r.ArrayValue)}] intVal={r.IntValue}");
+                    break;
+                case "mbooster-device-type":
+                    MozaLog.Debug($"[AZOM/mBooster] {ShortIdentity(Identity)} device-type=[{ToHex(r.ArrayValue)}]");
+                    break;
+                default:
+                    // Calibration read-backs — log at Debug so the bundle shows what
+                    // the device returned. Mapping into settings happens plugin-side.
+                    MozaLog.Debug($"[AZOM/mBooster] {ShortIdentity(Identity)} {r.Name} = {r.IntValue}");
+                    break;
+            }
+        }
+
+        /// <summary>Concatenate the two serial halves once both have arrived.</summary>
+        private void TryCompleteSerial()
+        {
+            if (string.IsNullOrEmpty(_serialPartA) || string.IsNullOrEmpty(_serialPartB)) return;
+            string full = _serialPartA + _serialPartB;
+            if (string.Equals(full, Serial, StringComparison.Ordinal)) return;
+            Serial = full;
+            MozaLog.Info($"[AZOM/mBooster] {ShortIdentity(Identity)} serial={MozaLog.RedactId(full)} (len={full.Length})");
+        }
+
+        private static string ToHex(byte[]? b) =>
+            b == null ? "" : BitConverter.ToString(b).Replace("-", " ").ToLowerInvariant();
+
+        // Each distinct diagnostic line logged once — the device re-streams these
+        // continuously, so an unguarded log would flood the support bundle.
+        private readonly HashSet<string> _diagLinesLogged = new HashSet<string>(StringComparer.Ordinal);
+
+        private void LogPedalDiagnosticIfRelevant(byte[] data)
+        {
+            var sb = new StringBuilder(data.Length);
+            foreach (var ch in data)
+                if (ch >= 0x20 && ch < 0x7f) sb.Append((char)ch);
+            string ascii = sb.ToString().Trim();
+            if (ascii.Length == 0) return;
+            if (ascii.IndexOf("PD Linked", StringComparison.OrdinalIgnoreCase) < 0 &&
+                ascii.IndexOf("pedal is connected", StringComparison.OrdinalIgnoreCase) < 0 &&
+                ascii.IndexOf("not connected", StringComparison.OrdinalIgnoreCase) < 0)
+                return;
+            lock (_diagLinesLogged) { if (!_diagLinesLogged.Add(ascii)) return; }
+            MozaLog.Debug($"[AZOM/mBooster] {ShortIdentity(Identity)} diag: {ascii}");
         }
 
         /// <summary>Short identity slug for capture labels / log lines — last 8 chars of instance id.</summary>
@@ -290,6 +400,11 @@ namespace MozaPlugin.Devices
             if (!_connection.IsConnected) return;
             foreach (var name in new[]
             {
+                // Identity first — the serial/model/presence reads are what let us
+                // key this lane by its own stable serial (and they double as a
+                // detection-eliciting response for a fresh, all-effects-off device).
+                "mbooster-model-name", "mbooster-serial-a", "mbooster-serial-b",
+                "mbooster-presence", "mbooster-device-type",
                 "mbooster-throttle-dir", "mbooster-throttle-min", "mbooster-throttle-max",
                 "mbooster-brake-dir", "mbooster-brake-min", "mbooster-brake-max",
                 "mbooster-clutch-dir", "mbooster-clutch-min", "mbooster-clutch-max",

@@ -1341,9 +1341,9 @@ namespace MozaPlugin
                 // Slice G: HID event subscription re-enabled.
                 if (_mboosterRegistry != null)
                 {
-                    _hidReader.MBoosterAxisChanged += (identity, pos01) =>
+                    _hidReader.MBoosterAxisChanged += (identity, containerId, axisIndex, pos01) =>
                     {
-                        try { _mboosterRegistry.OnHidAxisUpdate(identity, pos01); }
+                        try { _mboosterRegistry.OnHidAxisUpdate(identity, containerId, axisIndex, pos01); }
                         catch (Exception ex) { MozaLog.Debug($"[AZOM/mBooster] HID dispatch: {ex.Message}"); }
                     };
                 }
@@ -2122,29 +2122,39 @@ namespace MozaPlugin
         internal void ApplyMBoosterToHardware(MBoosterDeviceController controller, MBoosterDeviceSettings s)
         {
             if (controller == null || s == null || !controller.IsConnected) return;
-            // Direction / min / max — write only if the user has set them.
-            if (s.Direction >= 0)
+
+            // Route Direction / Min / Max / output-curve to the command slot
+            // matching the pedal's ROLE. This used to be hardcoded to the
+            // "throttle" slot, which is wrong for a mBooster used as a brake or
+            // clutch (and for a chain whose master pedal isn't the throttle) —
+            // the calibration silently landed on the wrong pedal's command.
+            // The role is the master pedal's (axis 0): ResolveAxisRole gives the
+            // legacy Role for a single unit or the chain default/override
+            // otherwise. Per-pedal calibration for the OTHER chained pedals is a
+            // follow-up (needs a per-pedal settings UI); this fixes the routing
+            // for the pedal the current single calibration set configures.
+            int axisCount = controller.AxisCount > 0 ? controller.AxisCount : 1;
+            var role = global::MozaPlugin.Devices.MozaMBoosterRegistry.ResolveAxisRole(s, 0, axisCount);
+            string? prefix =
+                role == global::MozaPlugin.Devices.MBoosterRole.Throttle ? "throttle"
+                : role == global::MozaPlugin.Devices.MBoosterRole.Brake ? "brake"
+                : role == global::MozaPlugin.Devices.MBoosterRole.Clutch ? "clutch"
+                : null;
+            if (prefix != null)
             {
-                // Direction is a per-pedal field on real Moza pedals; on
-                // mBooster (single-axis) we route through the throttle dir
-                // slot. Brake/clutch dirs are reserved for symmetry but
-                // unlikely to be wired on a single-axis unit.
-                controller.SendIntWrite("mbooster-throttle-dir", s.Direction);
-            }
-            if (s.Min >= 0) controller.SendIntWrite("mbooster-throttle-min", s.Min);
-            if (s.Max >= 0) controller.SendIntWrite("mbooster-throttle-max", s.Max);
-            if (s.CurveY != null && s.CurveY.Length == 5)
-            {
-                // Resample at the fixed 20/40/60/80/100 breakpoints in case
-                // CurveX has been horizontally dragged (see
-                // MozaMBoosterRegistry.ResampleCurveAtFixedBreakpoints) —
-                // identity when it hasn't.
-                var resampled = global::MozaPlugin.Devices.MozaMBoosterRegistry.ResampleCurveAtFixedBreakpoints(s.CurveX, s.CurveY);
-                controller.SendFloatWrite("mbooster-throttle-y1", resampled[0]);
-                controller.SendFloatWrite("mbooster-throttle-y2", resampled[1]);
-                controller.SendFloatWrite("mbooster-throttle-y3", resampled[2]);
-                controller.SendFloatWrite("mbooster-throttle-y4", resampled[3]);
-                controller.SendFloatWrite("mbooster-throttle-y5", resampled[4]);
+                if (s.Direction >= 0) controller.SendIntWrite($"mbooster-{prefix}-dir", s.Direction);
+                if (s.Min >= 0) controller.SendIntWrite($"mbooster-{prefix}-min", s.Min);
+                if (s.Max >= 0) controller.SendIntWrite($"mbooster-{prefix}-max", s.Max);
+                if (s.CurveY != null && s.CurveY.Length == 5)
+                {
+                    // Resample at the fixed 20/40/60/80/100 breakpoints in case
+                    // CurveX has been horizontally dragged (see
+                    // MozaMBoosterRegistry.ResampleCurveAtFixedBreakpoints) —
+                    // identity when it hasn't.
+                    var resampled = global::MozaPlugin.Devices.MozaMBoosterRegistry.ResampleCurveAtFixedBreakpoints(s.CurveX, s.CurveY);
+                    for (int i = 0; i < 5; i++)
+                        controller.SendFloatWrite($"mbooster-{prefix}-y{i + 1}", resampled[i]);
+                }
             }
             // Sim Input Mapping (Pit House-style).
             if (s.SensorOutputRatioPct >= 0)

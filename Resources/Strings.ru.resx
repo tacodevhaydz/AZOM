@@ -658,4 +658,17 @@ Id: {2}</value></data>
   <data name="Label_StalksLastPressed" xml:space="preserve"><value>Последнее нажатие: кнопка {0}</value></data>
   <data name="Button_LoadEts2Defaults" xml:space="preserve"><value>Загрузить настройки ETS2/ATS по умолчанию</value></data>
   <data name="Button_ResyncStages" xml:space="preserve"><value>Пересинхронизировать стеклоочистители и свет</value></data>
+  <data name="SliderLabel_DisplayName" xml:space="preserve"><value>Отображаемое имя</value></data>
+  <data name="Hint_MBoosterDisplayName" xml:space="preserve"><value>Необязательно — помогает различать два mBooster с одинаковой ролью в списке устройств выше.</value></data>
+  <data name="Section_CustomEffects" xml:space="preserve"><value>Пользовательские эффекты (экспериментально)</value></data>
+  <data name="Subtitle_CustomEffectsExperimental" xml:space="preserve"><value>// экспериментально — пользовательская вибрация на основе формул SimHub/NCalc</value></data>
+  <data name="Hint_CustomEffectsExperimental" xml:space="preserve"><value>Экспериментально — каждый пользовательский эффект заставляет мотор вибрировать, используя указанное вами свойство SimHub или формулу NCalc. Все пользовательские эффекты (и встроенный эффект Engine) используют один канал, поэтому одновременно мотором может управлять только один; побеждает последний обработанный активный эффект. Частота/интенсивность работают как ползунки Engine.</value></data>
+  <data name="Hint_CustomEffectFormula" xml:space="preserve"><value>Свойство SimHub (например, SpeedKmh) или формула NCalc (например, [Rpms] / [CarSettings_MaxRPM]). Если «Использовать порог» выключен, значение (ограниченное 0..1) непрерывно масштабирует интенсивность. Если включён, эффект пульсирует с заданной интенсивностью, когда значение достигает порога или выше.</value></data>
+  <data name="Label_UseThreshold" xml:space="preserve"><value>Использовать порог</value></data>
+  <data name="SliderLabel_Name" xml:space="preserve"><value>Имя</value></data>
+  <data name="SliderLabel_Formula" xml:space="preserve"><value>Формула</value></data>
+  <data name="SliderLabel_Threshold" xml:space="preserve"><value>Порог</value></data>
+  <data name="Button_AddCustomEffect" xml:space="preserve"><value>+ Добавить пользовательский эффект</value></data>
+  <data name="Button_DeleteCustomEffect" xml:space="preserve"><value>Удалить эффект</value></data>
+  <data name="DefaultName_CustomEffect" xml:space="preserve"><value>Пользовательский эффект</value></data>
 </root>

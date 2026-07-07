@@ -657,4 +657,17 @@ Id: {2}</value></data>
   <data name="Label_StalksLastPressed" xml:space="preserve"><value>Τελευταίο πάτημα: κουμπί {0}</value></data>
   <data name="Button_LoadEts2Defaults" xml:space="preserve"><value>Φόρτωση προεπιλογών ETS2/ATS</value></data>
   <data name="Button_ResyncStages" xml:space="preserve"><value>Επανασυγχρονισμός υαλοκαθαριστήρων &amp; φώτων</value></data>
+  <data name="SliderLabel_DisplayName" xml:space="preserve"><value>Όνομα εμφάνισης</value></data>
+  <data name="Hint_MBoosterDisplayName" xml:space="preserve"><value>Προαιρετικό — βοηθά να ξεχωρίσετε δύο mBooster με τον ίδιο ρόλο στη λίστα συσκευών παραπάνω.</value></data>
+  <data name="Section_CustomEffects" xml:space="preserve"><value>Προσαρμοσμένα εφέ (Πειραματικό)</value></data>
+  <data name="Subtitle_CustomEffectsExperimental" xml:space="preserve"><value>// πειραματικό — δόνηση καθορισμένη από τον χρήστη μέσω τύπων SimHub/NCalc</value></data>
+  <data name="Hint_CustomEffectsExperimental" xml:space="preserve"><value>Πειραματικό — κάθε προσαρμοσμένο εφέ δονεί το μοτέρ χρησιμοποιώντας μια ιδιότητα SimHub ή τύπο NCalc που παρέχετε. Όλα τα προσαρμοσμένα εφέ (και το ενσωματωμένο εφέ Engine) μοιράζονται ένα κανάλι, οπότε μόνο ένα μπορεί να οδηγεί το μοτέρ κάθε φορά· κερδίζει το πιο πρόσφατα επεξεργασμένο ενεργό εφέ. Η συχνότητα/ένταση συμπεριφέρονται όπως τα ρυθμιστικά του Engine.</value></data>
+  <data name="Hint_CustomEffectFormula" xml:space="preserve"><value>Μια ιδιότητα SimHub (π.χ. SpeedKmh) ή τύπος NCalc (π.χ. [Rpms] / [CarSettings_MaxRPM]). Με το «Χρήση κατωφλίου» απενεργοποιημένο, η τιμή (περιορισμένη 0..1) κλιμακώνει συνεχώς την ένταση. Ενεργοποιημένο, το εφέ πάλλεται στη ρυθμισμένη ένταση όποτε η τιμή είναι ίση ή μεγαλύτερη από το κατώφλι.</value></data>
+  <data name="Label_UseThreshold" xml:space="preserve"><value>Χρήση κατωφλίου</value></data>
+  <data name="SliderLabel_Name" xml:space="preserve"><value>Όνομα</value></data>
+  <data name="SliderLabel_Formula" xml:space="preserve"><value>Τύπος</value></data>
+  <data name="SliderLabel_Threshold" xml:space="preserve"><value>Κατώφλι</value></data>
+  <data name="Button_AddCustomEffect" xml:space="preserve"><value>+ Προσθήκη προσαρμοσμένου εφέ</value></data>
+  <data name="Button_DeleteCustomEffect" xml:space="preserve"><value>Διαγραφή εφέ</value></data>
+  <data name="DefaultName_CustomEffect" xml:space="preserve"><value>Προσαρμοσμένο εφέ</value></data>
 </root>
