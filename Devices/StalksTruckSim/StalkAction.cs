@@ -51,9 +51,18 @@ namespace MozaPlugin.Devices.StalksTruckSim
         WiperSingleSwipe = 7,
 
         /// <summary>Hold a key down while the button is pressed and release it when the
-        /// button is released (e.g. high-beam flash / light horn on <c>J</c>), rather
-        /// than a single tap.</summary>
+        /// button is released (for a stalk position that reports a sustained hold).</summary>
         HeldKey = 8,
+
+        /// <summary>Latch a key down on press and keep it held (auto-repeated) — NOT
+        /// released on this button's own release. Released by a <see cref="ReleaseHeld"/>
+        /// button. Use for a flash lever that pulses instead of reporting a hold: the
+        /// key stays down until the stalk returns to neutral.</summary>
+        LatchKey = 9,
+
+        /// <summary>Release every currently-held/latched key. Map to the neutral stalk
+        /// position so returning there drops the flash.</summary>
+        ReleaseHeld = 10,
     }
 
     /// <summary>

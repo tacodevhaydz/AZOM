@@ -31,12 +31,30 @@ namespace MozaPlugin.Devices.StalksTruckSim
         private readonly object _downLock = new object();
         private readonly HashSet<ushort> _down = new HashSet<ushort>();
         private readonly Thread _worker;
+        private readonly Timer _repeatTimer;
+        private const int RepeatMs = 40;   // re-assert held keys at ~25 Hz
         private volatile bool _disposed;
 
         public KeyboardSender()
         {
             _worker = new Thread(Run) { IsBackground = true, Name = "StalksKeyboard" };
             _worker.Start();
+            // Re-assert held keys so games that sample the flash/high-beam key as an
+            // edge (ETS2's J) keep it active for the whole hold, not just one frame.
+            _repeatTimer = new Timer(_ => RepeatHeld(), null, RepeatMs, RepeatMs);
+        }
+
+        private void RepeatHeld()
+        {
+            if (_disposed) return;
+            ushort[] held;
+            lock (_downLock)
+            {
+                if (_down.Count == 0) return;
+                held = new ushort[_down.Count];
+                _down.CopyTo(held);
+            }
+            foreach (var s in held) Enqueue(s, Op.Down);
         }
 
         /// <summary>Restrict key output to when one of these process names is the
@@ -99,11 +117,18 @@ namespace MozaPlugin.Devices.StalksTruckSim
                     try
                     {
                         // Key-up always fires — even if the game isn't foreground — so a
-                        // held key can never get stuck down. Down/Tap only inject when
-                        // the game is the foreground window.
+                        // held key can never get stuck down.
                         if (op == Op.Up) { SendKey(scan, down: false); continue; }
+                        if (op == Op.Down)
+                        {
+                            // Only assert a key-down if the key is still held (a repeat
+                            // Down enqueued just before release must not re-press it) and
+                            // the game is foreground.
+                            bool held; lock (_downLock) held = _down.Contains(scan);
+                            if (held && IsGameForeground()) SendKey(scan, down: true);
+                            continue;
+                        }
                         if (!IsGameForeground()) continue;
-                        if (op == Op.Down) { SendKey(scan, down: true); continue; }
                         SendKey(scan, down: true);   // Tap
                         Thread.Sleep(HoldMs);
                         SendKey(scan, down: false);
@@ -240,6 +265,7 @@ namespace MozaPlugin.Devices.StalksTruckSim
         {
             if (_disposed) return;
             _disposed = true;
+            try { _repeatTimer.Dispose(); } catch { }
             // Release any held keys directly — the worker is stopping and won't drain
             // queued key-ups.
             try

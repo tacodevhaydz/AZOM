@@ -16,12 +16,14 @@ namespace MozaPlugin
         public const string NoneOption = "(none)";
         private const string KeyPrefix = "Key: ";
         private const string HeldPrefix = "Held: ";
+        private const string LatchPrefix = "Latch: ";
         private const string WiperPrefix = "Wiper stage ";
         private const string LightPrefix = "Light stage ";
         private const string IndLeft = "Indicator: left";
         private const string IndRight = "Indicator: right";
         private const string IndCancel = "Indicator: cancel";
         private const string WiperSwipe = "Wiper: single swipe";
+        private const string ReleaseHeldOption = "Release held keys";
 
         // ETS2/ATS-relevant keys first, then a general set for custom binds.
         private static readonly string[] PresetKeys =
@@ -76,9 +78,10 @@ namespace MozaPlugin
 
         public static List<string> BuildOptions(int wiperStageCount, int lightStageCount)
         {
-            var list = new List<string> { NoneOption, IndLeft, IndRight, IndCancel, WiperSwipe };
+            var list = new List<string> { NoneOption, IndLeft, IndRight, IndCancel, WiperSwipe, ReleaseHeldOption };
             foreach (var k in PresetKeys) list.Add(KeyPrefix + k);
             foreach (var k in PresetKeys) list.Add(HeldPrefix + k);
+            foreach (var k in PresetKeys) list.Add(LatchPrefix + k);
             for (int i = 0; i < Math.Max(1, wiperStageCount); i++) list.Add(WiperPrefix + i);
             for (int i = 0; i < Math.Max(1, lightStageCount); i++) list.Add(LightPrefix + i);
             return list;
@@ -92,8 +95,11 @@ namespace MozaPlugin
             if (option == IndRight) return new StalkAction { Kind = StalkActionKind.IndicatorRight };
             if (option == IndCancel) return new StalkAction { Kind = StalkActionKind.IndicatorCancel };
             if (option == WiperSwipe) return new StalkAction { Kind = StalkActionKind.WiperSingleSwipe };
+            if (option == ReleaseHeldOption) return new StalkAction { Kind = StalkActionKind.ReleaseHeld };
             if (option.StartsWith(HeldPrefix, StringComparison.Ordinal))
                 return new StalkAction { Kind = StalkActionKind.HeldKey, Key = option.Substring(HeldPrefix.Length) };
+            if (option.StartsWith(LatchPrefix, StringComparison.Ordinal))
+                return new StalkAction { Kind = StalkActionKind.LatchKey, Key = option.Substring(LatchPrefix.Length) };
             if (option.StartsWith(KeyPrefix, StringComparison.Ordinal))
                 return new StalkAction { Kind = StalkActionKind.Momentary, Key = option.Substring(KeyPrefix.Length) };
             if (option.StartsWith(WiperPrefix, StringComparison.Ordinal))
@@ -110,6 +116,8 @@ namespace MozaPlugin
             {
                 case StalkActionKind.Momentary: return KeyPrefix + (a.Key ?? "");
                 case StalkActionKind.HeldKey: return HeldPrefix + (a.Key ?? "");
+                case StalkActionKind.LatchKey: return LatchPrefix + (a.Key ?? "");
+                case StalkActionKind.ReleaseHeld: return ReleaseHeldOption;
                 case StalkActionKind.WiperStage: return WiperPrefix + a.Stage;
                 case StalkActionKind.LightStage: return LightPrefix + a.Stage;
                 case StalkActionKind.IndicatorLeft: return IndLeft;

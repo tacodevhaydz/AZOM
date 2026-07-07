@@ -102,6 +102,14 @@ namespace MozaPlugin.Devices.StalksTruckSim
                 case StalkActionKind.HeldKey:
                     _kb.KeyDown(action.Key);
                     break;
+                case StalkActionKind.LatchKey:
+                    // Latch down and keep held; released by a ReleaseHeld button
+                    // (e.g. the neutral stalk position), not this button's release.
+                    _kb.KeyDown(action.Key);
+                    break;
+                case StalkActionKind.ReleaseHeld:
+                    _kb.ReleaseAll();
+                    break;
                 case StalkActionKind.Momentary:
                     _kb.Tap(action.Key);
                     break;

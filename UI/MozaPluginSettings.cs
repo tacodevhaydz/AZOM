@@ -621,9 +621,9 @@ namespace MozaPlugin
                 { 0, new StalkAction { Kind = StalkActionKind.LightStage, Stage = 0 } }, // btn1 lights off
                 { 1, new StalkAction { Kind = StalkActionKind.LightStage, Stage = 1 } }, // btn2 accessory
                 { 2, new StalkAction { Kind = StalkActionKind.LightStage, Stage = 2 } }, // btn3 headlights
-                { 3, new StalkAction { Kind = StalkActionKind.Momentary, Key = "K" } },  // btn4 high beam on (toggle)
-                { 4, new StalkAction { Kind = StalkActionKind.Momentary, Key = "K" } },  // btn5 high beam off (toggle)
-                { 5, new StalkAction { Kind = StalkActionKind.HeldKey, Key = "J" } },    // btn6 light horn / high-beam flash (held)
+                { 3, new StalkAction { Kind = StalkActionKind.Momentary, Key = "K" } },  // btn4 high beam toggle
+                { 4, new StalkAction { Kind = StalkActionKind.ReleaseHeld } },           // btn5 neutral: releases the flash
+                { 5, new StalkAction { Kind = StalkActionKind.LatchKey, Key = "J" } },   // btn6 flash: latch J until neutral (btn5)
                 { 7, new StalkAction { Kind = StalkActionKind.IndicatorRight } },        // btn8 right
                 { 8, new StalkAction { Kind = StalkActionKind.IndicatorCancel } },       // btn9 neutral/cancel
                 { 9, new StalkAction { Kind = StalkActionKind.IndicatorLeft } },         // btn10 left
