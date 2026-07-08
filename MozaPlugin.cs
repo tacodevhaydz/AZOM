@@ -2225,28 +2225,33 @@ namespace MozaPlugin
                         controller.SendFloatWrite($"mbooster-{prefix}-y{k + 1}", resampled[k]);
                 }
 
-                // Sim Input Mapping + travel/endstop are BRAKE-only wire commands
-                // (there are no throttle/clutch variants) — apply them from
-                // whichever pedal is the brake, not always the master pedal.
+                // Load-cell / physical settings share the single brake-named wire
+                // command set, so each mBooster UNIT is addressed by its own
+                // device id (0x12 host, 0x1d/0x1e chain ports). Pedal travel +
+                // endstop exist on every pedal mode; sensor ratio + max threshold
+                // are load-cell-only and the UI only lets you set them for a
+                // brake (unset = -1 = skipped). Calibration above stays per-role
+                // on 0x12 — the host aggregates the output mapping (capture-verified).
+                byte dev = global::MozaPlugin.Devices.MBoosterDeviceController.MotorDeviceForAxis(axis);
+                if (cfg.TravelStartMm >= 0)
+                    controller.SendIntWrite("mbooster-brake-travel-start",
+                        global::MozaPlugin.Protocol.MozaMBoosterProtocol.EncodeTravelMm(cfg.TravelStartMm), dev);
+                if (cfg.TravelEndMm >= 0)
+                    controller.SendIntWrite("mbooster-brake-travel-end",
+                        global::MozaPlugin.Protocol.MozaMBoosterProtocol.EncodeTravelMm(cfg.TravelEndMm), dev);
+                if (cfg.EndstopFrontStiffness >= 0)
+                    controller.SendIntWrite("mbooster-brake-endstop-front",
+                        global::MozaPlugin.Protocol.MozaMBoosterProtocol.EncodeEndstopStiffness(cfg.EndstopFrontStiffness), dev);
+                if (cfg.EndstopEndStiffness >= 0)
+                    controller.SendIntWrite("mbooster-brake-endstop-end",
+                        global::MozaPlugin.Protocol.MozaMBoosterProtocol.EncodeEndstopStiffness(cfg.EndstopEndStiffness), dev);
                 if (role == global::MozaPlugin.Devices.MBoosterRole.Brake)
                 {
                     if (cfg.SensorOutputRatioPct >= 0)
-                        controller.SendFloatWrite("mbooster-brake-angle-ratio", cfg.SensorOutputRatioPct);
+                        controller.SendFloatWrite("mbooster-brake-angle-ratio", cfg.SensorOutputRatioPct, dev);
                     if (cfg.MaxThresholdKg >= 0)
                         controller.SendIntWrite("mbooster-brake-threshold",
-                            global::MozaPlugin.Protocol.MozaMBoosterProtocol.EncodeThresholdKg(cfg.MaxThresholdKg));
-                    if (cfg.TravelStartMm >= 0)
-                        controller.SendIntWrite("mbooster-brake-travel-start",
-                            global::MozaPlugin.Protocol.MozaMBoosterProtocol.EncodeTravelMm(cfg.TravelStartMm));
-                    if (cfg.TravelEndMm >= 0)
-                        controller.SendIntWrite("mbooster-brake-travel-end",
-                            global::MozaPlugin.Protocol.MozaMBoosterProtocol.EncodeTravelMm(cfg.TravelEndMm));
-                    if (cfg.EndstopFrontStiffness >= 0)
-                        controller.SendIntWrite("mbooster-brake-endstop-front",
-                            global::MozaPlugin.Protocol.MozaMBoosterProtocol.EncodeEndstopStiffness(cfg.EndstopFrontStiffness));
-                    if (cfg.EndstopEndStiffness >= 0)
-                        controller.SendIntWrite("mbooster-brake-endstop-end",
-                            global::MozaPlugin.Protocol.MozaMBoosterProtocol.EncodeEndstopStiffness(cfg.EndstopEndStiffness));
+                            global::MozaPlugin.Protocol.MozaMBoosterProtocol.EncodeThresholdKg(cfg.MaxThresholdKg), dev);
                 }
             }
         }

@@ -1910,6 +1910,11 @@
                                               Icon="{StaticResource IconCurve}"
                                               AccentBrush="{StaticResource AmberBrush}">
                                 <StackPanel>
+                                    <!-- Sensor Output Ratio + Max Threshold are load-cell / pressure-
+                                         sensor settings that only a BRAKE has — hidden for throttle/
+                                         clutch pedals (see UpdateMBoosterConfigVisibilityForRole). The
+                                         output curve below applies to every pedal mode. -->
+                                    <StackPanel x:Name="MBoosterBrakeOnlyPanel">
                                     <Grid Margin="0,4">
                                         <Grid.ColumnDefinitions>
                                             <ColumnDefinition Width="Auto"/>
@@ -1939,6 +1944,7 @@
                                                  Text="100"/>
                                     </Grid>
                                     <TextBlock TextWrapping="Wrap" Foreground="#FFE082" FontSize="11" Text="{x:Static res:Strings.Hint_MaxThresholdReverseEngineered}" Margin="0,0,0,8"/>
+                                    </StackPanel><!-- MBoosterBrakeOnlyPanel -->
 
                                     <TextBlock TextWrapping="Wrap" Style="{StaticResource MutedHintText}" Margin="0,4,0,8" Text="{x:Static res:Strings.Subtitle_MapPhysicalPositionToGame}"/>
                                     <TextBlock TextWrapping="Wrap" Style="{StaticResource MutedHintText}" Margin="0,0,0,8" Text="{x:Static res:Strings.Hint_OutputCurveDragX}"/>

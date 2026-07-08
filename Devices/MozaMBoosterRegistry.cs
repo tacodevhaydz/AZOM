@@ -322,12 +322,19 @@ namespace MozaPlugin.Devices
                 double fullScaleKg = cfg.MaxThresholdKg >= 0 ? cfg.MaxThresholdKg : 200.0;
                 if (cfg.DeadzoneKg > 0 || cfg.MaxForceKg < fullScaleKg)
                     posPct = ApplyDeadzoneAndMaxForce(posPct, cfg.DeadzoneKg, cfg.MaxForceKg, fullScaleKg);
-                // The UI's live input-curve marker tracks the master pedal.
+                // Store the pre-input-curve percent for EVERY axis so the UI's
+                // live curve markers follow whichever pedal is selected (axis 0
+                // also mirrored to LastRawPercentPreCurve for legacy callers).
+                if (axisIndex < c.LastAxisRawPercentPreCurve.Length) c.LastAxisRawPercentPreCurve[axisIndex] = posPct;
                 if (axisIndex == 0) c.LastRawPercentPreCurve = posPct;
                 if (cfg.InputCurveY != null && cfg.InputCurveY.Length == 5)
                     posPct = EvaluateInputCurve(cfg.InputCurveY, posPct);
             }
-            else if (axisIndex == 0) c.LastRawPercentPreCurve = posPct;
+            else
+            {
+                if (axisIndex < c.LastAxisRawPercentPreCurve.Length) c.LastAxisRawPercentPreCurve[axisIndex] = posPct;
+                if (axisIndex == 0) c.LastRawPercentPreCurve = posPct;
+            }
 
             double shaped01 = posPct / 100.0;
             if (axisIndex == 0) c.LastHidPosition = shaped01;

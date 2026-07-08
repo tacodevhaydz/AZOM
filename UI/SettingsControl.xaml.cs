@@ -298,13 +298,20 @@ namespace MozaPlugin
             if (MBoosterDevicePanel.Visibility != Visibility.Visible) return;
             var selected = _plugin?.MBoosterRegistry?.FindByIdentity(_mboosterSelectedIdentity ?? "");
             if (selected == null) return;
-            int pct = (int)Math.Round(selected.LastHidPosition * 100);
+            // Track the SELECTED pedal's own axis, not always the master's —
+            // otherwise every pedal page showed the master (throttle) input.
+            int idx = _mboosterEffectPedalIndex;
+            double shaped = (idx >= 0 && idx < selected.LastAxisPositions.Length)
+                ? selected.LastAxisPositions[idx] : selected.LastHidPosition;
+            double preCurve = (idx >= 0 && idx < selected.LastAxisRawPercentPreCurve.Length)
+                ? selected.LastAxisRawPercentPreCurve[idx] : selected.LastRawPercentPreCurve;
+            int pct = (int)Math.Round(shaped * 100);
             if (pct < 0) pct = 0; if (pct > 100) pct = 100;
 
             // Input Curve sees the pre-shaping value (what it actually
             // receives); the output curve sees the post-Pedal-Feel value
             // (what's effectively sent onward).
-            MBoosterInputCurveEditor.LiveX = selected.LastRawPercentPreCurve;
+            MBoosterInputCurveEditor.LiveX = preCurve;
             MBoosterCurveEditor.LiveX = pct;
 
             // Effects card pedal trace — same 30 Hz cadence, same position
@@ -2597,6 +2604,7 @@ namespace MozaPlugin
                 PopulateMBoosterEffectPedalCombo(selected);
                 SeedMBoosterEffectControls(PeekMBoosterEffectTarget());
                 UpdateMBoosterEffectPassiveState();
+                UpdateMBoosterConfigVisibilityForRole();
                 MBoosterBrakeFadeEnable.IsChecked = s.BrakeFade?.Enabled ?? false;
                 MBoosterBrakeFadeOnsetSlider.Value = s.BrakeFade?.BrakeFadeOnsetC ?? 550;
                 SetValueText(MBoosterBrakeFadeOnsetValue, MBoosterBrakeFadeOnsetSlider.Value.ToString("F0"));
@@ -3011,6 +3019,7 @@ namespace MozaPlugin
             if (ci.Tag is not string tag || !int.TryParse(tag, out int v)) return;
             s.Role = (MBoosterRole)v;
             _plugin.SaveSettings();
+            UpdateMBoosterConfigVisibilityForRole();
         }
 
         /// <summary>
@@ -3099,6 +3108,7 @@ namespace MozaPlugin
             if (axisIndex >= 0 && axisIndex < roles.Length)
                 roles[axisIndex] = role;
             _plugin.SaveSettings();
+            UpdateMBoosterConfigVisibilityForRole();
         }
 
         /// <summary>
@@ -3167,6 +3177,7 @@ namespace MozaPlugin
                 PopulateMBoosterCustomEffectsList(PeekMBoosterEffectTarget());
             }
             UpdateMBoosterEffectPassiveState();
+            UpdateMBoosterConfigVisibilityForRole();
         }
 
         /// <summary>
@@ -3183,6 +3194,18 @@ namespace MozaPlugin
                 && types[_mboosterEffectPedalIndex] == 2;
             MBoosterEffectsCardsPanel.Visibility = passive ? Visibility.Collapsed : Visibility.Visible;
             MBoosterEffectsPassiveNote.Visibility = passive ? Visibility.Visible : Visibility.Collapsed;
+        }
+
+        /// <summary>
+        /// Show the load-cell-only Sim Input controls (Sensor Output Ratio + Max
+        /// Threshold) only when the selected pedal is a BRAKE — a throttle/clutch
+        /// has no pressure sensor. Pedal travel, endstop, the output curve and
+        /// Pedal Feel all stay visible for every pedal mode.
+        /// </summary>
+        private void UpdateMBoosterConfigVisibilityForRole()
+        {
+            bool isBrake = MBoosterSelectedPedalRolePrefix() == "brake";
+            MBoosterBrakeOnlyPanel.Visibility = isBrake ? Visibility.Visible : Visibility.Collapsed;
         }
 
         // ===== Effect handlers =====
@@ -3686,17 +3709,14 @@ namespace MozaPlugin
             if (s == null) return;
             s.TravelStartMm = (float)MBoosterTravelRangeSlider.LowValue;
             s.TravelEndMm = (float)MBoosterTravelRangeSlider.HighValue;
-            // Travel is a brake-only load-cell command — only push to hardware
-            // when the selected pedal IS the brake (it's stored per pedal either
-            // way). See MBoosterSelectedPedalRolePrefix.
-            if (MBoosterSelectedPedalRolePrefix() == "brake")
-            {
-                var controller = CurrentMBoosterController();
-                controller?.SendIntWrite("mbooster-brake-travel-start",
-                    global::MozaPlugin.Protocol.MozaMBoosterProtocol.EncodeTravelMm(s.TravelStartMm));
-                controller?.SendIntWrite("mbooster-brake-travel-end",
-                    global::MozaPlugin.Protocol.MozaMBoosterProtocol.EncodeTravelMm(s.TravelEndMm));
-            }
+            // Travel is a physical setting on every pedal mode — push to THIS
+            // pedal's own mBooster unit (device 0x12 host / 0x1d / 0x1e chain).
+            var controller = CurrentMBoosterController();
+            byte dev = MBoosterDeviceController.MotorDeviceForAxis(_mboosterEffectPedalIndex);
+            controller?.SendIntWrite("mbooster-brake-travel-start",
+                global::MozaPlugin.Protocol.MozaMBoosterProtocol.EncodeTravelMm(s.TravelStartMm), dev);
+            controller?.SendIntWrite("mbooster-brake-travel-end",
+                global::MozaPlugin.Protocol.MozaMBoosterProtocol.EncodeTravelMm(s.TravelEndMm), dev);
             _plugin.SaveSettings();
         }
 
@@ -3738,8 +3758,8 @@ namespace MozaPlugin
             var s = CurrentMBoosterEffectTarget();
             if (s == null) return;
             s.SensorOutputRatioPct = v;
-            if (MBoosterSelectedPedalRolePrefix() == "brake")
-                CurrentMBoosterController()?.SendFloatWrite("mbooster-brake-angle-ratio", v);
+            CurrentMBoosterController()?.SendFloatWrite("mbooster-brake-angle-ratio", v,
+                MBoosterDeviceController.MotorDeviceForAxis(_mboosterEffectPedalIndex));
             _plugin.SaveSettings();
         }
 
@@ -3755,9 +3775,9 @@ namespace MozaPlugin
                 var s = CurrentMBoosterEffectTarget();
                 if (s == null) return;
                 s.MaxThresholdKg = v;
-                if (MBoosterSelectedPedalRolePrefix() == "brake")
-                    CurrentMBoosterController()?.SendIntWrite("mbooster-brake-threshold",
-                        global::MozaPlugin.Protocol.MozaMBoosterProtocol.EncodeThresholdKg(v));
+                CurrentMBoosterController()?.SendIntWrite("mbooster-brake-threshold",
+                    global::MozaPlugin.Protocol.MozaMBoosterProtocol.EncodeThresholdKg(v),
+                    MBoosterDeviceController.MotorDeviceForAxis(_mboosterEffectPedalIndex));
             });
 
         // End Stop Stiffness (Front Limit / End Limit), 1-10 — Pit House's
@@ -3772,9 +3792,9 @@ namespace MozaPlugin
                 var s = CurrentMBoosterEffectTarget();
                 if (s == null) return;
                 s.EndstopFrontStiffness = v;
-                if (MBoosterSelectedPedalRolePrefix() == "brake")
-                    CurrentMBoosterController()?.SendIntWrite("mbooster-brake-endstop-front",
-                        global::MozaPlugin.Protocol.MozaMBoosterProtocol.EncodeEndstopStiffness(v));
+                CurrentMBoosterController()?.SendIntWrite("mbooster-brake-endstop-front",
+                    global::MozaPlugin.Protocol.MozaMBoosterProtocol.EncodeEndstopStiffness(v),
+                    MBoosterDeviceController.MotorDeviceForAxis(_mboosterEffectPedalIndex));
             });
 
         private void MBoosterEndstopEndSlider_ValueChanged(object sender, RoutedPropertyChangedEventArgs<double> e) =>
@@ -3783,9 +3803,9 @@ namespace MozaPlugin
                 var s = CurrentMBoosterEffectTarget();
                 if (s == null) return;
                 s.EndstopEndStiffness = v;
-                if (MBoosterSelectedPedalRolePrefix() == "brake")
-                    CurrentMBoosterController()?.SendIntWrite("mbooster-brake-endstop-end",
-                        global::MozaPlugin.Protocol.MozaMBoosterProtocol.EncodeEndstopStiffness(v));
+                CurrentMBoosterController()?.SendIntWrite("mbooster-brake-endstop-end",
+                    global::MozaPlugin.Protocol.MozaMBoosterProtocol.EncodeEndstopStiffness(v),
+                    MBoosterDeviceController.MotorDeviceForAxis(_mboosterEffectPedalIndex));
             });
 
         private void MBoosterReadCalButton_Click(object sender, RoutedEventArgs e)

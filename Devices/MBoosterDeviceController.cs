@@ -111,6 +111,12 @@ namespace MozaPlugin.Devices
         // LastHidPosition) so no lock is needed.
         public readonly double[] LastAxisPositions = new double[MaxAxes];
 
+        // Per-axis pre-input-curve percent (0..100) — the same signal as
+        // LastRawPercentPreCurve (after deadzone/max-force, before the input
+        // curve) but for EVERY pedal, so the settings tab's live curve markers
+        // track whichever pedal is selected, not just the master.
+        public readonly double[] LastAxisRawPercentPreCurve = new double[MaxAxes];
+
         // Highest axis index + 1 the HID has reported for this lane: 1 for a
         // lone pedal, up to 3 for a full chain. 0 until the first axis update.
         public int AxisCount { get; internal set; }
@@ -192,6 +198,15 @@ namespace MozaPlugin.Devices
         /// (0 = master/host), or null if out of range.</summary>
         private MBoosterEffectWorker? WorkerFor(int pedalIndex) =>
             pedalIndex >= 0 && pedalIndex < _workers.Length ? _workers[pedalIndex] : null;
+
+        /// <summary>The motor/config device id for a pedal by HID axis index
+        /// (0x12 host, 0x1d/0x1e chain ports) — used to address a chained
+        /// mBooster unit's own load-cell config. Master (0x12) if out of range.</summary>
+        public static byte MotorDeviceForAxis(int axisIndex)
+        {
+            var ids = MozaMBoosterProtocol.MotorDeviceIds;
+            return (axisIndex >= 0 && axisIndex < ids.Length) ? ids[axisIndex] : MozaProtocol.DeviceMain;
+        }
 
         private void OnConnectionDisconnected()
         {
@@ -435,24 +450,26 @@ namespace MozaPlugin.Devices
         /// but unverified" on mBooster firmware — the UI surfaces a warning so
         /// the user knows the request may not be acknowledged.
         /// </summary>
-        public bool SendIntWrite(string commandName, int value)
+        public bool SendIntWrite(string commandName, int value, byte device = MozaProtocol.DeviceMain)
         {
             if (!_connection.IsConnected) return false;
             var cmd = MozaCommandDatabase.Get(commandName);
             if (cmd == null) return false;
-            var msg = cmd.BuildWriteInt(MozaProtocol.DeviceMain, value);
+            var msg = cmd.BuildWriteInt(device, value);
             if (msg == null) return false;
             _connection.Send(msg);
             return true;
         }
 
-        /// <summary>Build + send a write for a registered <c>mbooster-*</c> float command.</summary>
-        public bool SendFloatWrite(string commandName, float value)
+        /// <summary>Build + send a write for a registered <c>mbooster-*</c> float command.
+        /// <paramref name="device"/> selects WHICH mBooster unit on a chain (0x12
+        /// host / 0x1d / 0x1e) — used to target a chained unit's own load cell.</summary>
+        public bool SendFloatWrite(string commandName, float value, byte device = MozaProtocol.DeviceMain)
         {
             if (!_connection.IsConnected) return false;
             var cmd = MozaCommandDatabase.Get(commandName);
             if (cmd == null) return false;
-            var msg = cmd.BuildWriteFloat(MozaProtocol.DeviceMain, value);
+            var msg = cmd.BuildWriteFloat(device, value);
             if (msg == null) return false;
             _connection.Send(msg);
             return true;
