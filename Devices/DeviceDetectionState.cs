@@ -17,6 +17,10 @@ namespace MozaPlugin.Devices
         public volatile bool PedalsDetected;
         public volatile bool HubDetected;
         public volatile bool Ab9Detected;
+        // HGP/SGP passive shifter. ShifterHasLeds distinguishes the SGP (2 config
+        // LEDs) from the HGP (no LEDs) so the UI shows the LED section only for the SGP.
+        public volatile bool ShifterDetected;
+        public volatile bool ShifterHasLeds;
 
         // Which MozaDeviceManager owns each routable peripheral — i.e. the pipe
         // it was detected on. Null = no opinion → callers fall back to the
@@ -28,6 +32,7 @@ namespace MozaPlugin.Devices
         // cross-thread visibility between the two serial read threads and the UI.
         public volatile MozaDeviceManager? PedalsOwner;
         public volatile MozaDeviceManager? HandbrakeOwner;
+        public volatile MozaDeviceManager? ShifterOwner;
 
         // Which MozaDeviceManager owns the base (wheelbase main/motor controller)
         // — the pipe that answered the base-mcu-temp detection cascade. Normally
@@ -103,8 +108,11 @@ namespace MozaPlugin.Devices
             PedalsDetected = false;
             HubDetected = false;
             Ab9Detected = false;
+            ShifterDetected = false;
+            ShifterHasLeds = false;
             PedalsOwner = null;
             HandbrakeOwner = null;
+            ShifterOwner = null;
             BaseOwner = null;
             OldProtoFallbackDeployed = false;
         }

@@ -676,4 +676,21 @@ Id: {2}</value></data>
   <data name="Hint_MBoosterAxisRoles" xml:space="preserve"><value>mBooster này lưu trữ nhiều bàn đạp trên một kết nối. Gán mỗi trục được phát hiện cho một đầu vào trò chơi. Thứ tự mặc định theo bố cục Rx/Ry/Rz của Moza (ga/phanh/côn) — gán lại tại đây nếu một bàn đạp điều khiển sai đầu vào.</value></data>
   <data name="Label_EffectsForPedal" xml:space="preserve"><value>Configure pedal:</value></data>
   <data name="Note_PassivePedalNoEffects" xml:space="preserve"><value>This pedal is passive (no motor) — vibration effects don't apply.</value></data>
+  <data name="TabHeader_Shifter" xml:space="preserve"><value>Cần số</value></data>
+  <data name="Section_ShifterSettings" xml:space="preserve"><value>CÀI ĐẶT CẦN SỐ</value></data>
+  <data name="Section_ShifterLeds" xml:space="preserve"><value>ĐÈN LED</value></data>
+  <data name="Subtitle_ShifterLeds" xml:space="preserve"><value>// hai đèn LED tùy chỉnh (SGP)</value></data>
+  <data name="Subtitle_ShifterCalibrate" xml:space="preserve"><value>// vào số R &gt; 7 &gt; R &gt; Mo</value></data>
+  <data name="SliderLabel_ShifterPaddleSync" xml:space="preserve"><value>Đồng bộ lẫy</value></data>
+  <data name="Label_ShifterLed1" xml:space="preserve"><value>LED 1 (S1)</value></data>
+  <data name="Label_ShifterLed2" xml:space="preserve"><value>LED 2 (S2)</value></data>
+  <data name="SliderLabel_ShifterBrightness" xml:space="preserve"><value>Độ sáng LED</value></data>
+  <data name="ShifterColor_Red" xml:space="preserve"><value>Đỏ</value></data>
+  <data name="ShifterColor_Orange" xml:space="preserve"><value>Cam</value></data>
+  <data name="ShifterColor_Yellow" xml:space="preserve"><value>Vàng</value></data>
+  <data name="ShifterColor_Green" xml:space="preserve"><value>Xanh lá</value></data>
+  <data name="ShifterColor_Cyan" xml:space="preserve"><value>Lục lam</value></data>
+  <data name="ShifterColor_Blue" xml:space="preserve"><value>Xanh dương</value></data>
+  <data name="ShifterColor_Purple" xml:space="preserve"><value>Tím</value></data>
+  <data name="ShifterColor_White" xml:space="preserve"><value>Trắng</value></data>
 </root>

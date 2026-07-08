@@ -112,6 +112,10 @@ namespace MozaPlugin.Protocol
         // fallback is ever enabled; no probe-emission branch is wired today.
         PedalsOnly,
         HandbrakeOnly,
+        // Standalone-USB HGP (0x001E) / SGP (0x0023) shifter, one per
+        // MozaStandalonePeripheralRegistry controller. Registry-only like the
+        // pedals/handbrake targets; no probe-emission branch is wired.
+        ShifterOnly,
     }
 
     public class MozaSerialConnection : IDisposable

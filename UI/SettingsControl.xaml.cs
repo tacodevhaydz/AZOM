@@ -228,6 +228,7 @@ namespace MozaPlugin
                 RefreshWheelTab();
                 RefreshHandbrakeTab();
                 RefreshPedalsTab();
+                RefreshShifterTab();
                 RefreshHubTab();
                 RefreshAb9Tab();
                 RefreshStalksTab();

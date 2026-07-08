@@ -676,4 +676,21 @@ Id: {2}</value></data>
   <data name="Hint_MBoosterAxisRoles" xml:space="preserve"><value>此 mBooster 通过一个连接承载多个踏板。将每个检测到的轴分配给游戏输入。默认顺序遵循 Moza 的 Rx/Ry/Rz 布局（油门/刹车/离合）——如果某个踏板驱动了错误的输入，请在此重新映射。</value></data>
   <data name="Label_EffectsForPedal" xml:space="preserve"><value>Configure pedal:</value></data>
   <data name="Note_PassivePedalNoEffects" xml:space="preserve"><value>This pedal is passive (no motor) — vibration effects don't apply.</value></data>
+  <data name="TabHeader_Shifter" xml:space="preserve"><value>换挡器</value></data>
+  <data name="Section_ShifterSettings" xml:space="preserve"><value>换挡器设置</value></data>
+  <data name="Section_ShifterLeds" xml:space="preserve"><value>LED 灯</value></data>
+  <data name="Subtitle_ShifterLeds" xml:space="preserve"><value>// 两个可配置 LED（SGP）</value></data>
+  <data name="Subtitle_ShifterCalibrate" xml:space="preserve"><value>// 依次挂 R &gt; 7 挡 &gt; R &gt; 空挡</value></data>
+  <data name="SliderLabel_ShifterPaddleSync" xml:space="preserve"><value>换挡拨片同步</value></data>
+  <data name="Label_ShifterLed1" xml:space="preserve"><value>LED 1 (S1)</value></data>
+  <data name="Label_ShifterLed2" xml:space="preserve"><value>LED 2 (S2)</value></data>
+  <data name="SliderLabel_ShifterBrightness" xml:space="preserve"><value>LED 亮度</value></data>
+  <data name="ShifterColor_Red" xml:space="preserve"><value>红色</value></data>
+  <data name="ShifterColor_Orange" xml:space="preserve"><value>橙色</value></data>
+  <data name="ShifterColor_Yellow" xml:space="preserve"><value>黄色</value></data>
+  <data name="ShifterColor_Green" xml:space="preserve"><value>绿色</value></data>
+  <data name="ShifterColor_Cyan" xml:space="preserve"><value>青色</value></data>
+  <data name="ShifterColor_Blue" xml:space="preserve"><value>蓝色</value></data>
+  <data name="ShifterColor_Purple" xml:space="preserve"><value>紫色</value></data>
+  <data name="ShifterColor_White" xml:space="preserve"><value>白色</value></data>
 </root>

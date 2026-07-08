@@ -737,5 +737,22 @@ namespace MozaPlugin.Resources
         public static string Hint_MBoosterAxisRoles => Get("Hint_MBoosterAxisRoles");
         public static string Label_EffectsForPedal => Get("Label_EffectsForPedal");
         public static string Note_PassivePedalNoEffects => Get("Note_PassivePedalNoEffects");
+        public static string TabHeader_Shifter => Get("TabHeader_Shifter");
+        public static string Section_ShifterSettings => Get("Section_ShifterSettings");
+        public static string Section_ShifterLeds => Get("Section_ShifterLeds");
+        public static string Subtitle_ShifterLeds => Get("Subtitle_ShifterLeds");
+        public static string Subtitle_ShifterCalibrate => Get("Subtitle_ShifterCalibrate");
+        public static string SliderLabel_ShifterPaddleSync => Get("SliderLabel_ShifterPaddleSync");
+        public static string Label_ShifterLed1 => Get("Label_ShifterLed1");
+        public static string Label_ShifterLed2 => Get("Label_ShifterLed2");
+        public static string SliderLabel_ShifterBrightness => Get("SliderLabel_ShifterBrightness");
+        public static string ShifterColor_Red => Get("ShifterColor_Red");
+        public static string ShifterColor_Orange => Get("ShifterColor_Orange");
+        public static string ShifterColor_Yellow => Get("ShifterColor_Yellow");
+        public static string ShifterColor_Green => Get("ShifterColor_Green");
+        public static string ShifterColor_Cyan => Get("ShifterColor_Cyan");
+        public static string ShifterColor_Blue => Get("ShifterColor_Blue");
+        public static string ShifterColor_Purple => Get("ShifterColor_Purple");
+        public static string ShifterColor_White => Get("ShifterColor_White");
     }
 }

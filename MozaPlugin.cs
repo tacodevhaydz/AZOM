@@ -340,6 +340,8 @@ namespace MozaPlugin
         internal void WriteFloatIfHandbrakeDetected(string command, int value) => _hardwareApplier.WriteFloatIfHandbrakeDetected(command, value);
         internal void WriteIfPedalsDetected(string command, int value) => _hardwareApplier.WriteIfPedalsDetected(command, value);
         internal void WriteFloatIfPedalsDetected(string command, int value) => _hardwareApplier.WriteFloatIfPedalsDetected(command, value);
+        internal void WriteIfShifterDetected(string command, int value) => _hardwareApplier.WriteIfShifterDetected(command, value);
+        internal void WriteArrayIfShifterDetected(string command, byte[] payload) => _hardwareApplier.WriteArrayIfShifterDetected(command, payload);
         internal void WriteIfBaseAmbientSupported(string command, int value) => _hardwareApplier.WriteIfBaseAmbientSupported(command, value);
         internal void WriteColorIfWheelDetected(string command, byte r, byte g, byte b) => _hardwareApplier.WriteColorIfWheelDetected(command, r, g, b);
         internal void WriteColorIfDashDetected(string command, byte r, byte g, byte b) => _hardwareApplier.WriteColorIfDashDetected(command, r, g, b);
@@ -351,6 +353,7 @@ namespace MozaPlugin
         internal void ApplyBaseAmbientToHardware(MozaProfile? profile) => _hardwareApplier.ApplyBaseAmbientToHardware(profile);
         internal void ApplyHandbrakeToHardware(MozaProfile? profile) => _hardwareApplier.ApplyHandbrakeToHardware(profile);
         internal void ApplyPedalsToHardware(MozaProfile? profile) => _hardwareApplier.ApplyPedalsToHardware(profile);
+        internal void ApplyShifterToHardware(MozaProfile? profile) => _hardwareApplier.ApplyShifterToHardware(profile);
         internal void ApplyAb9ToHardware(MozaProfile? profile) => _hardwareApplier.ApplyAb9ToHardware(profile);
         internal void ApplyWheelExtensionSettings(MozaWheelExtensionSettings extSettings, string? pageModelPrefix = null) => _hardwareApplier.ApplyWheelExtensionSettings(extSettings, pageModelPrefix);
         /// <summary>
@@ -766,6 +769,8 @@ namespace MozaPlugin
         internal bool IsBaseAmbientLedSupported => DetectionState.BaseAmbientLedSupported;
         internal bool IsHandbrakeDetected => DetectionState.HandbrakeDetected;
         internal bool IsPedalsDetected => DetectionState.PedalsDetected;
+        internal bool IsShifterDetected => DetectionState.ShifterDetected;
+        internal bool IsShifterHasLeds => DetectionState.ShifterHasLeds;
         internal bool IsHubDetected => DetectionState.HubDetected;
         internal bool IsAb9Detected => DetectionState.Ab9Detected;
         internal MozaAb9DeviceManager Ab9Manager => _ab9Manager;
@@ -3761,6 +3766,11 @@ namespace MozaPlugin
                 _deviceManager.SendPresenceProbe(MozaProtocol.DeviceHandbrake);
             if (!DetectionState.PedalsDetected)
                 _deviceManager.SendPresenceProbe(MozaProtocol.DevicePedals);
+            // HGP/SGP attached to the base's peripheral port (dev 0x1A). A shifter on
+            // its own USB port is found by MozaStandalonePeripheralRegistry instead;
+            // one behind the Universal Hub answers on the dedicated hub pipe.
+            if (!DetectionState.ShifterDetected)
+                _deviceManager.SendPresenceProbe(MozaProtocol.DeviceHPattern);
             // No hub-port-power poll on the wheelbase connection — a Universal Hub
             // is found by the dedicated hub connection on its own port, never by
             // sending hub commands to a device we already know is a wheelbase.
@@ -4147,6 +4157,10 @@ namespace MozaPlugin
                     break;
                 case MozaProtocol.DevicePedals:
                     _deviceProber.MarkPedalsDetected();
+                    break;
+                // DeviceHPattern == DeviceSequential (0x1A) — one case covers both.
+                case MozaProtocol.DeviceHPattern:
+                    _deviceProber.MarkShifterDetected();
                     break;
             }
         }

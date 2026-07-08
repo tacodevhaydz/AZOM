@@ -376,6 +376,15 @@ namespace MozaPlugin
         public int[]? PedalsBrakeCurve { get; set; }             // [5] values 0-100
         public int[]? PedalsClutchCurve { get; set; }            // [5] values 0-100
 
+        // ===== Shifter settings (HGP/SGP). -1 = untouched. =====
+        public int ShifterDirection { get; set; } = -1;   // 0=Normal, 1=Reversed
+        public int ShifterPaddleSync { get; set; } = -1;  // 1/2
+        public int ShifterHidMode { get; set; } = -1;     // 0/1 game-compat mode
+        public int ShifterApplyMode { get; set; } = -1;   // 0/1
+        public int ShifterBrightness { get; set; } = -1;  // SGP LED brightness 0-10
+        public int ShifterLed1Index { get; set; } = -1;   // SGP LED S1 palette index 0-7
+        public int ShifterLed2Index { get; set; } = -1;   // SGP LED S2 palette index 0-7
+
         // ===== Color arrays (packed as R<<16 | G<<8 | B) =====
         public int[]? WheelRpmColors { get; set; }       // [10]
         public int[]? WheelRpmBlinkColors { get; set; }  // [10]
@@ -558,6 +567,12 @@ namespace MozaPlugin
             PedalsThrottleCurve = CloneArray(p.PedalsThrottleCurve);
             PedalsBrakeCurve = CloneArray(p.PedalsBrakeCurve);
             PedalsClutchCurve = CloneArray(p.PedalsClutchCurve);
+
+            // Shifter (HGP/SGP)
+            ShifterDirection = p.ShifterDirection; ShifterPaddleSync = p.ShifterPaddleSync;
+            ShifterHidMode = p.ShifterHidMode; ShifterApplyMode = p.ShifterApplyMode;
+            ShifterBrightness = p.ShifterBrightness;
+            ShifterLed1Index = p.ShifterLed1Index; ShifterLed2Index = p.ShifterLed2Index;
 
             // Colors (deep copy)
             WheelRpmColors = CloneArray(p.WheelRpmColors);
@@ -746,6 +761,13 @@ namespace MozaPlugin
             PedalsThrottleCurve = (int[])data.PedalsThrottleCurve.Clone();
             PedalsBrakeCurve = (int[])data.PedalsBrakeCurve.Clone();
             PedalsClutchCurve = (int[])data.PedalsClutchCurve.Clone();
+
+            // Shifter (HGP/SGP). Device-read fields, like handbrake/pedals above —
+            // only read on detect (no telemetry drift), so capturing _data is safe.
+            ShifterDirection = data.ShifterDirection; ShifterPaddleSync = data.ShifterPaddleSync;
+            ShifterHidMode = data.ShifterHidMode; ShifterApplyMode = data.ShifterApplyMode;
+            ShifterBrightness = data.ShifterBrightness;
+            ShifterLed1Index = data.ShifterLed1Index; ShifterLed2Index = data.ShifterLed2Index;
 
             // NOTE: wheel-LED / ES-wheel / Dash / Base-ambient / Gearshift / AB9
             // fields are NOT captured here. They are written directly to the

@@ -1737,6 +1737,91 @@
                 </ScrollViewer>
             </TabItem>
 
+            <!-- ==================== SHIFTER TAB (HGP / SGP) ==================== -->
+            <TabItem x:Name="ShifterTab" Header="{x:Static res:Strings.TabHeader_Shifter}" Visibility="Collapsed">
+                <TabItem.Resources>
+                    <StaticResource x:Key="ToggleOnBrush" ResourceKey="RedToggleOnBrush"/>
+                    <SolidColorBrush x:Key="ToggleOnTextBrush" Color="{StaticResource RedColor}"/>
+                </TabItem.Resources>
+                <ScrollViewer VerticalScrollBarVisibility="Auto" Padding="10">
+                    <StackPanel Margin="5">
+
+                        <Grid>
+                            <Grid.ColumnDefinitions>
+                                <ColumnDefinition Width="*"/>
+                                <ColumnDefinition Width="*"/>
+                            </Grid.ColumnDefinitions>
+
+                            <!-- Shifter settings (both HGP + SGP) -->
+                            <ctrl:SectionCard Grid.Column="0" Title="{x:Static res:Strings.Section_ShifterSettings}"
+                                              Icon="{StaticResource IconShift}"
+                                              AccentBrush="{StaticResource RedBrush}" Margin="0,0,7,14">
+                                <StackPanel>
+                                    <StackPanel Orientation="Horizontal" Margin="0,8">
+                                        <TextBlock Text="{x:Static res:Strings.SliderLabel_ReverseDirection}" Style="{StaticResource SliderLabel}"/>
+                                        <ctrl:OffOnToggle x:Name="ShifterDirectionCheck" VerticalAlignment="Center" Click="ShifterDirectionCheck_Click"/>
+                                    </StackPanel>
+                                    <StackPanel Orientation="Horizontal" Margin="0,8">
+                                        <TextBlock Text="{x:Static res:Strings.SliderLabel_ShifterPaddleSync}" Style="{StaticResource SliderLabel}"/>
+                                        <ctrl:OffOnToggle x:Name="ShifterPaddleSyncCheck" VerticalAlignment="Center" Click="ShifterPaddleSyncCheck_Click"/>
+                                    </StackPanel>
+                                </StackPanel>
+                            </ctrl:SectionCard>
+
+                            <!-- Calibration (HGP H-pattern only) -->
+                            <ctrl:SectionCard Grid.Column="1" x:Name="ShifterCalCard" Title="{x:Static res:Strings.Section_Calibration}"
+                                              Subtitle="{x:Static res:Strings.Subtitle_ShifterCalibrate}"
+                                              Icon="{StaticResource IconCal}"
+                                              AccentBrush="{StaticResource RedBrush}" Margin="7,0,0,14">
+                                <StackPanel Margin="0,4">
+                                    <Button x:Name="ShifterCalStartButton" Content="{x:Static res:Strings.Button_StartCalibration}" HorizontalAlignment="Left" Click="ShifterCalStartButton_Click"/>
+                                    <TextBlock x:Name="ShifterCalStatus" Style="{StaticResource MutedHintText}" TextWrapping="Wrap" Margin="0,6,0,0" Visibility="Collapsed"/>
+                                </StackPanel>
+                            </ctrl:SectionCard>
+                        </Grid>
+
+                        <!-- LEDs (SGP sequential only — 2 configurable LEDs) -->
+                        <ctrl:SectionCard x:Name="ShifterLedCard" Title="{x:Static res:Strings.Section_ShifterLeds}"
+                                          Subtitle="{x:Static res:Strings.Subtitle_ShifterLeds}"
+                                          Icon="{StaticResource IconLed}"
+                                          AccentBrush="{StaticResource RedBrush}" Margin="0,0,0,14" Visibility="Collapsed">
+                            <StackPanel>
+                                <Grid Margin="0,4">
+                                    <Grid.ColumnDefinitions>
+                                        <ColumnDefinition Width="Auto"/>
+                                        <ColumnDefinition Width="*"/>
+                                    </Grid.ColumnDefinitions>
+                                    <TextBlock Grid.Column="0" Text="{x:Static res:Strings.Label_ShifterLed1}" Style="{StaticResource SliderLabel}"/>
+                                    <ComboBox Grid.Column="1" x:Name="ShifterLed1Combo" HorizontalAlignment="Left" Width="170" SelectionChanged="ShifterLed1Combo_Changed"/>
+                                </Grid>
+                                <Grid Margin="0,4">
+                                    <Grid.ColumnDefinitions>
+                                        <ColumnDefinition Width="Auto"/>
+                                        <ColumnDefinition Width="*"/>
+                                    </Grid.ColumnDefinitions>
+                                    <TextBlock Grid.Column="0" Text="{x:Static res:Strings.Label_ShifterLed2}" Style="{StaticResource SliderLabel}"/>
+                                    <ComboBox Grid.Column="1" x:Name="ShifterLed2Combo" HorizontalAlignment="Left" Width="170" SelectionChanged="ShifterLed2Combo_Changed"/>
+                                </Grid>
+                                <Grid Margin="0,8,0,4">
+                                    <Grid.ColumnDefinitions>
+                                        <ColumnDefinition Width="Auto"/>
+                                        <ColumnDefinition Width="*"/>
+                                        <ColumnDefinition Width="Auto"/>
+                                    </Grid.ColumnDefinitions>
+                                    <TextBlock Grid.Column="0" Text="{x:Static res:Strings.SliderLabel_ShifterBrightness}" Style="{StaticResource SliderLabel}"/>
+                                    <Slider Grid.Column="1" x:Name="ShifterBrightnessSlider" Minimum="0" Maximum="10"
+                                            TickFrequency="1" IsSnapToTickEnabled="True" VerticalAlignment="Center"
+                                            ValueChanged="ShifterBrightnessSlider_ValueChanged"/>
+                                    <TextBlock Grid.Column="2" x:Name="ShifterBrightnessValue" MinWidth="24"
+                                               TextAlignment="Right" VerticalAlignment="Center" Text="10"/>
+                                </Grid>
+                            </StackPanel>
+                        </ctrl:SectionCard>
+
+                    </StackPanel>
+                </ScrollViewer>
+            </TabItem>
+
             <!-- ==================== mBOOSTER TAB ==================== -->
             <TabItem x:Name="MBoosterTab" Header="{x:Static res:Strings.TabHeader_MBooster}" Visibility="Collapsed">
                 <ScrollViewer VerticalScrollBarVisibility="Auto" Padding="22,18,22,8">

@@ -31,6 +31,16 @@ namespace MozaPlugin.Devices
         public Action<DeviceProber, bool> MarkDetected { get; }
         /// <summary>Reads this peripheral's shared detection flag (gates presence-probe polling).</summary>
         public Func<DeviceDetectionState, bool> IsDetected { get; }
+        /// <summary>Settings this lane reads once the binary channel is confirmed, or
+        /// null to read nothing (pedals/handbrake populate their tab from the profile
+        /// via Apply*ToHardware instead — see StandalonePeripheralController). The
+        /// shifter descriptors set a per-model list so the tab reflects the device's
+        /// stored values on connect (the SGP list includes its LED commands).</summary>
+        public string[]? SettingsReadCommands { get; }
+        /// <summary>True for the SGP (2 configurable LEDs); false for the HGP. Stamped
+        /// into <c>DeviceDetectionState.ShifterHasLeds</c> so the UI shows the LED
+        /// section only for the SGP.</summary>
+        public bool HasLeds { get; }
 
         public StandalonePeripheralDescriptor(
             MozaDeviceCategory category,
@@ -40,7 +50,9 @@ namespace MozaPlugin.Devices
             string commandPrefix,
             string captureLabelBase,
             Action<DeviceProber, bool> markDetected,
-            Func<DeviceDetectionState, bool> isDetected)
+            Func<DeviceDetectionState, bool> isDetected,
+            string[]? settingsReadCommands = null,
+            bool hasLeds = false)
         {
             Category = category;
             PidFilter = pidFilter ?? throw new ArgumentNullException(nameof(pidFilter));
@@ -50,13 +62,14 @@ namespace MozaPlugin.Devices
             CaptureLabelBase = captureLabelBase ?? throw new ArgumentNullException(nameof(captureLabelBase));
             MarkDetected = markDetected ?? throw new ArgumentNullException(nameof(markDetected));
             IsDetected = isDetected ?? throw new ArgumentNullException(nameof(isDetected));
+            SettingsReadCommands = settingsReadCommands;
+            HasLeds = hasLeds;
         }
 
-        // The two peripherals that actually have a config/calibration surface
-        // (settings commands + UI tab + Apply*ToHardware). Standalone shifters
-        // (HGP 0x001E / SGP 0x0023) have NO settings commands and no UI, so
-        // there is nothing for a lane to read or write — they are intentionally
-        // not listed until that surface exists.
+        // Directly-USB-attached peripherals with a config surface. Pedals/handbrake
+        // populate their tab from the profile via Apply*ToHardware, so they carry no
+        // read list. The two shifters DO read on connect (per-model list) so the tab
+        // reflects the device's stored values — the SGP list adds its LED commands.
         public static readonly StandalonePeripheralDescriptor Pedals =
             new StandalonePeripheralDescriptor(
                 MozaDeviceCategory.Pedals,
@@ -79,11 +92,51 @@ namespace MozaPlugin.Devices
                 (prober, issueReads) => prober.MarkHandbrakeDetected(issueReads),
                 s => s.HandbrakeDetected);
 
-        /// <summary>Descriptor for a discovered port's category, or null if unsupported.</summary>
-        public static StandalonePeripheralDescriptor? ForCategory(MozaDeviceCategory category)
+        private static readonly string[] ShifterCommonReads =
+            { "shifter-direction", "shifter-paddle-sync", "shifter-hid-mode", "shifter-apply-mode" };
+        private static readonly string[] ShifterSgpReads =
+            { "shifter-direction", "shifter-paddle-sync", "shifter-hid-mode", "shifter-apply-mode",
+              "shifter-brightness", "shifter-colors" };
+
+        // HGP: H-pattern shifter, no LEDs.
+        public static readonly StandalonePeripheralDescriptor Hgp =
+            new StandalonePeripheralDescriptor(
+                MozaDeviceCategory.Shifter,
+                pid => MozaUsbIds.IsShifterHgpPid(pid),
+                MozaProbeTarget.ShifterOnly,
+                MozaProtocol.DeviceHPattern,
+                "shifter-",
+                "shifter",
+                (prober, issueReads) => prober.MarkShifterDetected(issueReads),
+                s => s.ShifterDetected,
+                ShifterCommonReads,
+                hasLeds: false);
+
+        // SGP: sequential shifter with 2 configurable LEDs.
+        public static readonly StandalonePeripheralDescriptor Sgp =
+            new StandalonePeripheralDescriptor(
+                MozaDeviceCategory.Shifter,
+                pid => MozaUsbIds.IsShifterSgpPid(pid),
+                MozaProbeTarget.ShifterOnly,
+                MozaProtocol.DeviceSequential,
+                "shifter-",
+                "shifter",
+                (prober, issueReads) => prober.MarkShifterDetected(issueReads),
+                s => s.ShifterDetected,
+                ShifterSgpReads,
+                hasLeds: true);
+
+        /// <summary>Descriptor for a discovered port's category + PID, or null if
+        /// unsupported. HGP and SGP share category <c>Shifter</c> and are disambiguated
+        /// by PID (only the SGP has LEDs).</summary>
+        public static StandalonePeripheralDescriptor? ForCategory(MozaDeviceCategory category, ushort pid = 0)
         {
             if (category == MozaDeviceCategory.Pedals) return Pedals;
             if (category == MozaDeviceCategory.Handbrake) return Handbrake;
+            if (category == MozaDeviceCategory.Shifter)
+                return MozaUsbIds.IsShifterSgpPid(pid) ? Sgp
+                     : MozaUsbIds.IsShifterHgpPid(pid) ? Hgp
+                     : null;
             return null;
         }
     }
@@ -188,6 +241,11 @@ namespace MozaPlugin.Devices
             if (ok)
             {
                 MozaLog.Info($"[AZOM] Connected to standalone {_desc.CaptureLabelBase} ({_connection.DiscoveredPid} on {_connection.LastPortName})");
+                // A shifter's LED capability is known from its PID (SGP has 2 LEDs,
+                // HGP has none) — stamp it before MarkDetected so the UI shows the LED
+                // section only for the SGP and the detect log reads correctly.
+                if (_desc.Category == MozaDeviceCategory.Shifter)
+                    _detectionState.ShifterHasLeds = _desc.HasLeds;
                 // Registry PID classification + an open dedicated port IS proof of
                 // presence on this topology, so show the tab immediately — don't
                 // gate it on a binary ACK this device may never send. issueReads:
@@ -242,8 +300,15 @@ namespace MozaPlugin.Devices
             // issue the settings reads.
             if (data.Length == 2 && data[0] == 0x80)
             {
+                bool firstConfirm = !_binaryConfirmed;
                 _binaryConfirmed = true;
                 _desc.MarkDetected(_prober, true);
+                // Now that the binary channel is confirmed, read the descriptor's
+                // settings once so the tab reflects the device's stored values. Only
+                // the shifter descriptors set this; pedals/handbrake read nothing here
+                // (they populate the tab from the profile via Apply*ToHardware).
+                if (firstConfirm && _desc.SettingsReadCommands != null)
+                    _deviceManager.ReadSettings(_desc.SettingsReadCommands);
                 return;
             }
 
@@ -279,6 +344,12 @@ namespace MozaPlugin.Devices
             {
                 _detectionState.HandbrakeDetected = false;
                 _detectionState.HandbrakeOwner = null;
+            }
+            if (ReferenceEquals(_detectionState.ShifterOwner, _deviceManager))
+            {
+                _detectionState.ShifterDetected = false;
+                _detectionState.ShifterHasLeds = false;
+                _detectionState.ShifterOwner = null;
             }
         }
 

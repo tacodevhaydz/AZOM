@@ -524,6 +524,9 @@ namespace MozaPlugin
                     return MozaPlugin.Instance?.Cm2TargetDeviceId
                         ?? MozaProtocol.DeviceMain;
                 case "handbrake": return MozaProtocol.DeviceHandbrake;
+                // HGP/SGP share bus dev 0x1A. On a dedicated standalone pipe the
+                // override above wins; this covers a future hub/base-relayed shifter.
+                case "shifter":  return MozaProtocol.DeviceHPattern;
                 case "ab9":      return MozaProtocol.DeviceAb9;
                 default:         return MozaProtocol.DeviceBase;
             }

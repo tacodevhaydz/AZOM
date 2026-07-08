@@ -681,4 +681,21 @@ Id: {2}</value></data>
   <data name="Hint_MBoosterAxisRoles" xml:space="preserve"><value>Este mBooster aloja más de un pedal en una sola conexión. Asigna cada eje detectado a una entrada del juego. El orden predeterminado sigue la disposición Rx/Ry/Rz de Moza (acelerador/freno/embrague); reasígnalo aquí si un pedal controla la entrada equivocada.</value></data>
   <data name="Label_EffectsForPedal" xml:space="preserve"><value>Configure pedal:</value></data>
   <data name="Note_PassivePedalNoEffects" xml:space="preserve"><value>This pedal is passive (no motor) — vibration effects don't apply.</value></data>
+  <data name="TabHeader_Shifter" xml:space="preserve"><value>Cambio</value></data>
+  <data name="Section_ShifterSettings" xml:space="preserve"><value>AJUSTES DEL CAMBIO</value></data>
+  <data name="Section_ShifterLeds" xml:space="preserve"><value>LEDS</value></data>
+  <data name="Subtitle_ShifterLeds" xml:space="preserve"><value>// dos LED configurables (SGP)</value></data>
+  <data name="Subtitle_ShifterCalibrate" xml:space="preserve"><value>// mete R &gt; 7ª &gt; R &gt; Punto muerto</value></data>
+  <data name="SliderLabel_ShifterPaddleSync" xml:space="preserve"><value>Sinc. de levas</value></data>
+  <data name="Label_ShifterLed1" xml:space="preserve"><value>LED 1 (S1)</value></data>
+  <data name="Label_ShifterLed2" xml:space="preserve"><value>LED 2 (S2)</value></data>
+  <data name="SliderLabel_ShifterBrightness" xml:space="preserve"><value>Brillo del LED</value></data>
+  <data name="ShifterColor_Red" xml:space="preserve"><value>Rojo</value></data>
+  <data name="ShifterColor_Orange" xml:space="preserve"><value>Naranja</value></data>
+  <data name="ShifterColor_Yellow" xml:space="preserve"><value>Amarillo</value></data>
+  <data name="ShifterColor_Green" xml:space="preserve"><value>Verde</value></data>
+  <data name="ShifterColor_Cyan" xml:space="preserve"><value>Cian</value></data>
+  <data name="ShifterColor_Blue" xml:space="preserve"><value>Azul</value></data>
+  <data name="ShifterColor_Purple" xml:space="preserve"><value>Morado</value></data>
+  <data name="ShifterColor_White" xml:space="preserve"><value>Blanco</value></data>
 </root>

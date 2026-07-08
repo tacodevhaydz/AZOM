@@ -36,10 +36,11 @@ namespace MozaPlugin.Devices
         private readonly DeviceDetectionState _detectionState;
         private readonly Func<bool> _isShuttingDown;
 
-        // Supported peripheral PIDs (pedals + handbrake). Shifters are excluded
-        // until they gain a settings/UI surface — see StandalonePeripheralDescriptor.
+        // Supported peripheral PIDs: pedals, handbrake, and the HGP/SGP shifters
+        // (each gets its own dedicated lane + config surface — see
+        // StandalonePeripheralDescriptor).
         private static bool IsSupportedPid(ushort pid) =>
-            MozaUsbIds.IsPedalsPid(pid) || MozaUsbIds.IsHandbrakePid(pid);
+            MozaUsbIds.IsPedalsPid(pid) || MozaUsbIds.IsHandbrakePid(pid) || MozaUsbIds.IsShifterPid(pid);
 
         public MozaStandalonePeripheralRegistry(
             MozaPlugin plugin,
@@ -85,7 +86,9 @@ namespace MozaPlugin.Devices
                 foreach (var kvp in currentByIdentity)
                 {
                     if (_byIdentity.ContainsKey(kvp.Key)) continue;
-                    var desc = StandalonePeripheralDescriptor.ForCategory(kvp.Value.Category);
+                    // Pass the PID so a Shifter port resolves to the HGP or SGP
+                    // descriptor (they share the category; only the SGP has LEDs).
+                    var desc = StandalonePeripheralDescriptor.ForCategory(kvp.Value.Category, kvp.Value.Pid);
                     if (desc == null) continue; // unsupported category — shouldn't happen given the PID filter
                     var c = new StandalonePeripheralController(
                         desc, kvp.Key, kvp.Value.PortName,

@@ -681,4 +681,21 @@ Id: {2}</value></data>
   <data name="Hint_MBoosterAxisRoles" xml:space="preserve"><value>Denne mBooster er vert for mer enn ett pedal på én tilkobling. Tildel hver oppdaget akse til en spillinngang. Standardrekkefølgen følger Mozas Rx/Ry/Rz-oppsett (gass/brems/clutch) — tilordne på nytt her hvis et pedal styrer feil inngang.</value></data>
   <data name="Label_EffectsForPedal" xml:space="preserve"><value>Configure pedal:</value></data>
   <data name="Note_PassivePedalNoEffects" xml:space="preserve"><value>This pedal is passive (no motor) — vibration effects don't apply.</value></data>
+  <data name="TabHeader_Shifter" xml:space="preserve"><value>Girspak</value></data>
+  <data name="Section_ShifterSettings" xml:space="preserve"><value>GIRSPAK-INNSTILLINGER</value></data>
+  <data name="Section_ShifterLeds" xml:space="preserve"><value>LED</value></data>
+  <data name="Subtitle_ShifterLeds" xml:space="preserve"><value>// to konfigurerbare LED-er (SGP)</value></data>
+  <data name="Subtitle_ShifterCalibrate" xml:space="preserve"><value>// gir R &gt; 7. &gt; R &gt; Nøytral</value></data>
+  <data name="SliderLabel_ShifterPaddleSync" xml:space="preserve"><value>Padle-synk</value></data>
+  <data name="Label_ShifterLed1" xml:space="preserve"><value>LED 1 (S1)</value></data>
+  <data name="Label_ShifterLed2" xml:space="preserve"><value>LED 2 (S2)</value></data>
+  <data name="SliderLabel_ShifterBrightness" xml:space="preserve"><value>LED-lysstyrke</value></data>
+  <data name="ShifterColor_Red" xml:space="preserve"><value>Rød</value></data>
+  <data name="ShifterColor_Orange" xml:space="preserve"><value>Oransje</value></data>
+  <data name="ShifterColor_Yellow" xml:space="preserve"><value>Gul</value></data>
+  <data name="ShifterColor_Green" xml:space="preserve"><value>Grønn</value></data>
+  <data name="ShifterColor_Cyan" xml:space="preserve"><value>Cyan</value></data>
+  <data name="ShifterColor_Blue" xml:space="preserve"><value>Blå</value></data>
+  <data name="ShifterColor_Purple" xml:space="preserve"><value>Lilla</value></data>
+  <data name="ShifterColor_White" xml:space="preserve"><value>Hvit</value></data>
 </root>

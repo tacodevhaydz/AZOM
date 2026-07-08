@@ -158,6 +158,7 @@ namespace MozaPlugin.Hardware
         // for base-attached peripherals).
         private MozaDeviceManager PedalsManager => _detectionState.PedalsOwner ?? _deviceManager;
         private MozaDeviceManager HandbrakeManager => _detectionState.HandbrakeOwner ?? _deviceManager;
+        private MozaDeviceManager ShifterManager => _detectionState.ShifterOwner ?? _deviceManager;
         // Base FFB/motor/ambient writes must target whichever pipe detected the
         // base. Normally that's the primary; after a base→hub primary migration
         // (broken base, wheel on hub) the base lives on a dedicated base-aux pipe,
@@ -710,6 +711,41 @@ namespace MozaPlugin.Hardware
                     dm.WriteFloat($"pedals-clutch-y{i + 1}", profile.PedalsClutchCurve[i]);
         }
 
+        /// <summary>Push HGP/SGP shifter settings. _data is mirrored always; writes
+        /// gated on detection. LED settings (SGP only) are gated on ShifterHasLeds.
+        /// The 2 SGP LEDs ride one 2-byte command [S1,S2] of palette indices 0-7.</summary>
+        public void ApplyShifterToHardware(MozaProfile? profile)
+        {
+            if (profile == null) return;
+
+            if (profile.ShifterDirection  >= 0) _data.ShifterDirection  = profile.ShifterDirection;
+            if (profile.ShifterPaddleSync >= 0) _data.ShifterPaddleSync = profile.ShifterPaddleSync;
+            if (profile.ShifterHidMode    >= 0) _data.ShifterHidMode    = profile.ShifterHidMode;
+            if (profile.ShifterApplyMode  >= 0) _data.ShifterApplyMode  = profile.ShifterApplyMode;
+            if (profile.ShifterBrightness >= 0) _data.ShifterBrightness = profile.ShifterBrightness;
+            if (profile.ShifterLed1Index  >= 0) _data.ShifterLed1Index  = profile.ShifterLed1Index;
+            if (profile.ShifterLed2Index  >= 0) _data.ShifterLed2Index  = profile.ShifterLed2Index;
+
+            if (!_detectionState.ShifterDetected) return;
+            var dm = ShifterManager;
+            if (profile.ShifterDirection  >= 0) dm.WriteSetting("shifter-direction", profile.ShifterDirection);
+            if (profile.ShifterPaddleSync >= 0) dm.WriteSetting("shifter-paddle-sync", profile.ShifterPaddleSync);
+            if (profile.ShifterHidMode    >= 0) dm.WriteSetting("shifter-hid-mode", profile.ShifterHidMode);
+            if (profile.ShifterApplyMode  >= 0) dm.WriteSetting("shifter-apply-mode", profile.ShifterApplyMode);
+            if (_detectionState.ShifterHasLeds)
+            {
+                if (profile.ShifterBrightness >= 0) dm.WriteSetting("shifter-brightness", profile.ShifterBrightness);
+                // Both LEDs ride one 2-byte command, so only push when BOTH indices
+                // are known — otherwise we'd coerce the unknown LED to index 0 (red)
+                // and clobber it. In the normal flow the pair always travels together
+                // (both set by a read/UI edit, or both -1 on a fresh profile).
+                int s1 = _data.ShifterLed1Index, s2 = _data.ShifterLed2Index;
+                if (s1 >= 0 && s2 >= 0)
+                    dm.WriteArray("shifter-colors",
+                        new byte[] { (byte)Math.Min(7, s1), (byte)Math.Min(7, s2) });
+            }
+        }
+
         /// <summary>
         /// Push base/FFB settings (motor limits, FFB curve breakpoints) to the
         /// wheelbase. _data is mirrored always; writes gated on base-connected.
@@ -954,6 +990,7 @@ namespace MozaPlugin.Hardware
             ApplyBaseAmbientToHardware(profile);
             ApplyHandbrakeToHardware(profile);
             ApplyPedalsToHardware(profile);
+            ApplyShifterToHardware(profile);
             ApplyAb9ToHardware(profile);
         }
 
@@ -1073,6 +1110,17 @@ namespace MozaPlugin.Hardware
         {
             if (value < 0) return;
             if (_detectionState.PedalsDetected) PedalsManager.WriteFloat(command, value);
+        }
+        public void WriteIfShifterDetected(string command, int value)
+        {
+            if (value < 0) return;
+            if (_detectionState.ShifterDetected) ShifterManager.WriteSetting(command, value);
+        }
+        // The 2 SGP LEDs ride one 2-byte command [S1,S2] (palette indices 0-7); the
+        // UI re-sends both whenever either changes.
+        public void WriteArrayIfShifterDetected(string command, byte[] payload)
+        {
+            if (_detectionState.ShifterDetected) ShifterManager.WriteArray(command, payload);
         }
         public void WriteIfBaseAmbientSupported(string command, int value)
         {

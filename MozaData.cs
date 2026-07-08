@@ -376,6 +376,17 @@ namespace MozaPlugin
         // Handbrake output curve (values 0-100, stored as ints; device uses 4-byte floats)
         public readonly int[] HandbrakeCurve = new int[] { 20, 40, 60, 80, 100 };
 
+        // ===== Shifter settings (HGP/SGP, bus dev 0x1A) =====
+        // Live device-value mirror (populated by settings reads). -1 = not read yet.
+        public volatile int ShifterDirection = -1;   // 0=Normal, 1=Reversed
+        public volatile int ShifterPaddleSync = -1;  // 1/2
+        public volatile int ShifterHidMode = -1;     // 0/1 game-compat mode
+        public volatile int ShifterApplyMode = -1;   // 0/1
+        public volatile int ShifterBrightness = -1;  // SGP LED brightness 0-10
+        public volatile int ShifterLed1Index = -1;   // SGP LED S1 palette index 0-7
+        public volatile int ShifterLed2Index = -1;   // SGP LED S2 palette index 0-7
+        public volatile int ShifterTheta = -1;       // read-only raw axis (output-x)
+
         // ===== Hub port power status (-1 = not read yet) =====
         public volatile int HubBasePower = -1;
         public volatile int HubPort1Power = -1;
@@ -592,6 +603,14 @@ namespace MozaPlugin
                 case "handbrake-y4": HandbrakeCurve[3] = value; break;
                 case "handbrake-y5": HandbrakeCurve[4] = value; break;
 
+                // Shifter settings (HGP/SGP). shifter-colors is an array — see UpdateFromArray.
+                case "shifter-hid-mode":    ShifterHidMode    = value; break;
+                case "shifter-apply-mode":  ShifterApplyMode  = value; break;
+                case "shifter-brightness":  ShifterBrightness = value; break;
+                case "shifter-direction":   ShifterDirection  = value; break;
+                case "shifter-paddle-sync": ShifterPaddleSync = value; break;
+                case "shifter-theta":       ShifterTheta      = value; break;
+
                 // Hub port power status
                 case "hub-base-power":    HubBasePower    = value; IsHubConnected = true; break;
                 case "hub-port1-power":   HubPort1Power   = value; IsHubConnected = true; break;
@@ -689,6 +708,15 @@ namespace MozaPlugin
             {
                 if (data.Length >= 3)
                     SetColor(BaseAmbientShutdownColor, data);
+            }
+            // Shifter (SGP) 2 LEDs: 2-byte payload [S1,S2], each a palette index 0-7.
+            else if (commandName == "shifter-colors")
+            {
+                if (data.Length >= 2)
+                {
+                    ShifterLed1Index = data[0];
+                    ShifterLed2Index = data[1];
+                }
             }
             // Dash RPM colors
             else if (commandName.StartsWith("dash-rpm-color") && !commandName.Contains("blink"))

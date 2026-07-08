@@ -686,4 +686,21 @@ Id: {2}</value></data>
   <data name="Hint_MBoosterAxisRoles" xml:space="preserve"><value>This mBooster hosts more than one pedal on one connection. Assign each detected axis to a game input. The default order follows Moza's Rx/Ry/Rz layout (throttle/brake/clutch) — remap here if a pedal drives the wrong input.</value></data>
   <data name="Label_EffectsForPedal" xml:space="preserve"><value>Configure pedal:</value></data>
   <data name="Note_PassivePedalNoEffects" xml:space="preserve"><value>This pedal is passive (no motor) — vibration effects don't apply.</value></data>
+  <data name="TabHeader_Shifter" xml:space="preserve"><value>Shifter</value></data>
+  <data name="Section_ShifterSettings" xml:space="preserve"><value>SHIFTER SETTINGS</value></data>
+  <data name="Section_ShifterLeds" xml:space="preserve"><value>LEDS</value></data>
+  <data name="Subtitle_ShifterLeds" xml:space="preserve"><value>// two configurable LEDs (SGP)</value></data>
+  <data name="Subtitle_ShifterCalibrate" xml:space="preserve"><value>// shift R &gt; 7th &gt; R &gt; Neutral</value></data>
+  <data name="SliderLabel_ShifterPaddleSync" xml:space="preserve"><value>Paddle Shift Sync</value></data>
+  <data name="Label_ShifterLed1" xml:space="preserve"><value>LED 1 (S1)</value></data>
+  <data name="Label_ShifterLed2" xml:space="preserve"><value>LED 2 (S2)</value></data>
+  <data name="SliderLabel_ShifterBrightness" xml:space="preserve"><value>LED Brightness</value></data>
+  <data name="ShifterColor_Red" xml:space="preserve"><value>Red</value></data>
+  <data name="ShifterColor_Orange" xml:space="preserve"><value>Orange</value></data>
+  <data name="ShifterColor_Yellow" xml:space="preserve"><value>Yellow</value></data>
+  <data name="ShifterColor_Green" xml:space="preserve"><value>Green</value></data>
+  <data name="ShifterColor_Cyan" xml:space="preserve"><value>Cyan</value></data>
+  <data name="ShifterColor_Blue" xml:space="preserve"><value>Blue</value></data>
+  <data name="ShifterColor_Purple" xml:space="preserve"><value>Purple</value></data>
+  <data name="ShifterColor_White" xml:space="preserve"><value>White</value></data>
 </root>

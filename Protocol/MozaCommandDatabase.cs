@@ -444,6 +444,27 @@ namespace MozaPlugin.Protocol
             AddCommand("handbrake-cal-start", "handbrake", 0xFF, 94, new byte[] { 3 }, 2, "int");
             AddCommand("handbrake-cal-stop",  "handbrake", 0xFF, 94, new byte[] { 4 }, 2, "int");
 
+            // ===== H-PATTERN / SEQUENTIAL SHIFTER (HGP/SGP, bus dev 0x1A) =====
+            // On its own USB-CDC pipe the shifter answers as root main (0x12);
+            // MozaDeviceManager's deviceIdOverride routes writes there. Settings
+            // read grp 0x51 / write grp 0x52, output read grp 0x53, calibration
+            // write grp 0x54. Verified against usb-capture/rs21_parameter.db
+            // (ShifterGetCfg_*/ShifterSetCfg_*) and docs/protocol/devices/shifter-0x1A.md.
+            AddCommand("shifter-hid-mode",    "shifter", 0x51, 0x52, new byte[] { 1 }, 2, "int");
+            AddCommand("shifter-apply-mode",  "shifter", 0x51, 0x52, new byte[] { 2 }, 2, "int");
+            AddCommand("shifter-brightness",  "shifter", 0x51, 0x52, new byte[] { 3 }, 2, "int");   // SGP LED brightness 0-10
+            // SGP 2 LEDs: 2-byte payload [S1,S2], each a palette index 0-7 (not RGB).
+            AddCommand("shifter-colors",      "shifter", 0x51, 0x52, new byte[] { 4 }, 2, "array");
+            AddCommand("shifter-direction",   "shifter", 0x51, 0x52, new byte[] { 5 }, 2, "int");
+            AddCommand("shifter-paddle-sync", "shifter", 0x51, 0x52, new byte[] { 6 }, 2, "int");   // {1,2}
+            // Read-only raw axis (output-x / ShifterTheta).
+            AddCommand("shifter-theta",       "shifter", 0x53, 0xFF, new byte[] { 1 }, 2, "int");
+            // Calibration (write-only, grp 0x54). Best-effort: present in foxblat
+            // serial.yml + SDK ShifterCalibrateStart/Finish, absent from the local
+            // parameter DB; gated on detection like handbrake calibration.
+            AddCommand("shifter-cal-start",   "shifter", 0xFF, 0x54, new byte[] { 3 }, 2, "int");
+            AddCommand("shifter-cal-stop",    "shifter", 0xFF, 0x54, new byte[] { 4 }, 2, "int");
+
             // ===== AB9 ACTIVE SHIFTER (dev id 0x12) =====
             // Reads (grp 0x1E) and writes (grp 0x1F) use different shapes:
             //   WRITE 7E 03 1F 12 <cmd> 00 <val>  →  echo on 0x9F
