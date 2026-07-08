@@ -379,8 +379,8 @@ namespace MozaPlugin
         // ===== Color arrays (packed as R<<16 | G<<8 | B) =====
         public int[]? WheelRpmColors { get; set; }       // [10]
         public int[]? WheelRpmBlinkColors { get; set; }  // [10]
-        public int[]? WheelButtonColors { get; set; }     // [14]
-        public bool[]? WheelButtonDefaultDuringTelemetry { get; set; } // [14]
+        public int[]? WheelButtonColors { get; set; }     // [16]
+        public bool[]? WheelButtonDefaultDuringTelemetry { get; set; } // [16]
         public int[]? WheelFlagColors { get; set; }       // [6]
         public int[]? WheelIdleColor { get; set; }        // [1]
         public int[]? WheelESRpmColors { get; set; }     // [10]

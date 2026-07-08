@@ -252,11 +252,13 @@ namespace MozaPlugin
         // Wheel RPM colors (10 LEDs, [R, G, B] each)
         public readonly byte[][] WheelRpmColors = InitWheelRpmColorArray();
         public readonly byte[][] WheelRpmBlinkColors = InitRpmColorArray();
-        public readonly byte[][] WheelButtonColors = InitColorArray(14);
+        // Group 1 (button matrix) spec max = 16 addressable LEDs (W11 has 16).
+        public const int WheelButtonMax = 16;
+        public readonly byte[][] WheelButtonColors = InitColorArray(WheelButtonMax);
         // Per-button "default during telemetry" flags. When true, any 'off' (0,0,0) value
         // sent through the live button-color telemetry pipeline is replaced with that
         // button's configured static color (see WheelButtonColors).
-        public readonly bool[] WheelButtonDefaultDuringTelemetry = new bool[14];
+        public readonly bool[] WheelButtonDefaultDuringTelemetry = new bool[WheelButtonMax];
         // Single "default during telemetry" toggle for the knob ring LEDs. When true,
         // an all-off knob frame from the live telemetry pipeline releases telemetry
         // ownership (active_mask=0) so the firmware restores the wheel's stored knob
@@ -643,7 +645,7 @@ namespace MozaPlugin
             else if (commandName.StartsWith("wheel-button-color"))
             {
                 int idx = ParseTrailingIndex(commandName, "wheel-button-color");
-                if (idx >= 0 && idx < 14 && data.Length >= 3)
+                if (idx >= 0 && idx < WheelButtonMax && data.Length >= 3)
                     SetColor(WheelButtonColors[idx], data);
             }
             // Wheel flag colors

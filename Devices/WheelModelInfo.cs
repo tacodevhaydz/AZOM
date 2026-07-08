@@ -186,6 +186,10 @@ namespace MozaPlugin.Devices
             // not split across RPM + Meter flag sub-device. Driving all 18 as one RPM strip.
             ("W18",     "KS Pro",     new WheelModelInfo(18, 10, false, null, 5, new[] { 12, 12, 8, 12, 12 }, hasDisplay: true,  browSegmentSize: 3, knobSignalModeOrder: new[] { 0, 4, 3, 1, 2 })),
             ("KS",      "KS",         new WheelModelInfo(10, 10, false, null, 0, hasDisplay: false)),
+            // Lamborghini Revuelto (firmware "W11"): screenless new-protocol wheel,
+            // 0 RPM LEDs + 16 dimming-only backlit buttons (no per-button RGB — the
+            // wheel ignores the colour bytes, like ES).
+            ("W11",     "Lamborghini Revuelto", new WheelModelInfo(0, 16, false, null, 0, hasDisplay: false)),
             ("W13",     "FSR V2",     new WheelModelInfo(16, 10, false, null, 0, hasDisplay: true,  browSegmentSize: 3)),  // firmware reports "W13" for FSR V2
             // FSR V1 display wheel (box name "FSR1"): firmware reports model-name
             // "FSR", hw "RS21-D03-HW FW-C", sw "RS21-D03-MC FW". A DISTINCT, older
