@@ -674,6 +674,6 @@ Id: {2}</value></data>
   <data name="Section_PedalRoles" xml:space="preserve"><value>踏板角色</value></data>
   <data name="Label_PedalAxis" xml:space="preserve"><value>踏板 {0}</value></data>
   <data name="Hint_MBoosterAxisRoles" xml:space="preserve"><value>此 mBooster 通过一个连接承载多个踏板。将每个检测到的轴分配给游戏输入。默认顺序遵循 Moza 的 Rx/Ry/Rz 布局（油门/刹车/离合）——如果某个踏板驱动了错误的输入，请在此重新映射。</value></data>
-  <data name="Label_EffectsForPedal" xml:space="preserve"><value>Effects for pedal:</value></data>
+  <data name="Label_EffectsForPedal" xml:space="preserve"><value>Configure pedal:</value></data>
   <data name="Note_PassivePedalNoEffects" xml:space="preserve"><value>This pedal is passive (no motor) — vibration effects don't apply.</value></data>
 </root>

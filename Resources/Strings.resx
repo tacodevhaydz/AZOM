@@ -684,6 +684,6 @@ Id: {2}</value></data>
   <data name="Section_PedalRoles" xml:space="preserve"><value>Pedal Roles</value></data>
   <data name="Label_PedalAxis" xml:space="preserve"><value>Pedal {0}</value></data>
   <data name="Hint_MBoosterAxisRoles" xml:space="preserve"><value>This mBooster hosts more than one pedal on one connection. Assign each detected axis to a game input. The default order follows Moza's Rx/Ry/Rz layout (throttle/brake/clutch) — remap here if a pedal drives the wrong input.</value></data>
-  <data name="Label_EffectsForPedal" xml:space="preserve"><value>Effects for pedal:</value></data>
+  <data name="Label_EffectsForPedal" xml:space="preserve"><value>Configure pedal:</value></data>
   <data name="Note_PassivePedalNoEffects" xml:space="preserve"><value>This pedal is passive (no motor) — vibration effects don't apply.</value></data>
 </root>

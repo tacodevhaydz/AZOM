@@ -2204,49 +2204,51 @@ namespace MozaPlugin
                     : null;
                 if (prefix == null) continue;
 
-                int dir, min, max; float[]? curveY, curveX;
-                if (axis == 0)
-                {
-                    dir = s.Direction; min = s.Min; max = s.Max; curveY = s.CurveY; curveX = s.CurveX;
-                }
-                else if (s.Pedals != null && s.Pedals.TryGetValue(axis, out var p) && p != null)
-                {
-                    dir = p.Direction; min = p.Min; max = p.Max; curveY = p.CurveY; curveX = p.CurveX;
-                }
-                else continue; // this chained pedal has no calibration override
+                // This pedal's full config: master flat fields (axis 0) or its
+                // per-pedal entry. An unconfigured chained pedal writes nothing.
+                global::MozaPlugin.Devices.IMBoosterPedalConfig cfg;
+                if (axis == 0) cfg = s;
+                else if (s.Pedals != null && s.Pedals.TryGetValue(axis, out var p) && p != null) cfg = p;
+                else continue;
 
-                if (dir >= 0) controller.SendIntWrite($"mbooster-{prefix}-dir", dir);
-                if (min >= 0) controller.SendIntWrite($"mbooster-{prefix}-min", min);
-                if (max >= 0) controller.SendIntWrite($"mbooster-{prefix}-max", max);
-                if (curveY != null && curveY.Length == 5)
+                if (cfg.Direction >= 0) controller.SendIntWrite($"mbooster-{prefix}-dir", cfg.Direction);
+                if (cfg.Min >= 0) controller.SendIntWrite($"mbooster-{prefix}-min", cfg.Min);
+                if (cfg.Max >= 0) controller.SendIntWrite($"mbooster-{prefix}-max", cfg.Max);
+                if (cfg.CurveY != null && cfg.CurveY.Length == 5)
                 {
                     // Resample at the fixed 20/40/60/80/100 breakpoints in case
                     // CurveX has been horizontally dragged (see
                     // MozaMBoosterRegistry.ResampleCurveAtFixedBreakpoints) —
                     // identity when it hasn't.
-                    var resampled = global::MozaPlugin.Devices.MozaMBoosterRegistry.ResampleCurveAtFixedBreakpoints(curveX, curveY);
+                    var resampled = global::MozaPlugin.Devices.MozaMBoosterRegistry.ResampleCurveAtFixedBreakpoints(cfg.CurveX, cfg.CurveY);
                     for (int k = 0; k < 5; k++)
                         controller.SendFloatWrite($"mbooster-{prefix}-y{k + 1}", resampled[k]);
                 }
+
+                // Sim Input Mapping + travel/endstop are BRAKE-only wire commands
+                // (there are no throttle/clutch variants) — apply them from
+                // whichever pedal is the brake, not always the master pedal.
+                if (role == global::MozaPlugin.Devices.MBoosterRole.Brake)
+                {
+                    if (cfg.SensorOutputRatioPct >= 0)
+                        controller.SendFloatWrite("mbooster-brake-angle-ratio", cfg.SensorOutputRatioPct);
+                    if (cfg.MaxThresholdKg >= 0)
+                        controller.SendIntWrite("mbooster-brake-threshold",
+                            global::MozaPlugin.Protocol.MozaMBoosterProtocol.EncodeThresholdKg(cfg.MaxThresholdKg));
+                    if (cfg.TravelStartMm >= 0)
+                        controller.SendIntWrite("mbooster-brake-travel-start",
+                            global::MozaPlugin.Protocol.MozaMBoosterProtocol.EncodeTravelMm(cfg.TravelStartMm));
+                    if (cfg.TravelEndMm >= 0)
+                        controller.SendIntWrite("mbooster-brake-travel-end",
+                            global::MozaPlugin.Protocol.MozaMBoosterProtocol.EncodeTravelMm(cfg.TravelEndMm));
+                    if (cfg.EndstopFrontStiffness >= 0)
+                        controller.SendIntWrite("mbooster-brake-endstop-front",
+                            global::MozaPlugin.Protocol.MozaMBoosterProtocol.EncodeEndstopStiffness(cfg.EndstopFrontStiffness));
+                    if (cfg.EndstopEndStiffness >= 0)
+                        controller.SendIntWrite("mbooster-brake-endstop-end",
+                            global::MozaPlugin.Protocol.MozaMBoosterProtocol.EncodeEndstopStiffness(cfg.EndstopEndStiffness));
+                }
             }
-            // Sim Input Mapping (Pit House-style).
-            if (s.SensorOutputRatioPct >= 0)
-                controller.SendFloatWrite("mbooster-brake-angle-ratio", s.SensorOutputRatioPct);
-            if (s.MaxThresholdKg >= 0)
-                controller.SendIntWrite("mbooster-brake-threshold",
-                    global::MozaPlugin.Protocol.MozaMBoosterProtocol.EncodeThresholdKg(s.MaxThresholdKg));
-            if (s.TravelStartMm >= 0)
-                controller.SendIntWrite("mbooster-brake-travel-start",
-                    global::MozaPlugin.Protocol.MozaMBoosterProtocol.EncodeTravelMm(s.TravelStartMm));
-            if (s.TravelEndMm >= 0)
-                controller.SendIntWrite("mbooster-brake-travel-end",
-                    global::MozaPlugin.Protocol.MozaMBoosterProtocol.EncodeTravelMm(s.TravelEndMm));
-            if (s.EndstopFrontStiffness >= 0)
-                controller.SendIntWrite("mbooster-brake-endstop-front",
-                    global::MozaPlugin.Protocol.MozaMBoosterProtocol.EncodeEndstopStiffness(s.EndstopFrontStiffness));
-            if (s.EndstopEndStiffness >= 0)
-                controller.SendIntWrite("mbooster-brake-endstop-end",
-                    global::MozaPlugin.Protocol.MozaMBoosterProtocol.EncodeEndstopStiffness(s.EndstopEndStiffness));
         }
 
         // Resolve a dashboard name to its parsed MultiStreamProfile without firing

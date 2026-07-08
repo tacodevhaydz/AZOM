@@ -1803,6 +1803,15 @@
                         <!-- Per-device panel: wraps Pedal Feel + Sim Input Mapping + Effects + Calibration into nested cards -->
                         <StackPanel x:Name="MBoosterDevicePanel" Visibility="Collapsed">
 
+                            <!-- One per-pedal selector scoping ALL config below (Pedal Feel,
+                                 Sim Input Mapping, Effects, Calibration). Hidden for a single-
+                                 pedal lane; on a chain, each pedal keeps its own config and
+                                 effects are sent to that pedal's own motor device id. -->
+                            <StackPanel x:Name="MBoosterEffectPedalPanel" Orientation="Horizontal" Margin="0,0,0,14" Visibility="Collapsed">
+                                <TextBlock Text="{x:Static res:Strings.Label_EffectsForPedal}" Style="{StaticResource LabelText}" VerticalAlignment="Center" Margin="0,0,8,0"/>
+                                <ComboBox x:Name="MBoosterEffectPedalCombo" MinWidth="140" SelectionChanged="MBoosterEffectPedalCombo_SelectionChanged"/>
+                            </StackPanel>
+
                             <ctrl:SectionCard Title="{x:Static res:Strings.Section_PedalFeel}"
                                               Subtitle="{x:Static res:Strings.Subtitle_PedalFeel}"
                                               Icon="{StaticResource IconCurve}">
@@ -1980,14 +1989,6 @@
                                                       InFillBrush="{StaticResource BwInFillBrush}"
                                                       OutBrush="Transparent"
                                                       MaxValue="100"/>
-
-                            <!-- Per-pedal effects: choose which pedal on a chained mBooster these
-                                 effects configure. Effects are stored per pedal and sent to that
-                                 pedal's own motor device id. Hidden for a single-pedal lane. -->
-                            <StackPanel x:Name="MBoosterEffectPedalPanel" Orientation="Horizontal" Margin="0,0,0,12" Visibility="Collapsed">
-                                <TextBlock Text="{x:Static res:Strings.Label_EffectsForPedal}" Style="{StaticResource SliderLabel}" VerticalAlignment="Center" Margin="0,0,8,0"/>
-                                <ComboBox x:Name="MBoosterEffectPedalCombo" MinWidth="120" SelectionChanged="MBoosterEffectPedalCombo_SelectionChanged"/>
-                            </StackPanel>
 
                             <!-- Shown instead of the effect cards when the selected pedal is passive
                                  (no motor — vibration effects can't play). -->

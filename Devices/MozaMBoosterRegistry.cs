@@ -300,32 +300,37 @@ namespace MozaPlugin.Devices
             // single-axis path always has — those controls are calibrated
             // against the master pedal. Chained axes (1+) route raw for now;
             // per-axis Pedal Feel is a follow-up (Stage 3).
-            double shaped01 = pos01;
-            if (axisIndex == 0)
+            // Per-axis Pedal Feel: shape EACH pedal's HID by ITS OWN config —
+            // the master (axis 0) from the lane's flat fields, each chained pedal
+            // from its per-pedal entry. Host-side only (deadzone / max force /
+            // input curve); the wire calibration is applied separately in
+            // ApplyMBoosterToHardware.
+            var laneSettings = _settingsLookup(c.Identity);
+            IMBoosterPedalConfig? cfg = laneSettings;
+            if (axisIndex > 0)
             {
-                var settings = _settingsLookup(c.Identity);
-                double posPct = pos01 * 100.0;
-                if (settings != null)
-                {
-                    // Raw 0-100% HID travel isn't a fixed 0-200kg scale — it's
-                    // whatever the device's OWN Max Threshold calibration
-                    // (Sim Input Mapping) currently says 100% is. -1 means the
-                    // user has never touched that control from this plugin (see
-                    // MaxThresholdKg's sentinel doc comment) — the device may
-                    // already be calibrated to something else entirely (real
-                    // Pit House captures commonly show ~100-125kg, not 200kg),
-                    // but there's no way to read that back, so 200kg remains
-                    // the best available guess in that case.
-                    double fullScaleKg = settings.MaxThresholdKg >= 0 ? settings.MaxThresholdKg : 200.0;
-                    if (settings.DeadzoneKg > 0 || settings.MaxForceKg < fullScaleKg)
-                        posPct = ApplyDeadzoneAndMaxForce(posPct, settings.DeadzoneKg, settings.MaxForceKg, fullScaleKg);
-                }
-                c.LastRawPercentPreCurve = posPct;
-                if (settings?.InputCurveY != null && settings.InputCurveY.Length == 5)
-                    posPct = EvaluateInputCurve(settings.InputCurveY, posPct);
-                shaped01 = posPct / 100.0;
-                c.LastHidPosition = shaped01;
+                var pedals = laneSettings?.Pedals;
+                cfg = (pedals != null && pedals.TryGetValue(axisIndex, out var pp)) ? pp : null;
             }
+
+            double posPct = pos01 * 100.0;
+            if (cfg != null)
+            {
+                // Raw 0-100% HID travel isn't a fixed 0-200kg scale — it's
+                // whatever this pedal's OWN Max Threshold calibration (Sim Input
+                // Mapping) currently says 100% is (200kg fallback when unset).
+                double fullScaleKg = cfg.MaxThresholdKg >= 0 ? cfg.MaxThresholdKg : 200.0;
+                if (cfg.DeadzoneKg > 0 || cfg.MaxForceKg < fullScaleKg)
+                    posPct = ApplyDeadzoneAndMaxForce(posPct, cfg.DeadzoneKg, cfg.MaxForceKg, fullScaleKg);
+                // The UI's live input-curve marker tracks the master pedal.
+                if (axisIndex == 0) c.LastRawPercentPreCurve = posPct;
+                if (cfg.InputCurveY != null && cfg.InputCurveY.Length == 5)
+                    posPct = EvaluateInputCurve(cfg.InputCurveY, posPct);
+            }
+            else if (axisIndex == 0) c.LastRawPercentPreCurve = posPct;
+
+            double shaped01 = posPct / 100.0;
+            if (axisIndex == 0) c.LastHidPosition = shaped01;
 
             c.LastAxisPositions[axisIndex] = shaped01;
             if (axisIndex + 1 > c.AxisCount) c.AxisCount = axisIndex + 1;

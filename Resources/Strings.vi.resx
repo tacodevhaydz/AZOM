@@ -674,6 +674,6 @@ Id: {2}</value></data>
   <data name="Section_PedalRoles" xml:space="preserve"><value>Vai trò bàn đạp</value></data>
   <data name="Label_PedalAxis" xml:space="preserve"><value>Bàn đạp {0}</value></data>
   <data name="Hint_MBoosterAxisRoles" xml:space="preserve"><value>mBooster này lưu trữ nhiều bàn đạp trên một kết nối. Gán mỗi trục được phát hiện cho một đầu vào trò chơi. Thứ tự mặc định theo bố cục Rx/Ry/Rz của Moza (ga/phanh/côn) — gán lại tại đây nếu một bàn đạp điều khiển sai đầu vào.</value></data>
-  <data name="Label_EffectsForPedal" xml:space="preserve"><value>Effects for pedal:</value></data>
+  <data name="Label_EffectsForPedal" xml:space="preserve"><value>Configure pedal:</value></data>
   <data name="Note_PassivePedalNoEffects" xml:space="preserve"><value>This pedal is passive (no motor) — vibration effects don't apply.</value></data>
 </root>

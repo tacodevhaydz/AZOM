@@ -241,6 +241,36 @@ namespace MozaPlugin.Devices
     }
 
     /// <summary>
+    /// ALL per-pedal config the settings UI edits — effects (via
+    /// <see cref="IMBoosterEffects"/>) PLUS Calibration, Sim Input Mapping, and
+    /// Pedal Feel. Both <see cref="MBoosterDeviceSettings"/> (the master pedal /
+    /// device 0x12, using its flat fields) and <see cref="MBoosterPedalSettings"/>
+    /// (each chained pedal) implement this, so the settings tab's one per-pedal
+    /// selector can point every config section at whichever pedal is chosen.
+    /// (Brake Fade stays on the device settings — it's per-lane, master only.)
+    /// </summary>
+    public interface IMBoosterPedalConfig : IMBoosterEffects
+    {
+        // Calibration
+        int Direction { get; set; }
+        int Min { get; set; }
+        int Max { get; set; }
+        float[]? CurveY { get; set; }
+        float[]? CurveX { get; set; }
+        // Sim Input Mapping
+        float SensorOutputRatioPct { get; set; }
+        float MaxThresholdKg { get; set; }
+        // Pedal Feel
+        float[]? InputCurveY { get; set; }
+        float DeadzoneKg { get; set; }
+        float MaxForceKg { get; set; }
+        float TravelStartMm { get; set; }
+        float TravelEndMm { get; set; }
+        float EndstopFrontStiffness { get; set; }
+        float EndstopEndStiffness { get; set; }
+    }
+
+    /// <summary>
     /// Settings for ONE hosted pedal on a chained mBooster lane: its output
     /// calibration (Direction / Min / Max / curve, written to that pedal's
     /// role-specific group-35/36 commands) AND its vibration effects (sent to
@@ -250,13 +280,27 @@ namespace MozaPlugin.Devices
     /// pedals store theirs here, keyed by axis index in
     /// <see cref="MBoosterDeviceSettings.Pedals"/>. -1 / null = "not set".
     /// </summary>
-    public sealed class MBoosterPedalSettings : IMBoosterEffects
+    public sealed class MBoosterPedalSettings : IMBoosterPedalConfig
     {
+        // Calibration (same sentinels as the master's flat fields).
         public int Direction { get; set; } = -1;
         public int Min { get; set; } = -1;
         public int Max { get; set; } = -1;
         public float[]? CurveY { get; set; } = null;   // 5-point output curve
         public float[]? CurveX { get; set; } = null;   // draggable node X (null = fixed breakpoints)
+
+        // Sim Input Mapping (see MBoosterDeviceSettings for the field semantics).
+        public float SensorOutputRatioPct { get; set; } = -1;
+        public float MaxThresholdKg { get; set; } = -1;
+
+        // Pedal Feel (host-side shaping + brake-only wire calibration).
+        public float[]? InputCurveY { get; set; } = null;
+        public float DeadzoneKg { get; set; } = 0;
+        public float MaxForceKg { get; set; } = 200;
+        public float TravelStartMm { get; set; } = -1;
+        public float TravelEndMm { get; set; } = -1;
+        public float EndstopFrontStiffness { get; set; } = -1;
+        public float EndstopEndStiffness { get; set; } = -1;
 
         // Per-pedal vibration effects (same defaults as the master's flat fields).
         public MBoosterEffectSettings Abs { get; set; } = new MBoosterEffectSettings { FrequencyHz = 22 };
@@ -274,6 +318,15 @@ namespace MozaPlugin.Devices
                 Max = Max,
                 CurveY = CurveY == null ? null : (float[])CurveY.Clone(),
                 CurveX = CurveX == null ? null : (float[])CurveX.Clone(),
+                SensorOutputRatioPct = SensorOutputRatioPct,
+                MaxThresholdKg = MaxThresholdKg,
+                InputCurveY = InputCurveY == null ? null : (float[])InputCurveY.Clone(),
+                DeadzoneKg = DeadzoneKg,
+                MaxForceKg = MaxForceKg,
+                TravelStartMm = TravelStartMm,
+                TravelEndMm = TravelEndMm,
+                EndstopFrontStiffness = EndstopFrontStiffness,
+                EndstopEndStiffness = EndstopEndStiffness,
                 Abs = Abs?.Clone() ?? new MBoosterEffectSettings(),
                 Lockup = Lockup?.Clone() ?? new MBoosterEffectSettings(),
                 Threshold = Threshold?.Clone() ?? new MBoosterEffectSettings(),
@@ -289,7 +342,7 @@ namespace MozaPlugin.Devices
     /// its own enable + intensity. Calibration values (group 35/36 — marked
     /// "likely but unverified" in the protocol note) are stored separately.
     /// </summary>
-    public sealed class MBoosterDeviceSettings : IMBoosterEffects
+    public sealed class MBoosterDeviceSettings : IMBoosterPedalConfig
     {
         public MBoosterRole Role { get; set; } = MBoosterRole.Disabled;
 

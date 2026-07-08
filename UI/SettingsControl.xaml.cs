@@ -2602,43 +2602,7 @@ namespace MozaPlugin
                 SetValueText(MBoosterBrakeFadeOnsetValue, MBoosterBrakeFadeOnsetSlider.Value.ToString("F0"));
                 // Never persisted — always starts off for a freshly-shown tab.
                 MBoosterBrakeFadeTestToggle.IsChecked = false;
-                MBoosterDirCheck.IsChecked = (s.Direction == 1);
-                MBoosterMinSlider.Value = s.Min >= 0 ? s.Min : 0;
-                SetValueText(MBoosterMinValue, MBoosterMinSlider.Value.ToString("F0"));
-                MBoosterMaxSlider.Value = s.Max >= 0 ? s.Max : 0;
-                SetValueText(MBoosterMaxValue, MBoosterMaxSlider.Value.ToString("F0"));
-                var curve = (s.CurveY != null && s.CurveY.Length == 5) ? s.CurveY : MBoosterDefaultCurve;
-                MBoosterY1Slider.Value = curve[0]; SetValueText(MBoosterY1Value, curve[0].ToString("F0"));
-                MBoosterY2Slider.Value = curve[1]; SetValueText(MBoosterY2Value, curve[1].ToString("F0"));
-                MBoosterY3Slider.Value = curve[2]; SetValueText(MBoosterY3Value, curve[2].ToString("F0"));
-                MBoosterY4Slider.Value = curve[3]; SetValueText(MBoosterY4Value, curve[3].ToString("F0"));
-                MBoosterY5Slider.Value = curve[4]; SetValueText(MBoosterY5Value, curve[4].ToString("F0"));
-                var curveX = (s.CurveX != null && s.CurveX.Length == 5) ? s.CurveX : MBoosterDefaultCurve;
-                MBoosterX1Slider.Value = curveX[0]; SetValueText(MBoosterX1Value, curveX[0].ToString("F0"));
-                MBoosterX2Slider.Value = curveX[1]; SetValueText(MBoosterX2Value, curveX[1].ToString("F0"));
-                MBoosterX3Slider.Value = curveX[2]; SetValueText(MBoosterX3Value, curveX[2].ToString("F0"));
-                MBoosterX4Slider.Value = curveX[3]; SetValueText(MBoosterX4Value, curveX[3].ToString("F0"));
-                MBoosterX5Slider.Value = curveX[4]; SetValueText(MBoosterX5Value, curveX[4].ToString("F0"));
-                MBoosterRatioSlider.Value = s.SensorOutputRatioPct >= 0 ? s.SensorOutputRatioPct : 0;
-                SetValueText(MBoosterRatioValue, $"{MBoosterRatioSlider.Value:F0}%");
-                MBoosterMaxThresholdSlider.Value = s.MaxThresholdKg >= 0 ? s.MaxThresholdKg : 100;
-                SetValueText(MBoosterMaxThresholdValue, MBoosterMaxThresholdSlider.Value.ToString("F0"));
-                var inputCurve = (s.InputCurveY != null && s.InputCurveY.Length == 5) ? s.InputCurveY : MBoosterDefaultCurve;
-                MBoosterInputY1Slider.Value = inputCurve[0]; SetValueText(MBoosterInputY1Value, inputCurve[0].ToString("F0"));
-                MBoosterInputY2Slider.Value = inputCurve[1]; SetValueText(MBoosterInputY2Value, inputCurve[1].ToString("F0"));
-                MBoosterInputY3Slider.Value = inputCurve[2]; SetValueText(MBoosterInputY3Value, inputCurve[2].ToString("F0"));
-                MBoosterInputY4Slider.Value = inputCurve[3]; SetValueText(MBoosterInputY4Value, inputCurve[3].ToString("F0"));
-                MBoosterInputY5Slider.Value = inputCurve[4]; SetValueText(MBoosterInputY5Value, inputCurve[4].ToString("F0"));
-                MBoosterTravelRangeSlider.LowValue = s.TravelStartMm >= 0 ? s.TravelStartMm : MBoosterUiConstants.TravelMinMm;
-                MBoosterTravelRangeSlider.HighValue = s.TravelEndMm >= 0 ? s.TravelEndMm : MBoosterUiConstants.TravelMinMm + MBoosterUiConstants.TravelMaxGapMm;
-                MBoosterEndstopFrontSlider.Value = s.EndstopFrontStiffness >= 0 ? s.EndstopFrontStiffness : 1;
-                SetValueText(MBoosterEndstopFrontValue, MBoosterEndstopFrontSlider.Value.ToString("F0"));
-                MBoosterEndstopEndSlider.Value = s.EndstopEndStiffness >= 0 ? s.EndstopEndStiffness : 1;
-                SetValueText(MBoosterEndstopEndValue, MBoosterEndstopEndSlider.Value.ToString("F0"));
-                MBoosterDeadzoneSlider.Value = s.DeadzoneKg;
-                SetValueText(MBoosterDeadzoneValue, s.DeadzoneKg.ToString("F1"));
-                MBoosterMaxForceSlider.Value = s.MaxForceKg;
-                SetValueText(MBoosterMaxForceValue, s.MaxForceKg.ToString("F0"));
+                SeedMBoosterConfigControls(PeekMBoosterEffectTarget());
             }
             PopulateMBoosterCustomEffectsList(PeekMBoosterEffectTarget());
             _mboosterUiSeeded = true;
@@ -2668,15 +2632,19 @@ namespace MozaPlugin
             return _plugin.GetOrCreateMBoosterSettings(_mboosterSelectedIdentity);
         }
 
-        // Which pedal's effects the Effects card currently edits (0 = master/host
-        // at device 0x12; 1/2 = chained pedals at 0x1d/0x1e). Set by the Effects
-        // section's pedal combo; effects are stored + sent per pedal.
+        // Which pedal ALL the config sections below the role selector currently
+        // edit (0 = master/host at device 0x12; 1/2 = chained pedals at
+        // 0x1d/0x1e). Set by the per-pedal config combo; Pedal Feel, Sim Input
+        // Mapping, Effects and Calibration are all stored (and effects sent) per
+        // pedal. (Kept the "Effect" names to limit churn from the earlier
+        // effects-only version — it now scopes every config section.)
         private int _mboosterEffectPedalIndex;
 
-        /// <summary>The effect settings the Effects card edits — the master's
-        /// flat fields for pedal 0, else the chained pedal's per-pedal entry
-        /// (created on demand so edits persist). Null if no device selected.</summary>
-        private IMBoosterEffects? CurrentMBoosterEffectTarget()
+        /// <summary>The full per-pedal config the settings sections edit — the
+        /// master's flat fields for pedal 0, else the chained pedal's per-pedal
+        /// entry (created on demand so edits persist). Null if no device
+        /// selected. Covers effects + calibration + sim input + pedal feel.</summary>
+        private IMBoosterPedalConfig? CurrentMBoosterEffectTarget()
         {
             var s = CurrentMBoosterSettings();
             if (s == null) return null;
@@ -2692,10 +2660,10 @@ namespace MozaPlugin
             return p;
         }
 
-        /// <summary>The effect settings for the selected pedal WITHOUT creating a
+        /// <summary>The per-pedal config for the selected pedal WITHOUT creating a
         /// missing entry — used when seeding controls so merely viewing a chained
         /// pedal doesn't persist an empty entry. Falls back to master defaults.</summary>
-        private IMBoosterEffects? PeekMBoosterEffectTarget()
+        private IMBoosterPedalConfig? PeekMBoosterEffectTarget()
         {
             var s = CurrentMBoosterSettings();
             if (s == null) return null;
@@ -2745,6 +2713,61 @@ namespace MozaPlugin
             MBoosterRoadTextureSmoothness.Value = fx?.RoadTexture?.SmoothnessPct ?? 50;
             SetValueText(MBoosterRoadTextureSmoothnessValue, (fx?.RoadTexture?.SmoothnessPct ?? 50).ToString());
             MBoosterRoadTextureTestToggle.IsChecked = false;
+        }
+
+        /// <summary>Seed the Calibration, Sim Input Mapping and Pedal Feel controls
+        /// from one pedal's config (master flat fields or a chained pedal's entry;
+        /// null = defaults). Assumes the event suppressor is active.</summary>
+        private void SeedMBoosterConfigControls(IMBoosterPedalConfig? fx)
+        {
+            // Calibration
+            MBoosterDirCheck.IsChecked = (fx?.Direction == 1);
+            int min = fx?.Min ?? -1;
+            MBoosterMinSlider.Value = min >= 0 ? min : 0;
+            SetValueText(MBoosterMinValue, MBoosterMinSlider.Value.ToString("F0"));
+            int max = fx?.Max ?? -1;
+            MBoosterMaxSlider.Value = max >= 0 ? max : 0;
+            SetValueText(MBoosterMaxValue, MBoosterMaxSlider.Value.ToString("F0"));
+            var curve = (fx?.CurveY != null && fx.CurveY.Length == 5) ? fx.CurveY : MBoosterDefaultCurve;
+            MBoosterY1Slider.Value = curve[0]; SetValueText(MBoosterY1Value, curve[0].ToString("F0"));
+            MBoosterY2Slider.Value = curve[1]; SetValueText(MBoosterY2Value, curve[1].ToString("F0"));
+            MBoosterY3Slider.Value = curve[2]; SetValueText(MBoosterY3Value, curve[2].ToString("F0"));
+            MBoosterY4Slider.Value = curve[3]; SetValueText(MBoosterY4Value, curve[3].ToString("F0"));
+            MBoosterY5Slider.Value = curve[4]; SetValueText(MBoosterY5Value, curve[4].ToString("F0"));
+            var curveX = (fx?.CurveX != null && fx.CurveX.Length == 5) ? fx.CurveX : MBoosterDefaultCurve;
+            MBoosterX1Slider.Value = curveX[0]; SetValueText(MBoosterX1Value, curveX[0].ToString("F0"));
+            MBoosterX2Slider.Value = curveX[1]; SetValueText(MBoosterX2Value, curveX[1].ToString("F0"));
+            MBoosterX3Slider.Value = curveX[2]; SetValueText(MBoosterX3Value, curveX[2].ToString("F0"));
+            MBoosterX4Slider.Value = curveX[3]; SetValueText(MBoosterX4Value, curveX[3].ToString("F0"));
+            MBoosterX5Slider.Value = curveX[4]; SetValueText(MBoosterX5Value, curveX[4].ToString("F0"));
+            // Sim Input Mapping
+            float ratio = fx?.SensorOutputRatioPct ?? -1;
+            MBoosterRatioSlider.Value = ratio >= 0 ? ratio : 0;
+            SetValueText(MBoosterRatioValue, $"{MBoosterRatioSlider.Value:F0}%");
+            float thr = fx?.MaxThresholdKg ?? -1;
+            MBoosterMaxThresholdSlider.Value = thr >= 0 ? thr : 100;
+            SetValueText(MBoosterMaxThresholdValue, MBoosterMaxThresholdSlider.Value.ToString("F0"));
+            // Pedal Feel
+            var inputCurve = (fx?.InputCurveY != null && fx.InputCurveY.Length == 5) ? fx.InputCurveY : MBoosterDefaultCurve;
+            MBoosterInputY1Slider.Value = inputCurve[0]; SetValueText(MBoosterInputY1Value, inputCurve[0].ToString("F0"));
+            MBoosterInputY2Slider.Value = inputCurve[1]; SetValueText(MBoosterInputY2Value, inputCurve[1].ToString("F0"));
+            MBoosterInputY3Slider.Value = inputCurve[2]; SetValueText(MBoosterInputY3Value, inputCurve[2].ToString("F0"));
+            MBoosterInputY4Slider.Value = inputCurve[3]; SetValueText(MBoosterInputY4Value, inputCurve[3].ToString("F0"));
+            MBoosterInputY5Slider.Value = inputCurve[4]; SetValueText(MBoosterInputY5Value, inputCurve[4].ToString("F0"));
+            float ts = fx?.TravelStartMm ?? -1;
+            MBoosterTravelRangeSlider.LowValue = ts >= 0 ? ts : MBoosterUiConstants.TravelMinMm;
+            float te = fx?.TravelEndMm ?? -1;
+            MBoosterTravelRangeSlider.HighValue = te >= 0 ? te : MBoosterUiConstants.TravelMinMm + MBoosterUiConstants.TravelMaxGapMm;
+            float ef = fx?.EndstopFrontStiffness ?? -1;
+            MBoosterEndstopFrontSlider.Value = ef >= 0 ? ef : 1;
+            SetValueText(MBoosterEndstopFrontValue, MBoosterEndstopFrontSlider.Value.ToString("F0"));
+            float ee = fx?.EndstopEndStiffness ?? -1;
+            MBoosterEndstopEndSlider.Value = ee >= 0 ? ee : 1;
+            SetValueText(MBoosterEndstopEndValue, MBoosterEndstopEndSlider.Value.ToString("F0"));
+            MBoosterDeadzoneSlider.Value = fx?.DeadzoneKg ?? 0;
+            SetValueText(MBoosterDeadzoneValue, (fx?.DeadzoneKg ?? 0).ToString("F1"));
+            MBoosterMaxForceSlider.Value = fx?.MaxForceKg ?? 200;
+            SetValueText(MBoosterMaxForceValue, (fx?.MaxForceKg ?? 200).ToString("F0"));
         }
 
         private MBoosterDeviceController? CurrentMBoosterController()
@@ -3139,6 +3162,7 @@ namespace MozaPlugin
             _mboosterEffectPedalIndex = newIndex;
             using (_suppressor.Begin())
             {
+                SeedMBoosterConfigControls(PeekMBoosterEffectTarget());
                 SeedMBoosterEffectControls(PeekMBoosterEffectTarget());
                 PopulateMBoosterCustomEffectsList(PeekMBoosterEffectTarget());
             }
@@ -3472,7 +3496,7 @@ namespace MozaPlugin
         private void MBoosterDirCheck_Changed(object sender, RoutedEventArgs e)
         {
             if (_suppressEvents) return;
-            var s = CurrentMBoosterSettings();
+            var s = CurrentMBoosterEffectTarget();
             if (s == null) return;
             s.Direction = MBoosterDirCheck.IsChecked == true ? 1 : 0;
             _plugin.SaveSettings();
@@ -3482,7 +3506,7 @@ namespace MozaPlugin
             if (_suppressEvents) return;
             int v = (int)Math.Round(e.NewValue);
             MBoosterMinValue.Text = v.ToString();
-            var s = CurrentMBoosterSettings();
+            var s = CurrentMBoosterEffectTarget();
             if (s == null) return;
             s.Min = v;
             _plugin.SaveSettings();
@@ -3492,7 +3516,7 @@ namespace MozaPlugin
             if (_suppressEvents) return;
             int v = (int)Math.Round(e.NewValue);
             MBoosterMaxValue.Text = v.ToString();
-            var s = CurrentMBoosterSettings();
+            var s = CurrentMBoosterEffectTarget();
             if (s == null) return;
             s.Max = v;
             _plugin.SaveSettings();
@@ -3516,7 +3540,7 @@ namespace MozaPlugin
         // behavior for anyone who never drags a node sideways.
         private void SetMBoosterCurveY(int index, int v)
         {
-            var s = CurrentMBoosterSettings();
+            var s = CurrentMBoosterEffectTarget();
             if (s == null) return;
             if (s.CurveY == null || s.CurveY.Length != 5) s.CurveY = (float[])MBoosterDefaultCurve.Clone();
             s.CurveY[index] = v;
@@ -3525,7 +3549,7 @@ namespace MozaPlugin
 
         private void SetMBoosterCurveX(int index, int v)
         {
-            var s = CurrentMBoosterSettings();
+            var s = CurrentMBoosterEffectTarget();
             if (s == null) return;
             if (s.CurveX == null || s.CurveX.Length != 5) s.CurveX = (float[])MBoosterDefaultCurve.Clone();
             if (s.CurveY == null || s.CurveY.Length != 5) s.CurveY = (float[])MBoosterDefaultCurve.Clone();
@@ -3533,14 +3557,32 @@ namespace MozaPlugin
             PushResampledMBoosterCurve(s);
         }
 
-        private void PushResampledMBoosterCurve(MBoosterDeviceSettings s)
+        private void PushResampledMBoosterCurve(IMBoosterPedalConfig s)
         {
             if (s.CurveY == null || s.CurveY.Length != 5) return;
             var controller = CurrentMBoosterController();
             if (controller == null) return;
+            // Live-preview push to the SELECTED pedal's role command (not always
+            // throttle) so dragging the curve previews on the right pedal.
+            string? prefix = MBoosterSelectedPedalRolePrefix();
+            if (prefix == null) return;
             var resampled = global::MozaPlugin.Devices.MozaMBoosterRegistry.ResampleCurveAtFixedBreakpoints(s.CurveX, s.CurveY);
             for (int i = 0; i < 5; i++)
-                controller.SendFloatWrite($"mbooster-throttle-y{i + 1}", resampled[i]);
+                controller.SendFloatWrite($"mbooster-{prefix}-y{i + 1}", resampled[i]);
+        }
+
+        /// <summary>The wire-command role prefix (throttle/brake/clutch) for the
+        /// currently-selected config pedal, or null if it has no game role.</summary>
+        private string? MBoosterSelectedPedalRolePrefix()
+        {
+            var s = CurrentMBoosterSettings();
+            var c = CurrentMBoosterController();
+            if (s == null || c == null) return null;
+            int axisCount = c.AxisCount > 0 ? c.AxisCount : 1;
+            var role = global::MozaPlugin.Devices.MozaMBoosterRegistry.ResolveAxisRole(s, _mboosterEffectPedalIndex, axisCount);
+            return role == global::MozaPlugin.Devices.MBoosterRole.Throttle ? "throttle"
+                 : role == global::MozaPlugin.Devices.MBoosterRole.Brake ? "brake"
+                 : role == global::MozaPlugin.Devices.MBoosterRole.Clutch ? "clutch" : null;
         }
 
         private void MBoosterY1Slider_ValueChanged(object s, RoutedPropertyChangedEventArgs<double> e) => OnIntSliderChanged(e.NewValue, MBoosterY1Value, "", v => SetMBoosterCurveY(0, v));
@@ -3557,7 +3599,7 @@ namespace MozaPlugin
 
         private void ApplyMBoosterCurvePreset(int[] curve)
         {
-            var s = CurrentMBoosterSettings();
+            var s = CurrentMBoosterEffectTarget();
             if (s == null) return;
             if (s.CurveY == null || s.CurveY.Length != 5) s.CurveY = new float[5];
             // Presets are a clean, standard shape — reset any dragged X
@@ -3593,7 +3635,7 @@ namespace MozaPlugin
         // never writes to the device, unlike SetMBoosterCurveY.
         private void SetMBoosterInputCurveY(int index, int v)
         {
-            var s = CurrentMBoosterSettings();
+            var s = CurrentMBoosterEffectTarget();
             if (s == null) return;
             if (s.InputCurveY == null || s.InputCurveY.Length != 5) s.InputCurveY = (float[])MBoosterDefaultCurve.Clone();
             s.InputCurveY[index] = v;
@@ -3607,7 +3649,7 @@ namespace MozaPlugin
 
         private void ApplyMBoosterInputCurvePreset(int[] curve)
         {
-            var s = CurrentMBoosterSettings();
+            var s = CurrentMBoosterEffectTarget();
             if (s == null) return;
             if (s.InputCurveY == null || s.InputCurveY.Length != 5) s.InputCurveY = new float[5];
             using (_suppressor.Begin())
@@ -3640,15 +3682,21 @@ namespace MozaPlugin
         private void MBoosterTravelRangeSlider_RangeChanged(object sender, EventArgs e)
         {
             if (_suppressEvents) return;
-            var s = CurrentMBoosterSettings();
+            var s = CurrentMBoosterEffectTarget();
             if (s == null) return;
             s.TravelStartMm = (float)MBoosterTravelRangeSlider.LowValue;
             s.TravelEndMm = (float)MBoosterTravelRangeSlider.HighValue;
-            var controller = CurrentMBoosterController();
-            controller?.SendIntWrite("mbooster-brake-travel-start",
-                global::MozaPlugin.Protocol.MozaMBoosterProtocol.EncodeTravelMm(s.TravelStartMm));
-            controller?.SendIntWrite("mbooster-brake-travel-end",
-                global::MozaPlugin.Protocol.MozaMBoosterProtocol.EncodeTravelMm(s.TravelEndMm));
+            // Travel is a brake-only load-cell command — only push to hardware
+            // when the selected pedal IS the brake (it's stored per pedal either
+            // way). See MBoosterSelectedPedalRolePrefix.
+            if (MBoosterSelectedPedalRolePrefix() == "brake")
+            {
+                var controller = CurrentMBoosterController();
+                controller?.SendIntWrite("mbooster-brake-travel-start",
+                    global::MozaPlugin.Protocol.MozaMBoosterProtocol.EncodeTravelMm(s.TravelStartMm));
+                controller?.SendIntWrite("mbooster-brake-travel-end",
+                    global::MozaPlugin.Protocol.MozaMBoosterProtocol.EncodeTravelMm(s.TravelEndMm));
+            }
             _plugin.SaveSettings();
         }
 
@@ -3661,7 +3709,7 @@ namespace MozaPlugin
             if (_suppressEvents) return;
             double v = Math.Round(e.NewValue, 1);
             SetValueText(MBoosterDeadzoneValue, v.ToString("F1"));
-            var s = CurrentMBoosterSettings();
+            var s = CurrentMBoosterEffectTarget();
             if (s == null) return;
             s.DeadzoneKg = (float)v;
             _plugin.SaveSettings();
@@ -3673,7 +3721,7 @@ namespace MozaPlugin
         private void MBoosterMaxForceSlider_ValueChanged(object sender, RoutedPropertyChangedEventArgs<double> e) =>
             OnIntSliderChanged(e.NewValue, MBoosterMaxForceValue, "", v =>
             {
-                var s = CurrentMBoosterSettings();
+                var s = CurrentMBoosterEffectTarget();
                 if (s == null) return;
                 s.MaxForceKg = v;
             });
@@ -3687,10 +3735,11 @@ namespace MozaPlugin
             if (_suppressEvents) return;
             int v = (int)Math.Round(e.NewValue);
             SetValueText(MBoosterRatioValue, $"{v}%");
-            var s = CurrentMBoosterSettings();
+            var s = CurrentMBoosterEffectTarget();
             if (s == null) return;
             s.SensorOutputRatioPct = v;
-            CurrentMBoosterController()?.SendFloatWrite("mbooster-brake-angle-ratio", v);
+            if (MBoosterSelectedPedalRolePrefix() == "brake")
+                CurrentMBoosterController()?.SendFloatWrite("mbooster-brake-angle-ratio", v);
             _plugin.SaveSettings();
         }
 
@@ -3703,11 +3752,12 @@ namespace MozaPlugin
         private void MBoosterMaxThresholdSlider_ValueChanged(object sender, RoutedPropertyChangedEventArgs<double> e) =>
             OnIntSliderChanged(e.NewValue, MBoosterMaxThresholdValue, "", v =>
             {
-                var s = CurrentMBoosterSettings();
+                var s = CurrentMBoosterEffectTarget();
                 if (s == null) return;
                 s.MaxThresholdKg = v;
-                CurrentMBoosterController()?.SendIntWrite("mbooster-brake-threshold",
-                    global::MozaPlugin.Protocol.MozaMBoosterProtocol.EncodeThresholdKg(v));
+                if (MBoosterSelectedPedalRolePrefix() == "brake")
+                    CurrentMBoosterController()?.SendIntWrite("mbooster-brake-threshold",
+                        global::MozaPlugin.Protocol.MozaMBoosterProtocol.EncodeThresholdKg(v));
             });
 
         // End Stop Stiffness (Front Limit / End Limit), 1-10 — Pit House's
@@ -3719,21 +3769,23 @@ namespace MozaPlugin
         private void MBoosterEndstopFrontSlider_ValueChanged(object sender, RoutedPropertyChangedEventArgs<double> e) =>
             OnIntSliderChanged(e.NewValue, MBoosterEndstopFrontValue, "", v =>
             {
-                var s = CurrentMBoosterSettings();
+                var s = CurrentMBoosterEffectTarget();
                 if (s == null) return;
                 s.EndstopFrontStiffness = v;
-                CurrentMBoosterController()?.SendIntWrite("mbooster-brake-endstop-front",
-                    global::MozaPlugin.Protocol.MozaMBoosterProtocol.EncodeEndstopStiffness(v));
+                if (MBoosterSelectedPedalRolePrefix() == "brake")
+                    CurrentMBoosterController()?.SendIntWrite("mbooster-brake-endstop-front",
+                        global::MozaPlugin.Protocol.MozaMBoosterProtocol.EncodeEndstopStiffness(v));
             });
 
         private void MBoosterEndstopEndSlider_ValueChanged(object sender, RoutedPropertyChangedEventArgs<double> e) =>
             OnIntSliderChanged(e.NewValue, MBoosterEndstopEndValue, "", v =>
             {
-                var s = CurrentMBoosterSettings();
+                var s = CurrentMBoosterEffectTarget();
                 if (s == null) return;
                 s.EndstopEndStiffness = v;
-                CurrentMBoosterController()?.SendIntWrite("mbooster-brake-endstop-end",
-                    global::MozaPlugin.Protocol.MozaMBoosterProtocol.EncodeEndstopStiffness(v));
+                if (MBoosterSelectedPedalRolePrefix() == "brake")
+                    CurrentMBoosterController()?.SendIntWrite("mbooster-brake-endstop-end",
+                        global::MozaPlugin.Protocol.MozaMBoosterProtocol.EncodeEndstopStiffness(v));
             });
 
         private void MBoosterReadCalButton_Click(object sender, RoutedEventArgs e)
