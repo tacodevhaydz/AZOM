@@ -642,7 +642,7 @@ namespace MozaPlugin.Hardware
             if (profile.HandbrakeButtonThreshold >= 0) _data.HandbrakeButtonThreshold = profile.HandbrakeButtonThreshold;
             if (profile.HandbrakeDirection       >= 0) _data.HandbrakeDirection       = profile.HandbrakeDirection;
             if (profile.HandbrakeMin             >= 0) _data.HandbrakeMin             = profile.HandbrakeMin;
-            if (profile.HandbrakeMax             >= 0) _data.HandbrakeMax             = profile.HandbrakeMax;
+            if (profile.HandbrakeMax             >  0) _data.HandbrakeMax             = profile.HandbrakeMax;
             if (profile.HandbrakeCurve != null)
             {
                 for (int i = 0; i < Math.Min(5, profile.HandbrakeCurve.Length); i++)
@@ -655,7 +655,7 @@ namespace MozaPlugin.Hardware
             if (profile.HandbrakeButtonThreshold >= 0) dm.WriteSetting("handbrake-button-threshold", profile.HandbrakeButtonThreshold);
             if (profile.HandbrakeDirection       >= 0) dm.WriteSetting("handbrake-direction", profile.HandbrakeDirection);
             if (profile.HandbrakeMin             >= 0) dm.WriteSetting("handbrake-min", profile.HandbrakeMin);
-            if (profile.HandbrakeMax             >= 0) dm.WriteSetting("handbrake-max", profile.HandbrakeMax);
+            if (profile.HandbrakeMax             >  0) dm.WriteSetting("handbrake-max", profile.HandbrakeMax);
             if (profile.HandbrakeCurve != null)
             {
                 for (int i = 0; i < Math.Min(5, profile.HandbrakeCurve.Length); i++)
@@ -670,13 +670,13 @@ namespace MozaPlugin.Hardware
 
             if (profile.PedalsThrottleDir      >= 0) _data.PedalsThrottleDir      = profile.PedalsThrottleDir;
             if (profile.PedalsThrottleMin      >= 0) _data.PedalsThrottleMin      = profile.PedalsThrottleMin;
-            if (profile.PedalsThrottleMax      >= 0) _data.PedalsThrottleMax      = profile.PedalsThrottleMax;
+            if (profile.PedalsThrottleMax      >  0) _data.PedalsThrottleMax      = profile.PedalsThrottleMax;
             if (profile.PedalsBrakeDir         >= 0) _data.PedalsBrakeDir         = profile.PedalsBrakeDir;
             if (profile.PedalsBrakeMin         >= 0) _data.PedalsBrakeMin         = profile.PedalsBrakeMin;
-            if (profile.PedalsBrakeMax         >= 0) _data.PedalsBrakeMax         = profile.PedalsBrakeMax;
+            if (profile.PedalsBrakeMax         >  0) _data.PedalsBrakeMax         = profile.PedalsBrakeMax;
             if (profile.PedalsClutchDir        >= 0) _data.PedalsClutchDir        = profile.PedalsClutchDir;
             if (profile.PedalsClutchMin        >= 0) _data.PedalsClutchMin        = profile.PedalsClutchMin;
-            if (profile.PedalsClutchMax        >= 0) _data.PedalsClutchMax        = profile.PedalsClutchMax;
+            if (profile.PedalsClutchMax        >  0) _data.PedalsClutchMax        = profile.PedalsClutchMax;
             if (profile.PedalsBrakeAngleRatio  >= 0) _data.PedalsBrakeAngleRatio  = profile.PedalsBrakeAngleRatio;
             if (profile.PedalsThrottleCurve != null)
                 for (int i = 0; i < Math.Min(5, profile.PedalsThrottleCurve.Length); i++)
@@ -692,13 +692,13 @@ namespace MozaPlugin.Hardware
             var dm = PedalsManager;
             if (profile.PedalsThrottleDir      >= 0) dm.WriteSetting("pedals-throttle-dir", profile.PedalsThrottleDir);
             if (profile.PedalsThrottleMin      >= 0) dm.WriteSetting("pedals-throttle-min", profile.PedalsThrottleMin);
-            if (profile.PedalsThrottleMax      >= 0) dm.WriteSetting("pedals-throttle-max", profile.PedalsThrottleMax);
+            if (profile.PedalsThrottleMax      >  0) dm.WriteSetting("pedals-throttle-max", profile.PedalsThrottleMax);
             if (profile.PedalsBrakeDir         >= 0) dm.WriteSetting("pedals-brake-dir", profile.PedalsBrakeDir);
             if (profile.PedalsBrakeMin         >= 0) dm.WriteSetting("pedals-brake-min", profile.PedalsBrakeMin);
-            if (profile.PedalsBrakeMax         >= 0) dm.WriteSetting("pedals-brake-max", profile.PedalsBrakeMax);
+            if (profile.PedalsBrakeMax         >  0) dm.WriteSetting("pedals-brake-max", profile.PedalsBrakeMax);
             if (profile.PedalsClutchDir        >= 0) dm.WriteSetting("pedals-clutch-dir", profile.PedalsClutchDir);
             if (profile.PedalsClutchMin        >= 0) dm.WriteSetting("pedals-clutch-min", profile.PedalsClutchMin);
-            if (profile.PedalsClutchMax        >= 0) dm.WriteSetting("pedals-clutch-max", profile.PedalsClutchMax);
+            if (profile.PedalsClutchMax        >  0) dm.WriteSetting("pedals-clutch-max", profile.PedalsClutchMax);
             if (profile.PedalsBrakeAngleRatio  >= 0) dm.WriteFloat("pedals-brake-angle-ratio", profile.PedalsBrakeAngleRatio);
             if (profile.PedalsThrottleCurve != null)
                 for (int i = 0; i < Math.Min(5, profile.PedalsThrottleCurve.Length); i++)

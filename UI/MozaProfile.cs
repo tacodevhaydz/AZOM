@@ -745,22 +745,29 @@ namespace MozaPlugin
             FfbCurveX1 = data.FfbCurveX1; FfbCurveX2 = data.FfbCurveX2; FfbCurveX3 = data.FfbCurveX3; FfbCurveX4 = data.FfbCurveX4;
             FfbCurveY1 = data.FfbCurveY1; FfbCurveY2 = data.FfbCurveY2; FfbCurveY3 = data.FfbCurveY3; FfbCurveY4 = data.FfbCurveY4; FfbCurveY5 = data.FfbCurveY5;
 
-            // Handbrake
-            HandbrakeMode = data.HandbrakeMode;
-            HandbrakeButtonThreshold = data.HandbrakeButtonThreshold;
-            HandbrakeDirection = data.HandbrakeDirection;
-            HandbrakeMin = data.HandbrakeMin; HandbrakeMax = data.HandbrakeMax;
-            HandbrakeCurve = (int[])data.HandbrakeCurve.Clone();
+            // Handbrake — only once the device has reported its calibration, so a
+            // pre-read default (e.g. min/max 0) isn't baked into the profile.
+            if (data.HandbrakeSettingsRead)
+            {
+                HandbrakeMode = data.HandbrakeMode;
+                HandbrakeButtonThreshold = data.HandbrakeButtonThreshold;
+                HandbrakeDirection = data.HandbrakeDirection;
+                HandbrakeMin = data.HandbrakeMin; HandbrakeMax = data.HandbrakeMax;
+                HandbrakeCurve = (int[])data.HandbrakeCurve.Clone();
+            }
 
-            // Pedals
-            PedalsThrottleDir = data.PedalsThrottleDir; PedalsBrakeDir = data.PedalsBrakeDir; PedalsClutchDir = data.PedalsClutchDir;
-            PedalsThrottleMin = data.PedalsThrottleMin; PedalsThrottleMax = data.PedalsThrottleMax;
-            PedalsBrakeMin = data.PedalsBrakeMin; PedalsBrakeMax = data.PedalsBrakeMax;
-            PedalsClutchMin = data.PedalsClutchMin; PedalsClutchMax = data.PedalsClutchMax;
-            PedalsBrakeAngleRatio = data.PedalsBrakeAngleRatio;
-            PedalsThrottleCurve = (int[])data.PedalsThrottleCurve.Clone();
-            PedalsBrakeCurve = (int[])data.PedalsBrakeCurve.Clone();
-            PedalsClutchCurve = (int[])data.PedalsClutchCurve.Clone();
+            // Pedals — gated the same way (see handbrake note above).
+            if (data.PedalsSettingsRead)
+            {
+                PedalsThrottleDir = data.PedalsThrottleDir; PedalsBrakeDir = data.PedalsBrakeDir; PedalsClutchDir = data.PedalsClutchDir;
+                PedalsThrottleMin = data.PedalsThrottleMin; PedalsThrottleMax = data.PedalsThrottleMax;
+                PedalsBrakeMin = data.PedalsBrakeMin; PedalsBrakeMax = data.PedalsBrakeMax;
+                PedalsClutchMin = data.PedalsClutchMin; PedalsClutchMax = data.PedalsClutchMax;
+                PedalsBrakeAngleRatio = data.PedalsBrakeAngleRatio;
+                PedalsThrottleCurve = (int[])data.PedalsThrottleCurve.Clone();
+                PedalsBrakeCurve = (int[])data.PedalsBrakeCurve.Clone();
+                PedalsClutchCurve = (int[])data.PedalsClutchCurve.Clone();
+            }
 
             // Shifter (HGP/SGP). Device-read fields, like handbrake/pedals above —
             // only read on detect (no telemetry drift), so capturing _data is safe.

@@ -19,6 +19,11 @@ namespace MozaPlugin
         /// </summary>
         public volatile bool IsDashboardConnected;
         public volatile bool BaseSettingsRead;
+        // Set once the device has reported its pedal / handbrake calibration
+        // (a *-max read landed). Gates CaptureFromCurrent so the pre-read default
+        // isn't persisted, mirroring BaseSettingsRead.
+        public volatile bool PedalsSettingsRead;
+        public volatile bool HandbrakeSettingsRead;
 
         /// <summary>
         /// True when any Moza device is confirmed on the serial bus (base, hub,
@@ -352,14 +357,14 @@ namespace MozaPlugin
         // ===== Pedals settings =====
         public volatile int PedalsThrottleDir;
         public volatile int PedalsThrottleMin;
-        public volatile int PedalsThrottleMax;
+        public volatile int PedalsThrottleMax = 100; // default full range until device read
         public volatile int PedalsBrakeDir;
         public volatile int PedalsBrakeMin;
-        public volatile int PedalsBrakeMax;
+        public volatile int PedalsBrakeMax = 100;
         public volatile int PedalsBrakeAngleRatio = 50; // 0=angle sensor, 100=load cell
         public volatile int PedalsClutchDir;
         public volatile int PedalsClutchMin;
-        public volatile int PedalsClutchMax;
+        public volatile int PedalsClutchMax = 100;
 
         // Pedal output curves (values 0-100, stored as ints; device uses 4-byte floats)
         public readonly int[] PedalsThrottleCurve = new int[] { 20, 40, 60, 80, 100 };
@@ -369,7 +374,7 @@ namespace MozaPlugin
         // ===== Handbrake settings =====
         public volatile int HandbrakeDirection;      // 0=Normal, 1=Reversed
         public volatile int HandbrakeMin;
-        public volatile int HandbrakeMax;
+        public volatile int HandbrakeMax = 100; // default full range until device read
         public volatile int HandbrakeMode;           // 0=Axis, 1=Button
         public volatile int HandbrakeButtonThreshold; // 0-100 (percent)
 
@@ -563,14 +568,14 @@ namespace MozaPlugin
                 // Pedals settings
                 case "pedals-throttle-dir": PedalsThrottleDir = value; break;
                 case "pedals-throttle-min": PedalsThrottleMin = value; break;
-                case "pedals-throttle-max": PedalsThrottleMax = value; break;
+                case "pedals-throttle-max": PedalsThrottleMax = value; PedalsSettingsRead = true; break;
                 case "pedals-brake-dir":    PedalsBrakeDir    = value; break;
                 case "pedals-brake-min":    PedalsBrakeMin    = value; break;
-                case "pedals-brake-max":    PedalsBrakeMax    = value; break;
+                case "pedals-brake-max":    PedalsBrakeMax    = value; PedalsSettingsRead = true; break;
                 case "pedals-brake-angle-ratio": PedalsBrakeAngleRatio = value; break;
                 case "pedals-clutch-dir":   PedalsClutchDir   = value; break;
                 case "pedals-clutch-min":   PedalsClutchMin   = value; break;
-                case "pedals-clutch-max":   PedalsClutchMax   = value; break;
+                case "pedals-clutch-max":   PedalsClutchMax   = value; PedalsSettingsRead = true; break;
 
                 // Pedal curves (float values cast to int, 0-100 range)
                 case "pedals-throttle-y1": PedalsThrottleCurve[0] = value; break;
@@ -592,7 +597,7 @@ namespace MozaPlugin
                 // Handbrake settings
                 case "handbrake-direction":        HandbrakeDirection        = value; break;
                 case "handbrake-min":              HandbrakeMin              = value; break;
-                case "handbrake-max":              HandbrakeMax              = value; break;
+                case "handbrake-max":              HandbrakeMax              = value; HandbrakeSettingsRead = true; break;
                 case "handbrake-mode":             HandbrakeMode             = value; break;
                 case "handbrake-button-threshold": HandbrakeButtonThreshold  = value; break;
 
