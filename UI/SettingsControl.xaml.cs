@@ -178,15 +178,15 @@ namespace MozaPlugin
             // view — stop them so a forgotten toggle doesn't leave the pedal
             // buzzing indefinitely with no UI left to turn it off.
             if (MBoosterEngineTestToggle?.IsChecked == true)
-                CurrentMBoosterController()?.SetEngineTestActive(false);
+                CurrentMBoosterController()?.SetEngineTestActive(false, _mboosterEffectPedalIndex);
             if (MBoosterAbsTestToggle?.IsChecked == true)
-                CurrentMBoosterController()?.SetAbsTestActive(false);
+                CurrentMBoosterController()?.SetAbsTestActive(false, _mboosterEffectPedalIndex);
             if (MBoosterRoadTextureTestToggle?.IsChecked == true)
-                CurrentMBoosterController()?.SetRoadTextureTestActive(false);
+                CurrentMBoosterController()?.SetRoadTextureTestActive(false, _mboosterEffectPedalIndex);
             if (MBoosterLockupTestToggle?.IsChecked == true)
-                CurrentMBoosterController()?.SetLockupTestActive(false);
+                CurrentMBoosterController()?.SetLockupTestActive(false, _mboosterEffectPedalIndex);
             if (MBoosterThresholdTestToggle?.IsChecked == true)
-                CurrentMBoosterController()?.SetThresholdTestActive(false);
+                CurrentMBoosterController()?.SetThresholdTestActive(false, _mboosterEffectPedalIndex);
             if (MBoosterBrakeFadeTestToggle?.IsChecked == true)
                 CurrentMBoosterController()?.SetBrakeFadeTestActive(false);
             StopAllCustomEffectTests();
@@ -2486,6 +2486,16 @@ namespace MozaPlugin
         private readonly System.Collections.ObjectModel.ObservableCollection<MBoosterCustomEffectRow> _mboosterCustomEffectRows =
             new System.Collections.ObjectModel.ObservableCollection<MBoosterCustomEffectRow>();
 
+        // Per-axis pedal-role selectors for a chained mBooster (one row per
+        // detected HID axis). Rebuilt only when the selected device or its axis
+        // count changes (tracked below) so an open dropdown isn't disrupted on
+        // the 500ms refresh tick.
+        private readonly System.Collections.ObjectModel.ObservableCollection<MBoosterAxisRoleRow> _mboosterAxisRoleRows =
+            new System.Collections.ObjectModel.ObservableCollection<MBoosterAxisRoleRow>();
+        private string? _mboosterAxisListIdentity;
+        private int _mboosterAxisListCount = -1;
+        private string? _mboosterAxisListConnected;
+
         private void RefreshMBoosterTab()
         {
             var registry = _plugin?.MBoosterRegistry;
@@ -2550,6 +2560,11 @@ namespace MozaPlugin
 
             MBoosterDevicePanel.Visibility = Visibility.Visible;
 
+            // Per-axis pedal-role selectors (multi-pedal chain). Runs every
+            // refresh (outside the seed-once gate) so it appears as soon as the
+            // HID reports the lane's axis count, which can lag the CDC detect.
+            PopulateMBoosterAxisRoles(selected);
+
             // Live position marker (on the curve editors) is updated at
             // 30 Hz from UpdateHidInputDisplays (UpdateMBoosterCurveMarkers)
             // instead of here — this 500ms pass felt sluggish for direct
@@ -2574,47 +2589,14 @@ namespace MozaPlugin
             {
                 SetMBoosterRoleCombo(s.Role);
                 MBoosterDisplayNameBox.Text = s.DisplayName ?? "";
-                MBoosterAbsEnable.IsChecked       = s.Abs?.Enabled          ?? false;
-                MBoosterAbsFrequencySlider.Value  = s.Abs?.FrequencyHz      ?? MBoosterUiConstants.AbsFreqMinHz;
-                SetValueText(MBoosterAbsFrequencyValue, MBoosterAbsFrequencySlider.Value.ToString("F0"));
-                MBoosterAbsIntensity.Value        = s.Abs?.IntensityPct     ?? 50;
-                SetValueText(MBoosterAbsIntensityValue, (s.Abs?.IntensityPct ?? 50).ToString());
-                MBoosterAbsSmoothness.Value       = s.Abs?.SmoothnessPct    ?? 100;
-                SetValueText(MBoosterAbsSmoothnessValue, (s.Abs?.SmoothnessPct ?? 100).ToString());
-                // Never persisted — always starts off for a freshly-shown tab.
-                MBoosterAbsTestToggle.IsChecked = false;
-                MBoosterLockupEnable.IsChecked = s.Lockup?.Enabled ?? false;
-                MBoosterLockupFrequencySlider.Value = s.Lockup?.FrequencyHz ?? MBoosterUiConstants.LockupFreqMinHz;
-                SetValueText(MBoosterLockupFrequencyValue, MBoosterLockupFrequencySlider.Value.ToString("F0"));
-                MBoosterLockupIntensity.Value = s.Lockup?.IntensityPct ?? 50;
-                SetValueText(MBoosterLockupIntensityValue, (s.Lockup?.IntensityPct ?? 50).ToString());
-                // Never persisted — always starts off for a freshly-shown tab.
-                MBoosterLockupTestToggle.IsChecked = false;
-                MBoosterThresholdEnable.IsChecked = s.Threshold?.Enabled ?? false;
-                MBoosterThresholdTriggerLevel.Value = s.Threshold?.TriggerLevelPct ?? 60;
-                SetValueText(MBoosterThresholdTriggerLevelValue, (s.Threshold?.TriggerLevelPct ?? 60).ToString());
-                MBoosterThresholdFrequencySlider.Value = s.Threshold?.FrequencyHz ?? MBoosterUiConstants.ThresholdFreqMinHz;
-                SetValueText(MBoosterThresholdFrequencyValue, MBoosterThresholdFrequencySlider.Value.ToString("F0"));
-                MBoosterThresholdIntensity.Value = s.Threshold?.IntensityPct ?? 50;
-                SetValueText(MBoosterThresholdIntensityValue, (s.Threshold?.IntensityPct ?? 50).ToString());
-                MBoosterThresholdDecay.Value = s.Threshold?.DecayPct ?? 20;
-                SetValueText(MBoosterThresholdDecayValue, (s.Threshold?.DecayPct ?? 20).ToString());
-                // Never persisted — always starts off for a freshly-shown tab.
-                MBoosterThresholdTestToggle.IsChecked = false;
-                MBoosterEngineEnable.IsChecked    = s.Engine?.Enabled       ?? false;
-                MBoosterEngineFrequencySlider.Value = s.Engine?.FrequencyHz ?? MBoosterUiConstants.EngineFreqMinHz;
-                SetValueText(MBoosterEngineFrequencyValue, MBoosterEngineFrequencySlider.Value.ToString("F0"));
-                MBoosterEngineIntensity.Value     = s.Engine?.IntensityPct  ?? 50;
-                SetValueText(MBoosterEngineIntensityValue, (s.Engine?.IntensityPct ?? 50).ToString());
-                // Never persisted — always starts off for a freshly-shown tab.
-                MBoosterEngineTestToggle.IsChecked = false;
-                MBoosterRoadTextureEnable.IsChecked = s.RoadTexture?.Enabled ?? false;
-                MBoosterRoadTextureIntensity.Value = s.RoadTexture?.IntensityPct ?? 50;
-                SetValueText(MBoosterRoadTextureIntensityValue, (s.RoadTexture?.IntensityPct ?? 50).ToString());
-                MBoosterRoadTextureSmoothness.Value = s.RoadTexture?.SmoothnessPct ?? 50;
-                SetValueText(MBoosterRoadTextureSmoothnessValue, (s.RoadTexture?.SmoothnessPct ?? 50).ToString());
-                // Never persisted — always starts off for a freshly-shown tab.
-                MBoosterRoadTextureTestToggle.IsChecked = false;
+                // Effects are per-pedal now — reset to the master pedal on a
+                // device (re)seed, populate the effects-pedal combo, and seed the
+                // effect cards from whichever pedal is selected. (Test toggles are
+                // never persisted; SeedMBoosterEffectControls always clears them.)
+                _mboosterEffectPedalIndex = 0;
+                PopulateMBoosterEffectPedalCombo(selected);
+                SeedMBoosterEffectControls(PeekMBoosterEffectTarget());
+                UpdateMBoosterEffectPassiveState();
                 MBoosterBrakeFadeEnable.IsChecked = s.BrakeFade?.Enabled ?? false;
                 MBoosterBrakeFadeOnsetSlider.Value = s.BrakeFade?.BrakeFadeOnsetC ?? 550;
                 SetValueText(MBoosterBrakeFadeOnsetValue, MBoosterBrakeFadeOnsetSlider.Value.ToString("F0"));
@@ -2658,7 +2640,7 @@ namespace MozaPlugin
                 MBoosterMaxForceSlider.Value = s.MaxForceKg;
                 SetValueText(MBoosterMaxForceValue, s.MaxForceKg.ToString("F0"));
             }
-            PopulateMBoosterCustomEffectsList(s);
+            PopulateMBoosterCustomEffectsList(PeekMBoosterEffectTarget());
             _mboosterUiSeeded = true;
             _mboosterSeededProfileName = currentProfileName;
             _mboosterSeededIdentity = selected.Identity;
@@ -2684,6 +2666,85 @@ namespace MozaPlugin
         {
             if (_mboosterSelectedIdentity == null) return null;
             return _plugin.GetOrCreateMBoosterSettings(_mboosterSelectedIdentity);
+        }
+
+        // Which pedal's effects the Effects card currently edits (0 = master/host
+        // at device 0x12; 1/2 = chained pedals at 0x1d/0x1e). Set by the Effects
+        // section's pedal combo; effects are stored + sent per pedal.
+        private int _mboosterEffectPedalIndex;
+
+        /// <summary>The effect settings the Effects card edits — the master's
+        /// flat fields for pedal 0, else the chained pedal's per-pedal entry
+        /// (created on demand so edits persist). Null if no device selected.</summary>
+        private IMBoosterEffects? CurrentMBoosterEffectTarget()
+        {
+            var s = CurrentMBoosterSettings();
+            if (s == null) return null;
+            if (_mboosterEffectPedalIndex <= 0) return s;
+            if (!s.Pedals.TryGetValue(_mboosterEffectPedalIndex, out var p))
+            {
+                // Copy-on-write: publish a NEW dictionary via atomic reference
+                // swap rather than mutating in place, so the 50 Hz effect worker
+                // threads reading s.Pedals never see a dictionary mid-resize.
+                p = new MBoosterPedalSettings();
+                s.Pedals = new Dictionary<int, MBoosterPedalSettings>(s.Pedals) { [_mboosterEffectPedalIndex] = p };
+            }
+            return p;
+        }
+
+        /// <summary>The effect settings for the selected pedal WITHOUT creating a
+        /// missing entry — used when seeding controls so merely viewing a chained
+        /// pedal doesn't persist an empty entry. Falls back to master defaults.</summary>
+        private IMBoosterEffects? PeekMBoosterEffectTarget()
+        {
+            var s = CurrentMBoosterSettings();
+            if (s == null) return null;
+            if (_mboosterEffectPedalIndex <= 0) return s;
+            return s.Pedals.TryGetValue(_mboosterEffectPedalIndex, out var p) ? p : null;
+        }
+
+        /// <summary>Seed the five vibration-effect cards' controls from one
+        /// pedal's effect settings. Assumes the event suppressor is active. Brake
+        /// Fade is seeded separately by <see cref="RefreshMBoosterTab"/> since it's
+        /// per-lane (master pedal only).</summary>
+        private void SeedMBoosterEffectControls(IMBoosterEffects? fx)
+        {
+            MBoosterAbsEnable.IsChecked       = fx?.Abs?.Enabled          ?? false;
+            MBoosterAbsFrequencySlider.Value  = fx?.Abs?.FrequencyHz      ?? MBoosterUiConstants.AbsFreqMinHz;
+            SetValueText(MBoosterAbsFrequencyValue, MBoosterAbsFrequencySlider.Value.ToString("F0"));
+            MBoosterAbsIntensity.Value        = fx?.Abs?.IntensityPct     ?? 50;
+            SetValueText(MBoosterAbsIntensityValue, (fx?.Abs?.IntensityPct ?? 50).ToString());
+            MBoosterAbsSmoothness.Value       = fx?.Abs?.SmoothnessPct    ?? 100;
+            SetValueText(MBoosterAbsSmoothnessValue, (fx?.Abs?.SmoothnessPct ?? 100).ToString());
+            MBoosterAbsTestToggle.IsChecked = false;
+            MBoosterLockupEnable.IsChecked = fx?.Lockup?.Enabled ?? false;
+            MBoosterLockupFrequencySlider.Value = fx?.Lockup?.FrequencyHz ?? MBoosterUiConstants.LockupFreqMinHz;
+            SetValueText(MBoosterLockupFrequencyValue, MBoosterLockupFrequencySlider.Value.ToString("F0"));
+            MBoosterLockupIntensity.Value = fx?.Lockup?.IntensityPct ?? 50;
+            SetValueText(MBoosterLockupIntensityValue, (fx?.Lockup?.IntensityPct ?? 50).ToString());
+            MBoosterLockupTestToggle.IsChecked = false;
+            MBoosterThresholdEnable.IsChecked = fx?.Threshold?.Enabled ?? false;
+            MBoosterThresholdTriggerLevel.Value = fx?.Threshold?.TriggerLevelPct ?? 60;
+            SetValueText(MBoosterThresholdTriggerLevelValue, (fx?.Threshold?.TriggerLevelPct ?? 60).ToString());
+            MBoosterThresholdFrequencySlider.Value = fx?.Threshold?.FrequencyHz ?? MBoosterUiConstants.ThresholdFreqMinHz;
+            SetValueText(MBoosterThresholdFrequencyValue, MBoosterThresholdFrequencySlider.Value.ToString("F0"));
+            MBoosterThresholdIntensity.Value = fx?.Threshold?.IntensityPct ?? 50;
+            SetValueText(MBoosterThresholdIntensityValue, (fx?.Threshold?.IntensityPct ?? 50).ToString());
+            MBoosterThresholdDecay.Value = fx?.Threshold?.DecayPct ?? 20;
+            SetValueText(MBoosterThresholdDecayValue, (fx?.Threshold?.DecayPct ?? 20).ToString());
+            MBoosterThresholdTestToggle.IsChecked = false;
+            MBoosterEngineEnable.IsChecked    = fx?.Engine?.Enabled       ?? false;
+            MBoosterEngineFrequencySlider.Value = fx?.Engine?.FrequencyHz ?? MBoosterUiConstants.EngineFreqMinHz;
+            SetValueText(MBoosterEngineFrequencyValue, MBoosterEngineFrequencySlider.Value.ToString("F0"));
+            MBoosterEngineIntensity.Value     = fx?.Engine?.IntensityPct  ?? 50;
+            SetValueText(MBoosterEngineIntensityValue, (fx?.Engine?.IntensityPct ?? 50).ToString());
+            MBoosterEngineTestToggle.IsChecked = false;
+            MBoosterRoadTextureEnable.IsChecked = fx?.RoadTexture?.Enabled ?? false;
+            MBoosterRoadTextureIntensity.Value = fx?.RoadTexture?.IntensityPct ?? 50;
+            SetValueText(MBoosterRoadTextureIntensityValue, (fx?.RoadTexture?.IntensityPct ?? 50).ToString());
+            MBoosterRoadTextureSmoothness.Value = fx?.RoadTexture?.SmoothnessPct ?? 50;
+            SetValueText(MBoosterRoadTextureSmoothnessValue, (fx?.RoadTexture?.SmoothnessPct ?? 50).ToString());
+            MBoosterRoadTextureTestToggle.IsChecked = false;
         }
 
         private MBoosterDeviceController? CurrentMBoosterController()
@@ -2735,11 +2796,11 @@ namespace MozaPlugin
         // (not incrementally synced) whenever the tab reseeds — simpler than
         // diffing, and this list is edited far less often than a slider is dragged.
 
-        private void PopulateMBoosterCustomEffectsList(MBoosterDeviceSettings? s)
+        private void PopulateMBoosterCustomEffectsList(IMBoosterEffects? fx)
         {
             MBoosterCustomEffectsList.ItemsSource = _mboosterCustomEffectRows;
             _mboosterCustomEffectRows.Clear();
-            var list = s?.CustomEffects;
+            var list = fx?.CustomEffects;
             if (list == null || _plugin == null) return;
             // Snapshot once so every row shares one backing list for the
             // simple editor, same as ChannelMappingRowFactory.Build does for
@@ -2763,7 +2824,7 @@ namespace MozaPlugin
             // this always targets whichever device is currently selected —
             // matters for StopAllCustomEffectTests, called just BEFORE the
             // selected device changes.
-            CurrentMBoosterController()?.SetCustomEffectTestActive(effectId, on);
+            CurrentMBoosterController()?.SetCustomEffectTestActive(effectId, on, _mboosterEffectPedalIndex);
         }
 
         /// <summary>
@@ -2782,7 +2843,7 @@ namespace MozaPlugin
 
         private void MBoosterAddCustomEffectButton_Click(object sender, RoutedEventArgs e)
         {
-            var s = CurrentMBoosterSettings();
+            var s = CurrentMBoosterEffectTarget();
             if (s == null) return;
             s.CustomEffects ??= new List<MBoosterCustomEffect>();
             var effect = new MBoosterCustomEffect
@@ -2801,8 +2862,8 @@ namespace MozaPlugin
         private void MBoosterDeleteCustomEffect_Click(object sender, RoutedEventArgs e)
         {
             if ((sender as FrameworkElement)?.Tag is not MBoosterCustomEffectRow row) return;
-            if (row.TestActive) CurrentMBoosterController()?.SetCustomEffectTestActive(row.Id, false);
-            var s = CurrentMBoosterSettings();
+            if (row.TestActive) CurrentMBoosterController()?.SetCustomEffectTestActive(row.Id, false, _mboosterEffectPedalIndex);
+            var s = CurrentMBoosterEffectTarget();
             s?.CustomEffects?.RemoveAll(c => string.Equals(c.Id, row.Id, StringComparison.Ordinal));
             _plugin.SaveSettings();
             _mboosterCustomEffectRows.Remove(row);
@@ -2897,15 +2958,15 @@ namespace MozaPlugin
             // it off (the new device's tab reseeds its own, unrelated
             // toggle state).
             if (MBoosterEngineTestToggle.IsChecked == true)
-                CurrentMBoosterController()?.SetEngineTestActive(false);
+                CurrentMBoosterController()?.SetEngineTestActive(false, _mboosterEffectPedalIndex);
             if (MBoosterAbsTestToggle.IsChecked == true)
-                CurrentMBoosterController()?.SetAbsTestActive(false);
+                CurrentMBoosterController()?.SetAbsTestActive(false, _mboosterEffectPedalIndex);
             if (MBoosterRoadTextureTestToggle.IsChecked == true)
-                CurrentMBoosterController()?.SetRoadTextureTestActive(false);
+                CurrentMBoosterController()?.SetRoadTextureTestActive(false, _mboosterEffectPedalIndex);
             if (MBoosterLockupTestToggle.IsChecked == true)
-                CurrentMBoosterController()?.SetLockupTestActive(false);
+                CurrentMBoosterController()?.SetLockupTestActive(false, _mboosterEffectPedalIndex);
             if (MBoosterThresholdTestToggle.IsChecked == true)
-                CurrentMBoosterController()?.SetThresholdTestActive(false);
+                CurrentMBoosterController()?.SetThresholdTestActive(false, _mboosterEffectPedalIndex);
             if (MBoosterBrakeFadeTestToggle.IsChecked == true)
                 CurrentMBoosterController()?.SetBrakeFadeTestActive(false);
             StopAllCustomEffectTests();
@@ -2929,6 +2990,177 @@ namespace MozaPlugin
             _plugin.SaveSettings();
         }
 
+        /// <summary>
+        /// Show one role selector per pedal on a chained mBooster. For a
+        /// single-axis lane the legacy single Role combo is kept (unchanged UX);
+        /// for a multi-pedal lane the per-axis panel replaces it. When the device
+        /// reports which slots are physically connected (<see cref="MBoosterDeviceController.ConnectedAxes"/>,
+        /// from its "PD Linked" diagnostic) only the connected pedals are shown;
+        /// otherwise every detected axis is listed. Rebuilt only when the device,
+        /// its axis count, or its connectivity changes.
+        /// </summary>
+        private void PopulateMBoosterAxisRoles(MBoosterDeviceController? controller)
+        {
+            MBoosterAxisRolesList.ItemsSource = _mboosterAxisRoleRows;
+            int axisCount = controller?.AxisCount ?? 0;
+            var connected = controller?.ConnectedAxes;
+            bool multi = axisCount > 1;
+
+            // Multi-pedal → per-axis panel replaces the single Role combo.
+            MBoosterAxisRolesPanel.Visibility = multi ? Visibility.Visible : Visibility.Collapsed;
+            MBoosterRoleCombo.Visibility = multi ? Visibility.Collapsed : Visibility.Visible;
+            MBoosterRoleLabel.Visibility = multi ? Visibility.Collapsed : Visibility.Visible;
+
+            if (!multi)
+            {
+                if (_mboosterAxisRoleRows.Count > 0) _mboosterAxisRoleRows.Clear();
+                _mboosterAxisListIdentity = controller?.Identity;
+                _mboosterAxisListCount = axisCount;
+                _mboosterAxisListConnected = null;
+                return;
+            }
+
+            // Rebuild only when the device / axis count / connectivity changed, so
+            // an open dropdown mid-selection isn't yanked out from under the user.
+            string connSig = "";
+            if (connected != null)
+            {
+                var cbuf = new char[connected.Length];
+                for (int k = 0; k < connected.Length; k++) cbuf[k] = connected[k] ? '1' : '0';
+                connSig = new string(cbuf);
+            }
+            if (string.Equals(controller?.Identity, _mboosterAxisListIdentity, StringComparison.OrdinalIgnoreCase)
+                && axisCount == _mboosterAxisListCount
+                && string.Equals(connSig, _mboosterAxisListConnected, StringComparison.Ordinal))
+                return;
+            _mboosterAxisListIdentity = controller?.Identity;
+            _mboosterAxisListCount = axisCount;
+            _mboosterAxisListConnected = connSig;
+
+            var s = controller != null ? _plugin?.GetOrCreateMBoosterSettings(controller.Identity) : null;
+            using (_suppressor.Begin())
+            {
+                _mboosterAxisRoleRows.Clear();
+                int shown = 0;
+                for (int i = 0; i < axisCount && i < MBoosterDeviceController.MaxAxes; i++)
+                {
+                    // Skip a slot the device says isn't physically connected.
+                    if (connected != null && i < connected.Length && !connected[i]) continue;
+                    var role = global::MozaPlugin.Devices.MozaMBoosterRegistry.ResolveAxisRole(s, i, axisCount);
+                    string label = string.Format(Strings.Label_PedalAxis, ++shown);
+                    _mboosterAxisRoleRows.Add(new MBoosterAxisRoleRow(i, label, role, OnMBoosterAxisRoleChanged));
+                }
+            }
+        }
+
+        /// <summary>
+        /// Persist a per-axis role edit. Seeds the full AxisRoles array from the
+        /// currently-resolved roles (so unedited axes keep their effective role)
+        /// then sets the edited one — makes every axis explicit on first edit.
+        /// </summary>
+        private void OnMBoosterAxisRoleChanged(int axisIndex, MBoosterRole role)
+        {
+            if (_suppressEvents) return;
+            var controller = CurrentMBoosterController();
+            var s = CurrentMBoosterSettings();
+            if (controller == null || s == null) return;
+            int axisCount = controller.AxisCount > 0 ? controller.AxisCount : 1;
+            var roles = s.AxisRoles;
+            if (roles == null || roles.Length != axisCount)
+            {
+                var seeded = new MBoosterRole[axisCount];
+                for (int i = 0; i < axisCount; i++)
+                    seeded[i] = global::MozaPlugin.Devices.MozaMBoosterRegistry.ResolveAxisRole(s, i, axisCount);
+                s.AxisRoles = roles = seeded;
+            }
+            if (axisIndex >= 0 && axisIndex < roles.Length)
+                roles[axisIndex] = role;
+            _plugin.SaveSettings();
+        }
+
+        /// <summary>
+        /// Populate the Effects section's pedal selector for a chained mBooster —
+        /// one entry per connected pedal (Tag = HID axis index). Hidden for a
+        /// single-pedal lane (effects apply to the sole pedal). The chosen pedal's
+        /// effects are stored per-pedal and sent to that pedal's motor device id
+        /// (0x12 host / 0x1d / 0x1e chain). Assumes the suppressor is active.
+        /// </summary>
+        private void PopulateMBoosterEffectPedalCombo(MBoosterDeviceController? controller)
+        {
+            int axisCount = controller?.AxisCount ?? 0;
+            var connected = controller?.ConnectedAxes;
+            bool multi = axisCount > 1;
+
+            MBoosterEffectPedalPanel.Visibility = multi ? Visibility.Visible : Visibility.Collapsed;
+            MBoosterEffectPedalCombo.Items.Clear();
+            if (!multi) return;
+
+            int shown = 0;
+            for (int i = 0; i < axisCount && i < MBoosterDeviceController.MaxAxes; i++)
+            {
+                if (connected != null && i < connected.Length && !connected[i]) continue;
+                MBoosterEffectPedalCombo.Items.Add(new ComboBoxItem
+                {
+                    Content = string.Format(Strings.Label_PedalAxis, ++shown),
+                    Tag = i,
+                });
+            }
+            if (_mboosterEffectPedalIndex < 0) _mboosterEffectPedalIndex = 0;
+            int sel = 0;
+            for (int k = 0; k < MBoosterEffectPedalCombo.Items.Count; k++)
+                if (MBoosterEffectPedalCombo.Items[k] is ComboBoxItem it && it.Tag is int t && t == _mboosterEffectPedalIndex)
+                { sel = k; break; }
+            if (MBoosterEffectPedalCombo.Items.Count > 0) MBoosterEffectPedalCombo.SelectedIndex = sel;
+        }
+
+        /// <summary>
+        /// Switch which pedal the Effects cards edit. Stops any running Test on
+        /// the pedal we're leaving (so it doesn't keep vibrating), then re-seeds
+        /// the cards from the newly-selected pedal's effects.
+        /// </summary>
+        private void MBoosterEffectPedalCombo_SelectionChanged(object sender, SelectionChangedEventArgs e)
+        {
+            if (_suppressEvents) return;
+            if (MBoosterEffectPedalCombo.SelectedItem is not ComboBoxItem item || item.Tag is not int newIndex) return;
+            if (newIndex == _mboosterEffectPedalIndex) return;
+
+            var c = CurrentMBoosterController();
+            if (c != null)
+            {
+                c.SetEngineTestActive(false, _mboosterEffectPedalIndex);
+                c.SetAbsTestActive(false, _mboosterEffectPedalIndex);
+                c.SetRoadTextureTestActive(false, _mboosterEffectPedalIndex);
+                c.SetLockupTestActive(false, _mboosterEffectPedalIndex);
+                c.SetThresholdTestActive(false, _mboosterEffectPedalIndex);
+            }
+            // Also stop any custom-effect Test on the pedal we're leaving (its
+            // rows are about to be replaced by the new pedal's).
+            StopAllCustomEffectTests();
+            _mboosterEffectPedalIndex = newIndex;
+            using (_suppressor.Begin())
+            {
+                SeedMBoosterEffectControls(PeekMBoosterEffectTarget());
+                PopulateMBoosterCustomEffectsList(PeekMBoosterEffectTarget());
+            }
+            UpdateMBoosterEffectPassiveState();
+        }
+
+        /// <summary>
+        /// Hide the vibration-effect cards when the selected pedal is passive
+        /// (type 2 = no motor, e.g. a CRP2 — effects can't play there). When the
+        /// device hasn't reported pedal types (0x0E diagnostic not received) the
+        /// cards stay visible (best-effort). See MBoosterDeviceController.AxisTypes.
+        /// </summary>
+        private void UpdateMBoosterEffectPassiveState()
+        {
+            var types = CurrentMBoosterController()?.AxisTypes;
+            bool passive = types != null
+                && _mboosterEffectPedalIndex >= 0 && _mboosterEffectPedalIndex < types.Length
+                && types[_mboosterEffectPedalIndex] == 2;
+            MBoosterEffectsCardsPanel.Visibility = passive ? Visibility.Collapsed : Visibility.Visible;
+            MBoosterEffectsPassiveNote.Visibility = passive ? Visibility.Visible : Visibility.Collapsed;
+        }
+
         // ===== Effect handlers =====
         // All five effects (ABS, Engine, Road Texture, Lockup, Threshold)
         // have now been rebuilt with Enable + sustained Test toggles — see
@@ -2938,7 +3170,7 @@ namespace MozaPlugin
         private void MBoosterAbsEnable_Changed(object sender, RoutedEventArgs e)
         {
             if (_suppressEvents) return;
-            var s = CurrentMBoosterSettings();
+            var s = CurrentMBoosterEffectTarget();
             if (s == null) return;
             (s.Abs ??= new MBoosterEffectSettings()).Enabled = MBoosterAbsEnable.IsChecked == true;
             _plugin.SaveSettings();
@@ -2948,7 +3180,7 @@ namespace MozaPlugin
             if (_suppressEvents) return;
             int v = Math.Max(0, Math.Min(100, (int)Math.Round(e.NewValue)));
             MBoosterAbsIntensityValue.Text = v.ToString();
-            var s = CurrentMBoosterSettings();
+            var s = CurrentMBoosterEffectTarget();
             if (s == null) return;
             (s.Abs ??= new MBoosterEffectSettings()).IntensityPct = v;
             _plugin.SaveSettings();
@@ -2962,7 +3194,7 @@ namespace MozaPlugin
             if (_suppressEvents) return;
             int v = Math.Max((int)MBoosterUiConstants.AbsFreqMinHz, Math.Min((int)MBoosterUiConstants.AbsFreqMaxHz, (int)Math.Round(e.NewValue)));
             MBoosterAbsFrequencyValue.Text = v.ToString();
-            var s = CurrentMBoosterSettings();
+            var s = CurrentMBoosterEffectTarget();
             if (s == null) return;
             (s.Abs ??= new MBoosterEffectSettings()).FrequencyHz = v;
             _plugin.SaveSettings();
@@ -2976,7 +3208,7 @@ namespace MozaPlugin
             if (_suppressEvents) return;
             int v = Math.Max(0, Math.Min(100, (int)Math.Round(e.NewValue)));
             MBoosterAbsSmoothnessValue.Text = v.ToString();
-            var s = CurrentMBoosterSettings();
+            var s = CurrentMBoosterEffectTarget();
             if (s == null) return;
             (s.Abs ??= new MBoosterEffectSettings()).SmoothnessPct = v;
             _plugin.SaveSettings();
@@ -2990,13 +3222,13 @@ namespace MozaPlugin
         private void MBoosterAbsTestToggle_Changed(object sender, RoutedEventArgs e)
         {
             if (_suppressEvents) return;
-            CurrentMBoosterController()?.SetAbsTestActive(MBoosterAbsTestToggle.IsChecked == true);
+            CurrentMBoosterController()?.SetAbsTestActive(MBoosterAbsTestToggle.IsChecked == true, _mboosterEffectPedalIndex);
         }
 
         private void MBoosterLockupEnable_Changed(object sender, RoutedEventArgs e)
         {
             if (_suppressEvents) return;
-            var s = CurrentMBoosterSettings();
+            var s = CurrentMBoosterEffectTarget();
             if (s == null) return;
             (s.Lockup ??= new MBoosterEffectSettings()).Enabled = MBoosterLockupEnable.IsChecked == true;
             _plugin.SaveSettings();
@@ -3009,7 +3241,7 @@ namespace MozaPlugin
             if (_suppressEvents) return;
             int v = Math.Max((int)MBoosterUiConstants.LockupFreqMinHz, Math.Min((int)MBoosterUiConstants.LockupFreqMaxHz, (int)Math.Round(e.NewValue)));
             MBoosterLockupFrequencyValue.Text = v.ToString();
-            var s = CurrentMBoosterSettings();
+            var s = CurrentMBoosterEffectTarget();
             if (s == null) return;
             (s.Lockup ??= new MBoosterEffectSettings()).FrequencyHz = v;
             _plugin.SaveSettings();
@@ -3019,7 +3251,7 @@ namespace MozaPlugin
             if (_suppressEvents) return;
             int v = Math.Max(0, Math.Min(100, (int)Math.Round(e.NewValue)));
             MBoosterLockupIntensityValue.Text = v.ToString();
-            var s = CurrentMBoosterSettings();
+            var s = CurrentMBoosterEffectTarget();
             if (s == null) return;
             (s.Lockup ??= new MBoosterEffectSettings()).IntensityPct = v;
             _plugin.SaveSettings();
@@ -3034,13 +3266,13 @@ namespace MozaPlugin
         private void MBoosterLockupTestToggle_Changed(object sender, RoutedEventArgs e)
         {
             if (_suppressEvents) return;
-            CurrentMBoosterController()?.SetLockupTestActive(MBoosterLockupTestToggle.IsChecked == true);
+            CurrentMBoosterController()?.SetLockupTestActive(MBoosterLockupTestToggle.IsChecked == true, _mboosterEffectPedalIndex);
         }
 
         private void MBoosterThresholdEnable_Changed(object sender, RoutedEventArgs e)
         {
             if (_suppressEvents) return;
-            var s = CurrentMBoosterSettings();
+            var s = CurrentMBoosterEffectTarget();
             if (s == null) return;
             (s.Threshold ??= new MBoosterEffectSettings()).Enabled = MBoosterThresholdEnable.IsChecked == true;
             _plugin.SaveSettings();
@@ -3054,7 +3286,7 @@ namespace MozaPlugin
             if (_suppressEvents) return;
             int v = Math.Max((int)MBoosterUiConstants.ThresholdTriggerMinPct, Math.Min((int)MBoosterUiConstants.ThresholdTriggerMaxPct, (int)Math.Round(e.NewValue)));
             MBoosterThresholdTriggerLevelValue.Text = v.ToString();
-            var s = CurrentMBoosterSettings();
+            var s = CurrentMBoosterEffectTarget();
             if (s == null) return;
             (s.Threshold ??= new MBoosterEffectSettings()).TriggerLevelPct = v;
             _plugin.SaveSettings();
@@ -3067,7 +3299,7 @@ namespace MozaPlugin
             if (_suppressEvents) return;
             int v = Math.Max((int)MBoosterUiConstants.ThresholdFreqMinHz, Math.Min((int)MBoosterUiConstants.ThresholdFreqMaxHz, (int)Math.Round(e.NewValue)));
             MBoosterThresholdFrequencyValue.Text = v.ToString();
-            var s = CurrentMBoosterSettings();
+            var s = CurrentMBoosterEffectTarget();
             if (s == null) return;
             (s.Threshold ??= new MBoosterEffectSettings()).FrequencyHz = v;
             _plugin.SaveSettings();
@@ -3077,7 +3309,7 @@ namespace MozaPlugin
             if (_suppressEvents) return;
             int v = Math.Max(0, Math.Min(100, (int)Math.Round(e.NewValue)));
             MBoosterThresholdIntensityValue.Text = v.ToString();
-            var s = CurrentMBoosterSettings();
+            var s = CurrentMBoosterEffectTarget();
             if (s == null) return;
             (s.Threshold ??= new MBoosterEffectSettings()).IntensityPct = v;
             _plugin.SaveSettings();
@@ -3091,7 +3323,7 @@ namespace MozaPlugin
             if (_suppressEvents) return;
             int v = Math.Max(0, Math.Min(100, (int)Math.Round(e.NewValue)));
             MBoosterThresholdDecayValue.Text = v.ToString();
-            var s = CurrentMBoosterSettings();
+            var s = CurrentMBoosterEffectTarget();
             if (s == null) return;
             (s.Threshold ??= new MBoosterEffectSettings()).DecayPct = v;
             _plugin.SaveSettings();
@@ -3104,13 +3336,13 @@ namespace MozaPlugin
         private void MBoosterThresholdTestToggle_Changed(object sender, RoutedEventArgs e)
         {
             if (_suppressEvents) return;
-            CurrentMBoosterController()?.SetThresholdTestActive(MBoosterThresholdTestToggle.IsChecked == true);
+            CurrentMBoosterController()?.SetThresholdTestActive(MBoosterThresholdTestToggle.IsChecked == true, _mboosterEffectPedalIndex);
         }
 
         private void MBoosterEngineEnable_Changed(object sender, RoutedEventArgs e)
         {
             if (_suppressEvents) return;
-            var s = CurrentMBoosterSettings();
+            var s = CurrentMBoosterEffectTarget();
             if (s == null) return;
             (s.Engine ??= new MBoosterEffectSettings()).Enabled = MBoosterEngineEnable.IsChecked == true;
             _plugin.SaveSettings();
@@ -3120,7 +3352,7 @@ namespace MozaPlugin
             if (_suppressEvents) return;
             int v = Math.Max(0, Math.Min(100, (int)Math.Round(e.NewValue)));
             MBoosterEngineIntensityValue.Text = v.ToString();
-            var s = CurrentMBoosterSettings();
+            var s = CurrentMBoosterEffectTarget();
             if (s == null) return;
             (s.Engine ??= new MBoosterEffectSettings()).IntensityPct = v;
             _plugin.SaveSettings();
@@ -3133,7 +3365,7 @@ namespace MozaPlugin
             if (_suppressEvents) return;
             int v = Math.Max((int)MBoosterUiConstants.EngineFreqMinHz, Math.Min((int)MBoosterUiConstants.EngineFreqMaxHz, (int)Math.Round(e.NewValue)));
             MBoosterEngineFrequencyValue.Text = v.ToString();
-            var s = CurrentMBoosterSettings();
+            var s = CurrentMBoosterEffectTarget();
             if (s == null) return;
             (s.Engine ??= new MBoosterEffectSettings()).FrequencyHz = v;
             _plugin.SaveSettings();
@@ -3147,13 +3379,13 @@ namespace MozaPlugin
         private void MBoosterEngineTestToggle_Changed(object sender, RoutedEventArgs e)
         {
             if (_suppressEvents) return;
-            CurrentMBoosterController()?.SetEngineTestActive(MBoosterEngineTestToggle.IsChecked == true);
+            CurrentMBoosterController()?.SetEngineTestActive(MBoosterEngineTestToggle.IsChecked == true, _mboosterEffectPedalIndex);
         }
 
         private void MBoosterRoadTextureEnable_Changed(object sender, RoutedEventArgs e)
         {
             if (_suppressEvents) return;
-            var s = CurrentMBoosterSettings();
+            var s = CurrentMBoosterEffectTarget();
             if (s == null) return;
             (s.RoadTexture ??= new MBoosterEffectSettings()).Enabled = MBoosterRoadTextureEnable.IsChecked == true;
             _plugin.SaveSettings();
@@ -3169,7 +3401,7 @@ namespace MozaPlugin
             if (_suppressEvents) return;
             int v = Math.Max(0, Math.Min(100, (int)Math.Round(e.NewValue)));
             MBoosterRoadTextureIntensityValue.Text = v.ToString();
-            var s = CurrentMBoosterSettings();
+            var s = CurrentMBoosterEffectTarget();
             if (s == null) return;
             (s.RoadTexture ??= new MBoosterEffectSettings()).IntensityPct = v;
             _plugin.SaveSettings();
@@ -3179,7 +3411,7 @@ namespace MozaPlugin
             if (_suppressEvents) return;
             int v = Math.Max(0, Math.Min(100, (int)Math.Round(e.NewValue)));
             MBoosterRoadTextureSmoothnessValue.Text = v.ToString();
-            var s = CurrentMBoosterSettings();
+            var s = CurrentMBoosterEffectTarget();
             if (s == null) return;
             (s.RoadTexture ??= new MBoosterEffectSettings()).SmoothnessPct = v;
             _plugin.SaveSettings();
@@ -3193,7 +3425,7 @@ namespace MozaPlugin
         private void MBoosterRoadTextureTestToggle_Changed(object sender, RoutedEventArgs e)
         {
             if (_suppressEvents) return;
-            CurrentMBoosterController()?.SetRoadTextureTestActive(MBoosterRoadTextureTestToggle.IsChecked == true);
+            CurrentMBoosterController()?.SetRoadTextureTestActive(MBoosterRoadTextureTestToggle.IsChecked == true, _mboosterEffectPedalIndex);
         }
 
         // Brake Fade — NOT a vibration effect. Dynamically rewrites the real

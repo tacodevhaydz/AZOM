@@ -671,4 +671,9 @@ Id: {2}</value></data>
   <data name="Button_AddCustomEffect" xml:space="preserve"><value>+ Добавить пользовательский эффект</value></data>
   <data name="Button_DeleteCustomEffect" xml:space="preserve"><value>Удалить эффект</value></data>
   <data name="DefaultName_CustomEffect" xml:space="preserve"><value>Пользовательский эффект</value></data>
+  <data name="Section_PedalRoles" xml:space="preserve"><value>Роли педалей</value></data>
+  <data name="Label_PedalAxis" xml:space="preserve"><value>Педаль {0}</value></data>
+  <data name="Hint_MBoosterAxisRoles" xml:space="preserve"><value>Этот mBooster обслуживает несколько педалей по одному подключению. Назначьте каждую обнаруженную ось на игровой вход. Порядок по умолчанию соответствует раскладке Moza Rx/Ry/Rz (газ/тормоз/сцепление) — переназначьте здесь, если педаль управляет не тем входом.</value></data>
+  <data name="Label_EffectsForPedal" xml:space="preserve"><value>Effects for pedal:</value></data>
+  <data name="Note_PassivePedalNoEffects" xml:space="preserve"><value>This pedal is passive (no motor) — vibration effects don't apply.</value></data>
 </root>

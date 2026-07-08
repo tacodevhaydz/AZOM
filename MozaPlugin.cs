@@ -1210,7 +1210,8 @@ namespace MozaPlugin
                     settingsLookup: id => GetOrCreateMBoosterSettings(id),
                     isShuttingDown: () => IsShuttingDown,
                     onDeviceDetectedEdge: OnMBoosterDeviceDetected,
-                    customEffectFormulaEvaluator: ResolveMBoosterCustomEffectFormula);
+                    customEffectFormulaEvaluator: ResolveMBoosterCustomEffectFormula,
+                    onSerialResolved: OnMBoosterSerialResolved);
                 // Initial walk so any mBooster plugged in BEFORE SimHub launched
                 // appears immediately — without this, the user waits up to 5 s
                 // for the reconnect timer to fire.
@@ -2073,18 +2074,72 @@ namespace MozaPlugin
         /// in the current profile. Called by the registry and the effect
         /// worker on every tick — must be allocation-free for known devices.
         /// </summary>
+        // Transport-identity → "mbooster:<serial>" once a lane's serial is
+        // interrogated. Populated on OnMBoosterSerialResolved; read lock-free in
+        // GetOrCreateMBoosterSettings. Deliberately NOT resolved via the
+        // registry there — MergePositions calls in while holding the registry
+        // lock, so consulting the registry under _mboosterSettingsLock would
+        // invert the lock order.
+        private readonly System.Collections.Concurrent.ConcurrentDictionary<string, string> _mboosterSerialByIdentity =
+            new System.Collections.Concurrent.ConcurrentDictionary<string, string>(StringComparer.OrdinalIgnoreCase);
+        private readonly object _mboosterSettingsLock = new object();
+
         internal MBoosterDeviceSettings GetOrCreateMBoosterSettings(string identity)
         {
-            var profile = _settings?.ProfileStore?.CurrentProfile;
-            if (profile == null) return new MBoosterDeviceSettings();
-            if (profile.MBoosterSettings == null)
-                profile.MBoosterSettings = new Dictionary<string, MBoosterDeviceSettings>(StringComparer.OrdinalIgnoreCase);
-            if (!profile.MBoosterSettings.TryGetValue(identity, out var s) || s == null)
+            // Resolve a transport identity to the device's stable serial key so
+            // per-device settings follow the physical unit across USB ports.
+            string key = identity ?? "";
+            string original = key;
+            if (!string.IsNullOrEmpty(key) && _mboosterSerialByIdentity.TryGetValue(key, out var serialKey))
+                key = serialKey;
+
+            lock (_mboosterSettingsLock)
             {
-                s = new MBoosterDeviceSettings();
-                profile.MBoosterSettings[identity] = s;
+                var profile = _settings?.ProfileStore?.CurrentProfile;
+                if (profile == null) return new MBoosterDeviceSettings();
+                if (profile.MBoosterSettings == null)
+                    profile.MBoosterSettings = new Dictionary<string, MBoosterDeviceSettings>(StringComparer.OrdinalIgnoreCase);
+                var dict = profile.MBoosterSettings;
+
+                // Lazily migrate a transient transport-keyed entry to the serial
+                // key in the current profile. A serial-keyed entry, if one
+                // already exists (the user's saved config from a prior session),
+                // wins — the transport entry is a just-created placeholder.
+                if (!string.Equals(original, key, StringComparison.OrdinalIgnoreCase)
+                    && dict.TryGetValue(original, out var stale))
+                {
+                    if (!dict.ContainsKey(key)) dict[key] = stale;
+                    dict.Remove(original);
+                }
+
+                if (!dict.TryGetValue(key, out var s) || s == null)
+                {
+                    s = new MBoosterDeviceSettings();
+                    dict[key] = s;
+                }
+                return s;
             }
-            return s;
+        }
+
+        /// <summary>
+        /// A lane's 32-char Moza serial has been interrogated. Record the
+        /// identity→serial mapping (so settings lookups re-key to it), migrate
+        /// the current profile's entry, and re-apply the now serial-keyed
+        /// settings to the device — at detect we applied the transient
+        /// transport-keyed entry, but the real config may live under the serial
+        /// key from a prior session. Runs on the connection read thread.
+        /// </summary>
+        private void OnMBoosterSerialResolved(string identity, string serial)
+        {
+            if (IsShuttingDown || string.IsNullOrEmpty(identity) || string.IsNullOrEmpty(serial)) return;
+            _mboosterSerialByIdentity[identity] = "mbooster:" + serial;
+            try
+            {
+                var settings = GetOrCreateMBoosterSettings(identity); // resolves + migrates current profile
+                var controller = _mboosterRegistry?.FindByIdentity(identity);
+                if (controller != null) ApplyMBoosterToHardware(controller, settings);
+            }
+            catch (Exception ex) { MozaLog.Warn($"[AZOM/mBooster] serial re-key for {MBoosterDeviceController.ShortIdentity(identity)}: {ex.Message}"); }
         }
 
         /// <summary>
@@ -2134,26 +2189,44 @@ namespace MozaPlugin
             // follow-up (needs a per-pedal settings UI); this fixes the routing
             // for the pedal the current single calibration set configures.
             int axisCount = controller.AxisCount > 0 ? controller.AxisCount : 1;
-            var role = global::MozaPlugin.Devices.MozaMBoosterRegistry.ResolveAxisRole(s, 0, axisCount);
-            string? prefix =
-                role == global::MozaPlugin.Devices.MBoosterRole.Throttle ? "throttle"
-                : role == global::MozaPlugin.Devices.MBoosterRole.Brake ? "brake"
-                : role == global::MozaPlugin.Devices.MBoosterRole.Clutch ? "clutch"
-                : null;
-            if (prefix != null)
+            // Apply EACH hosted pedal's calibration to its role-specific command.
+            // Pedal 0 (master) keeps its calibration in the flat fields (the
+            // existing UI); the additional chained pedals (axes 1+) store theirs
+            // in s.Pedals[axis]. An unconfigured pedal (all -1 / null) writes
+            // nothing.
+            for (int axis = 0; axis < axisCount && axis < global::MozaPlugin.Devices.MBoosterDeviceController.MaxAxes; axis++)
             {
-                if (s.Direction >= 0) controller.SendIntWrite($"mbooster-{prefix}-dir", s.Direction);
-                if (s.Min >= 0) controller.SendIntWrite($"mbooster-{prefix}-min", s.Min);
-                if (s.Max >= 0) controller.SendIntWrite($"mbooster-{prefix}-max", s.Max);
-                if (s.CurveY != null && s.CurveY.Length == 5)
+                var role = global::MozaPlugin.Devices.MozaMBoosterRegistry.ResolveAxisRole(s, axis, axisCount);
+                string? prefix =
+                    role == global::MozaPlugin.Devices.MBoosterRole.Throttle ? "throttle"
+                    : role == global::MozaPlugin.Devices.MBoosterRole.Brake ? "brake"
+                    : role == global::MozaPlugin.Devices.MBoosterRole.Clutch ? "clutch"
+                    : null;
+                if (prefix == null) continue;
+
+                int dir, min, max; float[]? curveY, curveX;
+                if (axis == 0)
+                {
+                    dir = s.Direction; min = s.Min; max = s.Max; curveY = s.CurveY; curveX = s.CurveX;
+                }
+                else if (s.Pedals != null && s.Pedals.TryGetValue(axis, out var p) && p != null)
+                {
+                    dir = p.Direction; min = p.Min; max = p.Max; curveY = p.CurveY; curveX = p.CurveX;
+                }
+                else continue; // this chained pedal has no calibration override
+
+                if (dir >= 0) controller.SendIntWrite($"mbooster-{prefix}-dir", dir);
+                if (min >= 0) controller.SendIntWrite($"mbooster-{prefix}-min", min);
+                if (max >= 0) controller.SendIntWrite($"mbooster-{prefix}-max", max);
+                if (curveY != null && curveY.Length == 5)
                 {
                     // Resample at the fixed 20/40/60/80/100 breakpoints in case
                     // CurveX has been horizontally dragged (see
                     // MozaMBoosterRegistry.ResampleCurveAtFixedBreakpoints) —
                     // identity when it hasn't.
-                    var resampled = global::MozaPlugin.Devices.MozaMBoosterRegistry.ResampleCurveAtFixedBreakpoints(s.CurveX, s.CurveY);
-                    for (int i = 0; i < 5; i++)
-                        controller.SendFloatWrite($"mbooster-{prefix}-y{i + 1}", resampled[i]);
+                    var resampled = global::MozaPlugin.Devices.MozaMBoosterRegistry.ResampleCurveAtFixedBreakpoints(curveX, curveY);
+                    for (int k = 0; k < 5; k++)
+                        controller.SendFloatWrite($"mbooster-{prefix}-y{k + 1}", resampled[k]);
                 }
             }
             // Sim Input Mapping (Pit House-style).

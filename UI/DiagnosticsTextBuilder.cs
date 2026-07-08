@@ -149,6 +149,22 @@ namespace MozaPlugin.UI
                     $"        serial={serialStr}  " +
                     $"model='{(string.IsNullOrEmpty(d.ModelName) ? "—" : d.ModelName)}'  " +
                     $"subDevs={d.SubDeviceCount}  container={(string.IsNullOrEmpty(d.ContainerId) ? "—" : d.ContainerId)}");
+                // Per-axis role resolution for a chained lane — the actual
+                // routing (which HID axis drives throttle/brake/clutch), so a
+                // mis-mapping is visible straight from the bundle.
+                if (d.AxisCount > 1)
+                {
+                    // ax<i>[+/-/?] = role — + connected, - not connected, ? unknown
+                    // (device hasn't streamed a "PD Linked" diagnostic this session).
+                    var connected = d.ConnectedAxes;
+                    var roleParts = new System.Collections.Generic.List<string>();
+                    for (int a = 0; a < d.AxisCount && a < MBoosterDeviceController.MaxAxes; a++)
+                    {
+                        string flag = connected == null ? "?" : (a < connected.Length && connected[a] ? "+" : "-");
+                        roleParts.Add($"ax{a}[{flag}]={MozaMBoosterRegistry.ResolveAxisRole(s, a, d.AxisCount)}");
+                    }
+                    sb.AppendLine($"        axes={d.AxisCount}  roles=[{string.Join(", ", roleParts)}]");
+                }
             }
             return sb.ToString().TrimEnd();
         }

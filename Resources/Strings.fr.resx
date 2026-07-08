@@ -671,4 +671,9 @@ Id : {2}</value></data>
   <data name="Button_AddCustomEffect" xml:space="preserve"><value>+ Ajouter un effet personnalisé</value></data>
   <data name="Button_DeleteCustomEffect" xml:space="preserve"><value>Supprimer l'effet</value></data>
   <data name="DefaultName_CustomEffect" xml:space="preserve"><value>Effet personnalisé</value></data>
+  <data name="Section_PedalRoles" xml:space="preserve"><value>Rôles des pédales</value></data>
+  <data name="Label_PedalAxis" xml:space="preserve"><value>Pédale {0}</value></data>
+  <data name="Hint_MBoosterAxisRoles" xml:space="preserve"><value>Ce mBooster héberge plusieurs pédales sur une seule connexion. Attribuez chaque axe détecté à une entrée de jeu. L'ordre par défaut suit la disposition Rx/Ry/Rz de Moza (accélérateur/frein/embrayage) — réattribuez ici si une pédale pilote la mauvaise entrée.</value></data>
+  <data name="Label_EffectsForPedal" xml:space="preserve"><value>Effects for pedal:</value></data>
+  <data name="Note_PassivePedalNoEffects" xml:space="preserve"><value>This pedal is passive (no motor) — vibration effects don't apply.</value></data>
 </root>

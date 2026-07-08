@@ -221,12 +221,75 @@ namespace MozaPlugin.Devices
     }
 
     /// <summary>
+    /// The per-pedal VIBRATION-motor effect settings the effect worker reads.
+    /// Both <see cref="MBoosterDeviceSettings"/> (the master pedal / device 0x12)
+    /// and <see cref="MBoosterPedalSettings"/> (each chained pedal at 0x1d/0x1e)
+    /// implement this, so ONE effect worker per motor device can run the same
+    /// effect code against whichever pedal it drives — configured effects are
+    /// sent to the device id the pedal belongs to. Brake Fade is deliberately
+    /// NOT here: it rewrites the brake's hardware calibration rather than driving
+    /// a motor, so it stays per-lane on the primary worker.
+    /// </summary>
+    public interface IMBoosterEffects
+    {
+        MBoosterEffectSettings Abs { get; set; }
+        MBoosterEffectSettings Lockup { get; set; }
+        MBoosterEffectSettings Threshold { get; set; }
+        MBoosterEffectSettings Engine { get; set; }
+        MBoosterEffectSettings RoadTexture { get; set; }
+        System.Collections.Generic.List<MBoosterCustomEffect> CustomEffects { get; set; }
+    }
+
+    /// <summary>
+    /// Settings for ONE hosted pedal on a chained mBooster lane: its output
+    /// calibration (Direction / Min / Max / curve, written to that pedal's
+    /// role-specific group-35/36 commands) AND its vibration effects (sent to
+    /// the pedal's own motor device id 0x1d/0x1e — see IMBoosterEffects). Pedal 0
+    /// (the master) keeps both in the flat fields on
+    /// <see cref="MBoosterDeviceSettings"/> for UI backward-compat; the chained
+    /// pedals store theirs here, keyed by axis index in
+    /// <see cref="MBoosterDeviceSettings.Pedals"/>. -1 / null = "not set".
+    /// </summary>
+    public sealed class MBoosterPedalSettings : IMBoosterEffects
+    {
+        public int Direction { get; set; } = -1;
+        public int Min { get; set; } = -1;
+        public int Max { get; set; } = -1;
+        public float[]? CurveY { get; set; } = null;   // 5-point output curve
+        public float[]? CurveX { get; set; } = null;   // draggable node X (null = fixed breakpoints)
+
+        // Per-pedal vibration effects (same defaults as the master's flat fields).
+        public MBoosterEffectSettings Abs { get; set; } = new MBoosterEffectSettings { FrequencyHz = 22 };
+        public MBoosterEffectSettings Lockup { get; set; } = new MBoosterEffectSettings { FrequencyHz = 55 };
+        public MBoosterEffectSettings Threshold { get; set; } = new MBoosterEffectSettings { FrequencyHz = 70, TriggerLevelPct = 60, DecayPct = 20 };
+        public MBoosterEffectSettings Engine { get; set; } = new MBoosterEffectSettings { IntensityPct = 50, FrequencyHz = 100 };
+        public MBoosterEffectSettings RoadTexture { get; set; } = new MBoosterEffectSettings { IntensityPct = 50, SmoothnessPct = 50 };
+        public List<MBoosterCustomEffect> CustomEffects { get; set; } = new List<MBoosterCustomEffect>();
+
+        public MBoosterPedalSettings Clone() =>
+            new MBoosterPedalSettings
+            {
+                Direction = Direction,
+                Min = Min,
+                Max = Max,
+                CurveY = CurveY == null ? null : (float[])CurveY.Clone(),
+                CurveX = CurveX == null ? null : (float[])CurveX.Clone(),
+                Abs = Abs?.Clone() ?? new MBoosterEffectSettings(),
+                Lockup = Lockup?.Clone() ?? new MBoosterEffectSettings(),
+                Threshold = Threshold?.Clone() ?? new MBoosterEffectSettings(),
+                Engine = Engine?.Clone() ?? new MBoosterEffectSettings(),
+                RoadTexture = RoadTexture?.Clone() ?? new MBoosterEffectSettings(),
+                CustomEffects = CustomEffects?.Select(c => c.Clone()).ToList() ?? new List<MBoosterCustomEffect>(),
+            };
+    }
+
+    /// <summary>
     /// All settings for ONE mBooster device, keyed by stable identity (USB
     /// instance ID) in the profile's per-device dictionary. Each effect has
     /// its own enable + intensity. Calibration values (group 35/36 — marked
     /// "likely but unverified" in the protocol note) are stored separately.
     /// </summary>
-    public sealed class MBoosterDeviceSettings
+    public sealed class MBoosterDeviceSettings : IMBoosterEffects
     {
         public MBoosterRole Role { get; set; } = MBoosterRole.Disabled;
 
@@ -311,6 +374,15 @@ namespace MozaPlugin.Devices
         // exist. See MozaMBoosterRegistry.EvaluateCurveArbitraryX and
         // docs/protocol/devices/mbooster.md "Sim Input Mapping".
         public float[]? CurveX { get; set; } = null;
+
+        // Per-pedal calibration for the ADDITIONAL pedals on a chained mBooster
+        // (axes 1+), keyed by HID axis index. Axis 0 (the master) keeps its
+        // calibration in the flat Direction/Min/Max/CurveY/CurveX fields above
+        // (unchanged for the existing UI). Absent key = that pedal uses no
+        // calibration override. See MozaPlugin.ApplyMBoosterToHardware, which
+        // writes each pedal's calibration to its role-specific command.
+        public Dictionary<int, MBoosterPedalSettings> Pedals { get; set; }
+            = new Dictionary<int, MBoosterPedalSettings>();
 
         // Sim Input Mapping (Pit House-style). -1 = "not yet set / no
         // override" — mirrors the Direction/Min/Max sentinel convention.
@@ -401,6 +473,9 @@ namespace MozaPlugin.Devices
             {
                 Role = Role,
                 AxisRoles = AxisRoles == null ? null : (MBoosterRole[])AxisRoles.Clone(),
+                Pedals = Pedals == null
+                    ? new Dictionary<int, MBoosterPedalSettings>()
+                    : Pedals.ToDictionary(kv => kv.Key, kv => kv.Value?.Clone() ?? new MBoosterPedalSettings()),
                 Abs = Abs?.Clone() ?? new MBoosterEffectSettings(),
                 Lockup = Lockup?.Clone() ?? new MBoosterEffectSettings(),
                 Threshold = Threshold?.Clone() ?? new MBoosterEffectSettings(),

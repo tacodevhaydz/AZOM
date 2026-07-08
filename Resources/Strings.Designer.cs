@@ -732,5 +732,10 @@ namespace MozaPlugin.Resources
         public static string Label_StalksLastPressed => Get("Label_StalksLastPressed");
         public static string Button_LoadEts2Defaults => Get("Button_LoadEts2Defaults");
         public static string Button_ResyncStages => Get("Button_ResyncStages");
+        public static string Section_PedalRoles => Get("Section_PedalRoles");
+        public static string Label_PedalAxis => Get("Label_PedalAxis");
+        public static string Hint_MBoosterAxisRoles => Get("Hint_MBoosterAxisRoles");
+        public static string Label_EffectsForPedal => Get("Label_EffectsForPedal");
+        public static string Note_PassivePedalNoEffects => Get("Note_PassivePedalNoEffects");
     }
 }

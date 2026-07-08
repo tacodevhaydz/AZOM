@@ -114,6 +114,58 @@ namespace MozaPlugin.Devices
         // Keepalive tick counter (mod KeepaliveTickInterval).
         private int _keepaliveCounter;
 
+        // This worker drives ONE pedal on the lane: its HID axis index (for the
+        // brake-position feed + role resolution), the motor device id its frames
+        // are addressed to (0x12 host / 0x1d / 0x1e chain — configured effects
+        // go to the device the pedal belongs to), and whether it's the primary
+        // worker (only the primary sends the shared keepalive and runs Brake
+        // Fade, which rewrites the brake's calibration once per lane).
+        private readonly int _pedalAxisIndex;
+        private readonly byte _targetDevice;
+        private readonly bool _isPrimary;
+
+        /// <summary>This pedal's vibration-effect settings — the master's flat
+        /// fields for axis 0, else the per-pedal entry (both implement
+        /// <see cref="IMBoosterEffects"/>). Null when no per-pedal entry exists.</summary>
+        private IMBoosterEffects? PedalEffects(MBoosterDeviceSettings? lane)
+        {
+            if (_pedalAxisIndex == 0) return lane;
+            // Snapshot the dictionary reference: the UI publishes new pedal
+            // entries via copy-on-write (atomic reference swap in
+            // CurrentMBoosterEffectTarget), so a snapshot is an immutable view —
+            // safe to read from this worker thread without a lock.
+            var pedals = lane?.Pedals;
+            if (pedals != null && pedals.TryGetValue(_pedalAxisIndex, out var p)) return p;
+            return null;
+        }
+
+        /// <summary>This pedal's role (for the brake-position test feed).</summary>
+        private MBoosterRole PedalRole(MBoosterDeviceSettings? lane)
+        {
+            int axisCount = _device.AxisCount > 0 ? _device.AxisCount : 1;
+            return MozaMBoosterRegistry.ResolveAxisRole(lane, _pedalAxisIndex, axisCount);
+        }
+
+        /// <summary>This pedal's own shaped HID position (0..1).</summary>
+        private double PedalHid() =>
+            _pedalAxisIndex == 0 ? _device.LastHidPosition
+            : (_pedalAxisIndex < _device.LastAxisPositions.Length ? _device.LastAxisPositions[_pedalAxisIndex] : 0.0);
+
+        /// <summary>
+        /// Emit a motor frame (already addressed to this pedal's device id) for
+        /// this pedal. The primary (device 0x12) uses the coalescing stream lane
+        /// so its effects follow the latest-wins priority ladder; chained pedals
+        /// (0x1d/0x1e) use the one-shot FIFO so they don't clobber the primary's
+        /// single shared StreamKind lane. In the common one-effect-per-pedal case
+        /// this is equivalent; only simultaneous effects on ONE chained pedal
+        /// skip the ladder (rare).
+        /// </summary>
+        private void SendMotor(byte[] frame)
+        {
+            if (_isPrimary) _device.SendMotorStream(frame);
+            else _device.SendOneShot(frame);
+        }
+
         private struct EffectState
         {
             public bool Active;
@@ -130,12 +182,18 @@ namespace MozaPlugin.Devices
             MBoosterDeviceController device,
             Func<MBoosterDeviceSettings?> settingsLookup,
             Func<bool> isShuttingDown,
-            Func<string, double>? customEffectFormulaEvaluator = null)
+            Func<string, double>? customEffectFormulaEvaluator = null,
+            int pedalAxisIndex = 0,
+            byte targetDevice = MozaMBoosterProtocol.DeviceMotor,
+            bool isPrimary = true)
         {
             _device = device;
             _settingsLookup = settingsLookup;
             _isShuttingDown = isShuttingDown;
             _customEffectFormulaEvaluator = customEffectFormulaEvaluator ?? (_ => 0.0);
+            _pedalAxisIndex = pedalAxisIndex;
+            _targetDevice = targetDevice;
+            _isPrimary = isPrimary;
         }
 
         public void Start()
@@ -249,18 +307,24 @@ namespace MozaPlugin.Devices
             if (_isShuttingDown()) return;
             if (!_device.IsConnected) return;
 
-            var settings = _settingsLookup();
+            var lane = _settingsLookup();
+            var effects = PedalEffects(lane);
 
             MBoosterTelemetrySnapshot snap;
             lock (_telemetryLock) snap = _latest;
 
+            // Brake signal for THIS pedal: the game's brake, rising to this
+            // pedal's own HID position when it's the one assigned Brake (so its
+            // brake-modulated test pulses feel right with no game running).
+            double brakeSignal = EffectiveBrake(PedalRole(lane), snap);
+
             // --- Compute per-effect requests from telemetry per doc § 4 -----
 
-            UpdateEngineRequest(settings, snap, ref _engine);
-            UpdateAbsRequest(settings, snap, ref _abs);
-            UpdateLockupRequest(settings, snap, ref _lockup);
-            UpdateThresholdRequest(settings, snap, ref _threshold);
-            UpdateRoadTextureRequest(settings, snap, ref _roadTexture);
+            UpdateEngineRequest(effects, snap, ref _engine);
+            UpdateAbsRequest(effects, brakeSignal, snap, ref _abs);
+            UpdateLockupRequest(effects, brakeSignal, snap, ref _lockup);
+            UpdateThresholdRequest(effects, brakeSignal, snap, ref _threshold);
+            UpdateRoadTextureRequest(effects, snap, ref _roadTexture);
 
             // --- Apply per-effect activation edges + emit motor frame ------
             //
@@ -275,6 +339,7 @@ namespace MozaPlugin.Devices
             // lockup/ABS/threshold pulse always overrides the ambient
             // vibration instead of being masked by it.
             ProcessEffect(MBoosterEffectId.Engine,    ref _engine);
+            // (ProcessRoadTextureEffect / custom below now take this pedal's effects.)
             // Road Texture has a materially different wire payload (see
             // MozaMBoosterProtocol.BuildRoadTextureFrame) so it doesn't go
             // through the shared ProcessEffect/BuildMotorFrame path. Even
@@ -284,7 +349,7 @@ namespace MozaPlugin.Devices
             // (ambient tier, before the braking cues) so a lockup/ABS/
             // threshold pulse that lands in the same tick as a bump always
             // wins instead of being masked by it.
-            ProcessRoadTextureEffect(settings, ref _roadTexture);
+            ProcessRoadTextureEffect(effects, ref _roadTexture);
             // Custom (NCalc) effects — Experimental. Placed in the ambient
             // tier (after Engine/Road Texture, before the braking cues) so a
             // user-authored effect can override built-in ambient vibration
@@ -293,35 +358,43 @@ namespace MozaPlugin.Devices
             // ProcessCustomEffect), so a custom effect active in the same
             // tick as the real Engine effect wins on the wire, same
             // last-write-wins masking rule as every other pair on this ladder.
-            UpdateAndProcessCustomEffects(settings);
+            UpdateAndProcessCustomEffects(effects);
             ProcessEffect(MBoosterEffectId.Abs,       ref _abs);
             ProcessEffect(MBoosterEffectId.Lockup,    ref _lockup);
             ProcessEffect(MBoosterEffectId.Threshold, ref _threshold);
 
-            // Brake Fade is NOT a vibration effect — it doesn't touch the
-            // motor stream slot at all, so it's entirely independent of the
-            // priority ladder above. See UpdateBrakeFade.
-            UpdateBrakeFade(settings, snap);
+            // Brake Fade is NOT a vibration effect — it rewrites the brake's
+            // hardware calibration, so it runs ONCE per lane on the primary
+            // worker (not per pedal) against the lane settings. See UpdateBrakeFade.
+            if (_isPrimary) UpdateBrakeFade(lane, snap);
 
             // --- 500 ms keepalive (separate from motor frames) -------------
-            _keepaliveCounter++;
-            if (_keepaliveCounter >= KeepaliveTickInterval)
+            // Primary worker only, and to ALL of the chain's motor device ids
+            // (0x12 host + 0x1d/0x1e chain ports), matching PitHouse — a chained
+            // active mBooster's motor drops its connection state if its own
+            // device id isn't kept alive. Harmless for empty/passive ports.
+            if (_isPrimary)
             {
-                _keepaliveCounter = 0;
-                _device.SendOneShot(MozaMBoosterProtocol.BuildKeepalive());
+                _keepaliveCounter++;
+                if (_keepaliveCounter >= KeepaliveTickInterval)
+                {
+                    _keepaliveCounter = 0;
+                    foreach (var dev in MozaMBoosterProtocol.MotorDeviceIds)
+                        _device.SendOneShot(MozaMBoosterProtocol.BuildKeepalive(dev));
+                }
             }
         }
 
         // ===== Telemetry → effect parameters (doc § 4) ====================
 
-        private void UpdateEngineRequest(MBoosterDeviceSettings? settings, in MBoosterTelemetrySnapshot snap, ref EffectState st)
+        private void UpdateEngineRequest(IMBoosterEffects? effects, in MBoosterTelemetrySnapshot snap, ref EffectState st)
         {
             // Engine's frequency used to be derived from RPM (doc § 4:
             // clamp(rpm / 20000 * 200, 10, 200)); it's now a fixed,
             // user-configured value (MBoosterEffectSettings.FrequencyHz,
             // 60-200Hz) — Intensity is still the only thing telemetry (or
             // the test pulse) modulates.
-            double freqHz = ClampEngineFreq(settings?.Engine?.FrequencyHz ?? MBoosterUiConstants.EngineFreqMinHz);
+            double freqHz = ClampEngineFreq(effects?.Engine?.FrequencyHz ?? MBoosterUiConstants.EngineFreqMinHz);
 
             // Sustained test toggle overrides telemetry-driven engine
             // entirely (ignores Enabled/RPM-idle gates, matching how the
@@ -330,12 +403,12 @@ namespace MozaPlugin.Devices
             // drags are felt immediately while testing.
             if (_engineTestSustained)
             {
-                st.IntensityRequest = Clamp01((settings?.Engine?.IntensityPct ?? 0) / 100.0);
+                st.IntensityRequest = Clamp01((effects?.Engine?.IntensityPct ?? 0) / 100.0);
                 st.FreqHz = freqHz;
                 return;
             }
 
-            if (settings?.Engine == null || !settings.Engine.Enabled)
+            if (effects?.Engine == null || !effects.Engine.Enabled)
             {
                 st.IntensityRequest = 0;
                 st.FreqHz = 0;
@@ -356,7 +429,7 @@ namespace MozaPlugin.Devices
             // amplitude 0..1, matching AB9's parametric engine-vibration
             // intensity slider (no artificial ceiling — see the constants
             // block above).
-            st.IntensityRequest = Clamp01(settings.Engine.IntensityPct / 100.0);
+            st.IntensityRequest = Clamp01(effects.Engine.IntensityPct / 100.0);
         }
 
         private static double ClampEngineFreq(double hz)
@@ -366,7 +439,7 @@ namespace MozaPlugin.Devices
             return hz;
         }
 
-        private void UpdateAbsRequest(MBoosterDeviceSettings? settings, in MBoosterTelemetrySnapshot snap, ref EffectState st)
+        private void UpdateAbsRequest(IMBoosterEffects? effects, double brakeSignal, in MBoosterTelemetrySnapshot snap, ref EffectState st)
         {
             // ABS's frequency used to be derived from ABS-activation depth
             // (doc § 4: 18 + abs01*12, 18-30Hz) — but the plugin's snapshot
@@ -374,8 +447,8 @@ namespace MozaPlugin.Devices
             // pseudocode expects, which collapsed that mapping to a constant
             // 30Hz anyway. It's now a fixed, user-configured value
             // (MBoosterEffectSettings.FrequencyHz, 5-30Hz).
-            double freqHz = ClampAbsFreq(settings?.Abs?.FrequencyHz ?? MBoosterUiConstants.AbsFreqMinHz);
-            double smoothness01 = Clamp01((settings?.Abs?.SmoothnessPct ?? 100) / 100.0);
+            double freqHz = ClampAbsFreq(effects?.Abs?.FrequencyHz ?? MBoosterUiConstants.AbsFreqMinHz);
+            double smoothness01 = Clamp01((effects?.Abs?.SmoothnessPct ?? 100) / 100.0);
             st.SmoothnessRequest01 = smoothness01;
 
             // Sustained test toggle overrides telemetry-driven ABS entirely
@@ -389,20 +462,20 @@ namespace MozaPlugin.Devices
             // plausibly trigger real ABS, not on a light tap.
             if (_absTestSustained)
             {
-                double brakeT = EffectiveBrake(settings, snap);
+                double brakeT = brakeSignal;
                 if (brakeT < 0.6)
                 {
                     st.IntensityRequest = 0;
                     st.FreqHz = 0;
                     return;
                 }
-                double testScale = ((settings?.Abs?.IntensityPct ?? 0) / 100.0) * AbsScaleMax;
+                double testScale = ((effects?.Abs?.IntensityPct ?? 0) / 100.0) * AbsScaleMax;
                 st.IntensityRequest = Clamp01(brakeT * testScale);
                 st.FreqHz = freqHz;
                 return;
             }
 
-            if (settings?.Abs == null || !settings.Abs.Enabled)
+            if (effects?.Abs == null || !effects.Abs.Enabled)
             {
                 st.IntensityRequest = 0;
                 st.FreqHz = 0;
@@ -417,7 +490,7 @@ namespace MozaPlugin.Devices
                 return;
             }
             st.FreqHz = freqHz;
-            double absScale = (settings.Abs.IntensityPct / 100.0) * AbsScaleMax;
+            double absScale = (effects.Abs.IntensityPct / 100.0) * AbsScaleMax;
             st.IntensityRequest = Clamp01(abs01 * absScale);
         }
 
@@ -428,7 +501,7 @@ namespace MozaPlugin.Devices
             return hz;
         }
 
-        private void UpdateLockupRequest(MBoosterDeviceSettings? settings, in MBoosterTelemetrySnapshot snap, ref EffectState st)
+        private void UpdateLockupRequest(IMBoosterEffects? effects, double brakeSignal, in MBoosterTelemetrySnapshot snap, ref EffectState st)
         {
             // Lockup's frequency used to be derived from brake position
             // (doc § 4: 40 + brake*30, 40-70Hz); it's now a fixed,
@@ -436,7 +509,7 @@ namespace MozaPlugin.Devices
             // 10-100Hz), same treatment as Engine/ABS. The wheel-slip
             // detection gate below (brake + speed + wheel-speed heuristic)
             // is unchanged — only frequency became fixed.
-            double freqHz = ClampLockupFreq(settings?.Lockup?.FrequencyHz ?? MBoosterUiConstants.LockupFreqMinHz);
+            double freqHz = ClampLockupFreq(effects?.Lockup?.FrequencyHz ?? MBoosterUiConstants.LockupFreqMinHz);
 
             // Sustained test toggle bypasses the lockup-detection heuristic
             // (which needs vehicle speed) entirely, substituting live brake
@@ -445,20 +518,20 @@ namespace MozaPlugin.Devices
             // every tick instead of snapshotting them.
             if (_lockupTestSustained)
             {
-                double brakeT = EffectiveBrake(settings, snap);
+                double brakeT = brakeSignal;
                 if (brakeT <= 0.01)
                 {
                     st.IntensityRequest = 0;
                     st.FreqHz = 0;
                     return;
                 }
-                double testScale = ((settings?.Lockup?.IntensityPct ?? 0) / 100.0) * LockupScaleMax;
+                double testScale = ((effects?.Lockup?.IntensityPct ?? 0) / 100.0) * LockupScaleMax;
                 st.IntensityRequest = Clamp01(brakeT * testScale);
                 st.FreqHz = freqHz;
                 return;
             }
 
-            if (settings?.Lockup == null || !settings.Lockup.Enabled)
+            if (effects?.Lockup == null || !effects.Lockup.Enabled)
             {
                 st.IntensityRequest = 0;
                 st.FreqHz = 0;
@@ -486,7 +559,7 @@ namespace MozaPlugin.Devices
                 return;
             }
             st.FreqHz = freqHz;
-            double lockupScale = (settings.Lockup.IntensityPct / 100.0) * LockupScaleMax;
+            double lockupScale = (effects.Lockup.IntensityPct / 100.0) * LockupScaleMax;
             st.IntensityRequest = Clamp01(brake * lockupScale);
         }
 
@@ -507,12 +580,12 @@ namespace MozaPlugin.Devices
         // original hysteresis gap. Decay (envelope sustain level after the
         // initial burst) is likewise now configurable — see
         // MBoosterEffectSynthesizer.SynthesizeThreshold.
-        private void UpdateThresholdRequest(MBoosterDeviceSettings? settings, in MBoosterTelemetrySnapshot snap, ref EffectState st)
+        private void UpdateThresholdRequest(IMBoosterEffects? effects, double brakeSignal, in MBoosterTelemetrySnapshot snap, ref EffectState st)
         {
-            double freqHz = ClampThresholdFreq(settings?.Threshold?.FrequencyHz ?? MBoosterUiConstants.ThresholdFreqMinHz);
-            double decay01 = Clamp01((settings?.Threshold?.DecayPct ?? 20) / 100.0);
+            double freqHz = ClampThresholdFreq(effects?.Threshold?.FrequencyHz ?? MBoosterUiConstants.ThresholdFreqMinHz);
+            double decay01 = Clamp01((effects?.Threshold?.DecayPct ?? 20) / 100.0);
             st.ThresholdDecayRequest01 = decay01;
-            double triggerLevel = Clamp01((settings?.Threshold?.TriggerLevelPct ?? MBoosterUiConstants.ThresholdTriggerMinPct) / 100.0);
+            double triggerLevel = Clamp01((effects?.Threshold?.TriggerLevelPct ?? MBoosterUiConstants.ThresholdTriggerMinPct) / 100.0);
             double releaseLevel = Math.Max(0, triggerLevel - 0.3);
 
             // Sustained test toggle shares the same rising-edge hysteresis
@@ -526,7 +599,7 @@ namespace MozaPlugin.Devices
             // below since only one of the two runs per tick.
             if (_thresholdTestSustained)
             {
-                double brakeT = EffectiveBrake(settings, snap);
+                double brakeT = brakeSignal;
                 if (!_thresholdLatched && brakeT > triggerLevel)
                     _thresholdLatched = true;
                 else if (_thresholdLatched && brakeT < releaseLevel)
@@ -538,13 +611,13 @@ namespace MozaPlugin.Devices
                     st.FreqHz = 0;
                     return;
                 }
-                double testScale = ((settings?.Threshold?.IntensityPct ?? 0) / 100.0) * ThresholdScaleMax;
+                double testScale = ((effects?.Threshold?.IntensityPct ?? 0) / 100.0) * ThresholdScaleMax;
                 st.IntensityRequest = Clamp01(brakeT * testScale);
                 st.FreqHz = freqHz;
                 return;
             }
 
-            if (settings?.Threshold == null || !settings.Threshold.Enabled)
+            if (effects?.Threshold == null || !effects.Threshold.Enabled)
             {
                 st.IntensityRequest = 0;
                 st.FreqHz = 0;
@@ -565,7 +638,7 @@ namespace MozaPlugin.Devices
                 return;
             }
             st.FreqHz = freqHz;
-            double thresholdScale = (settings.Threshold.IntensityPct / 100.0) * ThresholdScaleMax;
+            double thresholdScale = (effects.Threshold.IntensityPct / 100.0) * ThresholdScaleMax;
             st.IntensityRequest = Clamp01(brake * thresholdScale);
         }
 
@@ -609,7 +682,7 @@ namespace MozaPlugin.Devices
         private const double RoadTextureBumpDecayTau = 0.15;
         private static readonly double RoadTextureBumpDecayPerTick = Math.Exp(-TickPeriodSec / RoadTextureBumpDecayTau);
 
-        private void UpdateRoadTextureRequest(MBoosterDeviceSettings? settings, in MBoosterTelemetrySnapshot snap, ref EffectState st)
+        private void UpdateRoadTextureRequest(IMBoosterEffects? effects, in MBoosterTelemetrySnapshot snap, ref EffectState st)
         {
             if (_roadTextureTestSustained)
             {
@@ -617,7 +690,7 @@ namespace MozaPlugin.Devices
                 st.RoadTextureRoughness01 = 1;
                 return;
             }
-            bool active = settings?.RoadTexture != null && settings.RoadTexture.Enabled
+            bool active = effects?.RoadTexture != null && effects.RoadTexture.Enabled
                 && snap.GameRunning && snap.VehicleSpeedMs > 0.5;
             if (!active)
             {
@@ -757,7 +830,7 @@ namespace MozaPlugin.Devices
             if (!wantActive && st.Active)
             {
                 // Deactivation edge: emit one disable frame and go silent.
-                _device.SendOneShot(MozaMBoosterProtocol.BuildDisableFrame(id));
+                _device.SendOneShot(MozaMBoosterProtocol.BuildDisableFrame(id, _targetDevice));
                 st.Active = false;
                 st.PhaseRad = 0;
                 st.ElapsedSec = 0;
@@ -796,8 +869,8 @@ namespace MozaPlugin.Devices
             ushort freqU16 = MozaMBoosterProtocol.EncodeFreq(st.FreqHz);
             ushort ampU16 = MozaMBoosterProtocol.EncodeAmp(amp01);
 
-            var frame = MozaMBoosterProtocol.BuildMotorFrame(id, enable: true, param1, freqU16, ampU16);
-            _device.SendMotorStream(frame);
+            var frame = MozaMBoosterProtocol.BuildMotorFrame(id, enable: true, param1, freqU16, ampU16, _targetDevice);
+            SendMotor(frame);
         }
 
         /// <summary>
@@ -822,14 +895,14 @@ namespace MozaPlugin.Devices
         /// by that same envelope (<see cref="EffectState.RoadTextureRoughness01"/>)
         /// every tick.
         /// </summary>
-        private void ProcessRoadTextureEffect(MBoosterDeviceSettings? settings, ref EffectState st)
+        private void ProcessRoadTextureEffect(IMBoosterEffects? effects, ref EffectState st)
         {
             const MBoosterEffectId id = MBoosterEffectId.RoadTexture;
             bool wantActive = st.IntensityRequest > 0;
 
             if (!wantActive && st.Active)
             {
-                _device.SendOneShot(MozaMBoosterProtocol.BuildDisableFrame(id));
+                _device.SendOneShot(MozaMBoosterProtocol.BuildDisableFrame(id, _targetDevice));
                 st.Active = false;
                 st.ElapsedSec = 0;
                 return;
@@ -847,12 +920,12 @@ namespace MozaPlugin.Devices
             if (noise < -1) noise = -1; else if (noise > 1) noise = 1;
             short noiseSample = (short)Math.Round(noise * short.MaxValue);
             ushort noiseRaw = unchecked((ushort)noiseSample);
-            double effectiveIntensityPct = (settings?.RoadTexture?.IntensityPct ?? 0) * st.RoadTextureRoughness01;
+            double effectiveIntensityPct = (effects?.RoadTexture?.IntensityPct ?? 0) * st.RoadTextureRoughness01;
             ushort intensityRaw = MozaMBoosterProtocol.EncodeRoadTextureLevel(effectiveIntensityPct);
-            ushort smoothnessRaw = MozaMBoosterProtocol.EncodeRoadTextureLevel(settings?.RoadTexture?.SmoothnessPct ?? 0);
+            ushort smoothnessRaw = MozaMBoosterProtocol.EncodeRoadTextureLevel(effects?.RoadTexture?.SmoothnessPct ?? 0);
 
-            var frame = MozaMBoosterProtocol.BuildRoadTextureFrame(true, intensityRaw, smoothnessRaw, noiseRaw);
-            _device.SendMotorStream(frame);
+            var frame = MozaMBoosterProtocol.BuildRoadTextureFrame(true, intensityRaw, smoothnessRaw, noiseRaw, _targetDevice);
+            SendMotor(frame);
         }
 
         /// <summary>
@@ -866,9 +939,9 @@ namespace MozaPlugin.Devices
         /// same "always send a disable frame on removal" rule every other
         /// effect follows so the last-active waveform can't latch.
         /// </summary>
-        private void UpdateAndProcessCustomEffects(MBoosterDeviceSettings? settings)
+        private void UpdateAndProcessCustomEffects(IMBoosterEffects? effects)
         {
-            var list = settings?.CustomEffects;
+            var list = effects?.CustomEffects;
 
             if (_customEffectStates.Count > 0)
             {
@@ -890,7 +963,7 @@ namespace MozaPlugin.Devices
                     foreach (var key in stale)
                     {
                         if (_customEffectStates[key].Active)
-                            _device.SendOneShot(MozaMBoosterProtocol.BuildDisableFrame(MBoosterEffectId.Engine));
+                            _device.SendOneShot(MozaMBoosterProtocol.BuildDisableFrame(MBoosterEffectId.Engine, _targetDevice));
                         _customEffectStates.Remove(key);
                         // Also drop a lingering test-toggle flag for a deleted
                         // effect — otherwise a stale UI row's forgotten Test
@@ -984,7 +1057,7 @@ namespace MozaPlugin.Devices
 
             if (!wantActive && st.Active)
             {
-                _device.SendOneShot(MozaMBoosterProtocol.BuildDisableFrame(id));
+                _device.SendOneShot(MozaMBoosterProtocol.BuildDisableFrame(id, _targetDevice));
                 st.Active = false;
                 st.PhaseRad = 0;
                 st.ElapsedSec = 0;
@@ -1010,8 +1083,8 @@ namespace MozaPlugin.Devices
             ushort freqU16 = MozaMBoosterProtocol.EncodeFreq(st.FreqHz);
             ushort ampU16 = MozaMBoosterProtocol.EncodeAmp(amp01);
 
-            var frame = MozaMBoosterProtocol.BuildMotorFrame(id, enable: true, param1, freqU16, ampU16);
-            _device.SendMotorStream(frame);
+            var frame = MozaMBoosterProtocol.BuildMotorFrame(id, enable: true, param1, freqU16, ampU16, _targetDevice);
+            SendMotor(frame);
         }
 
         // ===== Helpers ====================================================
@@ -1022,12 +1095,12 @@ namespace MozaPlugin.Devices
         /// own HID pedal position when its role is Brake — so the user can feel
         /// brake-modulated test pulses even with no game running.
         /// </summary>
-        private double EffectiveBrake(MBoosterDeviceSettings? settings, in MBoosterTelemetrySnapshot snap)
+        private double EffectiveBrake(MBoosterRole role, in MBoosterTelemetrySnapshot snap)
         {
             double b = Clamp01(snap.Brake);
-            if (settings?.Role == MBoosterRole.Brake)
+            if (role == MBoosterRole.Brake)
             {
-                double hid = Clamp01(_device.LastHidPosition);
+                double hid = Clamp01(PedalHid());
                 if (hid > b) b = hid;
             }
             return b;

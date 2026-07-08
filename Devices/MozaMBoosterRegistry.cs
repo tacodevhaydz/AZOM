@@ -42,6 +42,7 @@ namespace MozaPlugin.Devices
         private readonly Func<bool> _isShuttingDown;
         private readonly Action<MBoosterDeviceController>? _onDeviceDetectedEdge;
         private readonly Func<string, double> _customEffectFormulaEvaluator;
+        private readonly Action<string, string>? _onSerialResolved;
 
         // Collision logging — emit at most one warning per (role, identity-tail)
         // combo per session to avoid spam.
@@ -80,13 +81,15 @@ namespace MozaPlugin.Devices
             Func<string, MBoosterDeviceSettings?> settingsLookup,
             Func<bool> isShuttingDown,
             Action<MBoosterDeviceController>? onDeviceDetectedEdge = null,
-            Func<string, double>? customEffectFormulaEvaluator = null)
+            Func<string, double>? customEffectFormulaEvaluator = null,
+            Action<string, string>? onSerialResolved = null)
         {
             _data = data ?? throw new ArgumentNullException(nameof(data));
             _settingsLookup = settingsLookup ?? throw new ArgumentNullException(nameof(settingsLookup));
             _isShuttingDown = isShuttingDown ?? (() => false);
             _onDeviceDetectedEdge = onDeviceDetectedEdge;
             _customEffectFormulaEvaluator = customEffectFormulaEvaluator ?? (_ => 0.0);
+            _onSerialResolved = onSerialResolved;
         }
 
         /// <summary>
@@ -134,6 +137,14 @@ namespace MozaPlugin.Devices
                     // Wire rising-edge detection to the plugin-level handler
                     // (applies profile, reads calibration, etc.).
                     c.DetectedRisingEdge += () => OnControllerDetected(c);
+                    // Forward the serial-interrogation result so the plugin can
+                    // re-key per-device settings from the transport identity to
+                    // the stable serial (settings follow the physical unit).
+                    c.SerialResolved += (id, ser) =>
+                    {
+                        try { _onSerialResolved?.Invoke(id, ser); }
+                        catch (Exception ex) { MozaLog.Debug($"[AZOM/mBooster] OnSerialResolved: {ex.Message}"); }
+                    };
                     _byIdentity[kvp.Key] = c;
                     _order.Add(c);
                     (added ??= new List<MBoosterDeviceController>()).Add(c);
@@ -685,10 +696,13 @@ namespace MozaPlugin.Devices
         /// (<see cref="MBoosterDeviceSettings.AxisRoles"/>, set by the UI when
         /// the user remaps) always wins. Otherwise: a single-axis device uses
         /// the legacy <see cref="MBoosterDeviceSettings.Role"/> (exact backward
-        /// compat); a multi-pedal chain defaults to [Brake, Throttle, Clutch]
-        /// by axis order — a guess, since the physical axis→pedal wiring isn't
-        /// reported (axis 0 = the master unit, usually the load-cell brake).
-        /// The user remaps via the UI if the order is wrong.
+        /// compat); a multi-pedal chain defaults by axis order to
+        /// [Throttle, Brake, Clutch]. That order is the standard Moza pedal
+        /// usage convention — real hardware (support bundle 2026-07-07) exposes
+        /// the chain's pedals as GenericDesktop axes Rx(0x33)/Ry(0x34)/Rz(0x35),
+        /// which ascending-sorted give index 0/1/2, and Moza maps Rx→throttle,
+        /// Ry→brake, Rz→clutch (see MozaHidClass.Pedals). The user remaps via
+        /// the UI if a given unit's wiring differs.
         /// </summary>
         internal static MBoosterRole ResolveAxisRole(MBoosterDeviceSettings? s, int axisIndex, int axisCount)
         {
@@ -699,9 +713,9 @@ namespace MozaPlugin.Devices
                 return s?.Role ?? MBoosterRole.Disabled;
             switch (axisIndex)
             {
-                case 0:  return MBoosterRole.Brake;
-                case 1:  return MBoosterRole.Throttle;
-                case 2:  return MBoosterRole.Clutch;
+                case 0:  return MBoosterRole.Throttle;  // Rx (0x33)
+                case 1:  return MBoosterRole.Brake;     // Ry (0x34)
+                case 2:  return MBoosterRole.Clutch;    // Rz (0x35)
                 default: return MBoosterRole.Disabled;
             }
         }

@@ -670,4 +670,9 @@ Id: {2}</value></data>
   <data name="Button_AddCustomEffect" xml:space="preserve"><value>+ Προσθήκη προσαρμοσμένου εφέ</value></data>
   <data name="Button_DeleteCustomEffect" xml:space="preserve"><value>Διαγραφή εφέ</value></data>
   <data name="DefaultName_CustomEffect" xml:space="preserve"><value>Προσαρμοσμένο εφέ</value></data>
+  <data name="Section_PedalRoles" xml:space="preserve"><value>Ρόλοι πεντάλ</value></data>
+  <data name="Label_PedalAxis" xml:space="preserve"><value>Πεντάλ {0}</value></data>
+  <data name="Hint_MBoosterAxisRoles" xml:space="preserve"><value>Αυτό το mBooster φιλοξενεί περισσότερα από ένα πεντάλ σε μία σύνδεση. Αντιστοιχίστε κάθε ανιχνευμένο άξονα σε μια είσοδο παιχνιδιού. Η προεπιλεγμένη σειρά ακολουθεί τη διάταξη Rx/Ry/Rz της Moza (γκάζι/φρένο/συμπλέκτης) — επαναντιστοιχίστε εδώ αν ένα πεντάλ οδηγεί λάθος είσοδο.</value></data>
+  <data name="Label_EffectsForPedal" xml:space="preserve"><value>Effects for pedal:</value></data>
+  <data name="Note_PassivePedalNoEffects" xml:space="preserve"><value>This pedal is passive (no motor) — vibration effects don't apply.</value></data>
 </root>

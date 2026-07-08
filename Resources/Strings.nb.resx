@@ -676,4 +676,9 @@ Id: {2}</value></data>
   <data name="Button_AddCustomEffect" xml:space="preserve"><value>+ Legg til egendefinert effekt</value></data>
   <data name="Button_DeleteCustomEffect" xml:space="preserve"><value>Slett effekt</value></data>
   <data name="DefaultName_CustomEffect" xml:space="preserve"><value>Egendefinert effekt</value></data>
+  <data name="Section_PedalRoles" xml:space="preserve"><value>Pedalroller</value></data>
+  <data name="Label_PedalAxis" xml:space="preserve"><value>Pedal {0}</value></data>
+  <data name="Hint_MBoosterAxisRoles" xml:space="preserve"><value>Denne mBooster er vert for mer enn ett pedal på én tilkobling. Tildel hver oppdaget akse til en spillinngang. Standardrekkefølgen følger Mozas Rx/Ry/Rz-oppsett (gass/brems/clutch) — tilordne på nytt her hvis et pedal styrer feil inngang.</value></data>
+  <data name="Label_EffectsForPedal" xml:space="preserve"><value>Effects for pedal:</value></data>
+  <data name="Note_PassivePedalNoEffects" xml:space="preserve"><value>This pedal is passive (no motor) — vibration effects don't apply.</value></data>
 </root>

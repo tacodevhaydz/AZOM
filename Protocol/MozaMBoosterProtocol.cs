@@ -78,14 +78,18 @@ namespace MozaPlugin.Protocol
             bool enable,
             byte param1,
             ushort freqU16,
-            ushort ampU16)
+            ushort ampU16,
+            byte device = DeviceMotor)
         {
             // 14 bytes total: start + len + group + device + 9 payload + checksum.
+            // <paramref name="device"/> selects WHICH pedal's motor on a chained
+            // mBooster — capture-verified the chain exposes motors at device ids
+            // 0x12 (host) / 0x1d / 0x1e (PitHouse keepalives all three).
             var frame = new byte[14];
             frame[0]  = MozaProtocol.MessageStart;
             frame[1]  = MotorPayloadLen;        // 0x09
             frame[2]  = GroupMotorWrite;        // 0x24
-            frame[3]  = DeviceMotor;            // 0x12
+            frame[3]  = device;                 // 0x12 host / 0x1d / 0x1e chained
             frame[4]  = CmdMotorWrite;          // 0xb1
             frame[5]  = (byte)effect;
             frame[6]  = enable ? (byte)1 : (byte)0;
@@ -108,8 +112,8 @@ namespace MozaPlugin.Protocol
         /// zeroing every field produces the exact same bytes either way, and
         /// this matches the real disable frame observed in capture.
         /// </summary>
-        public static byte[] BuildDisableFrame(MBoosterEffectId effect)
-            => BuildMotorFrame(effect, enable: false, param1: 0, freqU16: 0, ampU16: 0);
+        public static byte[] BuildDisableFrame(MBoosterEffectId effect, byte device = DeviceMotor)
+            => BuildMotorFrame(effect, enable: false, param1: 0, freqU16: 0, ampU16: 0, device);
 
         /// <summary>
         /// Build the motor-write frame for Road Texture (effect type 9) — a
@@ -137,13 +141,13 @@ namespace MozaPlugin.Protocol
         /// than Pit House pre-scaling it. See
         /// <see cref="MBoosterEffectSynthesizer.SynthesizeRoadTextureNoise"/>.
         /// </summary>
-        public static byte[] BuildRoadTextureFrame(bool enable, ushort intensityRaw, ushort smoothnessRaw, ushort noiseRaw)
+        public static byte[] BuildRoadTextureFrame(bool enable, ushort intensityRaw, ushort smoothnessRaw, ushort noiseRaw, byte device = DeviceMotor)
         {
             var frame = new byte[14];
             frame[0]  = MozaProtocol.MessageStart;
             frame[1]  = MotorPayloadLen;
             frame[2]  = GroupMotorWrite;
-            frame[3]  = DeviceMotor;
+            frame[3]  = device;
             frame[4]  = CmdMotorWrite;
             frame[5]  = (byte)MBoosterEffectId.RoadTexture;
             frame[6]  = enable ? (byte)1 : (byte)0;
@@ -163,18 +167,28 @@ namespace MozaPlugin.Protocol
         /// is open. If we stop sending it the motor will eventually drop connection
         /// state and may stop responding to writes until the link is re-established.
         /// </summary>
-        public static byte[] BuildKeepalive()
+        public static byte[] BuildKeepalive(byte device = DeviceMotor)
         {
             var frame = new byte[5];
             frame[0] = MozaProtocol.MessageStart;
             frame[1] = 0x00;
             frame[2] = 0x00;
-            frame[3] = DeviceMotor;
+            frame[3] = device;
             frame[4] = MozaProtocol.CalculateWireChecksum(frame, 4);
-            // CalculateWireChecksum yields 0x9d for this keepalive body
-            // (protocol note § 3 keepalive).
+            // CalculateWireChecksum yields 0x9d for device 0x12, 0xa8 for 0x1d,
+            // 0xa9 for 0x1e — the three motor device ids a chained mBooster
+            // exposes (all keepalived by PitHouse; capture-verified).
             return frame;
         }
+
+        /// <summary>
+        /// The motor/keepalive device ids a chained mBooster exposes — host at
+        /// 0x12 plus two chain ports at 0x1d/0x1e. Capture-verified: PitHouse
+        /// keepalives all three every ~500 ms, and effect (cmd 0xb1) frames are
+        /// addressed to the specific pedal's device id. See
+        /// docs/protocol/devices/mbooster.md.
+        /// </summary>
+        public static readonly byte[] MotorDeviceIds = { 0x12, 0x1d, 0x1e };
 
         // Encoders ----------------------------------------------------------
 
