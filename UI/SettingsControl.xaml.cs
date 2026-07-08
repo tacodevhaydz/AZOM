@@ -2504,6 +2504,13 @@ namespace MozaPlugin
         private int _mboosterAxisListCount = -1;
         private string? _mboosterAxisListConnected;
 
+        // Same rebuild-guard signature for the "Configure pedal" combo, so it
+        // repopulates on the SAME cadence as the roles panel above and their
+        // "Pedal N" numbering can't drift out of sync.
+        private string? _mboosterEffectComboIdentity;
+        private int _mboosterEffectComboCount = -1;
+        private string? _mboosterEffectComboConnected;
+
         private void RefreshMBoosterTab()
         {
             var registry = _plugin?.MBoosterRegistry;
@@ -2572,6 +2579,10 @@ namespace MozaPlugin
             // refresh (outside the seed-once gate) so it appears as soon as the
             // HID reports the lane's axis count, which can lag the CDC detect.
             PopulateMBoosterAxisRoles(selected);
+            // The "Configure pedal" combo shares the same every-refresh + guard
+            // cadence so its "Pedal N" numbering stays locked to the roles panel
+            // above (both walk the connected axes identically).
+            PopulateMBoosterEffectPedalCombo(selected);
 
             // Live position marker (on the curve editors) is updated at
             // 30 Hz from UpdateHidInputDisplays (UpdateMBoosterCurveMarkers)
@@ -2597,12 +2608,12 @@ namespace MozaPlugin
             {
                 SetMBoosterRoleCombo(s.Role);
                 MBoosterDisplayNameBox.Text = s.DisplayName ?? "";
-                // Effects are per-pedal now — reset to the master pedal on a
-                // device (re)seed, populate the effects-pedal combo, and seed the
-                // effect cards from whichever pedal is selected. (Test toggles are
-                // never persisted; SeedMBoosterEffectControls always clears them.)
-                _mboosterEffectPedalIndex = 0;
-                PopulateMBoosterEffectPedalCombo(selected);
+                // The "Configure pedal" combo + _mboosterEffectPedalIndex are
+                // maintained by PopulateMBoosterEffectPedalCombo (called every
+                // refresh above), which resets to the master pedal on a device
+                // change — so here we just seed whichever pedal it settled on.
+                // (Test toggles are never persisted; SeedMBoosterEffectControls
+                // always clears them.)
                 SeedMBoosterEffectControls(PeekMBoosterEffectTarget());
                 UpdateMBoosterEffectPassiveState();
                 UpdateMBoosterConfigVisibilityForRole();
@@ -3125,26 +3136,59 @@ namespace MozaPlugin
             var connected = controller?.ConnectedAxes;
             bool multi = axisCount > 1;
 
+            // Visibility every call (cheap). Items rebuild ONLY when the device /
+            // axis count / connectivity changes — otherwise a per-refresh rebuild
+            // would reset the user's selection every tick, and the numbering uses
+            // the EXACT same connected-axis walk as PopulateMBoosterAxisRoles so
+            // the two "Pedal N" lists always agree.
             MBoosterEffectPedalPanel.Visibility = multi ? Visibility.Visible : Visibility.Collapsed;
-            MBoosterEffectPedalCombo.Items.Clear();
-            if (!multi) return;
 
-            int shown = 0;
-            for (int i = 0; i < axisCount && i < MBoosterDeviceController.MaxAxes; i++)
+            string connSig = "";
+            if (connected != null)
             {
-                if (connected != null && i < connected.Length && !connected[i]) continue;
-                MBoosterEffectPedalCombo.Items.Add(new ComboBoxItem
-                {
-                    Content = string.Format(Strings.Label_PedalAxis, ++shown),
-                    Tag = i,
-                });
+                var cbuf = new char[connected.Length];
+                for (int k = 0; k < connected.Length; k++) cbuf[k] = connected[k] ? '1' : '0';
+                connSig = new string(cbuf);
             }
-            if (_mboosterEffectPedalIndex < 0) _mboosterEffectPedalIndex = 0;
-            int sel = 0;
-            for (int k = 0; k < MBoosterEffectPedalCombo.Items.Count; k++)
-                if (MBoosterEffectPedalCombo.Items[k] is ComboBoxItem it && it.Tag is int t && t == _mboosterEffectPedalIndex)
-                { sel = k; break; }
-            if (MBoosterEffectPedalCombo.Items.Count > 0) MBoosterEffectPedalCombo.SelectedIndex = sel;
+            bool identityChanged = !string.Equals(controller?.Identity, _mboosterEffectComboIdentity, StringComparison.OrdinalIgnoreCase);
+            if (!identityChanged
+                && axisCount == _mboosterEffectComboCount
+                && string.Equals(connSig, _mboosterEffectComboConnected, StringComparison.Ordinal))
+                return;
+            _mboosterEffectComboIdentity = controller?.Identity;
+            _mboosterEffectComboCount = axisCount;
+            _mboosterEffectComboConnected = connSig;
+
+            // A different device → start at the master pedal, mirroring the seed.
+            if (identityChanged) _mboosterEffectPedalIndex = 0;
+
+            using (_suppressor.Begin())
+            {
+                MBoosterEffectPedalCombo.Items.Clear();
+                if (!multi) return;
+                int shown = 0;
+                for (int i = 0; i < axisCount && i < MBoosterDeviceController.MaxAxes; i++)
+                {
+                    if (connected != null && i < connected.Length && !connected[i]) continue;
+                    MBoosterEffectPedalCombo.Items.Add(new ComboBoxItem
+                    {
+                        Content = string.Format(Strings.Label_PedalAxis, ++shown),
+                        Tag = i,
+                    });
+                }
+                // Select the item for the current pedal; if that axis is gone,
+                // fall back to the first and re-home the index there.
+                int sel = -1;
+                for (int k = 0; k < MBoosterEffectPedalCombo.Items.Count; k++)
+                    if (MBoosterEffectPedalCombo.Items[k] is ComboBoxItem it && it.Tag is int t && t == _mboosterEffectPedalIndex)
+                    { sel = k; break; }
+                if (sel < 0 && MBoosterEffectPedalCombo.Items.Count > 0)
+                {
+                    sel = 0;
+                    if (MBoosterEffectPedalCombo.Items[0] is ComboBoxItem f && f.Tag is int ft) _mboosterEffectPedalIndex = ft;
+                }
+                if (sel >= 0) MBoosterEffectPedalCombo.SelectedIndex = sel;
+            }
         }
 
         /// <summary>
