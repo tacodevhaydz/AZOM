@@ -256,31 +256,75 @@ namespace MozaPlugin
     }
 
     /// <summary>
-    /// Wheelbase "low-frequency effects" (LFE) — the complex gearshift vibration,
-    /// continuous engine vibration, and ABS effect available on base firmware
-    /// >= 1.2.10.10 (see MozaData.BaseSupportsLfe). All three are HOST-RENDERED
-    /// streams (cmd 0x2D/0x77, see MozaBaseLfeProtocol / BaseLfeEffectWorker) —
-    /// like AB9 engine vibration and mBooster effects, they do NOT round-trip as
-    /// stored device settings, so these fields drive the plugin's host-side
-    /// stream generator only (no MozaData field, no command-DB write, no probe).
+    /// One wheelbase LFE channel (Engine / ABS / Gearshift). Each of the four
+    /// parameters is dual-mode: a static slider value, OR an NCalc/property
+    /// formula that overrides it (empty formula → slider). The formula is a bare
+    /// SimHub property path or an NCalc/js: expression, evaluated live per tick
+    /// via the same resolver the channel-mapper uses. The "trigger" gates the
+    /// channel: non-zero = active (level, for Engine/ABS) or fires a burst on
+    /// change (edge, for Gearshift). See BaseLfeEffectWorker.
+    /// </summary>
+    public sealed class BaseLfeChannel
+    {
+        public bool Enabled { get; set; } = false;
+
+        // Trigger: pre-filled with the natural data source. Non-zero → active.
+        public string TriggerFormula { get; set; } = "";
+
+        // Frequency (Hz). Slider clamped to the UI range; a formula is sent
+        // unclamped (the wire encoder saturates the freq field at 200 Hz).
+        public float Frequency { get; set; } = 50;
+        public string FrequencyFormula { get; set; } = "";
+
+        // Intensity (0..100 %).
+        public int Intensity { get; set; } = 50;
+        public string IntensityFormula { get; set; } = "";
+
+        // Smoothness (0..100): 100 = steady amplitude, 0 = full-swing pulse.
+        public int Smoothness { get; set; } = 100;
+        public string SmoothnessFormula { get; set; } = "";
+
+        public BaseLfeChannel Clone() => new BaseLfeChannel
+        {
+            Enabled = Enabled,
+            TriggerFormula = TriggerFormula,
+            Frequency = Frequency,
+            FrequencyFormula = FrequencyFormula,
+            Intensity = Intensity,
+            IntensityFormula = IntensityFormula,
+            Smoothness = Smoothness,
+            SmoothnessFormula = SmoothnessFormula,
+        };
+    }
+
+    /// <summary>
+    /// Wheelbase "low-frequency effects" (LFE) — Engine, ABS, and complex
+    /// Gearshift vibration, available on base firmware >= 1.2.10.10 (see
+    /// MozaData.BaseSupportsLfe). HOST-RENDERED streams (cmd 0x2D/0x77, see
+    /// MozaBaseLfeProtocol / BaseLfeEffectWorker) — no device round-trip.
     ///
-    /// Reuses <see cref="MBoosterEffectSettings"/> (Enabled / IntensityPct /
-    /// FrequencyHz / SmoothnessPct) per effect. Frequency semantics:
-    /// - Engine: redline frequency (buzz pitch at max RPM; scales down with RPM).
-    /// - ABS: fixed carrier; intensity is host-pulse-modulated.
-    /// - Gearshift: buzz pitch of the per-shift burst.
+    /// Each channel exposes trigger + frequency + intensity + smoothness, each a
+    /// slider OR a formula. The default formulas reproduce the built-in behavior
+    /// (engine tracks RPM, ABS pulses on ABSActive, gearshift fires on gear
+    /// change) but are fully editable.
     /// </summary>
     public sealed class BaseLfeSettings
     {
-        public MBoosterEffectSettings Engine    { get; set; } = new MBoosterEffectSettings { FrequencyHz = 100, IntensityPct = 50 };
-        public MBoosterEffectSettings Abs       { get; set; } = new MBoosterEffectSettings { FrequencyHz = 15, IntensityPct = 50, SmoothnessPct = 100 };
-        public MBoosterEffectSettings Gearshift { get; set; } = new MBoosterEffectSettings { FrequencyHz = 40, IntensityPct = 100 };
+        // Default trigger/frequency formulas — the "vary it" formula is exposed,
+        // not hidden. Editable; empty falls back to the slider.
+        public const string EngineTrigger = "[DataCorePlugin.GameData.Rpms]";
+        public const string EngineFrequency = "[DataCorePlugin.GameData.Rpms] / [DataCorePlugin.GameData.MaxRpm] * 100";
+        public const string AbsTrigger = "[DataCorePlugin.GameData.ABSActive]";
+        public const string GearshiftTrigger = "[DataCorePlugin.GameData.Gear]";
 
-        // Complex-gearshift event tuning — mirrors the classic wheelbase
-        // GearshiftVibrateOnNeutral / GearshiftDebounceMs, but applies to the
-        // LFE gearshift path (cmd 0x77) which replaces the classic 0x76 event
-        // on LFE-capable firmware. Kept separate so the two paths never share a
-        // debounce latch.
+        public BaseLfeChannel Engine { get; set; } = new BaseLfeChannel
+        { Frequency = 100, Intensity = 50, Smoothness = 100, TriggerFormula = EngineTrigger, FrequencyFormula = EngineFrequency };
+        public BaseLfeChannel Abs { get; set; } = new BaseLfeChannel
+        { Frequency = 15, Intensity = 50, Smoothness = 40, TriggerFormula = AbsTrigger };
+        public BaseLfeChannel Gearshift { get; set; } = new BaseLfeChannel
+        { Frequency = 40, Intensity = 100, Smoothness = 100, TriggerFormula = GearshiftTrigger };
+
+        // Complex-gearshift event tuning (edge-trigger refinements).
         public bool GearshiftVibrateOnNeutral { get; set; } = false;
         public int GearshiftDebounceMs { get; set; } = 500;
 
@@ -288,9 +332,9 @@ namespace MozaPlugin
         {
             return new BaseLfeSettings
             {
-                Engine = Engine?.Clone() ?? new MBoosterEffectSettings(),
-                Abs = Abs?.Clone() ?? new MBoosterEffectSettings(),
-                Gearshift = Gearshift?.Clone() ?? new MBoosterEffectSettings(),
+                Engine = Engine?.Clone() ?? new BaseLfeChannel(),
+                Abs = Abs?.Clone() ?? new BaseLfeChannel(),
+                Gearshift = Gearshift?.Clone() ?? new BaseLfeChannel(),
                 GearshiftVibrateOnNeutral = GearshiftVibrateOnNeutral,
                 GearshiftDebounceMs = GearshiftDebounceMs,
             };

@@ -470,40 +470,43 @@ namespace MozaPlugin
         // Only valid on the base primary connection (base == primary pipe).
         // ============================================================
 
-        public bool SendBaseLfeEngineStream(bool playing, double freqHz, int intensityPct)
+        // freqHz is sent unclamped (EncodeFreq saturates the wire field at 200 Hz;
+        // EncodePeriod carries higher rates). amp01 is the already-enveloped
+        // amplitude (0..1) the worker computed from intensity × smoothness.
+        public bool SendBaseLfeEngineStream(bool playing, double freqHz, double amp01)
         {
             if (!_connection.IsConnected) return false;
             var f = MozaBaseLfeProtocol.BuildFrame(
                 MozaBaseLfeProtocol.LfeEffect.Engine, playing,
                 MozaBaseLfeProtocol.EncodePeriod(MozaBaseLfeProtocol.ParamKEngine, freqHz),
                 MozaMBoosterProtocol.EncodeFreq(freqHz),
-                MozaMBoosterProtocol.EncodeAmp(intensityPct / 100.0));
+                MozaMBoosterProtocol.EncodeAmp(amp01));
             _connection.SendStream(StreamKind.BaseLfeEngine, f);
             return true;
         }
 
-        public bool SendBaseLfeAbsStream(bool playing, double freqHz, double intensity01)
+        public bool SendBaseLfeAbsStream(bool playing, double freqHz, double amp01)
         {
             if (!_connection.IsConnected) return false;
             var f = MozaBaseLfeProtocol.BuildFrame(
                 MozaBaseLfeProtocol.LfeEffect.Abs, playing,
                 MozaBaseLfeProtocol.EncodePeriod(MozaBaseLfeProtocol.ParamKAbs, freqHz),
                 MozaMBoosterProtocol.EncodeFreq(freqHz),
-                MozaMBoosterProtocol.EncodeAmp(intensity01));
+                MozaMBoosterProtocol.EncodeAmp(amp01));
             _connection.SendStream(StreamKind.BaseLfeAbs, f);
             return true;
         }
 
-        public bool SendBaseLfeGearshiftBurst(double freqHz, int intensityPct)
+        public bool SendBaseLfeGearshiftBurst(double freqHz, double amp01)
         {
             if (!_connection.IsConnected) return false;
-            // Gearshift is event-driven: fixed placeholder period, freq+intensity
-            // from the sliders, play flag set. One-shot FIFO (not coalesced).
+            // Gearshift burst: fixed placeholder period, freq+amplitude from the
+            // channel. One-shot FIFO (not coalesced).
             var f = MozaBaseLfeProtocol.BuildFrame(
                 MozaBaseLfeProtocol.LfeEffect.Gearshift, playing: true,
                 MozaBaseLfeProtocol.GearshiftPeriod,
                 MozaMBoosterProtocol.EncodeFreq(freqHz),
-                MozaMBoosterProtocol.EncodeAmp(intensityPct / 100.0));
+                MozaMBoosterProtocol.EncodeAmp(amp01));
             _connection.Send(f);
             return true;
         }

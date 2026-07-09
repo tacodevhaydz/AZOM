@@ -693,4 +693,5 @@ Id: {2}</value></data>
   <data name="ShifterColor_Purple" xml:space="preserve"><value>Μωβ</value></data>
   <data name="ShifterColor_White" xml:space="preserve"><value>Λευκό</value></data>
   <data name="Section_WheelbaseLfe" xml:space="preserve"><value>ΕΦΕ ΔΟΝΗΣΗΣ ΒΑΣΗΣ</value></data>
+  <data name="SliderLabel_Trigger" xml:space="preserve"><value>Έναυσμα</value></data>
 </root>

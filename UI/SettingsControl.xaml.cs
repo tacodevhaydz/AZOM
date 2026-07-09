@@ -648,36 +648,36 @@ namespace MozaPlugin
         }
 
         // ===== Wheelbase LFE effects (base fw >= 1.2.10.10) =====
-        // Profile-tier host-rendered effects — mutate BaseLfeSettings and Save;
-        // no WriteIf* device write (the BaseLfeEffectWorker reads the profile).
-        // Enable/slider values persist; Test toggles drive the worker directly.
+        // Profile-tier host-rendered effects — mutate BaseLfeSettings and Save.
+        // Each parameter is dual-mode: a slider, or an NCalc/property formula
+        // (ƒₓ) that overrides it. A set formula disables the slider and shows "ƒₓ".
 
         private void SeedBaseLfeControls(BaseLfeSettings? fx)
         {
-            var eng = fx?.Engine;
-            BaseLfeEngineEnable.IsChecked = eng?.Enabled ?? false;
-            BaseLfeEngineFrequencySlider.Value = Clamp(eng?.FrequencyHz ?? 100, 60, 100);
-            SetValueText(BaseLfeEngineFrequencyValue, ((int)BaseLfeEngineFrequencySlider.Value).ToString());
-            BaseLfeEngineIntensity.Value = Clamp(eng?.IntensityPct ?? 50, 0, 100);
-            SetValueText(BaseLfeEngineIntensityValue, ((int)BaseLfeEngineIntensity.Value).ToString());
+            fx ??= new BaseLfeSettings();
+            var eng = fx.Engine ?? new BaseLfeChannel();
+            var ab = fx.Abs ?? new BaseLfeChannel();
+            var gs = fx.Gearshift ?? new BaseLfeChannel();
 
-            var ab = fx?.Abs;
-            BaseLfeAbsEnable.IsChecked = ab?.Enabled ?? false;
-            BaseLfeAbsFrequencySlider.Value = Clamp(ab?.FrequencyHz ?? 15, 5, 30);
-            SetValueText(BaseLfeAbsFrequencyValue, ((int)BaseLfeAbsFrequencySlider.Value).ToString());
-            BaseLfeAbsIntensity.Value = Clamp(ab?.IntensityPct ?? 50, 0, 100);
-            SetValueText(BaseLfeAbsIntensityValue, ((int)BaseLfeAbsIntensity.Value).ToString());
-            BaseLfeAbsSmoothness.Value = Clamp(ab?.SmoothnessPct ?? 100, 0, 100);
-            SetValueText(BaseLfeAbsSmoothnessValue, ((int)BaseLfeAbsSmoothness.Value).ToString());
+            BaseLfeEngineEnable.IsChecked = eng.Enabled;
+            SeedLfeTrigger(BaseLfeEngineTriggerText, eng.TriggerFormula);
+            SeedLfeParam(BaseLfeEngineFrequencySlider, BaseLfeEngineFrequencyValue, eng.Frequency, eng.FrequencyFormula);
+            SeedLfeParam(BaseLfeEngineIntensity, BaseLfeEngineIntensityValue, eng.Intensity, eng.IntensityFormula);
+            SeedLfeParam(BaseLfeEngineSmoothness, BaseLfeEngineSmoothnessValue, eng.Smoothness, eng.SmoothnessFormula);
 
-            var gsx = fx?.Gearshift;
-            BaseLfeGearshiftEnable.IsChecked = gsx?.Enabled ?? false;
-            BaseLfeGearshiftFrequencySlider.Value = Clamp(gsx?.FrequencyHz ?? 40, 20, 100);
-            SetValueText(BaseLfeGearshiftFrequencyValue, ((int)BaseLfeGearshiftFrequencySlider.Value).ToString());
-            BaseLfeGearshiftIntensity.Value = Clamp(gsx?.IntensityPct ?? 100, 0, 100);
-            SetValueText(BaseLfeGearshiftIntensityValue, ((int)BaseLfeGearshiftIntensity.Value).ToString());
-            BaseLfeGearshiftVibrateOnNeutral.IsChecked = fx?.GearshiftVibrateOnNeutral ?? false;
-            int dbg = fx?.GearshiftDebounceMs ?? 500;
+            BaseLfeAbsEnable.IsChecked = ab.Enabled;
+            SeedLfeTrigger(BaseLfeAbsTriggerText, ab.TriggerFormula);
+            SeedLfeParam(BaseLfeAbsFrequencySlider, BaseLfeAbsFrequencyValue, ab.Frequency, ab.FrequencyFormula);
+            SeedLfeParam(BaseLfeAbsIntensity, BaseLfeAbsIntensityValue, ab.Intensity, ab.IntensityFormula);
+            SeedLfeParam(BaseLfeAbsSmoothness, BaseLfeAbsSmoothnessValue, ab.Smoothness, ab.SmoothnessFormula);
+
+            BaseLfeGearshiftEnable.IsChecked = gs.Enabled;
+            SeedLfeTrigger(BaseLfeGearshiftTriggerText, gs.TriggerFormula);
+            SeedLfeParam(BaseLfeGearshiftFrequencySlider, BaseLfeGearshiftFrequencyValue, gs.Frequency, gs.FrequencyFormula);
+            SeedLfeParam(BaseLfeGearshiftIntensity, BaseLfeGearshiftIntensityValue, gs.Intensity, gs.IntensityFormula);
+            SeedLfeParam(BaseLfeGearshiftSmoothness, BaseLfeGearshiftSmoothnessValue, gs.Smoothness, gs.SmoothnessFormula);
+            BaseLfeGearshiftVibrateOnNeutral.IsChecked = fx.GearshiftVibrateOnNeutral;
+            int dbg = fx.GearshiftDebounceMs;
             if (dbg < 0) dbg = 500;
             if (dbg > 1000) dbg = 1000;
             dbg = ((dbg + 25) / 50) * 50;
@@ -685,6 +685,26 @@ namespace MozaPlugin
             BaseLfeGearshiftDebounceValue.Text = $"{dbg} ms";
         }
 
+        // A formula overrides the slider: disable it and show "ƒₓ" (formula in tooltip).
+        private static void SeedLfeParam(Slider slider, TextBox box, double sliderVal, string? formula)
+        {
+            bool hasFormula = !string.IsNullOrWhiteSpace(formula);
+            slider.Value = sliderVal;                     // WPF clamps to Min/Max
+            slider.IsEnabled = !hasFormula;
+            box.IsEnabled = !hasFormula;
+            box.Text = hasFormula ? "ƒ(x)" : ((int)slider.Value).ToString();
+            box.ToolTip = hasFormula ? formula : null;
+        }
+
+        private static void SeedLfeTrigger(TextBlock text, string? formula)
+        {
+            bool has = !string.IsNullOrWhiteSpace(formula);
+            text.Text = has ? formula : "(always on)";
+            text.ToolTip = has ? formula : null;
+        }
+
+        // Slider handlers only fire on user drag (a set formula disables the
+        // slider). Each writes the channel's slider value.
         // Engine ---------------------------------------------------------------
         private void BaseLfeEngineEnable_Changed(object sender, RoutedEventArgs e)
         {
@@ -698,7 +718,7 @@ namespace MozaPlugin
             if (_suppressEvents) return;
             int v = Math.Max(60, Math.Min(100, (int)Math.Round(e.NewValue)));
             BaseLfeEngineFrequencyValue.Text = v.ToString();
-            _plugin.UpdateActiveProfile(p => { (p.BaseLfe ??= new BaseLfeSettings()).Engine.FrequencyHz = v; });
+            _plugin.UpdateActiveProfile(p => { (p.BaseLfe ??= new BaseLfeSettings()).Engine.Frequency = v; });
             _plugin.SaveSettings();
         }
         private void BaseLfeEngineIntensity_ValueChanged(object sender, RoutedPropertyChangedEventArgs<double> e)
@@ -706,7 +726,15 @@ namespace MozaPlugin
             if (_suppressEvents) return;
             int v = Math.Max(0, Math.Min(100, (int)Math.Round(e.NewValue)));
             BaseLfeEngineIntensityValue.Text = v.ToString();
-            _plugin.UpdateActiveProfile(p => { (p.BaseLfe ??= new BaseLfeSettings()).Engine.IntensityPct = v; });
+            _plugin.UpdateActiveProfile(p => { (p.BaseLfe ??= new BaseLfeSettings()).Engine.Intensity = v; });
+            _plugin.SaveSettings();
+        }
+        private void BaseLfeEngineSmoothness_ValueChanged(object sender, RoutedPropertyChangedEventArgs<double> e)
+        {
+            if (_suppressEvents) return;
+            int v = Math.Max(0, Math.Min(100, (int)Math.Round(e.NewValue)));
+            BaseLfeEngineSmoothnessValue.Text = v.ToString();
+            _plugin.UpdateActiveProfile(p => { (p.BaseLfe ??= new BaseLfeSettings()).Engine.Smoothness = v; });
             _plugin.SaveSettings();
         }
         private void BaseLfeEngineTest_Click(object sender, RoutedEventArgs e)
@@ -725,7 +753,7 @@ namespace MozaPlugin
             if (_suppressEvents) return;
             int v = Math.Max(5, Math.Min(30, (int)Math.Round(e.NewValue)));
             BaseLfeAbsFrequencyValue.Text = v.ToString();
-            _plugin.UpdateActiveProfile(p => { (p.BaseLfe ??= new BaseLfeSettings()).Abs.FrequencyHz = v; });
+            _plugin.UpdateActiveProfile(p => { (p.BaseLfe ??= new BaseLfeSettings()).Abs.Frequency = v; });
             _plugin.SaveSettings();
         }
         private void BaseLfeAbsIntensity_ValueChanged(object sender, RoutedPropertyChangedEventArgs<double> e)
@@ -733,7 +761,7 @@ namespace MozaPlugin
             if (_suppressEvents) return;
             int v = Math.Max(0, Math.Min(100, (int)Math.Round(e.NewValue)));
             BaseLfeAbsIntensityValue.Text = v.ToString();
-            _plugin.UpdateActiveProfile(p => { (p.BaseLfe ??= new BaseLfeSettings()).Abs.IntensityPct = v; });
+            _plugin.UpdateActiveProfile(p => { (p.BaseLfe ??= new BaseLfeSettings()).Abs.Intensity = v; });
             _plugin.SaveSettings();
         }
         private void BaseLfeAbsSmoothness_ValueChanged(object sender, RoutedPropertyChangedEventArgs<double> e)
@@ -741,7 +769,7 @@ namespace MozaPlugin
             if (_suppressEvents) return;
             int v = Math.Max(0, Math.Min(100, (int)Math.Round(e.NewValue)));
             BaseLfeAbsSmoothnessValue.Text = v.ToString();
-            _plugin.UpdateActiveProfile(p => { (p.BaseLfe ??= new BaseLfeSettings()).Abs.SmoothnessPct = v; });
+            _plugin.UpdateActiveProfile(p => { (p.BaseLfe ??= new BaseLfeSettings()).Abs.Smoothness = v; });
             _plugin.SaveSettings();
         }
         private void BaseLfeAbsTest_Click(object sender, RoutedEventArgs e)
@@ -760,7 +788,7 @@ namespace MozaPlugin
             if (_suppressEvents) return;
             int v = Math.Max(20, Math.Min(100, (int)Math.Round(e.NewValue)));
             BaseLfeGearshiftFrequencyValue.Text = v.ToString();
-            _plugin.UpdateActiveProfile(p => { (p.BaseLfe ??= new BaseLfeSettings()).Gearshift.FrequencyHz = v; });
+            _plugin.UpdateActiveProfile(p => { (p.BaseLfe ??= new BaseLfeSettings()).Gearshift.Frequency = v; });
             _plugin.SaveSettings();
         }
         private void BaseLfeGearshiftIntensity_ValueChanged(object sender, RoutedPropertyChangedEventArgs<double> e)
@@ -768,7 +796,15 @@ namespace MozaPlugin
             if (_suppressEvents) return;
             int v = Math.Max(0, Math.Min(100, (int)Math.Round(e.NewValue)));
             BaseLfeGearshiftIntensityValue.Text = v.ToString();
-            _plugin.UpdateActiveProfile(p => { (p.BaseLfe ??= new BaseLfeSettings()).Gearshift.IntensityPct = v; });
+            _plugin.UpdateActiveProfile(p => { (p.BaseLfe ??= new BaseLfeSettings()).Gearshift.Intensity = v; });
+            _plugin.SaveSettings();
+        }
+        private void BaseLfeGearshiftSmoothness_ValueChanged(object sender, RoutedPropertyChangedEventArgs<double> e)
+        {
+            if (_suppressEvents) return;
+            int v = Math.Max(0, Math.Min(100, (int)Math.Round(e.NewValue)));
+            BaseLfeGearshiftSmoothnessValue.Text = v.ToString();
+            _plugin.UpdateActiveProfile(p => { (p.BaseLfe ??= new BaseLfeSettings()).Gearshift.Smoothness = v; });
             _plugin.SaveSettings();
         }
         private void BaseLfeGearshiftVibrateOnNeutral_Changed(object sender, RoutedEventArgs e)
@@ -791,6 +827,89 @@ namespace MozaPlugin
         }
         private void BaseLfeGearshiftTest_Click(object sender, RoutedEventArgs e)
             => _plugin.TriggerBaseLfeGearshiftTest();
+
+        // ƒₓ — open SimHub's formula editor for the tagged "channel:param" field.
+        // Mirrors MBoosterAdvancedEditFormula_Click. Empty result clears back to
+        // the slider.
+        private async void BaseLfeFx_Click(object sender, RoutedEventArgs e)
+        {
+            if ((sender as FrameworkElement)?.Tag is not string tag) return;
+            var engine = _plugin.ChannelFormulaEngine;
+            if (engine == null)
+            {
+                MozaLog.Warn("[AZOM] LFE formula editor unavailable (SimHub engine not loaded)");
+                return;
+            }
+            var lfe = _plugin.Settings?.ProfileStore?.CurrentProfile?.BaseLfe ?? new BaseLfeSettings();
+            var ev = LfeMakeExpression(GetLfeFormula(lfe, tag));
+            var working = new ExpressionValue { UseJavascript = ev.UseJavascript, Expression = ev.Expression, PreExpression = ev.PreExpression };
+            var data = new DashboardBindingData
+            {
+                Formula = working,
+                Mode = string.IsNullOrWhiteSpace(working.Expression) ? BindingMode.None : BindingMode.Formula,
+                TargetPropertyName = tag,
+                TargetType = typeof(double),
+            };
+            try
+            {
+                var editor = new BindingEditor(engine) { DataContext = data };
+                var result = await editor.ShowDialogWindowAsync(this);
+                if ((int)result != 1) return;
+                string formula = data.Mode == BindingMode.Formula ? LfeSerializeExpression(data.Formula) : "";
+                _plugin.UpdateActiveProfile(p => SetLfeFormula(p.BaseLfe ??= new BaseLfeSettings(), tag, formula));
+                _plugin.SaveSettings();
+                RefreshDisplay(this, EventArgs.Empty);
+            }
+            catch (Exception ex) { MozaLog.Warn("[AZOM] LFE formula editor failed: " + ex.Message); }
+        }
+
+        private static BaseLfeChannel LfeChannelForTag(BaseLfeSettings lfe, string tag)
+        {
+            if (tag.StartsWith("engine", StringComparison.Ordinal)) return lfe.Engine ??= new BaseLfeChannel();
+            if (tag.StartsWith("abs", StringComparison.Ordinal)) return lfe.Abs ??= new BaseLfeChannel();
+            return lfe.Gearshift ??= new BaseLfeChannel();
+        }
+        private static string GetLfeFormula(BaseLfeSettings lfe, string tag)
+        {
+            var ch = LfeChannelForTag(lfe, tag);
+            if (tag.EndsWith("trigger", StringComparison.Ordinal)) return ch.TriggerFormula;
+            if (tag.EndsWith("frequency", StringComparison.Ordinal)) return ch.FrequencyFormula;
+            if (tag.EndsWith("intensity", StringComparison.Ordinal)) return ch.IntensityFormula;
+            return ch.SmoothnessFormula;
+        }
+        private static void SetLfeFormula(BaseLfeSettings lfe, string tag, string formula)
+        {
+            var ch = LfeChannelForTag(lfe, tag);
+            if (tag.EndsWith("trigger", StringComparison.Ordinal)) ch.TriggerFormula = formula;
+            else if (tag.EndsWith("frequency", StringComparison.Ordinal)) ch.FrequencyFormula = formula;
+            else if (tag.EndsWith("intensity", StringComparison.Ordinal)) ch.IntensityFormula = formula;
+            else ch.SmoothnessFormula = formula;
+        }
+
+        // Stored-string <-> ExpressionValue (mirror MBoosterCustomEffectRow).
+        private static ExpressionValue LfeMakeExpression(string? stored)
+        {
+            var ev = new ExpressionValue();
+            var s = (stored ?? "").Trim();
+            if (s.Length == 0) { ev.UseJavascript = false; ev.Expression = ""; }
+            else if (s.StartsWith("js:", StringComparison.OrdinalIgnoreCase)) { ev.UseJavascript = true; ev.Expression = s.Substring(3); }
+            else { ev.UseJavascript = false; ev.Expression = global::MozaPlugin.Telemetry.NCalcExpressionEvaluator.LooksLikeExpression(s) ? s : "[" + s + "]"; }
+            return ev;
+        }
+        private static string LfeSerializeExpression(ExpressionValue ev)
+        {
+            var expr = (ev?.Expression ?? "").Trim();
+            if (expr.Length == 0) return "";
+            if (ev!.UseJavascript) return "js:" + expr;
+            if (expr.Length >= 2 && expr[0] == '[' && expr[expr.Length - 1] == ']')
+            {
+                var inner = expr.Substring(1, expr.Length - 2);
+                if (inner.IndexOf('[') < 0 && inner.IndexOf(']') < 0
+                    && !global::MozaPlugin.Telemetry.NCalcExpressionEvaluator.LooksLikeExpression(inner))
+                    return inner;
+            }
+            return expr;
+        }
 
         private void SpeedSlider_ValueChanged(object sender, RoutedPropertyChangedEventArgs<double> e)
         {

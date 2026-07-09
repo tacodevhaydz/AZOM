@@ -417,7 +417,7 @@ namespace MozaPlugin.UI.Import
 
         private static void AddLfeSwitch(
             ImportPlan plan, JObject dp, string key, string label,
-            MozaProfile profile, Func<BaseLfeSettings, MBoosterEffectSettings> pick)
+            MozaProfile profile, Func<BaseLfeSettings, BaseLfeChannel> pick)
         {
             plan.ConsideredKeys.Add(key);
             var b = BoolOrNull(dp, key);
@@ -430,10 +430,13 @@ namespace MozaPlugin.UI.Import
                 () => pick(profile.BaseLfe ??= new BaseLfeSettings()).Enabled = newVal));
         }
 
+        // Sets the channel's slider value. (Formulas are left at their defaults,
+        // so on Engine the RPM-tracking frequency formula still wins over the
+        // imported slider — the slider is the constant fallback.)
         private static void AddLfeInt(
             ImportPlan plan, JObject dp, string key, string label, string unit,
             int lo, int hi, MozaProfile profile,
-            Func<BaseLfeSettings, MBoosterEffectSettings> pick, bool isFreq)
+            Func<BaseLfeSettings, BaseLfeChannel> pick, bool isFreq)
         {
             plan.ConsideredKeys.Add(key);
             var pithouse = IntOrNull(dp, key);
@@ -441,13 +444,13 @@ namespace MozaPlugin.UI.Import
             int clamped = Math.Max(lo, Math.Min(hi, pithouse.Value));
             var cur = profile.BaseLfe != null ? pick(profile.BaseLfe) : null;
             string oldDisplay = cur == null ? "(unset)"
-                : ((isFreq ? (int)cur.FrequencyHz : cur.IntensityPct).ToString() + unit);
+                : ((isFreq ? (int)cur.Frequency : cur.Intensity).ToString() + unit);
             string newDisplay = clamped.ToString() + unit;
             plan.Diffs.Add(new FieldDiff(label, oldDisplay, newDisplay,
                 () =>
                 {
                     var e = pick(profile.BaseLfe ??= new BaseLfeSettings());
-                    if (isFreq) e.FrequencyHz = clamped; else e.IntensityPct = clamped;
+                    if (isFreq) e.Frequency = clamped; else e.Intensity = clamped;
                 }));
         }
 

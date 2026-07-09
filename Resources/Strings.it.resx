@@ -697,4 +697,5 @@ Id: {2}</value></data>
   <data name="ShifterColor_Purple" xml:space="preserve"><value>Viola</value></data>
   <data name="ShifterColor_White" xml:space="preserve"><value>Bianco</value></data>
   <data name="Section_WheelbaseLfe" xml:space="preserve"><value>EFFETTI DI VIBRAZIONE DELLA BASE</value></data>
+  <data name="SliderLabel_Trigger" xml:space="preserve"><value>Trigger</value></data>
 </root>

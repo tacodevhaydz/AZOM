@@ -94,6 +94,7 @@ namespace MozaPlugin.Resources
         public static string Section_CoreSettings => Get("Section_CoreSettings");
         public static string Section_GearshiftVibration => Get("Section_GearshiftVibration");
         public static string Section_WheelbaseLfe => Get("Section_WheelbaseLfe");
+        public static string SliderLabel_Trigger => Get("SliderLabel_Trigger");
         public static string SliderLabel_WheelRotationAngle => Get("SliderLabel_WheelRotationAngle");
         public static string SliderLabel_GameFfbStrength => Get("SliderLabel_GameFfbStrength");
         public static string SliderLabel_BaseTorqueOutput => Get("SliderLabel_BaseTorqueOutput");

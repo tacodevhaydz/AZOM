@@ -1219,6 +1219,7 @@ namespace MozaPlugin
                     DetectionState,
                     _data,
                     () => _settings?.ProfileStore?.CurrentProfile?.BaseLfe,
+                    ResolveMBoosterCustomEffectFormula,   // NCalc/property → double
                     () => IsShuttingDown);
                 _baseLfeWorker.Start();
 
@@ -1705,11 +1706,6 @@ namespace MozaPlugin
         private string? _lastAb9GearString;
         private DateTime _lastAb9GearShiftSendUtc = DateTime.MinValue;
 
-        // LFE complex-gearshift state — own latch/debounce so the LFE path
-        // (cmd 0x77) and the classic path (cmd 0x76) never share a latch.
-        private string? _lastLfeGearString;
-        private DateTime _lastLfeGearShiftSendUtc = DateTime.MinValue;
-
         // Wheelbase LFE momentary test triggers (from the UI test buttons). No-op
         // when the firmware doesn't support LFE. Each plays a fixed pattern:
         // engine = 2 s sweep, ABS = 1 s burst, gearshift = two rapid bumps.
@@ -1729,31 +1725,10 @@ namespace MozaPlugin
             if (string.IsNullOrEmpty(gear)) return;
 
             // LFE-capable firmware: the complex gearshift (cmd 0x77) REPLACES the
-            // classic base-gearshift-event (cmd 0x76). Route the gear change to the
-            // LFE worker instead; the classic path below is skipped entirely so the
-            // base never sees a double buzz. Uses its own latch/debounce + neutral
-            // setting from BaseLfeSettings.
-            if (_data.BaseSupportsLfe)
-            {
-                var lfeProfile = _settings?.ProfileStore?.CurrentProfile?.BaseLfe;
-                bool lfeEnabled = lfeProfile?.Gearshift?.Enabled == true;
-                // Keep the latch fresh even while disabled so enabling mid-drive
-                // doesn't fire on the first stale comparison.
-                if (!lfeEnabled) { _lastLfeGearString = gear; return; }
-                if (_lastLfeGearString == null) { _lastLfeGearString = gear; return; }
-                if (gear == _lastLfeGearString) return;
-                _lastLfeGearString = gear;
-                bool isNeutralLfe = (gear == "N" || gear == "0");
-                bool vibrateOnNeutralLfe = lfeProfile!.GearshiftVibrateOnNeutral;
-                int debounceMsLfe = lfeProfile.GearshiftDebounceMs;
-                if (debounceMsLfe < 0) debounceMsLfe = 500;
-                if (isNeutralLfe && !vibrateOnNeutralLfe) return;
-                var nowLfe = DateTime.UtcNow;
-                if (debounceMsLfe > 0 && (nowLfe - _lastLfeGearShiftSendUtc).TotalMilliseconds < debounceMsLfe) return;
-                _lastLfeGearShiftSendUtc = nowLfe;
-                _baseLfeWorker?.PostGearshiftEvent();
-                return;
-            }
+            // classic base-gearshift-event (cmd 0x76) and is driven entirely by
+            // BaseLfeEffectWorker's own gear-trigger edge detection — skip the
+            // classic path so the base never sees a double buzz.
+            if (_data.BaseSupportsLfe) return;
 
             if (_data.GearshiftVibration <= 0) return;
             if (_lastGearString == null)
@@ -1906,21 +1881,10 @@ namespace MozaPlugin
             bool engineOn = data.GameRunning && !data.GamePaused && !data.GameInMenu;
             _ab9Worker?.PostFrame(rpm, maxRpm, engineOn);
 
-            // Wheelbase LFE worker: engine tracks RPM, ABS triggers on ABS-active.
-            // ABSActive is SimHub's loosely-typed property (see the mBooster block
-            // below for the same unwrap).
-            object? rawAbsLfe = data.NewData?.ABSActive;
-            bool absActiveLfe = rawAbsLfe switch
-            {
-                bool b   => b,
-                int i    => i != 0,
-                byte by  => by != 0,
-                sbyte sb => sb != 0,
-                short sh => sh != 0,
-                long lo  => lo != 0,
-                _ => false,
-            };
-            _baseLfeWorker?.PostFrame(rpm, maxRpm, engineOn, absActiveLfe);
+            // Wheelbase LFE worker: just feed liveness (running & not paused/in-menu).
+            // All per-channel values (RPM, ABSActive, Gear, …) come from the
+            // channels' own formulas, evaluated live via the property resolver.
+            _baseLfeWorker?.PostFrame(engineOn);
 
             // Control Mapper variant-provider bridge: drive wheel-change detection
             // each tick when registered; otherwise retry registration up to the
