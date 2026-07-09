@@ -211,6 +211,15 @@ namespace MozaPlugin.Protocol
             AddCommand("base-hw-sub",        "base",  8, 0xFF, new byte[] { 2 }, 0, "array");
             AddCommand("base-mcu-uid",       "base",  6, 0xFF, new byte[] { },   0, "array");
             AddCommand("base-identity-11",   "base", 17, 0xFF, new byte[] { 4 }, 0, "array");
+            // Numeric base firmware version — dev 0x12 (main), read group 0x04,
+            // empty cmd. Reply `84 21 <maj min patch build>` e.g. 84 21 01 02 0A 0A
+            // = 1.2.10.10 (same shape as wheel-device-type, no cmd echo). DeviceType
+            // MUST be "main": MozaResponseParser hints dev-0x12 replies as "main"
+            // and drops any command whose DeviceType != hint, so a "base" (0x13)
+            // command would never match. Gates the wheelbase LFE effects. This is
+            // the NUMERIC version — distinct from base-sw-version (group 0x0F),
+            // which returns the hardware model string.
+            AddCommand("base-fw-version",    "main",  4, 0xFF, new byte[] { },   4, "array");
 
             // ===== ES WHEEL IDENTITY (device 0x18) =====
             // The ES (old-protocol) steering wheel answers identity probes at its

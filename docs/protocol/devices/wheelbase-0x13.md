@@ -129,6 +129,7 @@ Group 45 carries two distinct types of host→base traffic:
 |---------|----|-------|------|-------|
 | sequence-counter | `F5 31` | 4 | int | Last byte monotonically increments each send; frame-sync counter at ~42 Hz |
 | gearshift-event | `76` | 2 | int | Fixed payload `00 01`. Fired once per gear change detected by PitHouse. Wheel firmware uses the configured `gearshift-vibration` (cmd 0x2E intensity) to drive a brief motor pulse. Verified 2026-05-10 (`bridge-20260510-115644.jsonl`): 112 occurrences across the capture, all identical body `76 00 01`, no `0xAD` echoes. The same trigger fires regardless of shift direction or gear value — direction/magnitude is not encoded. |
+| lfe-effect | `77` | 9 | array | **Low-frequency effects** (fw ≥ 1.2.10.10) — host-rendered stream for the complex gearshift / engine / ABS effects. Replaces `gearshift-event` (0x76) for gearshift on LFE firmware. See below. |
 
 Notes:
 - Trigger and intensity are independent commands. `gearshift-event` (group
@@ -138,3 +139,66 @@ Notes:
 - The on-wheel display gear digit comes from the dashboard telemetry
   (session 0x02 channel 15) — that's a separate render path and does NOT
   drive the rumble.
+
+#### Low-frequency effects — cmd `0x77` (fw ≥ 1.2.10.10)
+
+Recent base firmware adds three **host-rendered** vibration effects (PitHouse
+"LFE"): a complex gearshift vibration, a continuous engine vibration, and an ABS
+effect. Each has an on/off toggle, a test button, and frequency + intensity
+sliders. All three are streamed as cmd `0x77` on group `0x2D` (dev `0x13`),
+write-only/fire-and-forget — the same group as the classic `gearshift-event`
+(`0x76`), which it **replaces** for gearshift on LFE-capable firmware (a capture
+with LFE active shows only `0x77`, never `0x76`).
+
+Reverse-engineered byte-exact from `lfe-{gearshift,engine,abs}-*.pcapng` +
+`lfe-in-game-test.pcapng` (base fw 1.2.10.10). Frame (15 bytes on the wire):
+
+```
+7E 0A 2D 13 77  p0 p1 p2 p3 p4 p5 p6 p7 p8  CK    (len 0x0A = cmd + 9 payload)
+```
+
+| byte | field | encoding |
+|------|-------|----------|
+| p0 | const | `0x00` |
+| p1 | effect id | `0x00` gearshift · `0x01` engine · `0x02` abs |
+| p2 | play flag | `0x01` playing · `0x00` staged/idle |
+| p3:p4 | period BE16 | `floor(ParamK / freqHz)` (oscillation period, ms). ParamK: engine `1000`, abs `2000`. Gearshift + off/preview frames use a fixed placeholder `0x000F`. |
+| p5:p6 | frequency BE16 | `round(freqHz / 200 × 65536)` — identical to the mBooster `EncodeFreq` |
+| p7:p8 | intensity BE16 | `round(pct / 100 × 65535)` — identical to the mBooster `EncodeAmp` |
+
+An all-zero payload disables the effect. Verified values: 100 Hz→`0x8000`,
+50 Hz→`0x4000`, 30 Hz→`0x2666`, 20 Hz→`0x199A`, 18 Hz→`0x170A`, 5 Hz→`0x0666`;
+100 %→`0xFFFF`, 50 %→`0x8000`, 1 %→`0x028F`. Frequency is computed from the
+**nominal slider Hz** (not the round-tripped `freq16`): the period is
+`floor(K/nominalHz)` — byte-exact across all 1992 engine frames; `round` diverges.
+(ABS period is +1 raw at 15/18 Hz — an imperceptible timing hint on a
+host-modulated effect; only 4 ABS capture points exist.)
+
+Per-effect behaviour (from `lfe-in-game-test.pcapng`):
+
+- **Engine** (p1=`01`) — continuous ~30 Hz stream while driving. Frequency
+  sweeps with RPM: the slider is the *redline* pitch and the audible frequency is
+  `slider × clamp(rpm / maxRpm)` (observed 5→100 Hz as RPM rose); intensity held
+  at the slider. Same model as the AB9 host engine vibration.
+- **ABS** (p1=`02`) — streamed only while ABS is active. Frequency fixed at the
+  slider; intensity modulated by a host pulse waveform (observed 11→50 % with the
+  slider at 50 %).
+- **Gearshift** (p1=`00`) — a short burst (~2 frames) on each gear change; fixed
+  placeholder period `0x000F`, freq + intensity from the sliders.
+
+**Firmware detection.** The numeric base firmware version is read on **group
+`0x04`** addressed to device `0x12` (main). The request carries a 4-byte zero
+payload: `7E 04 04 12 00 00 00 00 A5` (length `0x04`). Reply `84 21 <4 version
+bytes>`, e.g. `84 21 01 02 0A 0A` = `1.2.10.10`. Same probe shape as the wheel's
+`device-type` (group `0x04`), and **distinct** from `sw-version` (group `0x0F`),
+which returns the hardware model string (`RS21-D05-MC WB`), not a numeric version.
+
+The 4 version bytes are in **wire order `[major, minor, build, patch]`** — MOZA's
+PitHouse UI displays the last two swapped: wire `01 02 18 09` is shown `1.2.9.24`,
+wire `01 02 0A 0A` is `1.2.10.10`. The plugin packs them in display/semver order
+(`major.minor.patch.build`, swapping the last two wire bytes) so a `>=` compare
+orders correctly — packing in raw wire order would misgate (`0x01021809` >
+`0x01020A0A`, i.e. the older 1.2.9.24 would wrongly out-rank the LFE 1.2.10.10).
+Registered as `base-fw-version` (DeviceType `"main"`, so the dev-0x12 reply routes
+correctly); the LFE UI/emission gate is version ≥ 1.2.10.10
+(`MozaData.BaseSupportsLfe`).

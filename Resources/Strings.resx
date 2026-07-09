@@ -703,4 +703,5 @@ Id: {2}</value></data>
   <data name="ShifterColor_Blue" xml:space="preserve"><value>Blue</value></data>
   <data name="ShifterColor_Purple" xml:space="preserve"><value>Purple</value></data>
   <data name="ShifterColor_White" xml:space="preserve"><value>White</value></data>
+  <data name="Section_WheelbaseLfe" xml:space="preserve"><value>BASE VIBRATION EFFECTS</value></data>
 </root>

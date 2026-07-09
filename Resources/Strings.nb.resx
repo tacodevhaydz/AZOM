@@ -698,4 +698,5 @@ Id: {2}</value></data>
   <data name="ShifterColor_Blue" xml:space="preserve"><value>Blå</value></data>
   <data name="ShifterColor_Purple" xml:space="preserve"><value>Lilla</value></data>
   <data name="ShifterColor_White" xml:space="preserve"><value>Hvit</value></data>
+  <data name="Section_WheelbaseLfe" xml:space="preserve"><value>VIBRASJONSEFFEKTER FOR BASE</value></data>
 </root>

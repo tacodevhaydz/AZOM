@@ -470,6 +470,19 @@ namespace MozaPlugin
             GearshiftDebounceSlider.Value = dbMs;
             GearshiftDebounceValue.Text = $"{dbMs} ms";
 
+            // Wheelbase LFE effects (base fw >= 1.2.10.10). On LFE-capable
+            // firmware the complex effects card is shown and the classic
+            // gearshift card hidden (the complex gearshift replaces it);
+            // otherwise the reverse. Re-evaluated each tick so the card appears
+            // within one refresh of the firmware-version read landing.
+            bool lfeSupported = _data.BaseSupportsLfe;
+            BaseLfeCard.Visibility = lfeSupported
+                ? System.Windows.Visibility.Visible : System.Windows.Visibility.Collapsed;
+            GearshiftVibrationCard.Visibility = lfeSupported
+                ? System.Windows.Visibility.Collapsed : System.Windows.Visibility.Visible;
+            if (lfeSupported)
+                SeedBaseLfeControls(gsProfile?.BaseLfe);
+
             double spd = _data.Speed / 10.0;
             SpeedSlider.Value = Clamp(spd, 0, 200);
             SetValueText(SpeedValue, $"{spd:F0}%");
@@ -633,6 +646,151 @@ namespace MozaPlugin
             _plugin.UpdateActiveProfile(p => p.GearshiftDebounceMs = val);
             _plugin.SaveSettings();
         }
+
+        // ===== Wheelbase LFE effects (base fw >= 1.2.10.10) =====
+        // Profile-tier host-rendered effects — mutate BaseLfeSettings and Save;
+        // no WriteIf* device write (the BaseLfeEffectWorker reads the profile).
+        // Enable/slider values persist; Test toggles drive the worker directly.
+
+        private void SeedBaseLfeControls(BaseLfeSettings? fx)
+        {
+            var eng = fx?.Engine;
+            BaseLfeEngineEnable.IsChecked = eng?.Enabled ?? false;
+            BaseLfeEngineFrequencySlider.Value = Clamp(eng?.FrequencyHz ?? 100, 60, 100);
+            SetValueText(BaseLfeEngineFrequencyValue, ((int)BaseLfeEngineFrequencySlider.Value).ToString());
+            BaseLfeEngineIntensity.Value = Clamp(eng?.IntensityPct ?? 50, 0, 100);
+            SetValueText(BaseLfeEngineIntensityValue, ((int)BaseLfeEngineIntensity.Value).ToString());
+
+            var ab = fx?.Abs;
+            BaseLfeAbsEnable.IsChecked = ab?.Enabled ?? false;
+            BaseLfeAbsFrequencySlider.Value = Clamp(ab?.FrequencyHz ?? 15, 5, 30);
+            SetValueText(BaseLfeAbsFrequencyValue, ((int)BaseLfeAbsFrequencySlider.Value).ToString());
+            BaseLfeAbsIntensity.Value = Clamp(ab?.IntensityPct ?? 50, 0, 100);
+            SetValueText(BaseLfeAbsIntensityValue, ((int)BaseLfeAbsIntensity.Value).ToString());
+            BaseLfeAbsSmoothness.Value = Clamp(ab?.SmoothnessPct ?? 100, 0, 100);
+            SetValueText(BaseLfeAbsSmoothnessValue, ((int)BaseLfeAbsSmoothness.Value).ToString());
+
+            var gsx = fx?.Gearshift;
+            BaseLfeGearshiftEnable.IsChecked = gsx?.Enabled ?? false;
+            BaseLfeGearshiftFrequencySlider.Value = Clamp(gsx?.FrequencyHz ?? 40, 20, 100);
+            SetValueText(BaseLfeGearshiftFrequencyValue, ((int)BaseLfeGearshiftFrequencySlider.Value).ToString());
+            BaseLfeGearshiftIntensity.Value = Clamp(gsx?.IntensityPct ?? 100, 0, 100);
+            SetValueText(BaseLfeGearshiftIntensityValue, ((int)BaseLfeGearshiftIntensity.Value).ToString());
+            BaseLfeGearshiftVibrateOnNeutral.IsChecked = fx?.GearshiftVibrateOnNeutral ?? false;
+            int dbg = fx?.GearshiftDebounceMs ?? 500;
+            if (dbg < 0) dbg = 500;
+            if (dbg > 1000) dbg = 1000;
+            dbg = ((dbg + 25) / 50) * 50;
+            BaseLfeGearshiftDebounceSlider.Value = dbg;
+            BaseLfeGearshiftDebounceValue.Text = $"{dbg} ms";
+        }
+
+        // Engine ---------------------------------------------------------------
+        private void BaseLfeEngineEnable_Changed(object sender, RoutedEventArgs e)
+        {
+            if (_suppressEvents) return;
+            bool on = BaseLfeEngineEnable.IsChecked == true;
+            _plugin.UpdateActiveProfile(p => { (p.BaseLfe ??= new BaseLfeSettings()).Engine.Enabled = on; });
+            _plugin.SaveSettings();
+        }
+        private void BaseLfeEngineFrequencySlider_ValueChanged(object sender, RoutedPropertyChangedEventArgs<double> e)
+        {
+            if (_suppressEvents) return;
+            int v = Math.Max(60, Math.Min(100, (int)Math.Round(e.NewValue)));
+            BaseLfeEngineFrequencyValue.Text = v.ToString();
+            _plugin.UpdateActiveProfile(p => { (p.BaseLfe ??= new BaseLfeSettings()).Engine.FrequencyHz = v; });
+            _plugin.SaveSettings();
+        }
+        private void BaseLfeEngineIntensity_ValueChanged(object sender, RoutedPropertyChangedEventArgs<double> e)
+        {
+            if (_suppressEvents) return;
+            int v = Math.Max(0, Math.Min(100, (int)Math.Round(e.NewValue)));
+            BaseLfeEngineIntensityValue.Text = v.ToString();
+            _plugin.UpdateActiveProfile(p => { (p.BaseLfe ??= new BaseLfeSettings()).Engine.IntensityPct = v; });
+            _plugin.SaveSettings();
+        }
+        private void BaseLfeEngineTest_Click(object sender, RoutedEventArgs e)
+            => _plugin.TriggerBaseLfeEngineTest();
+
+        // ABS ------------------------------------------------------------------
+        private void BaseLfeAbsEnable_Changed(object sender, RoutedEventArgs e)
+        {
+            if (_suppressEvents) return;
+            bool on = BaseLfeAbsEnable.IsChecked == true;
+            _plugin.UpdateActiveProfile(p => { (p.BaseLfe ??= new BaseLfeSettings()).Abs.Enabled = on; });
+            _plugin.SaveSettings();
+        }
+        private void BaseLfeAbsFrequencySlider_ValueChanged(object sender, RoutedPropertyChangedEventArgs<double> e)
+        {
+            if (_suppressEvents) return;
+            int v = Math.Max(5, Math.Min(30, (int)Math.Round(e.NewValue)));
+            BaseLfeAbsFrequencyValue.Text = v.ToString();
+            _plugin.UpdateActiveProfile(p => { (p.BaseLfe ??= new BaseLfeSettings()).Abs.FrequencyHz = v; });
+            _plugin.SaveSettings();
+        }
+        private void BaseLfeAbsIntensity_ValueChanged(object sender, RoutedPropertyChangedEventArgs<double> e)
+        {
+            if (_suppressEvents) return;
+            int v = Math.Max(0, Math.Min(100, (int)Math.Round(e.NewValue)));
+            BaseLfeAbsIntensityValue.Text = v.ToString();
+            _plugin.UpdateActiveProfile(p => { (p.BaseLfe ??= new BaseLfeSettings()).Abs.IntensityPct = v; });
+            _plugin.SaveSettings();
+        }
+        private void BaseLfeAbsSmoothness_ValueChanged(object sender, RoutedPropertyChangedEventArgs<double> e)
+        {
+            if (_suppressEvents) return;
+            int v = Math.Max(0, Math.Min(100, (int)Math.Round(e.NewValue)));
+            BaseLfeAbsSmoothnessValue.Text = v.ToString();
+            _plugin.UpdateActiveProfile(p => { (p.BaseLfe ??= new BaseLfeSettings()).Abs.SmoothnessPct = v; });
+            _plugin.SaveSettings();
+        }
+        private void BaseLfeAbsTest_Click(object sender, RoutedEventArgs e)
+            => _plugin.TriggerBaseLfeAbsTest();
+
+        // Gearshift ------------------------------------------------------------
+        private void BaseLfeGearshiftEnable_Changed(object sender, RoutedEventArgs e)
+        {
+            if (_suppressEvents) return;
+            bool on = BaseLfeGearshiftEnable.IsChecked == true;
+            _plugin.UpdateActiveProfile(p => { (p.BaseLfe ??= new BaseLfeSettings()).Gearshift.Enabled = on; });
+            _plugin.SaveSettings();
+        }
+        private void BaseLfeGearshiftFrequencySlider_ValueChanged(object sender, RoutedPropertyChangedEventArgs<double> e)
+        {
+            if (_suppressEvents) return;
+            int v = Math.Max(20, Math.Min(100, (int)Math.Round(e.NewValue)));
+            BaseLfeGearshiftFrequencyValue.Text = v.ToString();
+            _plugin.UpdateActiveProfile(p => { (p.BaseLfe ??= new BaseLfeSettings()).Gearshift.FrequencyHz = v; });
+            _plugin.SaveSettings();
+        }
+        private void BaseLfeGearshiftIntensity_ValueChanged(object sender, RoutedPropertyChangedEventArgs<double> e)
+        {
+            if (_suppressEvents) return;
+            int v = Math.Max(0, Math.Min(100, (int)Math.Round(e.NewValue)));
+            BaseLfeGearshiftIntensityValue.Text = v.ToString();
+            _plugin.UpdateActiveProfile(p => { (p.BaseLfe ??= new BaseLfeSettings()).Gearshift.IntensityPct = v; });
+            _plugin.SaveSettings();
+        }
+        private void BaseLfeGearshiftVibrateOnNeutral_Changed(object sender, RoutedEventArgs e)
+        {
+            if (_suppressEvents) return;
+            bool on = BaseLfeGearshiftVibrateOnNeutral.IsChecked == true;
+            _plugin.UpdateActiveProfile(p => { (p.BaseLfe ??= new BaseLfeSettings()).GearshiftVibrateOnNeutral = on; });
+            _plugin.SaveSettings();
+        }
+        private void BaseLfeGearshiftDebounceSlider_ValueChanged(object sender, RoutedPropertyChangedEventArgs<double> e)
+        {
+            if (_suppressEvents) return;
+            int val = (int)Math.Round(e.NewValue);
+            val = ((val + 25) / 50) * 50;
+            if (val < 0) val = 0;
+            if (val > 1000) val = 1000;
+            BaseLfeGearshiftDebounceValue.Text = $"{val} ms";
+            _plugin.UpdateActiveProfile(p => { (p.BaseLfe ??= new BaseLfeSettings()).GearshiftDebounceMs = val; });
+            _plugin.SaveSettings();
+        }
+        private void BaseLfeGearshiftTest_Click(object sender, RoutedEventArgs e)
+            => _plugin.TriggerBaseLfeGearshiftTest();
 
         private void SpeedSlider_ValueChanged(object sender, RoutedPropertyChangedEventArgs<double> e)
         {

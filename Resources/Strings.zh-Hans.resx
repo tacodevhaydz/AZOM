@@ -693,4 +693,5 @@ Id: {2}</value></data>
   <data name="ShifterColor_Blue" xml:space="preserve"><value>蓝色</value></data>
   <data name="ShifterColor_Purple" xml:space="preserve"><value>紫色</value></data>
   <data name="ShifterColor_White" xml:space="preserve"><value>白色</value></data>
+  <data name="Section_WheelbaseLfe" xml:space="preserve"><value>基座震动效果</value></data>
 </root>

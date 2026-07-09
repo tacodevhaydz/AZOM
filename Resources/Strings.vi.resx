@@ -693,4 +693,5 @@ Id: {2}</value></data>
   <data name="ShifterColor_Blue" xml:space="preserve"><value>Xanh dương</value></data>
   <data name="ShifterColor_Purple" xml:space="preserve"><value>Tím</value></data>
   <data name="ShifterColor_White" xml:space="preserve"><value>Trắng</value></data>
+  <data name="Section_WheelbaseLfe" xml:space="preserve"><value>HIỆU ỨNG RUNG ĐẾ</value></data>
 </root>

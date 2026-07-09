@@ -116,6 +116,9 @@ namespace MozaPlugin
             _deviceIdOverride = deviceIdOverride;
         }
 
+        /// <summary>True while the underlying serial pipe is open.</summary>
+        public bool IsConnected => _connection.IsConnected;
+
         // Valid wheel device IDs to try (23, 21, 19)
         private static readonly byte[] WheelIdCandidates = { 23, 21, 19 };
 
@@ -456,6 +459,59 @@ namespace MozaPlugin
             var msg = cmd.BuildWriteMessage(deviceId, payload);
             if (msg == null) return false;
             _connection.SendStream(slot, msg);
+            return true;
+        }
+
+        // ============================================================
+        // Wheelbase LFE (low-frequency effects) host-rendered streams —
+        // cmd 0x2D/0x77 on the base (dev 0x13). Engine/ABS ride their own
+        // latest-wins stream lanes; the discrete gearshift burst and the
+        // disable edge go out the paced one-shot FIFO. See MozaBaseLfeProtocol.
+        // Only valid on the base primary connection (base == primary pipe).
+        // ============================================================
+
+        public bool SendBaseLfeEngineStream(bool playing, double freqHz, int intensityPct)
+        {
+            if (!_connection.IsConnected) return false;
+            var f = MozaBaseLfeProtocol.BuildFrame(
+                MozaBaseLfeProtocol.LfeEffect.Engine, playing,
+                MozaBaseLfeProtocol.EncodePeriod(MozaBaseLfeProtocol.ParamKEngine, freqHz),
+                MozaMBoosterProtocol.EncodeFreq(freqHz),
+                MozaMBoosterProtocol.EncodeAmp(intensityPct / 100.0));
+            _connection.SendStream(StreamKind.BaseLfeEngine, f);
+            return true;
+        }
+
+        public bool SendBaseLfeAbsStream(bool playing, double freqHz, double intensity01)
+        {
+            if (!_connection.IsConnected) return false;
+            var f = MozaBaseLfeProtocol.BuildFrame(
+                MozaBaseLfeProtocol.LfeEffect.Abs, playing,
+                MozaBaseLfeProtocol.EncodePeriod(MozaBaseLfeProtocol.ParamKAbs, freqHz),
+                MozaMBoosterProtocol.EncodeFreq(freqHz),
+                MozaMBoosterProtocol.EncodeAmp(intensity01));
+            _connection.SendStream(StreamKind.BaseLfeAbs, f);
+            return true;
+        }
+
+        public bool SendBaseLfeGearshiftBurst(double freqHz, int intensityPct)
+        {
+            if (!_connection.IsConnected) return false;
+            // Gearshift is event-driven: fixed placeholder period, freq+intensity
+            // from the sliders, play flag set. One-shot FIFO (not coalesced).
+            var f = MozaBaseLfeProtocol.BuildFrame(
+                MozaBaseLfeProtocol.LfeEffect.Gearshift, playing: true,
+                MozaBaseLfeProtocol.GearshiftPeriod,
+                MozaMBoosterProtocol.EncodeFreq(freqHz),
+                MozaMBoosterProtocol.EncodeAmp(intensityPct / 100.0));
+            _connection.Send(f);
+            return true;
+        }
+
+        public bool SendBaseLfeDisable(MozaBaseLfeProtocol.LfeEffect id)
+        {
+            if (!_connection.IsConnected) return false;
+            _connection.Send(MozaBaseLfeProtocol.BuildDisable(id));
             return true;
         }
 

@@ -406,6 +406,10 @@ namespace MozaPlugin
         // AB9 host-rendered engine-vibration worker. See Devices/Ab9EngineVibrationWorker.cs.
         private Ab9EngineVibrationWorker? _ab9Worker;
 
+        // Wheelbase LFE worker (complex gearshift / engine / ABS on base fw
+        // >= 1.2.10.10). See Devices/BaseLfeEffectWorker.cs.
+        private BaseLfeEffectWorker? _baseLfeWorker;
+
         // Keeps the process responsive in the background: opts out of EcoQoS
         // throttling during active gameplay, and holds the 1 ms timer during gameplay
         // (or whenever the FFB Lag Fix override is on). See ProcessResponsivenessManager.
@@ -1207,6 +1211,17 @@ namespace MozaPlugin
                     () => IsShuttingDown);
                 _ab9Worker.Start();
 
+                // Wheelbase LFE worker — tick gates on connection/detection +
+                // BaseSupportsLfe (base fw >= 1.2.10.10). Emits on the base
+                // primary pipe (_deviceManager).
+                _baseLfeWorker = new BaseLfeEffectWorker(
+                    _deviceManager,
+                    DetectionState,
+                    _data,
+                    () => _settings?.ProfileStore?.CurrentProfile?.BaseLfe,
+                    () => IsShuttingDown);
+                _baseLfeWorker.Start();
+
                 // mBooster Pedals registry — multi-device owner. Refresh() is
                 // called from the reconnect timer alongside TryConnectAb9. Each
                 // detected mBooster spawns its own controller + 50 Hz worker.
@@ -1561,6 +1576,7 @@ namespace MozaPlugin
 
             // Halt the AB9 engine-vib worker before disposing the AB9 manager.
             try { _ab9Worker?.Stop(); _ab9Worker = null; } catch { }
+            try { _baseLfeWorker?.Stop(); _baseLfeWorker = null; } catch { }
             // Release the timer-resolution request + power-throttling opt-out.
             try { _responsiveness?.Dispose(); _responsiveness = null; } catch { }
             // Dispose every mBooster controller — same reason: stop workers
@@ -1689,6 +1705,18 @@ namespace MozaPlugin
         private string? _lastAb9GearString;
         private DateTime _lastAb9GearShiftSendUtc = DateTime.MinValue;
 
+        // LFE complex-gearshift state — own latch/debounce so the LFE path
+        // (cmd 0x77) and the classic path (cmd 0x76) never share a latch.
+        private string? _lastLfeGearString;
+        private DateTime _lastLfeGearShiftSendUtc = DateTime.MinValue;
+
+        // Wheelbase LFE momentary test triggers (from the UI test buttons). No-op
+        // when the firmware doesn't support LFE. Each plays a fixed pattern:
+        // engine = 2 s sweep, ABS = 1 s burst, gearshift = two rapid bumps.
+        public void TriggerBaseLfeEngineTest() { if (_data.BaseSupportsLfe) _baseLfeWorker?.PostEngineTest(); }
+        public void TriggerBaseLfeAbsTest() { if (_data.BaseSupportsLfe) _baseLfeWorker?.PostAbsTest(); }
+        public void TriggerBaseLfeGearshiftTest() { if (_data.BaseSupportsLfe) _baseLfeWorker?.PostGearshiftTest(); }
+
         // Fire a one-shot base-gearshift-event on gear change. Gated by
         // GearshiftVibration > 0 and a debounce. By default, transitions
         // *into* neutral don't fire (H-pattern produces two transitions
@@ -1697,9 +1725,37 @@ namespace MozaPlugin
         private void CheckGearshiftEvent(GameData data)
         {
             if (!_data.IsConnected) return;
-            if (_data.GearshiftVibration <= 0) return;
             string? gear = data?.NewData?.Gear;
             if (string.IsNullOrEmpty(gear)) return;
+
+            // LFE-capable firmware: the complex gearshift (cmd 0x77) REPLACES the
+            // classic base-gearshift-event (cmd 0x76). Route the gear change to the
+            // LFE worker instead; the classic path below is skipped entirely so the
+            // base never sees a double buzz. Uses its own latch/debounce + neutral
+            // setting from BaseLfeSettings.
+            if (_data.BaseSupportsLfe)
+            {
+                var lfeProfile = _settings?.ProfileStore?.CurrentProfile?.BaseLfe;
+                bool lfeEnabled = lfeProfile?.Gearshift?.Enabled == true;
+                // Keep the latch fresh even while disabled so enabling mid-drive
+                // doesn't fire on the first stale comparison.
+                if (!lfeEnabled) { _lastLfeGearString = gear; return; }
+                if (_lastLfeGearString == null) { _lastLfeGearString = gear; return; }
+                if (gear == _lastLfeGearString) return;
+                _lastLfeGearString = gear;
+                bool isNeutralLfe = (gear == "N" || gear == "0");
+                bool vibrateOnNeutralLfe = lfeProfile!.GearshiftVibrateOnNeutral;
+                int debounceMsLfe = lfeProfile.GearshiftDebounceMs;
+                if (debounceMsLfe < 0) debounceMsLfe = 500;
+                if (isNeutralLfe && !vibrateOnNeutralLfe) return;
+                var nowLfe = DateTime.UtcNow;
+                if (debounceMsLfe > 0 && (nowLfe - _lastLfeGearShiftSendUtc).TotalMilliseconds < debounceMsLfe) return;
+                _lastLfeGearShiftSendUtc = nowLfe;
+                _baseLfeWorker?.PostGearshiftEvent();
+                return;
+            }
+
+            if (_data.GearshiftVibration <= 0) return;
             if (_lastGearString == null)
             {
                 _lastGearString = gear;
@@ -1849,6 +1905,22 @@ namespace MozaPlugin
             double maxRpm = data.NewData?.MaxRpm ?? 0.0;
             bool engineOn = data.GameRunning && !data.GamePaused && !data.GameInMenu;
             _ab9Worker?.PostFrame(rpm, maxRpm, engineOn);
+
+            // Wheelbase LFE worker: engine tracks RPM, ABS triggers on ABS-active.
+            // ABSActive is SimHub's loosely-typed property (see the mBooster block
+            // below for the same unwrap).
+            object? rawAbsLfe = data.NewData?.ABSActive;
+            bool absActiveLfe = rawAbsLfe switch
+            {
+                bool b   => b,
+                int i    => i != 0,
+                byte by  => by != 0,
+                sbyte sb => sb != 0,
+                short sh => sh != 0,
+                long lo  => lo != 0,
+                _ => false,
+            };
+            _baseLfeWorker?.PostFrame(rpm, maxRpm, engineOn, absActiveLfe);
 
             // Control Mapper variant-provider bridge: drive wheel-change detection
             // each tick when registered; otherwise retry registration up to the
@@ -2295,6 +2367,7 @@ namespace MozaPlugin
             // are disposed; the tick gates on connection state but joining here
             // keeps shutdown deterministic.
             try { _ab9Worker?.Stop(); _ab9Worker = null; } catch { }
+            try { _baseLfeWorker?.Stop(); _baseLfeWorker = null; } catch { }
             // Release the timer-resolution request + power-throttling opt-out on
             // shutdown/reload so neither leaks past the plugin's lifetime.
             try { _responsiveness?.Dispose(); _responsiveness = null; } catch { }
@@ -2311,6 +2384,14 @@ namespace MozaPlugin
             // which means users hear vibrations for ten seconds after closing
             // SimHub mid-session. Worker is stopped above so this can't race.
             try { _ab9Manager?.SendEngineSilence(); } catch { }
+            // Flush LFE effects so the base doesn't latch a waveform on teardown.
+            try
+            {
+                _deviceManager?.SendBaseLfeDisable(Protocol.MozaBaseLfeProtocol.LfeEffect.Engine);
+                _deviceManager?.SendBaseLfeDisable(Protocol.MozaBaseLfeProtocol.LfeEffect.Abs);
+                _deviceManager?.SendBaseLfeDisable(Protocol.MozaBaseLfeProtocol.LfeEffect.Gearshift);
+            }
+            catch { }
 
             // Dispose every mBooster controller — fires disable frames + closes
             // each connection. Must happen before MozaData is torn down so the

@@ -82,6 +82,15 @@ namespace MozaPlugin.Protocol
         DashRpmColor9 = 45,
         DashRpmBitmask = 46,      // CM2 dash-send-telemetry (41 FD DE) — after colours
         DashFlagColors = 47,      // CM2 dash-flag-colors (32 08 00, 18-byte array)
+
+        // ── Wheelbase LFE lanes (absolute slots 48+) ─────────────────────────
+        // Host-rendered wheelbase low-frequency effects (cmd 0x2D/0x77) on the
+        // BASE primary connection. Engine (continuous while driving) and ABS
+        // (while ABS active) can be live simultaneously, so they get separate
+        // latest-wins lanes and never coalesce into one another. Gearshift is a
+        // discrete burst → the paced one-shot FIFO, so it needs no lane.
+        BaseLfeEngine = 48,
+        BaseLfeAbs = 49,
     }
 
     /// <summary>Device family targeted by the serial probe fallback (registry-empty case).</summary>
@@ -129,11 +138,12 @@ namespace MozaPlugin.Protocol
         //   29..47 — LED lanes (wheel RPM colour chunks + bitmasks, CM2 RPM/flag) —
         //            high-rate latest-wins LED writes moved off the throttled one-shot
         //            FIFO. See the LED StreamKind members.
+        //   48..49 — wheelbase LFE lanes (engine + ABS host-rendered effect streams).
         // A CM2 on its own USB connection runs at base 0 on THAT connection, so the
         // second block is only used when two pipelines share one connection.
-        // NOTE: keep this >= (highest LED StreamKind + 1). The static ctor below
+        // NOTE: keep this >= (highest StreamKind + 1). The static ctor below
         // asserts the regions are disjoint and fit.
-        private const int StreamSlotCount = 48;
+        private const int StreamSlotCount = 50;
 
         // Startup slot-layout invariant: the LED lanes (29+) must not alias the
         // wheel value pipeline (0..10), AB9/mBooster (11..17), or the CM2 second
@@ -149,6 +159,11 @@ namespace MozaPlugin.Protocol
                 "LED stream slots must start after the CM2 value pipeline (18..28)");
             System.Diagnostics.Debug.Assert(ledLast < StreamSlotCount,
                 "StreamSlotCount too small for the LED stream slots");
+            const int lfeLast = (int)StreamKind.BaseLfeAbs;      // 49 (highest slot overall)
+            System.Diagnostics.Debug.Assert(lfeLast > ledLast,
+                "wheelbase LFE stream slots must start after the LED lanes");
+            System.Diagnostics.Debug.Assert(lfeLast < StreamSlotCount,
+                "StreamSlotCount too small for the wheelbase LFE stream slots");
         }
 
         // Ports held by a live connection — probe path skips these (Wine pty

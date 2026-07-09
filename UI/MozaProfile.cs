@@ -256,6 +256,48 @@ namespace MozaPlugin
     }
 
     /// <summary>
+    /// Wheelbase "low-frequency effects" (LFE) — the complex gearshift vibration,
+    /// continuous engine vibration, and ABS effect available on base firmware
+    /// >= 1.2.10.10 (see MozaData.BaseSupportsLfe). All three are HOST-RENDERED
+    /// streams (cmd 0x2D/0x77, see MozaBaseLfeProtocol / BaseLfeEffectWorker) —
+    /// like AB9 engine vibration and mBooster effects, they do NOT round-trip as
+    /// stored device settings, so these fields drive the plugin's host-side
+    /// stream generator only (no MozaData field, no command-DB write, no probe).
+    ///
+    /// Reuses <see cref="MBoosterEffectSettings"/> (Enabled / IntensityPct /
+    /// FrequencyHz / SmoothnessPct) per effect. Frequency semantics:
+    /// - Engine: redline frequency (buzz pitch at max RPM; scales down with RPM).
+    /// - ABS: fixed carrier; intensity is host-pulse-modulated.
+    /// - Gearshift: buzz pitch of the per-shift burst.
+    /// </summary>
+    public sealed class BaseLfeSettings
+    {
+        public MBoosterEffectSettings Engine    { get; set; } = new MBoosterEffectSettings { FrequencyHz = 100, IntensityPct = 50 };
+        public MBoosterEffectSettings Abs       { get; set; } = new MBoosterEffectSettings { FrequencyHz = 15, IntensityPct = 50, SmoothnessPct = 100 };
+        public MBoosterEffectSettings Gearshift { get; set; } = new MBoosterEffectSettings { FrequencyHz = 40, IntensityPct = 100 };
+
+        // Complex-gearshift event tuning — mirrors the classic wheelbase
+        // GearshiftVibrateOnNeutral / GearshiftDebounceMs, but applies to the
+        // LFE gearshift path (cmd 0x77) which replaces the classic 0x76 event
+        // on LFE-capable firmware. Kept separate so the two paths never share a
+        // debounce latch.
+        public bool GearshiftVibrateOnNeutral { get; set; } = false;
+        public int GearshiftDebounceMs { get; set; } = 500;
+
+        public BaseLfeSettings Clone()
+        {
+            return new BaseLfeSettings
+            {
+                Engine = Engine?.Clone() ?? new MBoosterEffectSettings(),
+                Abs = Abs?.Clone() ?? new MBoosterEffectSettings(),
+                Gearshift = Gearshift?.Clone() ?? new MBoosterEffectSettings(),
+                GearshiftVibrateOnNeutral = GearshiftVibrateOnNeutral,
+                GearshiftDebounceMs = GearshiftDebounceMs,
+            };
+        }
+    }
+
+    /// <summary>
     /// A named profile snapshot of all Moza device configuration.
     /// Extends SimHub's ProfileBase for native per-game profile switching.
     /// All integer settings use -1 as sentinel for "not included in this profile".
@@ -410,6 +452,12 @@ namespace MozaPlugin
         // older serialized profiles untouched on load and avoids pushing default
         // values to a device that isn't attached.
         public Ab9Settings? Ab9 { get; set; }
+
+        // ===== Wheelbase LFE effects (base firmware >= 1.2.10.10) =====
+        // Null until the user touches the Wheelbase LFE panel for this profile —
+        // leaves older serialized profiles untouched on load. Host-rendered; not
+        // captured from device reads.
+        public BaseLfeSettings? BaseLfe { get; set; }
 
         // ===== mBooster Pedals (per-device) =====
         // Per-device settings keyed by USB device instance ID (stable across
@@ -594,6 +642,7 @@ namespace MozaPlugin
             DashFlagColors = CloneArray(p.DashFlagColors);
 
             Ab9 = p.Ab9?.Clone();
+            BaseLfe = p.BaseLfe?.Clone();
 
             // mBooster — deep-copy each per-device settings entry.
             MBoosterSettings = new Dictionary<string, MBoosterDeviceSettings>(StringComparer.OrdinalIgnoreCase);

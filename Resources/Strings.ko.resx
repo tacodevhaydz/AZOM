@@ -692,4 +692,5 @@ Id: {2}</value></data>
   <data name="ShifterColor_Blue" xml:space="preserve"><value>파랑</value></data>
   <data name="ShifterColor_Purple" xml:space="preserve"><value>보라</value></data>
   <data name="ShifterColor_White" xml:space="preserve"><value>흰색</value></data>
+  <data name="Section_WheelbaseLfe" xml:space="preserve"><value>베이스 진동 효과</value></data>
 </root>

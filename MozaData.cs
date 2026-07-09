@@ -336,6 +336,25 @@ namespace MozaPlugin
         public volatile string BaseHwSubVersion = "";
         public byte[] BaseMcuUid = System.Array.Empty<byte>();
         public byte[] BaseIdentity11 = System.Array.Empty<byte>();
+        // Numeric base firmware version, packed (maj<<24)|(min<<16)|(patch<<8)|build;
+        // 0 = not yet read/unknown. Read via base-fw-version (dev 0x12, group 0x04).
+        // Distinct from BaseSwVersion above (group 0x0F), which is the hardware
+        // model STRING (e.g. "RS21-D05-MC WB"), not a numeric version. Gates the
+        // wheelbase LFE effects — see BaseSupportsLfe.
+        //
+        // STATIC-backed so it survives the game-switch plugin reload (which builds
+        // a fresh MozaData) — the base isn't re-detected over the persistent wire,
+        // so base-fw-version isn't re-read; without persistence BaseSupportsLfe
+        // would drop to false after every game switch. Cleared on wheel/base
+        // hot-swap via ClearWheelIdentity so a physically-swapped base re-reads.
+        private static volatile int s_baseFwVersion;
+        public int BaseFwVersion { get => s_baseFwVersion; set => s_baseFwVersion = value; }
+
+        // Minimum base firmware for the wheelbase LFE effects (complex gearshift,
+        // engine vibration, ABS). Captured on 1.2.10.10; the prior non-LFE build
+        // was 1.2.9.24.
+        public const int BaseFwLfeMin = (1 << 24) | (2 << 16) | (10 << 8) | 10; // 1.2.10.10
+        public bool BaseSupportsLfe => BaseFwVersion != 0 && BaseFwVersion >= BaseFwLfeMin;
 
         // ===== FFB Equalizer (6 bands: 10/15/25/40/60/100 Hz, 0-400% where 100% = flat) =====
         public volatile int Equalizer1 = 100;
@@ -862,6 +881,18 @@ namespace MozaPlugin
             {
                 BaseIdentity11 = (byte[])data.Clone();
             }
+            else if (commandName == "base-fw-version")
+            {
+                // Reply payload is 4 version bytes in WIRE order [major, minor,
+                // build, patch] (no cmd echo — group 0x04). MOZA DISPLAYS the last
+                // two swapped: wire 01 02 18 09 is shown "1.2.9.24", wire 01 02 0A
+                // 0A is "1.2.10.10". Pack in display/semver order (maj.min.patch.
+                // build) — swap data[2]/data[3] — so the >= threshold compare in
+                // BaseSupportsLfe orders pre-LFE (1.2.9.24) BELOW LFE (1.2.10.10).
+                // Packing in raw wire order would misgate (0x01021809 > 0x01020A0A).
+                if (data.Length >= 4)
+                    BaseFwVersion = (data[0] << 24) | (data[1] << 16) | (data[3] << 8) | data[2];
+            }
             else if (commandName == "wheel-identity-11")
             {
                 WheelIdentity11 = (byte[])data.Clone();
@@ -944,6 +975,7 @@ namespace MozaPlugin
             BaseHwSubVersion = "";
             BaseMcuUid = System.Array.Empty<byte>();
             BaseIdentity11 = System.Array.Empty<byte>();
+            BaseFwVersion = 0;
             Last28x00Byte5 = 0;
             Last28x00ByteValid = false;
             Last28x01Byte4 = 0;

@@ -474,6 +474,9 @@ namespace MozaPlugin.Devices
                     _deviceManager.ReadSetting("base-hw-sub");
                     _deviceManager.ReadSetting("base-mcu-uid");
                     _deviceManager.ReadSetting("base-identity-11");
+                    // Numeric firmware version (dev 0x12, group 0x04) — gates the
+                    // wheelbase LFE effects via MozaData.BaseSupportsLfe.
+                    _deviceManager.ReadSetting("base-fw-version");
                 }
             }
 

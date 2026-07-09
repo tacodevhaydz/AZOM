@@ -155,6 +155,7 @@ The two orchestrators — `MozaPlugin.cs` and `Telemetry/TelemetrySender.cs` —
 | `Telemetry/SimHubPropertyResolver.cs` | `ResolveAsDouble`/`AsString`, `@internal/` channels, property-name enumeration |
 | `SimHubRegistrar.cs` | `AZOM.*` property delegates (live state reads at invoke time) + action registration |
 | `Devices/Ab9EngineVibrationWorker.cs` | The 91 Hz host-rendered AB9 engine-vibration loop |
+| `Devices/BaseLfeEffectWorker.cs` | The 50 Hz host-rendered wheelbase LFE loop (complex gearshift / engine / ABS, cmd `0x2D/0x77`, fw ≥ 1.2.10.10) |
 | `ControlMapper/ControlMapperBridge.cs` | Control Mapper variant-provider registration + workarounds — see [`docs/controlmapper.md`](controlmapper.md) |
 
 `TelemetrySender` collaborators (constructed in its ctor):
@@ -404,7 +405,7 @@ When adding a new setting that is written to the device, it must also be saved/r
 
 Every setting that writes to the device on UI change must round-trip through profiles or the per-wheel-page dicts — a transient-only field is lost on game/profile switch.
 
-**Host-rendered settings** (e.g. AB9 engine vibration) skip steps 1–4 entirely: no command-DB entry, no `MozaData` field, no probe — just the profile property + UI, with the periodic worker reading the profile on its next tick. **One-shot host-side config writes that ARE device-persisted but bypass the command DB** (e.g. AB9 gear-shift intensity) follow 6–8 plus an explicit `Send*` call in both the UI handler and `ApplyAb9ToHardware`.
+**Host-rendered settings** (e.g. AB9 engine vibration, the wheelbase LFE effects in `Devices/BaseLfeEffectWorker.cs`) skip steps 1–4 entirely: no command-DB entry, no `MozaData` field, no probe — just the profile property + UI, with the periodic worker reading the profile on its next tick. **One-shot host-side config writes that ARE device-persisted but bypass the command DB** (e.g. AB9 gear-shift intensity) follow 6–8 plus an explicit `Send*` call in both the UI handler and `ApplyAb9ToHardware`. New host-rendered *stream* lanes need a `StreamKind` slot in `Protocol/MozaSerialConnection.cs` — bump `StreamSlotCount` and add the member past the LED lanes (the static ctor asserts the regions fit).
 
 ### Settings storage and migration
 

@@ -520,7 +520,7 @@
                                 </StackPanel>
                             </ctrl:SectionCard>
 
-                            <ctrl:SectionCard Grid.Column="1" Title="{x:Static res:Strings.Section_GearshiftVibration}"
+                            <ctrl:SectionCard x:Name="GearshiftVibrationCard" Grid.Column="1" Title="{x:Static res:Strings.Section_GearshiftVibration}"
                                               Icon="{StaticResource IconShift}" Margin="7,0,0,14">
                                 <StackPanel>
                                     <Grid Margin="0,4">
@@ -551,6 +551,152 @@
                                         <Slider Grid.Column="1" x:Name="GearshiftDebounceSlider" Style="{StaticResource SettingSlider}" Minimum="0" Maximum="1000" TickFrequency="50" SmallChange="50" LargeChange="50" IsSnapToTickEnabled="True" ValueChanged="GearshiftDebounceSlider_ValueChanged"/>
                                         <TextBox Grid.Column="2" x:Name="GearshiftDebounceValue" Style="{StaticResource SliderValueEditBox}"
                                                  Tag="{Binding ElementName=GearshiftDebounceSlider}"
+                                                 KeyDown="SliderValueBox_KeyDown" LostFocus="SliderValueBox_LostFocus"
+                                                 Text="500 ms"/>
+                                    </Grid>
+                                </StackPanel>
+                            </ctrl:SectionCard>
+                            <!-- Wheelbase LFE effects (complex gearshift / engine / ABS).
+                                 Host-rendered streams available on base firmware
+                                 >= 1.2.10.10; hidden (and the classic gearshift card shown
+                                 instead) on older firmware. See BaseLfeEffectWorker. -->
+                            <ctrl:SectionCard x:Name="BaseLfeCard" Grid.Column="1" Title="{x:Static res:Strings.Section_WheelbaseLfe}"
+                                              Icon="{StaticResource IconShift}" Margin="7,0,0,14" Visibility="Collapsed">
+                                <StackPanel>
+                                    <!-- ENGINE -->
+                                    <DockPanel Margin="0,0,0,2">
+                                        <StackPanel DockPanel.Dock="Right" Orientation="Horizontal" VerticalAlignment="Center">
+                                            <ctrl:OffOnToggle x:Name="BaseLfeEngineEnable" Content="{x:Static res:Strings.Label_Enable}" VerticalAlignment="Center" Checked="BaseLfeEngineEnable_Changed" Unchecked="BaseLfeEngineEnable_Changed"/>
+                                            <Button x:Name="BaseLfeEngineTestButton" Content="{x:Static res:Strings.Label_Test}" Margin="12,0,0,0" Padding="14,3" Click="BaseLfeEngineTest_Click"/>
+                                        </StackPanel>
+                                        <TextBlock Text="{x:Static res:Strings.Section_EngineContinuous}" Foreground="{StaticResource TextBrush}" FontWeight="SemiBold" VerticalAlignment="Center"/>
+                                    </DockPanel>
+                                    <Grid Margin="0,4">
+                                        <Grid.ColumnDefinitions>
+                                            <ColumnDefinition Width="Auto"/>
+                                            <ColumnDefinition Width="*"/>
+                                            <ColumnDefinition Width="Auto"/>
+                                        </Grid.ColumnDefinitions>
+                                        <TextBlock Grid.Column="0" Text="{x:Static res:Strings.SliderLabel_FrequencyHz}" Style="{StaticResource SliderLabel}"/>
+                                        <Slider Grid.Column="1" x:Name="BaseLfeEngineFrequencySlider" Style="{StaticResource SettingSlider}" Minimum="60" Maximum="100" TickFrequency="1" ValueChanged="BaseLfeEngineFrequencySlider_ValueChanged"/>
+                                        <TextBox Grid.Column="2" x:Name="BaseLfeEngineFrequencyValue" Style="{StaticResource SliderValueEditBox}"
+                                                 Tag="{Binding ElementName=BaseLfeEngineFrequencySlider}"
+                                                 KeyDown="SliderValueBox_KeyDown" LostFocus="SliderValueBox_LostFocus"
+                                                 Text="100"/>
+                                    </Grid>
+                                    <Grid Margin="0,4">
+                                        <Grid.ColumnDefinitions>
+                                            <ColumnDefinition Width="Auto"/>
+                                            <ColumnDefinition Width="*"/>
+                                            <ColumnDefinition Width="Auto"/>
+                                        </Grid.ColumnDefinitions>
+                                        <TextBlock Grid.Column="0" Text="{x:Static res:Strings.SliderLabel_Intensity}" Style="{StaticResource SliderLabel}"/>
+                                        <Slider Grid.Column="1" x:Name="BaseLfeEngineIntensity" Style="{StaticResource SettingSlider}" Minimum="0" Maximum="100" TickFrequency="1" ValueChanged="BaseLfeEngineIntensity_ValueChanged"/>
+                                        <TextBox Grid.Column="2" x:Name="BaseLfeEngineIntensityValue" Style="{StaticResource SliderValueEditBox}"
+                                                 Tag="{Binding ElementName=BaseLfeEngineIntensity}"
+                                                 KeyDown="SliderValueBox_KeyDown" LostFocus="SliderValueBox_LostFocus"
+                                                 Text="50"/>
+                                    </Grid>
+                                    <Border BorderBrush="{StaticResource BorderBrush}" BorderThickness="0,1,0,0" Margin="0,10,0,8"/>
+
+                                    <!-- ABS -->
+                                    <DockPanel Margin="0,0,0,2">
+                                        <StackPanel DockPanel.Dock="Right" Orientation="Horizontal" VerticalAlignment="Center">
+                                            <ctrl:OffOnToggle x:Name="BaseLfeAbsEnable" Content="{x:Static res:Strings.Label_Enable}" VerticalAlignment="Center" Checked="BaseLfeAbsEnable_Changed" Unchecked="BaseLfeAbsEnable_Changed"/>
+                                            <Button x:Name="BaseLfeAbsTestButton" Content="{x:Static res:Strings.Label_Test}" Margin="12,0,0,0" Padding="14,3" Click="BaseLfeAbsTest_Click"/>
+                                        </StackPanel>
+                                        <TextBlock Text="{x:Static res:Strings.Section_Abs}" Foreground="{StaticResource TextBrush}" FontWeight="SemiBold" VerticalAlignment="Center"/>
+                                    </DockPanel>
+                                    <Grid Margin="0,4">
+                                        <Grid.ColumnDefinitions>
+                                            <ColumnDefinition Width="Auto"/>
+                                            <ColumnDefinition Width="*"/>
+                                            <ColumnDefinition Width="Auto"/>
+                                        </Grid.ColumnDefinitions>
+                                        <TextBlock Grid.Column="0" Text="{x:Static res:Strings.SliderLabel_FrequencyHz}" Style="{StaticResource SliderLabel}"/>
+                                        <Slider Grid.Column="1" x:Name="BaseLfeAbsFrequencySlider" Style="{StaticResource SettingSlider}" Minimum="5" Maximum="30" TickFrequency="1" ValueChanged="BaseLfeAbsFrequencySlider_ValueChanged"/>
+                                        <TextBox Grid.Column="2" x:Name="BaseLfeAbsFrequencyValue" Style="{StaticResource SliderValueEditBox}"
+                                                 Tag="{Binding ElementName=BaseLfeAbsFrequencySlider}"
+                                                 KeyDown="SliderValueBox_KeyDown" LostFocus="SliderValueBox_LostFocus"
+                                                 Text="15"/>
+                                    </Grid>
+                                    <Grid Margin="0,4">
+                                        <Grid.ColumnDefinitions>
+                                            <ColumnDefinition Width="Auto"/>
+                                            <ColumnDefinition Width="*"/>
+                                            <ColumnDefinition Width="Auto"/>
+                                        </Grid.ColumnDefinitions>
+                                        <TextBlock Grid.Column="0" Text="{x:Static res:Strings.SliderLabel_Intensity}" Style="{StaticResource SliderLabel}"/>
+                                        <Slider Grid.Column="1" x:Name="BaseLfeAbsIntensity" Style="{StaticResource SettingSlider}" Minimum="0" Maximum="100" TickFrequency="1" ValueChanged="BaseLfeAbsIntensity_ValueChanged"/>
+                                        <TextBox Grid.Column="2" x:Name="BaseLfeAbsIntensityValue" Style="{StaticResource SliderValueEditBox}"
+                                                 Tag="{Binding ElementName=BaseLfeAbsIntensity}"
+                                                 KeyDown="SliderValueBox_KeyDown" LostFocus="SliderValueBox_LostFocus"
+                                                 Text="50"/>
+                                    </Grid>
+                                    <Grid Margin="0,4">
+                                        <Grid.ColumnDefinitions>
+                                            <ColumnDefinition Width="Auto"/>
+                                            <ColumnDefinition Width="*"/>
+                                            <ColumnDefinition Width="Auto"/>
+                                        </Grid.ColumnDefinitions>
+                                        <TextBlock Grid.Column="0" Text="{x:Static res:Strings.SliderLabel_Smoothness}" Style="{StaticResource SliderLabel}"/>
+                                        <Slider Grid.Column="1" x:Name="BaseLfeAbsSmoothness" Style="{StaticResource SettingSlider}" Minimum="0" Maximum="100" TickFrequency="1" ValueChanged="BaseLfeAbsSmoothness_ValueChanged"/>
+                                        <TextBox Grid.Column="2" x:Name="BaseLfeAbsSmoothnessValue" Style="{StaticResource SliderValueEditBox}"
+                                                 Tag="{Binding ElementName=BaseLfeAbsSmoothness}"
+                                                 KeyDown="SliderValueBox_KeyDown" LostFocus="SliderValueBox_LostFocus"
+                                                 Text="100"/>
+                                    </Grid>
+                                    <Border BorderBrush="{StaticResource BorderBrush}" BorderThickness="0,1,0,0" Margin="0,10,0,8"/>
+
+                                    <!-- GEARSHIFT (complex) -->
+                                    <DockPanel Margin="0,0,0,2">
+                                        <StackPanel DockPanel.Dock="Right" Orientation="Horizontal" VerticalAlignment="Center">
+                                            <ctrl:OffOnToggle x:Name="BaseLfeGearshiftEnable" Content="{x:Static res:Strings.Label_Enable}" VerticalAlignment="Center" Checked="BaseLfeGearshiftEnable_Changed" Unchecked="BaseLfeGearshiftEnable_Changed"/>
+                                            <Button x:Name="BaseLfeGearshiftTestButton" Content="{x:Static res:Strings.Label_Test}" Margin="12,0,0,0" Padding="14,3" Click="BaseLfeGearshiftTest_Click"/>
+                                        </StackPanel>
+                                        <TextBlock Text="{x:Static res:Strings.Section_GearshiftVibration}" Foreground="{StaticResource TextBrush}" FontWeight="SemiBold" VerticalAlignment="Center"/>
+                                    </DockPanel>
+                                    <Grid Margin="0,4">
+                                        <Grid.ColumnDefinitions>
+                                            <ColumnDefinition Width="Auto"/>
+                                            <ColumnDefinition Width="*"/>
+                                            <ColumnDefinition Width="Auto"/>
+                                        </Grid.ColumnDefinitions>
+                                        <TextBlock Grid.Column="0" Text="{x:Static res:Strings.SliderLabel_FrequencyHz}" Style="{StaticResource SliderLabel}"/>
+                                        <Slider Grid.Column="1" x:Name="BaseLfeGearshiftFrequencySlider" Style="{StaticResource SettingSlider}" Minimum="20" Maximum="100" TickFrequency="1" ValueChanged="BaseLfeGearshiftFrequencySlider_ValueChanged"/>
+                                        <TextBox Grid.Column="2" x:Name="BaseLfeGearshiftFrequencyValue" Style="{StaticResource SliderValueEditBox}"
+                                                 Tag="{Binding ElementName=BaseLfeGearshiftFrequencySlider}"
+                                                 KeyDown="SliderValueBox_KeyDown" LostFocus="SliderValueBox_LostFocus"
+                                                 Text="40"/>
+                                    </Grid>
+                                    <Grid Margin="0,4">
+                                        <Grid.ColumnDefinitions>
+                                            <ColumnDefinition Width="Auto"/>
+                                            <ColumnDefinition Width="*"/>
+                                            <ColumnDefinition Width="Auto"/>
+                                        </Grid.ColumnDefinitions>
+                                        <TextBlock Grid.Column="0" Text="{x:Static res:Strings.SliderLabel_Intensity}" Style="{StaticResource SliderLabel}"/>
+                                        <Slider Grid.Column="1" x:Name="BaseLfeGearshiftIntensity" Style="{StaticResource SettingSlider}" Minimum="0" Maximum="100" TickFrequency="1" ValueChanged="BaseLfeGearshiftIntensity_ValueChanged"/>
+                                        <TextBox Grid.Column="2" x:Name="BaseLfeGearshiftIntensityValue" Style="{StaticResource SliderValueEditBox}"
+                                                 Tag="{Binding ElementName=BaseLfeGearshiftIntensity}"
+                                                 KeyDown="SliderValueBox_KeyDown" LostFocus="SliderValueBox_LostFocus"
+                                                 Text="100"/>
+                                    </Grid>
+                                    <StackPanel Orientation="Horizontal" Margin="0,4">
+                                        <TextBlock Text="{x:Static res:Strings.SliderLabel_VibrateOnNeutral}" Style="{StaticResource SliderLabel}"/>
+                                        <ctrl:OffOnToggle x:Name="BaseLfeGearshiftVibrateOnNeutral" VerticalAlignment="Center"
+                                                  Checked="BaseLfeGearshiftVibrateOnNeutral_Changed" Unchecked="BaseLfeGearshiftVibrateOnNeutral_Changed"/>
+                                    </StackPanel>
+                                    <Grid Margin="0,4">
+                                        <Grid.ColumnDefinitions>
+                                            <ColumnDefinition Width="Auto"/>
+                                            <ColumnDefinition Width="*"/>
+                                            <ColumnDefinition Width="Auto"/>
+                                        </Grid.ColumnDefinitions>
+                                        <TextBlock Grid.Column="0" Text="{x:Static res:Strings.SliderLabel_ShiftDebounce}" Style="{StaticResource SliderLabel}"/>
+                                        <Slider Grid.Column="1" x:Name="BaseLfeGearshiftDebounceSlider" Style="{StaticResource SettingSlider}" Minimum="0" Maximum="1000" TickFrequency="50" SmallChange="50" LargeChange="50" IsSnapToTickEnabled="True" ValueChanged="BaseLfeGearshiftDebounceSlider_ValueChanged"/>
+                                        <TextBox Grid.Column="2" x:Name="BaseLfeGearshiftDebounceValue" Style="{StaticResource SliderValueEditBox}"
+                                                 Tag="{Binding ElementName=BaseLfeGearshiftDebounceSlider}"
                                                  KeyDown="SliderValueBox_KeyDown" LostFocus="SliderValueBox_LostFocus"
                                                  Text="500 ms"/>
                                     </Grid>
