@@ -54,15 +54,19 @@ namespace MozaPlugin.Devices
         // Momentary test triggers.
         private long _engineTestUntil, _engineTestStart, _absTestUntil, _gsTestStart;
 
-        // Per-channel state (worker thread only).
-        private bool _engineActive, _absActive, _gearActive;
-        private double _enginePhase, _absPhase, _gearPhase;
-
-        // Gearshift edge-trigger state.
-        private long _gearBurstUntil;      // burst hold deadline (real events + test)
-        private double _lastGearTrigger;
-        private bool _gearWarm;
-        private long _lastGearFireTicks;
+        // Per-channel state (worker thread only). Every channel carries both the
+        // continuous phase and the OnChange edge state, so any channel can run in
+        // either trigger mode (used by the additive-engine partials).
+        private struct ChannelState
+        {
+            public bool Active;
+            public double Phase;
+            public double LastTrigger;   // OnChange edge detection
+            public bool Warm;
+            public long BurstUntil;
+            public long LastFireTicks;
+        }
+        private ChannelState _engineSt, _absSt, _gearSt;
 
         private long _burstTicks, _feedStaleTicks;
 
@@ -154,78 +158,83 @@ namespace MozaPlugin.Devices
                 (Stopwatch.GetTimestamp() - Interlocked.Read(ref _lastFrameTicks)) <= _feedStaleTicks;
 
             var lfe = _lookup() ?? DefaultLfe;
-            TickEngine(lfe.Engine ?? DefaultLfe.Engine, feedLive);
-            TickAbs(lfe.Abs ?? DefaultLfe.Abs, feedLive);
+            TickEngine(lfe, feedLive);
+            TickAbs(lfe, feedLive);
             TickGearshift(lfe, feedLive);
         }
 
-        // ── Engine — level trigger, continuous ────────────────────────────────
-        private void TickEngine(BaseLfeChannel ch, bool feedLive)
+        // Game-driven activation, mode-aware. Level = trigger != 0 (continuous);
+        // OnChange = burst on trigger change (neutral-suppress + debounce, edge
+        // state kept per channel). Test windows are handled by the per-channel
+        // tick methods. Any channel can run in either mode (additive partials).
+        private bool ActiveByGame(BaseLfeChannel ch, BaseLfeSettings lfe, bool feedLive, ref ChannelState st)
         {
+            if (!ch.Enabled || !feedLive) { st.Warm = false; return false; }
+            if (ch.TriggerMode == BaseLfeTriggerMode.Level)
+                return Triggered(ch.TriggerFormula);
+
+            long now = Stopwatch.GetTimestamp();
+            double raw = EvalFormulaRaw(ch.TriggerFormula);
+            if (!st.Warm) { st.LastTrigger = raw; st.Warm = true; }
+            else if (Math.Abs(raw - st.LastTrigger) > 1e-6)
+            {
+                bool intoNeutral = Math.Abs(raw) < 0.5;   // gear ≈ 0
+                st.LastTrigger = raw;
+                int debounceMs = lfe.GearshiftDebounceMs; if (debounceMs < 0) debounceMs = 0;
+                bool debounced = (now - st.LastFireTicks) * 1000.0 / Stopwatch.Frequency < debounceMs;
+                if ((!intoNeutral || lfe.GearshiftVibrateOnNeutral) && !debounced)
+                {
+                    st.LastFireTicks = now;
+                    st.BurstUntil = now + _burstTicks;
+                }
+            }
+            return st.BurstUntil > now;
+        }
+
+        // ── Engine (2 s sweep test) ───────────────────────────────────────────
+        private void TickEngine(BaseLfeSettings lfe, bool feedLive)
+        {
+            var ch = lfe.Engine ?? DefaultLfe.Engine;
             long now = Stopwatch.GetTimestamp();
             bool testActive = Interlocked.Read(ref _engineTestUntil) > now;
-            bool active = testActive || (ch.Enabled && feedLive && Triggered(ch.TriggerFormula));
-            if (!active)
-            {
-                if (_engineActive) { _base.SendBaseLfeDisable(MozaBaseLfeProtocol.LfeEffect.Engine); _engineActive = false; _enginePhase = 0; }
-                return;
-            }
+            bool active = testActive || ActiveByGame(ch, lfe, feedLive, ref _engineSt);
+            if (!active) { DisableIf(ref _engineSt, MozaBaseLfeProtocol.LfeEffect.Engine); return; }
 
             double freq, intensity01, smoothness01;
             if (testActive)
             {
-                // 2 s sweep of the slider pitch so the range is felt without a game.
                 double t = (now - Interlocked.Read(ref _engineTestStart)) * 1000.0 / Stopwatch.Frequency / EngineTestMs;
                 if (t < 0) t = 0; if (t > 1) t = 1;
                 freq = Clamp(ch.Frequency, 0, 500) * (0.12 + 0.88 * t);
                 intensity01 = ClampPct(ch.Intensity) / 100.0;
                 smoothness01 = ClampPct(ch.Smoothness) / 100.0;
             }
-            else
-            {
-                freq = EvalParam(ch.FrequencyFormula, ch.Frequency);
-                intensity01 = Clamp01(EvalParam(ch.IntensityFormula, ch.Intensity) / 100.0);
-                smoothness01 = Clamp01(EvalParam(ch.SmoothnessFormula, ch.Smoothness) / 100.0);
-            }
-            _base.SendBaseLfeEngineStream(playing: true, freq, Envelope(intensity01, ref _enginePhase, freq, smoothness01));
-            _engineActive = true;
+            else EvalRender(ch, out freq, out intensity01, out smoothness01);
+            _base.SendBaseLfeEngineStream(playing: true, freq, Envelope(intensity01, ref _engineSt.Phase, freq, smoothness01));
+            _engineSt.Active = true;
         }
 
-        // ── ABS — level trigger, continuous ───────────────────────────────────
-        private void TickAbs(BaseLfeChannel ch, bool feedLive)
+        // ── ABS (1 s burst test) ──────────────────────────────────────────────
+        private void TickAbs(BaseLfeSettings lfe, bool feedLive)
         {
+            var ch = lfe.Abs ?? DefaultLfe.Abs;
             bool testActive = Interlocked.Read(ref _absTestUntil) > Stopwatch.GetTimestamp();
-            bool active = testActive || (ch.Enabled && feedLive && Triggered(ch.TriggerFormula));
-            if (!active)
-            {
-                if (_absActive) { _base.SendBaseLfeDisable(MozaBaseLfeProtocol.LfeEffect.Abs); _absActive = false; _absPhase = 0; }
-                return;
-            }
+            bool active = testActive || ActiveByGame(ch, lfe, feedLive, ref _absSt);
+            if (!active) { DisableIf(ref _absSt, MozaBaseLfeProtocol.LfeEffect.Abs); return; }
 
             double freq, intensity01, smoothness01;
-            if (testActive)
-            {
-                freq = Clamp(ch.Frequency, 0, 500);
-                intensity01 = ClampPct(ch.Intensity) / 100.0;
-                smoothness01 = ClampPct(ch.Smoothness) / 100.0;
-            }
-            else
-            {
-                freq = EvalParam(ch.FrequencyFormula, ch.Frequency);
-                intensity01 = Clamp01(EvalParam(ch.IntensityFormula, ch.Intensity) / 100.0);
-                smoothness01 = Clamp01(EvalParam(ch.SmoothnessFormula, ch.Smoothness) / 100.0);
-            }
-            _base.SendBaseLfeAbsStream(playing: true, freq, Envelope(intensity01, ref _absPhase, freq, smoothness01));
-            _absActive = true;
+            if (testActive) { freq = Clamp(ch.Frequency, 0, 500); intensity01 = ClampPct(ch.Intensity) / 100.0; smoothness01 = ClampPct(ch.Smoothness) / 100.0; }
+            else EvalRender(ch, out freq, out intensity01, out smoothness01);
+            _base.SendBaseLfeAbsStream(playing: true, freq, Envelope(intensity01, ref _absSt.Phase, freq, smoothness01));
+            _absSt.Active = true;
         }
 
-        // ── Gearshift — edge trigger, burst ───────────────────────────────────
+        // ── Gearshift (two-bump test) ─────────────────────────────────────────
         private void TickGearshift(BaseLfeSettings lfe, bool feedLive)
         {
             var ch = lfe.Gearshift ?? DefaultLfe.Gearshift;
             long now = Stopwatch.GetTimestamp();
 
-            // Test = two rapid bumps.
             bool testBump = false;
             long ts = Interlocked.Read(ref _gsTestStart);
             if (ts > 0)
@@ -236,50 +245,33 @@ namespace MozaPlugin.Devices
                 else if (ms >= GsTestBump2EndMs) Interlocked.Exchange(ref _gsTestStart, 0);
             }
 
-            // Real gear-change edge → arm a burst (neutral-suppress + debounce).
-            if (ch.Enabled && feedLive)
-            {
-                // Edge-detect on the raw trigger value: any monitored-property
-                // change fires the burst (default trigger = [Gear]).
-                double raw = EvalFormulaRaw(ch.TriggerFormula);
-                if (!_gearWarm) { _lastGearTrigger = raw; _gearWarm = true; }
-                else if (Math.Abs(raw - _lastGearTrigger) > 1e-6)
-                {
-                    bool intoNeutral = Math.Abs(raw) < 0.5;   // gear ≈ 0
-                    _lastGearTrigger = raw;
-                    int debounceMs = lfe.GearshiftDebounceMs; if (debounceMs < 0) debounceMs = 0;
-                    bool debounced = (now - _lastGearFireTicks) * 1000.0 / Stopwatch.Frequency < debounceMs;
-                    if ((!intoNeutral || lfe.GearshiftVibrateOnNeutral) && !debounced)
-                    {
-                        _lastGearFireTicks = now;
-                        Interlocked.Exchange(ref _gearBurstUntil, now + _burstTicks);
-                    }
-                }
-            }
-            else
-            {
-                _gearWarm = false;   // reset the latch so re-entry doesn't fire on a stale value
-            }
+            bool active = testBump || ActiveByGame(ch, lfe, feedLive, ref _gearSt);
+            if (!active) { DisableIf(ref _gearSt, MozaBaseLfeProtocol.LfeEffect.Gearshift); return; }
 
-            bool burst = Interlocked.Read(ref _gearBurstUntil) > now || testBump;
-            if (!burst)
-            {
-                if (_gearActive) { _base.SendBaseLfeDisable(MozaBaseLfeProtocol.LfeEffect.Gearshift); _gearActive = false; _gearPhase = 0; }
-                return;
-            }
+            double freq, intensity01, smoothness01;
+            if (testBump) { freq = Clamp(ch.Frequency, 0, 500); intensity01 = ClampPct(ch.Intensity) / 100.0; smoothness01 = ClampPct(ch.Smoothness) / 100.0; }
+            else EvalRender(ch, out freq, out intensity01, out smoothness01);
+            _base.SendBaseLfeGearshiftBurst(freq, Envelope(intensity01, ref _gearSt.Phase, freq, smoothness01));
+            _gearSt.Active = true;
+        }
 
-            double freq = testBump ? Clamp(ch.Frequency, 0, 500) : EvalParam(ch.FrequencyFormula, ch.Frequency);
-            double intensity01 = testBump ? ClampPct(ch.Intensity) / 100.0 : Clamp01(EvalParam(ch.IntensityFormula, ch.Intensity) / 100.0);
-            double smoothness01 = testBump ? ClampPct(ch.Smoothness) / 100.0 : Clamp01(EvalParam(ch.SmoothnessFormula, ch.Smoothness) / 100.0);
-            _base.SendBaseLfeGearshiftBurst(freq, Envelope(intensity01, ref _gearPhase, freq, smoothness01));
-            _gearActive = true;
+        private void EvalRender(BaseLfeChannel ch, out double freq, out double intensity01, out double smoothness01)
+        {
+            freq = EvalParam(ch.FrequencyFormula, ch.Frequency);
+            intensity01 = Clamp01(EvalParam(ch.IntensityFormula, ch.Intensity) / 100.0);
+            smoothness01 = Clamp01(EvalParam(ch.SmoothnessFormula, ch.Smoothness) / 100.0);
+        }
+
+        private void DisableIf(ref ChannelState st, MozaBaseLfeProtocol.LfeEffect id)
+        {
+            if (st.Active) { _base.SendBaseLfeDisable(id); st.Active = false; st.Phase = 0; }
         }
 
         private void SilenceIfActive()
         {
-            if (_engineActive) { _base.SendBaseLfeDisable(MozaBaseLfeProtocol.LfeEffect.Engine); _engineActive = false; }
-            if (_absActive) { _base.SendBaseLfeDisable(MozaBaseLfeProtocol.LfeEffect.Abs); _absActive = false; }
-            if (_gearActive) { _base.SendBaseLfeDisable(MozaBaseLfeProtocol.LfeEffect.Gearshift); _gearActive = false; }
+            DisableIf(ref _engineSt, MozaBaseLfeProtocol.LfeEffect.Engine);
+            DisableIf(ref _absSt, MozaBaseLfeProtocol.LfeEffect.Abs);
+            DisableIf(ref _gearSt, MozaBaseLfeProtocol.LfeEffect.Gearshift);
         }
 
         // ── Helpers ───────────────────────────────────────────────────────────

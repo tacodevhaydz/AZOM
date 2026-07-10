@@ -166,6 +166,13 @@ Reverse-engineered byte-exact from `lfe-{gearshift,engine,abs}-*.pcapng` +
 | p5:p6 | frequency BE16 | `round(freqHz / 200 × 65536)` — identical to the mBooster `EncodeFreq` |
 | p7:p8 | intensity BE16 | `round(pct / 100 × 65535)` — identical to the mBooster `EncodeAmp` |
 
+**Only effect ids 0/1/2 are live channels** — probing ids 3..15 with cmd `0x77`
+(via `tools/lfe_probe.py`) produces no vibration, so the base runs exactly three
+concurrent oscillators. The base **sums** whatever the channels are doing
+(verified on hardware), so the three can be repurposed as summed harmonic partials
+for a richer engine (the plugin's "Additive Engine" preset) — they run on
+independent phases, so they beat against each other for free roughness.
+
 An all-zero payload disables the effect. Verified values: 100 Hz→`0x8000`,
 50 Hz→`0x4000`, 30 Hz→`0x2666`, 20 Hz→`0x199A`, 18 Hz→`0x170A`, 5 Hz→`0x0666`;
 100 %→`0xFFFF`, 50 %→`0x8000`, 1 %→`0x028F`. Frequency is computed from the

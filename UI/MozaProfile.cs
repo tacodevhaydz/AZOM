@@ -264,9 +264,21 @@ namespace MozaPlugin
     /// channel: non-zero = active (level, for Engine/ABS) or fires a burst on
     /// change (edge, for Gearshift). See BaseLfeEffectWorker.
     /// </summary>
+    /// <summary>How a channel's trigger gates it.</summary>
+    public enum BaseLfeTriggerMode
+    {
+        /// <summary>Active while the trigger is non-zero (continuous — engine/abs, and partials).</summary>
+        Level = 0,
+        /// <summary>Fire a burst whenever the trigger value changes (event — gearshift).</summary>
+        OnChange = 1,
+    }
+
     public sealed class BaseLfeChannel
     {
         public bool Enabled { get; set; } = false;
+
+        // Level = continuous while trigger != 0; OnChange = burst on trigger change.
+        public BaseLfeTriggerMode TriggerMode { get; set; } = BaseLfeTriggerMode.Level;
 
         // Trigger: pre-filled with the natural data source. Non-zero → active.
         public string TriggerFormula { get; set; } = "";
@@ -287,6 +299,7 @@ namespace MozaPlugin
         public BaseLfeChannel Clone() => new BaseLfeChannel
         {
             Enabled = Enabled,
+            TriggerMode = TriggerMode,
             TriggerFormula = TriggerFormula,
             Frequency = Frequency,
             FrequencyFormula = FrequencyFormula,
@@ -322,11 +335,11 @@ namespace MozaPlugin
         public BaseLfeChannel Abs { get; set; } = new BaseLfeChannel
         { Frequency = 15, Intensity = 50, Smoothness = 40, TriggerFormula = AbsTrigger };
         public BaseLfeChannel Gearshift { get; set; } = new BaseLfeChannel
-        { Frequency = 40, Intensity = 100, Smoothness = 100, TriggerFormula = GearshiftTrigger };
+        { Frequency = 40, Intensity = 100, Smoothness = 100, TriggerFormula = GearshiftTrigger, TriggerMode = BaseLfeTriggerMode.OnChange };
 
         // Complex-gearshift event tuning (edge-trigger refinements).
         public bool GearshiftVibrateOnNeutral { get; set; } = false;
-        public int GearshiftDebounceMs { get; set; } = 500;
+        public int GearshiftDebounceMs { get; set; } = 50;
 
         public BaseLfeSettings Clone()
         {

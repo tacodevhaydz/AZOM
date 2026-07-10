@@ -475,11 +475,12 @@ namespace MozaPlugin
             // gearshift card hidden (the complex gearshift replaces it);
             // otherwise the reverse. Re-evaluated each tick so the card appears
             // within one refresh of the firmware-version read landing.
+            // The classic gearshift card stays visible on all firmware (its bump
+            // command coexists with the LFE channels); the LFE card is shown
+            // additionally, full-width below, only on LFE-capable firmware.
             bool lfeSupported = _data.BaseSupportsLfe;
             BaseLfeCard.Visibility = lfeSupported
                 ? System.Windows.Visibility.Visible : System.Windows.Visibility.Collapsed;
-            GearshiftVibrationCard.Visibility = lfeSupported
-                ? System.Windows.Visibility.Collapsed : System.Windows.Visibility.Visible;
             if (lfeSupported)
                 SeedBaseLfeControls(gsProfile?.BaseLfe);
 
@@ -660,6 +661,9 @@ namespace MozaPlugin
             var gs = fx.Gearshift ?? new BaseLfeChannel();
 
             BaseLfeEngineEnable.IsChecked = eng.Enabled;
+            BaseLfeEngineTriggerMode.SelectedIndex = (int)eng.TriggerMode;
+            BaseLfeAbsTriggerMode.SelectedIndex = (int)ab.TriggerMode;
+            BaseLfeGearshiftTriggerMode.SelectedIndex = (int)gs.TriggerMode;
             SeedLfeTrigger(BaseLfeEngineTriggerText, eng.TriggerFormula);
             SeedLfeParam(BaseLfeEngineFrequencySlider, BaseLfeEngineFrequencyValue, eng.Frequency, eng.FrequencyFormula);
             SeedLfeParam(BaseLfeEngineIntensity, BaseLfeEngineIntensityValue, eng.Intensity, eng.IntensityFormula);
@@ -678,7 +682,7 @@ namespace MozaPlugin
             SeedLfeParam(BaseLfeGearshiftSmoothness, BaseLfeGearshiftSmoothnessValue, gs.Smoothness, gs.SmoothnessFormula);
             BaseLfeGearshiftVibrateOnNeutral.IsChecked = fx.GearshiftVibrateOnNeutral;
             int dbg = fx.GearshiftDebounceMs;
-            if (dbg < 0) dbg = 500;
+            if (dbg < 0) dbg = 50;
             if (dbg > 1000) dbg = 1000;
             dbg = ((dbg + 25) / 50) * 50;
             BaseLfeGearshiftDebounceSlider.Value = dbg;
@@ -827,6 +831,44 @@ namespace MozaPlugin
         }
         private void BaseLfeGearshiftTest_Click(object sender, RoutedEventArgs e)
             => _plugin.TriggerBaseLfeGearshiftTest();
+
+        // Trigger mode: Level (continuous) vs On-change (burst). Tag = channel name.
+        private void BaseLfeTriggerMode_Changed(object sender, SelectionChangedEventArgs e)
+        {
+            if (_suppressEvents) return;
+            if (sender is not ComboBox cb || cb.Tag is not string ch) return;
+            var mode = cb.SelectedIndex == 1 ? BaseLfeTriggerMode.OnChange : BaseLfeTriggerMode.Level;
+            _plugin.UpdateActiveProfile(p => LfeChannelForTag(p.BaseLfe ??= new BaseLfeSettings(), ch).TriggerMode = mode);
+            _plugin.SaveSettings();
+        }
+
+        // Additive engine: the base sums concurrent channels, so drive all three
+        // as octave-spaced harmonic partials. Frequency scales by PERCENT of RPM
+        // (rpm/maxrpm) so it works for any vehicle from a 4000-rpm diesel to an
+        // 18000-rpm F1, and the *200 partial never exceeds the 200 Hz wire cap
+        // (rpm/maxrpm <= 1). Overwrites the ABS + Gearshift channels.
+        private void BaseLfeAdditiveEngine_Click(object sender, RoutedEventArgs e)
+        {
+            const string rpm = "[DataCorePlugin.GameData.Rpms]";
+            const string pct = "[DataCorePlugin.GameData.Rpms] / [DataCorePlugin.GameData.MaxRpm]";
+            _plugin.UpdateActiveProfile(p =>
+            {
+                var lfe = p.BaseLfe ??= new BaseLfeSettings();
+                // fundamental / octave-up / sub-octave; modest amps (sum 60%).
+                lfe.Engine = new BaseLfeChannel { Enabled = true, TriggerMode = BaseLfeTriggerMode.Level, TriggerFormula = rpm, FrequencyFormula = pct + " * 100", Frequency = 80, Intensity = 30, Smoothness = 100 };
+                lfe.Abs = new BaseLfeChannel { Enabled = true, TriggerMode = BaseLfeTriggerMode.Level, TriggerFormula = rpm, FrequencyFormula = pct + " * 200", Frequency = 30, Intensity = 15, Smoothness = 100 };
+                lfe.Gearshift = new BaseLfeChannel { Enabled = true, TriggerMode = BaseLfeTriggerMode.Level, TriggerFormula = rpm, FrequencyFormula = pct + " * 50", Frequency = 30, Intensity = 15, Smoothness = 100 };
+            });
+            _plugin.SaveSettings();
+            RefreshDisplay(this, EventArgs.Empty);
+        }
+
+        private void BaseLfeDefaults_Click(object sender, RoutedEventArgs e)
+        {
+            _plugin.UpdateActiveProfile(p => p.BaseLfe = new BaseLfeSettings());
+            _plugin.SaveSettings();
+            RefreshDisplay(this, EventArgs.Empty);
+        }
 
         // ƒₓ — open SimHub's formula editor for the tagged "channel:param" field.
         // Mirrors MBoosterAdvancedEditFormula_Click. Empty result clears back to
