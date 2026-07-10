@@ -164,7 +164,13 @@ namespace MozaPlugin.Devices
 
         public object GetDriverInstance() => this;
 
-        public void Close() { }
+        // Clear the diagnostics static so a closed driver (and the SimHub
+        // LedModuleSettings it references) isn't pinned for the process
+        // lifetime after the dash extension ends.
+        public void Close()
+        {
+            if (ReferenceEquals(Latest, this)) Latest = null;
+        }
 
         public void ResetDetection() { }
 

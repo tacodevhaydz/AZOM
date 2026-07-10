@@ -5323,6 +5323,7 @@ namespace MozaPlugin.Telemetry
             try { _uploader?.Dispose(); } catch { }
             try { _dashboardDownloader?.Dispose(); } catch { }
             try { _rpc?.Dispose(); } catch { }
+            try { _recovery?.Dispose(); } catch { }
             try { _startSemaphore.Dispose(); } catch { }
         }
 

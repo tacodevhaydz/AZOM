@@ -91,6 +91,14 @@ namespace MozaPlugin.Telemetry.Lifecycle
             _parkRetryTimer = new Timer(_ => OnParkAutoRetry(), null, Timeout.Infinite, Timeout.Infinite);
         }
 
+        /// <summary>Dispose the park-retry timer. Called from
+        /// <see cref="TelemetrySender.Dispose"/> — one native timer would
+        /// otherwise leak per cold sender teardown.</summary>
+        public void Dispose()
+        {
+            try { _parkRetryTimer.Dispose(); } catch { }
+        }
+
         // Arm the one-shot post-park re-attempt. Caller holds _lock. No-op if the
         // single retry for this park episode has already been spent.
         private void ArmParkAutoRetryLocked()

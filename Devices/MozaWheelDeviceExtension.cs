@@ -22,6 +22,9 @@ namespace MozaPlugin.Devices
         private MozaWheelExtensionSettings _settings = new MozaWheelExtensionSettings();
         private MozaLedDeviceManager? _ledDriver;
         private bool _driverInjected;
+        // Injection target + SimHub's original driver, restored in End().
+        private LedModuleSettings? _injectedSettings;
+        private object? _originalDriver;
         // Last applied button count, used to detect when the source-of-truth
         // WheelModelInfo has changed and a fresh apply is needed. -1 = never
         // applied. Replaces a prior bool latch that one-shot-set the count
@@ -88,14 +91,10 @@ namespace MozaPlugin.Devices
                         _ledDriver.ExpectedModelPrefix = _expectedModelPrefix;
                         _ledDriver.LedModuleSettings = lmd.ledModuleSettings;
 
-                        // DeviceDriver setter is protected — use reflection
-                        var prop = typeof(LedModuleSettings).GetProperty(
-                            "DeviceDriver",
-                            BindingFlags.Public | BindingFlags.Instance);
-
-                        if (prop?.GetSetMethod(nonPublic: true) != null)
+                        if (LedDriverInjection.CanInject)
                         {
-                            prop.GetSetMethod(nonPublic: true)!.Invoke(lmd.ledModuleSettings, new object[] { _ledDriver });
+                            _injectedSettings = lmd.ledModuleSettings;
+                            _originalDriver = LedDriverInjection.Swap(lmd.ledModuleSettings, _ledDriver);
                             _driverInjected = true;
 
                             // Expose button LEDs — count is THIS extension's model
@@ -141,9 +140,13 @@ namespace MozaPlugin.Devices
                 MozaLog.Debug("[AZOM] Device extension ended");
             }
 
-            // Drop the LED driver from the static instance registry so it isn't
-            // retained for the process lifetime after the device detaches; reset
-            // the latch so a re-attach re-injects a fresh driver.
+            // Restore SimHub's original driver, then drop ours from the static
+            // instance registry so neither is retained for the process lifetime
+            // after the device detaches; reset the latch so a re-attach
+            // re-injects a fresh driver.
+            LedDriverInjection.Restore(_injectedSettings, _ledDriver, _originalDriver);
+            _injectedSettings = null;
+            _originalDriver = null;
             try { _ledDriver?.Close(); } catch { }
             _ledDriver = null;
             _driverInjected = false;

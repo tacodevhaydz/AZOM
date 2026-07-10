@@ -86,6 +86,8 @@ namespace MozaPlugin.Devices.WheelUi
                 catch { }
                 try { _dashEventSubscribedPlugin.Fsr1ActiveIndexChanged -= OnFsr1ActiveIndexChanged; }
                 catch { }
+                try { _dashEventSubscribedPlugin.Cm1ActiveIndexChanged -= OnCm1ActiveIndexChanged; }
+                catch { }
                 _dashEventSubscribedPlugin = null;
             }
 
