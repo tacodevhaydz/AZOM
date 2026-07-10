@@ -680,13 +680,24 @@ namespace MozaPlugin
             SeedLfeParam(BaseLfeGearshiftFrequencySlider, BaseLfeGearshiftFrequencyValue, gs.Frequency, gs.FrequencyFormula);
             SeedLfeParam(BaseLfeGearshiftIntensity, BaseLfeGearshiftIntensityValue, gs.Intensity, gs.IntensityFormula);
             SeedLfeParam(BaseLfeGearshiftSmoothness, BaseLfeGearshiftSmoothnessValue, gs.Smoothness, gs.SmoothnessFormula);
-            BaseLfeGearshiftVibrateOnNeutral.IsChecked = fx.GearshiftVibrateOnNeutral;
-            int dbg = fx.GearshiftDebounceMs;
-            if (dbg < 0) dbg = 50;
-            if (dbg > 1000) dbg = 1000;
-            dbg = ((dbg + 25) / 50) * 50;
-            BaseLfeGearshiftDebounceSlider.Value = dbg;
-            BaseLfeGearshiftDebounceValue.Text = $"{dbg} ms";
+
+            // Edge refinements (vibrate-on-neutral + debounce) — every channel has
+            // them, shown only while that channel is in On-change mode.
+            SeedLfeEdge(BaseLfeEngineEdgeOptions, BaseLfeEngineVibrateOnNeutral, BaseLfeEngineDebounceSlider, BaseLfeEngineDebounceValue, eng);
+            SeedLfeEdge(BaseLfeAbsEdgeOptions, BaseLfeAbsVibrateOnNeutral, BaseLfeAbsDebounceSlider, BaseLfeAbsDebounceValue, ab);
+            SeedLfeEdge(BaseLfeGearshiftEdgeOptions, BaseLfeGearshiftVibrateOnNeutral, BaseLfeGearshiftDebounceSlider, BaseLfeGearshiftDebounceValue, gs);
+        }
+
+        private static void SeedLfeEdge(FrameworkElement panel, System.Windows.Controls.Primitives.ToggleButton neutral, Slider debSlider, TextBox debBox, BaseLfeChannel ch)
+        {
+            panel.Visibility = ch.TriggerMode == BaseLfeTriggerMode.OnChange ? Visibility.Visible : Visibility.Collapsed;
+            neutral.IsChecked = ch.VibrateOnNeutral;
+            int db = ch.DebounceMs;
+            if (db < 0) db = 50;
+            if (db > 1000) db = 1000;
+            db = ((db + 25) / 50) * 50;
+            debSlider.Value = db;
+            debBox.Text = $"{db} ms";
         }
 
         // A formula overrides the slider: disable it and show "ƒₓ" (formula in tooltip).
@@ -811,35 +822,44 @@ namespace MozaPlugin
             _plugin.UpdateActiveProfile(p => { (p.BaseLfe ??= new BaseLfeSettings()).Gearshift.Smoothness = v; });
             _plugin.SaveSettings();
         }
-        private void BaseLfeGearshiftVibrateOnNeutral_Changed(object sender, RoutedEventArgs e)
+        // Edge refinements (Tag = channel). Vibrate-on-neutral + debounce, per channel.
+        private void BaseLfeVibrateOnNeutral_Changed(object sender, RoutedEventArgs e)
         {
             if (_suppressEvents) return;
-            bool on = BaseLfeGearshiftVibrateOnNeutral.IsChecked == true;
-            _plugin.UpdateActiveProfile(p => { (p.BaseLfe ??= new BaseLfeSettings()).GearshiftVibrateOnNeutral = on; });
+            if (sender is not System.Windows.Controls.Primitives.ToggleButton tog || tog.Tag is not string ch) return;
+            bool on = tog.IsChecked == true;
+            _plugin.UpdateActiveProfile(p => LfeChannelForTag(p.BaseLfe ??= new BaseLfeSettings(), ch).VibrateOnNeutral = on);
             _plugin.SaveSettings();
         }
-        private void BaseLfeGearshiftDebounceSlider_ValueChanged(object sender, RoutedPropertyChangedEventArgs<double> e)
+        private void BaseLfeDebounce_ValueChanged(object sender, RoutedPropertyChangedEventArgs<double> e)
         {
             if (_suppressEvents) return;
+            if (sender is not Slider sl || sl.Tag is not string ch) return;
             int val = (int)Math.Round(e.NewValue);
             val = ((val + 25) / 50) * 50;
             if (val < 0) val = 0;
             if (val > 1000) val = 1000;
-            BaseLfeGearshiftDebounceValue.Text = $"{val} ms";
-            _plugin.UpdateActiveProfile(p => { (p.BaseLfe ??= new BaseLfeSettings()).GearshiftDebounceMs = val; });
+            if (FindName($"BaseLfe{LfeCap(ch)}DebounceValue") is TextBox box) box.Text = $"{val} ms";
+            _plugin.UpdateActiveProfile(p => LfeChannelForTag(p.BaseLfe ??= new BaseLfeSettings(), ch).DebounceMs = val);
             _plugin.SaveSettings();
         }
         private void BaseLfeGearshiftTest_Click(object sender, RoutedEventArgs e)
             => _plugin.TriggerBaseLfeGearshiftTest();
 
+        // "engine" → "Engine" (element-name prefix for the channel's controls).
+        private static string LfeCap(string ch) => char.ToUpperInvariant(ch[0]) + ch.Substring(1);
+
         // Trigger mode: Level (continuous) vs On-change (burst). Tag = channel name.
+        // The edge refinements (neutral/debounce) only apply in On-change mode.
         private void BaseLfeTriggerMode_Changed(object sender, SelectionChangedEventArgs e)
         {
             if (_suppressEvents) return;
-            if (sender is not ComboBox cb || cb.Tag is not string ch) return;
-            var mode = cb.SelectedIndex == 1 ? BaseLfeTriggerMode.OnChange : BaseLfeTriggerMode.Level;
+            if (sender is not System.Windows.Controls.Primitives.Selector sel || sel.Tag is not string ch) return;
+            var mode = sel.SelectedIndex == 1 ? BaseLfeTriggerMode.OnChange : BaseLfeTriggerMode.Level;
             _plugin.UpdateActiveProfile(p => LfeChannelForTag(p.BaseLfe ??= new BaseLfeSettings(), ch).TriggerMode = mode);
             _plugin.SaveSettings();
+            if (FindName($"BaseLfe{LfeCap(ch)}EdgeOptions") is FrameworkElement panel)
+                panel.Visibility = mode == BaseLfeTriggerMode.OnChange ? Visibility.Visible : Visibility.Collapsed;
         }
 
         // Additive engine: the base sums concurrent channels, so drive all three

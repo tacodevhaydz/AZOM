@@ -167,7 +167,7 @@ namespace MozaPlugin.Devices
         // OnChange = burst on trigger change (neutral-suppress + debounce, edge
         // state kept per channel). Test windows are handled by the per-channel
         // tick methods. Any channel can run in either mode (additive partials).
-        private bool ActiveByGame(BaseLfeChannel ch, BaseLfeSettings lfe, bool feedLive, ref ChannelState st)
+        private bool ActiveByGame(BaseLfeChannel ch, bool feedLive, ref ChannelState st)
         {
             if (!ch.Enabled || !feedLive) { st.Warm = false; return false; }
             if (ch.TriggerMode == BaseLfeTriggerMode.Level)
@@ -180,9 +180,9 @@ namespace MozaPlugin.Devices
             {
                 bool intoNeutral = Math.Abs(raw) < 0.5;   // gear ≈ 0
                 st.LastTrigger = raw;
-                int debounceMs = lfe.GearshiftDebounceMs; if (debounceMs < 0) debounceMs = 0;
+                int debounceMs = ch.DebounceMs; if (debounceMs < 0) debounceMs = 0;
                 bool debounced = (now - st.LastFireTicks) * 1000.0 / Stopwatch.Frequency < debounceMs;
-                if ((!intoNeutral || lfe.GearshiftVibrateOnNeutral) && !debounced)
+                if ((!intoNeutral || ch.VibrateOnNeutral) && !debounced)
                 {
                     st.LastFireTicks = now;
                     st.BurstUntil = now + _burstTicks;
@@ -197,7 +197,7 @@ namespace MozaPlugin.Devices
             var ch = lfe.Engine ?? DefaultLfe.Engine;
             long now = Stopwatch.GetTimestamp();
             bool testActive = Interlocked.Read(ref _engineTestUntil) > now;
-            bool active = testActive || ActiveByGame(ch, lfe, feedLive, ref _engineSt);
+            bool active = testActive || ActiveByGame(ch, feedLive, ref _engineSt);
             if (!active) { DisableIf(ref _engineSt, MozaBaseLfeProtocol.LfeEffect.Engine); return; }
 
             double freq, intensity01, smoothness01;
@@ -219,7 +219,7 @@ namespace MozaPlugin.Devices
         {
             var ch = lfe.Abs ?? DefaultLfe.Abs;
             bool testActive = Interlocked.Read(ref _absTestUntil) > Stopwatch.GetTimestamp();
-            bool active = testActive || ActiveByGame(ch, lfe, feedLive, ref _absSt);
+            bool active = testActive || ActiveByGame(ch, feedLive, ref _absSt);
             if (!active) { DisableIf(ref _absSt, MozaBaseLfeProtocol.LfeEffect.Abs); return; }
 
             double freq, intensity01, smoothness01;
@@ -245,7 +245,7 @@ namespace MozaPlugin.Devices
                 else if (ms >= GsTestBump2EndMs) Interlocked.Exchange(ref _gsTestStart, 0);
             }
 
-            bool active = testBump || ActiveByGame(ch, lfe, feedLive, ref _gearSt);
+            bool active = testBump || ActiveByGame(ch, feedLive, ref _gearSt);
             if (!active) { DisableIf(ref _gearSt, MozaBaseLfeProtocol.LfeEffect.Gearshift); return; }
 
             double freq, intensity01, smoothness01;

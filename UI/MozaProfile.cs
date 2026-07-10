@@ -296,6 +296,11 @@ namespace MozaPlugin
         public int Smoothness { get; set; } = 100;
         public string SmoothnessFormula { get; set; } = "";
 
+        // Edge-trigger refinements — only meaningful in OnChange mode: fire when
+        // the trigger drops into neutral (≈0), and a minimum ms between bursts.
+        public bool VibrateOnNeutral { get; set; } = false;
+        public int DebounceMs { get; set; } = 50;
+
         public BaseLfeChannel Clone() => new BaseLfeChannel
         {
             Enabled = Enabled,
@@ -307,6 +312,8 @@ namespace MozaPlugin
             IntensityFormula = IntensityFormula,
             Smoothness = Smoothness,
             SmoothnessFormula = SmoothnessFormula,
+            VibrateOnNeutral = VibrateOnNeutral,
+            DebounceMs = DebounceMs,
         };
     }
 
@@ -337,10 +344,6 @@ namespace MozaPlugin
         public BaseLfeChannel Gearshift { get; set; } = new BaseLfeChannel
         { Frequency = 40, Intensity = 100, Smoothness = 100, TriggerFormula = GearshiftTrigger, TriggerMode = BaseLfeTriggerMode.OnChange };
 
-        // Complex-gearshift event tuning (edge-trigger refinements).
-        public bool GearshiftVibrateOnNeutral { get; set; } = false;
-        public int GearshiftDebounceMs { get; set; } = 50;
-
         public BaseLfeSettings Clone()
         {
             return new BaseLfeSettings
@@ -348,8 +351,6 @@ namespace MozaPlugin
                 Engine = Engine?.Clone() ?? new BaseLfeChannel(),
                 Abs = Abs?.Clone() ?? new BaseLfeChannel(),
                 Gearshift = Gearshift?.Clone() ?? new BaseLfeChannel(),
-                GearshiftVibrateOnNeutral = GearshiftVibrateOnNeutral,
-                GearshiftDebounceMs = GearshiftDebounceMs,
             };
         }
     }
