@@ -665,21 +665,21 @@ namespace MozaPlugin
             BaseLfeAbsTriggerMode.SelectedIndex = (int)ab.TriggerMode;
             BaseLfeGearshiftTriggerMode.SelectedIndex = (int)gs.TriggerMode;
             SeedLfeTrigger(BaseLfeEngineTriggerText, eng.TriggerFormula);
-            SeedLfeParam(BaseLfeEngineFrequencySlider, BaseLfeEngineFrequencyValue, eng.Frequency, eng.FrequencyFormula);
-            SeedLfeParam(BaseLfeEngineIntensity, BaseLfeEngineIntensityValue, eng.Intensity, eng.IntensityFormula);
-            SeedLfeParam(BaseLfeEngineSmoothness, BaseLfeEngineSmoothnessValue, eng.Smoothness, eng.SmoothnessFormula);
+            SeedLfeParam(BaseLfeEngineFrequencySlider, BaseLfeEngineFrequencyValue, BaseLfeEngineFrequencyFormulaText, eng.Frequency, eng.FrequencyFormula);
+            SeedLfeParam(BaseLfeEngineIntensity, BaseLfeEngineIntensityValue, BaseLfeEngineIntensityFormulaText, eng.Intensity, eng.IntensityFormula);
+            SeedLfeParam(BaseLfeEngineSmoothness, BaseLfeEngineSmoothnessValue, BaseLfeEngineSmoothnessFormulaText, eng.Smoothness, eng.SmoothnessFormula);
 
             BaseLfeAbsEnable.IsChecked = ab.Enabled;
             SeedLfeTrigger(BaseLfeAbsTriggerText, ab.TriggerFormula);
-            SeedLfeParam(BaseLfeAbsFrequencySlider, BaseLfeAbsFrequencyValue, ab.Frequency, ab.FrequencyFormula);
-            SeedLfeParam(BaseLfeAbsIntensity, BaseLfeAbsIntensityValue, ab.Intensity, ab.IntensityFormula);
-            SeedLfeParam(BaseLfeAbsSmoothness, BaseLfeAbsSmoothnessValue, ab.Smoothness, ab.SmoothnessFormula);
+            SeedLfeParam(BaseLfeAbsFrequencySlider, BaseLfeAbsFrequencyValue, BaseLfeAbsFrequencyFormulaText, ab.Frequency, ab.FrequencyFormula);
+            SeedLfeParam(BaseLfeAbsIntensity, BaseLfeAbsIntensityValue, BaseLfeAbsIntensityFormulaText, ab.Intensity, ab.IntensityFormula);
+            SeedLfeParam(BaseLfeAbsSmoothness, BaseLfeAbsSmoothnessValue, BaseLfeAbsSmoothnessFormulaText, ab.Smoothness, ab.SmoothnessFormula);
 
             BaseLfeGearshiftEnable.IsChecked = gs.Enabled;
             SeedLfeTrigger(BaseLfeGearshiftTriggerText, gs.TriggerFormula);
-            SeedLfeParam(BaseLfeGearshiftFrequencySlider, BaseLfeGearshiftFrequencyValue, gs.Frequency, gs.FrequencyFormula);
-            SeedLfeParam(BaseLfeGearshiftIntensity, BaseLfeGearshiftIntensityValue, gs.Intensity, gs.IntensityFormula);
-            SeedLfeParam(BaseLfeGearshiftSmoothness, BaseLfeGearshiftSmoothnessValue, gs.Smoothness, gs.SmoothnessFormula);
+            SeedLfeParam(BaseLfeGearshiftFrequencySlider, BaseLfeGearshiftFrequencyValue, BaseLfeGearshiftFrequencyFormulaText, gs.Frequency, gs.FrequencyFormula);
+            SeedLfeParam(BaseLfeGearshiftIntensity, BaseLfeGearshiftIntensityValue, BaseLfeGearshiftIntensityFormulaText, gs.Intensity, gs.IntensityFormula);
+            SeedLfeParam(BaseLfeGearshiftSmoothness, BaseLfeGearshiftSmoothnessValue, BaseLfeGearshiftSmoothnessFormulaText, gs.Smoothness, gs.SmoothnessFormula);
 
             // Frequency band — shown only while a frequency formula is active.
             SeedLfeFreqLimits(BaseLfeEngineFreqLimits, BaseLfeEngineFreqRange, BaseLfeEngineFreqRangeText, eng);
@@ -717,15 +717,19 @@ namespace MozaPlugin
             debBox.Text = $"{db} ms";
         }
 
-        // A formula overrides the slider: disable it and show "ƒₓ" (formula in tooltip).
-        private static void SeedLfeParam(Slider slider, TextBox box, double sliderVal, string? formula)
+        // A formula overrides the slider: hide the slider + value box and show the
+        // formula string in their place (full text in the tooltip). No formula →
+        // slider + editable value box, formula line hidden.
+        private static void SeedLfeParam(Slider slider, TextBox box, TextBlock formulaText, double sliderVal, string? formula)
         {
             bool hasFormula = !string.IsNullOrWhiteSpace(formula);
-            slider.Value = sliderVal;                     // WPF clamps to Min/Max
-            slider.IsEnabled = !hasFormula;
-            box.IsEnabled = !hasFormula;
-            box.Text = hasFormula ? "ƒ(x)" : ((int)slider.Value).ToString();
-            box.ToolTip = hasFormula ? formula : null;
+            slider.Value = sliderVal;                     // kept as the revert-to value; WPF clamps to Min/Max
+            slider.Visibility = hasFormula ? Visibility.Collapsed : Visibility.Visible;
+            box.Visibility = hasFormula ? Visibility.Collapsed : Visibility.Visible;
+            box.Text = ((int)slider.Value).ToString();
+            formulaText.Visibility = hasFormula ? Visibility.Visible : Visibility.Collapsed;
+            formulaText.Text = hasFormula ? formula : "";
+            formulaText.ToolTip = hasFormula ? formula : null;
         }
 
         private static void SeedLfeTrigger(TextBlock text, string? formula)

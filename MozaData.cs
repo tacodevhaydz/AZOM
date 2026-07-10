@@ -345,8 +345,13 @@ namespace MozaPlugin
         // STATIC-backed so it survives the game-switch plugin reload (which builds
         // a fresh MozaData) — the base isn't re-detected over the persistent wire,
         // so base-fw-version isn't re-read; without persistence BaseSupportsLfe
-        // would drop to false after every game switch. Cleared on wheel/base
-        // hot-swap via ClearWheelIdentity so a physically-swapped base re-reads.
+        // would drop to false after every game switch. Deliberately NOT cleared by
+        // ClearWheelIdentity: that fires on wheel-rim swaps AND transient reconnects
+        // (e.g. sleep/wake, where the tty drops and re-opens), but the BASE is
+        // unchanged — zeroing it there made the LFE card vanish on wake. It persists
+        // and is overwritten by the next base-fw-version read, which the prober
+        // re-issues on every base re-detection (reconnect re-arms BaseAmbientProbed),
+        // so a physically-swapped base still re-reads the correct value on reconnect.
         private static volatile int s_baseFwVersion;
         public int BaseFwVersion { get => s_baseFwVersion; set => s_baseFwVersion = value; }
 
@@ -975,7 +980,10 @@ namespace MozaPlugin
             BaseHwSubVersion = "";
             BaseMcuUid = System.Array.Empty<byte>();
             BaseIdentity11 = System.Array.Empty<byte>();
-            BaseFwVersion = 0;
+            // NOTE: BaseFwVersion is intentionally NOT cleared here — see its field
+            // comment. It's a BASE property; a wheel-rim/transient identity reset
+            // must not blank it or the LFE card blinks out on sleep/wake. The prober
+            // overwrites it on the next base re-detection.
             Last28x00Byte5 = 0;
             Last28x00ByteValid = false;
             Last28x01Byte4 = 0;

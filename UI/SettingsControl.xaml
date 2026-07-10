@@ -40,6 +40,14 @@
                 <Setter Property="TextWrapping" Value="Wrap"/>
                 <Setter Property="Margin" Value="0,0,12,0"/>
             </Style>
+            <!-- Left-justified label for the narrow 3-across LFE columns: no min/max
+                 width (SliderLabel's 180 min + 280 max + default Stretch centers the
+                 text in a wide column, leaving a gap on the left). -->
+            <Style x:Key="LfeLabel" TargetType="TextBlock" BasedOn="{StaticResource LabelText}">
+                <Setter Property="HorizontalAlignment" Value="Left"/>
+                <Setter Property="TextWrapping" Value="Wrap"/>
+                <Setter Property="Margin" Value="0,0,8,0"/>
+            </Style>
             <Style x:Key="SliderValue" TargetType="TextBlock">
                 <Setter Property="VerticalAlignment" Value="Center"/>
                 <Setter Property="Width" Value="60"/>
@@ -582,18 +590,19 @@
                                     <ctrl:OffOnToggle x:Name="BaseLfeEngineEnable" Content="{x:Static res:Strings.Label_Enable}" HorizontalAlignment="Left" Margin="0,0,0,6" Checked="BaseLfeEngineEnable_Changed" Unchecked="BaseLfeEngineEnable_Changed"/>
                                     <Grid Margin="0,2,0,0">
                                         <Grid.ColumnDefinitions><ColumnDefinition Width="Auto"/><ColumnDefinition Width="*"/><ColumnDefinition Width="Auto"/></Grid.ColumnDefinitions>
-                                        <TextBlock Grid.Column="0" Text="{x:Static res:Strings.SliderLabel_Trigger}" Style="{StaticResource SliderLabel}" VerticalAlignment="Center"/>
+                                        <TextBlock Grid.Column="0" Text="{x:Static res:Strings.SliderLabel_Trigger}" Style="{StaticResource LfeLabel}" VerticalAlignment="Center"/>
                                         <TextBlock Grid.Column="1" x:Name="BaseLfeEngineTriggerText" Foreground="{StaticResource TextDimBrush}" FontSize="10" TextTrimming="CharacterEllipsis" VerticalAlignment="Center" Margin="6,0,4,0"/>
                                         <Button Grid.Column="2" Tag="engine:trigger" Click="BaseLfeFx_Click" ToolTip="{x:Static res:Strings.Tooltip_EditFormula}" Width="34" Height="22" Padding="2" Margin="4,0,0,0" Background="Transparent" BorderThickness="0" Cursor="Hand" VerticalAlignment="Center"><TextBlock Text="𝑓(𝑥)" FontFamily="Cambria Math, Segoe UI" FontSize="14" HorizontalAlignment="Center" VerticalAlignment="Center" Foreground="{DynamicResource TextDimBrush}"/></Button>
                                     </Grid>
                                     <ctrl:SegmentedControl x:Name="BaseLfeEngineTriggerMode" Tag="engine" HorizontalAlignment="Left" Margin="0,4,0,0" SelectionChanged="BaseLfeTriggerMode_Changed"><ListBoxItem Content="{x:Static res:Strings.TriggerMode_Level}"/><ListBoxItem Content="{x:Static res:Strings.TriggerMode_OnChange}"/></ctrl:SegmentedControl>
                                     <Grid Margin="0,6,0,0">
                                         <Grid.ColumnDefinitions><ColumnDefinition Width="*"/><ColumnDefinition Width="Auto"/><ColumnDefinition Width="Auto"/></Grid.ColumnDefinitions>
-                                        <TextBlock Grid.Column="0" Text="{x:Static res:Strings.SliderLabel_FrequencyHz}" Style="{StaticResource SliderLabel}" VerticalAlignment="Center"/>
+                                        <TextBlock Grid.Column="0" Text="{x:Static res:Strings.SliderLabel_FrequencyHz}" Style="{StaticResource LfeLabel}" VerticalAlignment="Center"/>
                                         <TextBox Grid.Column="1" x:Name="BaseLfeEngineFrequencyValue" Width="58" Style="{StaticResource SliderValueEditBox}" Tag="{Binding ElementName=BaseLfeEngineFrequencySlider}" KeyDown="SliderValueBox_KeyDown" LostFocus="SliderValueBox_LostFocus" Text="100"/>
                                         <Button Grid.Column="2" Tag="engine:frequency" Click="BaseLfeFx_Click" ToolTip="{x:Static res:Strings.Tooltip_EditFormula}" Width="34" Height="22" Padding="2" Margin="4,0,0,0" Background="Transparent" BorderThickness="0" Cursor="Hand" VerticalAlignment="Center"><TextBlock Text="𝑓(𝑥)" FontFamily="Cambria Math, Segoe UI" FontSize="14" HorizontalAlignment="Center" VerticalAlignment="Center" Foreground="{DynamicResource TextDimBrush}"/></Button>
                                     </Grid>
                                     <Slider x:Name="BaseLfeEngineFrequencySlider" Style="{StaticResource SettingSlider}" Minimum="60" Maximum="100" TickFrequency="1" Margin="0,2,0,0" ValueChanged="BaseLfeEngineFrequencySlider_ValueChanged"/>
+                                    <TextBlock x:Name="BaseLfeEngineFrequencyFormulaText" Visibility="Collapsed" Foreground="{StaticResource CyanBrush}" FontFamily="{StaticResource FontMono}" FontSize="11" TextTrimming="CharacterEllipsis" Margin="0,2,0,0"/>
                                     <StackPanel x:Name="BaseLfeEngineFreqLimits" Visibility="Collapsed" Margin="0,4,0,0">
                                         <Grid>
                                             <Grid.ColumnDefinitions><ColumnDefinition Width="*"/><ColumnDefinition Width="Auto"/></Grid.ColumnDefinitions>
@@ -608,27 +617,29 @@
                                     </StackPanel>
                                     <Grid Margin="0,6,0,0">
                                         <Grid.ColumnDefinitions><ColumnDefinition Width="*"/><ColumnDefinition Width="Auto"/><ColumnDefinition Width="Auto"/></Grid.ColumnDefinitions>
-                                        <TextBlock Grid.Column="0" Text="{x:Static res:Strings.SliderLabel_Intensity}" Style="{StaticResource SliderLabel}" VerticalAlignment="Center"/>
+                                        <TextBlock Grid.Column="0" Text="{x:Static res:Strings.SliderLabel_Intensity}" Style="{StaticResource LfeLabel}" VerticalAlignment="Center"/>
                                         <TextBox Grid.Column="1" x:Name="BaseLfeEngineIntensityValue" Width="58" Style="{StaticResource SliderValueEditBox}" Tag="{Binding ElementName=BaseLfeEngineIntensity}" KeyDown="SliderValueBox_KeyDown" LostFocus="SliderValueBox_LostFocus" Text="50"/>
                                         <Button Grid.Column="2" Tag="engine:intensity" Click="BaseLfeFx_Click" ToolTip="{x:Static res:Strings.Tooltip_EditFormula}" Width="34" Height="22" Padding="2" Margin="4,0,0,0" Background="Transparent" BorderThickness="0" Cursor="Hand" VerticalAlignment="Center"><TextBlock Text="𝑓(𝑥)" FontFamily="Cambria Math, Segoe UI" FontSize="14" HorizontalAlignment="Center" VerticalAlignment="Center" Foreground="{DynamicResource TextDimBrush}"/></Button>
                                     </Grid>
                                     <Slider x:Name="BaseLfeEngineIntensity" Style="{StaticResource SettingSlider}" Minimum="0" Maximum="100" TickFrequency="1" Margin="0,2,0,0" ValueChanged="BaseLfeEngineIntensity_ValueChanged"/>
+                                    <TextBlock x:Name="BaseLfeEngineIntensityFormulaText" Visibility="Collapsed" Foreground="{StaticResource CyanBrush}" FontFamily="{StaticResource FontMono}" FontSize="11" TextTrimming="CharacterEllipsis" Margin="0,2,0,0"/>
                                     <Grid Margin="0,6,0,0">
                                         <Grid.ColumnDefinitions><ColumnDefinition Width="*"/><ColumnDefinition Width="Auto"/><ColumnDefinition Width="Auto"/></Grid.ColumnDefinitions>
-                                        <TextBlock Grid.Column="0" Text="{x:Static res:Strings.SliderLabel_Smoothness}" Style="{StaticResource SliderLabel}" VerticalAlignment="Center"/>
+                                        <TextBlock Grid.Column="0" Text="{x:Static res:Strings.SliderLabel_Smoothness}" Style="{StaticResource LfeLabel}" VerticalAlignment="Center"/>
                                         <TextBox Grid.Column="1" x:Name="BaseLfeEngineSmoothnessValue" Width="58" Style="{StaticResource SliderValueEditBox}" Tag="{Binding ElementName=BaseLfeEngineSmoothness}" KeyDown="SliderValueBox_KeyDown" LostFocus="SliderValueBox_LostFocus" Text="100"/>
                                         <Button Grid.Column="2" Tag="engine:smoothness" Click="BaseLfeFx_Click" ToolTip="{x:Static res:Strings.Tooltip_EditFormula}" Width="34" Height="22" Padding="2" Margin="4,0,0,0" Background="Transparent" BorderThickness="0" Cursor="Hand" VerticalAlignment="Center"><TextBlock Text="𝑓(𝑥)" FontFamily="Cambria Math, Segoe UI" FontSize="14" HorizontalAlignment="Center" VerticalAlignment="Center" Foreground="{DynamicResource TextDimBrush}"/></Button>
                                     </Grid>
                                     <Slider x:Name="BaseLfeEngineSmoothness" Style="{StaticResource SettingSlider}" Minimum="0" Maximum="100" TickFrequency="1" Margin="0,2,0,0" ValueChanged="BaseLfeEngineSmoothness_ValueChanged"/>
+                                    <TextBlock x:Name="BaseLfeEngineSmoothnessFormulaText" Visibility="Collapsed" Foreground="{StaticResource CyanBrush}" FontFamily="{StaticResource FontMono}" FontSize="11" TextTrimming="CharacterEllipsis" Margin="0,2,0,0"/>
                                     <StackPanel x:Name="BaseLfeEngineEdgeOptions" Visibility="Collapsed">
                                         <Grid Margin="0,6,0,0">
                                             <Grid.ColumnDefinitions><ColumnDefinition Width="*"/><ColumnDefinition Width="Auto"/></Grid.ColumnDefinitions>
-                                            <TextBlock Grid.Column="0" Text="{x:Static res:Strings.SliderLabel_VibrateOnNeutral}" Style="{StaticResource SliderLabel}" VerticalAlignment="Center"/>
+                                            <TextBlock Grid.Column="0" Text="{x:Static res:Strings.SliderLabel_VibrateOnNeutral}" Style="{StaticResource LfeLabel}" VerticalAlignment="Center"/>
                                             <ctrl:OffOnToggle Grid.Column="1" x:Name="BaseLfeEngineVibrateOnNeutral" Tag="engine" Margin="0,0,38,0" VerticalAlignment="Center" Checked="BaseLfeVibrateOnNeutral_Changed" Unchecked="BaseLfeVibrateOnNeutral_Changed"/>
                                         </Grid>
                                         <Grid Margin="0,6,0,0">
                                             <Grid.ColumnDefinitions><ColumnDefinition Width="*"/><ColumnDefinition Width="Auto"/></Grid.ColumnDefinitions>
-                                            <TextBlock Grid.Column="0" Text="{x:Static res:Strings.SliderLabel_ShiftDebounce}" Style="{StaticResource SliderLabel}" VerticalAlignment="Center"/>
+                                            <TextBlock Grid.Column="0" Text="{x:Static res:Strings.SliderLabel_ShiftDebounce}" Style="{StaticResource LfeLabel}" VerticalAlignment="Center"/>
                                             <TextBox Grid.Column="1" x:Name="BaseLfeEngineDebounceValue" Width="58" Margin="0,0,38,0" Style="{StaticResource SliderValueEditBox}" Tag="{Binding ElementName=BaseLfeEngineDebounceSlider}" KeyDown="SliderValueBox_KeyDown" LostFocus="SliderValueBox_LostFocus" Text="50 ms"/>
                                         </Grid>
                                         <Slider x:Name="BaseLfeEngineDebounceSlider" Tag="engine" Style="{StaticResource SettingSlider}" Minimum="0" Maximum="1000" TickFrequency="50" SmallChange="50" LargeChange="50" IsSnapToTickEnabled="True" Margin="0,2,0,0" ValueChanged="BaseLfeDebounce_ValueChanged"/>
@@ -643,18 +654,19 @@
                                     <ctrl:OffOnToggle x:Name="BaseLfeAbsEnable" Content="{x:Static res:Strings.Label_Enable}" HorizontalAlignment="Left" Margin="0,0,0,6" Checked="BaseLfeAbsEnable_Changed" Unchecked="BaseLfeAbsEnable_Changed"/>
                                     <Grid Margin="0,2,0,0">
                                         <Grid.ColumnDefinitions><ColumnDefinition Width="Auto"/><ColumnDefinition Width="*"/><ColumnDefinition Width="Auto"/></Grid.ColumnDefinitions>
-                                        <TextBlock Grid.Column="0" Text="{x:Static res:Strings.SliderLabel_Trigger}" Style="{StaticResource SliderLabel}" VerticalAlignment="Center"/>
+                                        <TextBlock Grid.Column="0" Text="{x:Static res:Strings.SliderLabel_Trigger}" Style="{StaticResource LfeLabel}" VerticalAlignment="Center"/>
                                         <TextBlock Grid.Column="1" x:Name="BaseLfeAbsTriggerText" Foreground="{StaticResource TextDimBrush}" FontSize="10" TextTrimming="CharacterEllipsis" VerticalAlignment="Center" Margin="6,0,4,0"/>
                                         <Button Grid.Column="2" Tag="abs:trigger" Click="BaseLfeFx_Click" ToolTip="{x:Static res:Strings.Tooltip_EditFormula}" Width="34" Height="22" Padding="2" Margin="4,0,0,0" Background="Transparent" BorderThickness="0" Cursor="Hand" VerticalAlignment="Center"><TextBlock Text="𝑓(𝑥)" FontFamily="Cambria Math, Segoe UI" FontSize="14" HorizontalAlignment="Center" VerticalAlignment="Center" Foreground="{DynamicResource TextDimBrush}"/></Button>
                                     </Grid>
                                     <ctrl:SegmentedControl x:Name="BaseLfeAbsTriggerMode" Tag="abs" HorizontalAlignment="Left" Margin="0,4,0,0" SelectionChanged="BaseLfeTriggerMode_Changed"><ListBoxItem Content="{x:Static res:Strings.TriggerMode_Level}"/><ListBoxItem Content="{x:Static res:Strings.TriggerMode_OnChange}"/></ctrl:SegmentedControl>
                                     <Grid Margin="0,6,0,0">
                                         <Grid.ColumnDefinitions><ColumnDefinition Width="*"/><ColumnDefinition Width="Auto"/><ColumnDefinition Width="Auto"/></Grid.ColumnDefinitions>
-                                        <TextBlock Grid.Column="0" Text="{x:Static res:Strings.SliderLabel_FrequencyHz}" Style="{StaticResource SliderLabel}" VerticalAlignment="Center"/>
+                                        <TextBlock Grid.Column="0" Text="{x:Static res:Strings.SliderLabel_FrequencyHz}" Style="{StaticResource LfeLabel}" VerticalAlignment="Center"/>
                                         <TextBox Grid.Column="1" x:Name="BaseLfeAbsFrequencyValue" Width="58" Style="{StaticResource SliderValueEditBox}" Tag="{Binding ElementName=BaseLfeAbsFrequencySlider}" KeyDown="SliderValueBox_KeyDown" LostFocus="SliderValueBox_LostFocus" Text="100"/>
                                         <Button Grid.Column="2" Tag="abs:frequency" Click="BaseLfeFx_Click" ToolTip="{x:Static res:Strings.Tooltip_EditFormula}" Width="34" Height="22" Padding="2" Margin="4,0,0,0" Background="Transparent" BorderThickness="0" Cursor="Hand" VerticalAlignment="Center"><TextBlock Text="𝑓(𝑥)" FontFamily="Cambria Math, Segoe UI" FontSize="14" HorizontalAlignment="Center" VerticalAlignment="Center" Foreground="{DynamicResource TextDimBrush}"/></Button>
                                     </Grid>
                                     <Slider x:Name="BaseLfeAbsFrequencySlider" Style="{StaticResource SettingSlider}" Minimum="5" Maximum="30" TickFrequency="1" Margin="0,2,0,0" ValueChanged="BaseLfeAbsFrequencySlider_ValueChanged"/>
+                                    <TextBlock x:Name="BaseLfeAbsFrequencyFormulaText" Visibility="Collapsed" Foreground="{StaticResource CyanBrush}" FontFamily="{StaticResource FontMono}" FontSize="11" TextTrimming="CharacterEllipsis" Margin="0,2,0,0"/>
                                     <StackPanel x:Name="BaseLfeAbsFreqLimits" Visibility="Collapsed" Margin="0,4,0,0">
                                         <Grid>
                                             <Grid.ColumnDefinitions><ColumnDefinition Width="*"/><ColumnDefinition Width="Auto"/></Grid.ColumnDefinitions>
@@ -669,27 +681,29 @@
                                     </StackPanel>
                                     <Grid Margin="0,6,0,0">
                                         <Grid.ColumnDefinitions><ColumnDefinition Width="*"/><ColumnDefinition Width="Auto"/><ColumnDefinition Width="Auto"/></Grid.ColumnDefinitions>
-                                        <TextBlock Grid.Column="0" Text="{x:Static res:Strings.SliderLabel_Intensity}" Style="{StaticResource SliderLabel}" VerticalAlignment="Center"/>
+                                        <TextBlock Grid.Column="0" Text="{x:Static res:Strings.SliderLabel_Intensity}" Style="{StaticResource LfeLabel}" VerticalAlignment="Center"/>
                                         <TextBox Grid.Column="1" x:Name="BaseLfeAbsIntensityValue" Width="58" Style="{StaticResource SliderValueEditBox}" Tag="{Binding ElementName=BaseLfeAbsIntensity}" KeyDown="SliderValueBox_KeyDown" LostFocus="SliderValueBox_LostFocus" Text="50"/>
                                         <Button Grid.Column="2" Tag="abs:intensity" Click="BaseLfeFx_Click" ToolTip="{x:Static res:Strings.Tooltip_EditFormula}" Width="34" Height="22" Padding="2" Margin="4,0,0,0" Background="Transparent" BorderThickness="0" Cursor="Hand" VerticalAlignment="Center"><TextBlock Text="𝑓(𝑥)" FontFamily="Cambria Math, Segoe UI" FontSize="14" HorizontalAlignment="Center" VerticalAlignment="Center" Foreground="{DynamicResource TextDimBrush}"/></Button>
                                     </Grid>
                                     <Slider x:Name="BaseLfeAbsIntensity" Style="{StaticResource SettingSlider}" Minimum="0" Maximum="100" TickFrequency="1" Margin="0,2,0,0" ValueChanged="BaseLfeAbsIntensity_ValueChanged"/>
+                                    <TextBlock x:Name="BaseLfeAbsIntensityFormulaText" Visibility="Collapsed" Foreground="{StaticResource CyanBrush}" FontFamily="{StaticResource FontMono}" FontSize="11" TextTrimming="CharacterEllipsis" Margin="0,2,0,0"/>
                                     <Grid Margin="0,6,0,0">
                                         <Grid.ColumnDefinitions><ColumnDefinition Width="*"/><ColumnDefinition Width="Auto"/><ColumnDefinition Width="Auto"/></Grid.ColumnDefinitions>
-                                        <TextBlock Grid.Column="0" Text="{x:Static res:Strings.SliderLabel_Smoothness}" Style="{StaticResource SliderLabel}" VerticalAlignment="Center"/>
+                                        <TextBlock Grid.Column="0" Text="{x:Static res:Strings.SliderLabel_Smoothness}" Style="{StaticResource LfeLabel}" VerticalAlignment="Center"/>
                                         <TextBox Grid.Column="1" x:Name="BaseLfeAbsSmoothnessValue" Width="58" Style="{StaticResource SliderValueEditBox}" Tag="{Binding ElementName=BaseLfeAbsSmoothness}" KeyDown="SliderValueBox_KeyDown" LostFocus="SliderValueBox_LostFocus" Text="100"/>
                                         <Button Grid.Column="2" Tag="abs:smoothness" Click="BaseLfeFx_Click" ToolTip="{x:Static res:Strings.Tooltip_EditFormula}" Width="34" Height="22" Padding="2" Margin="4,0,0,0" Background="Transparent" BorderThickness="0" Cursor="Hand" VerticalAlignment="Center"><TextBlock Text="𝑓(𝑥)" FontFamily="Cambria Math, Segoe UI" FontSize="14" HorizontalAlignment="Center" VerticalAlignment="Center" Foreground="{DynamicResource TextDimBrush}"/></Button>
                                     </Grid>
                                     <Slider x:Name="BaseLfeAbsSmoothness" Style="{StaticResource SettingSlider}" Minimum="0" Maximum="100" TickFrequency="1" Margin="0,2,0,0" ValueChanged="BaseLfeAbsSmoothness_ValueChanged"/>
+                                    <TextBlock x:Name="BaseLfeAbsSmoothnessFormulaText" Visibility="Collapsed" Foreground="{StaticResource CyanBrush}" FontFamily="{StaticResource FontMono}" FontSize="11" TextTrimming="CharacterEllipsis" Margin="0,2,0,0"/>
                                     <StackPanel x:Name="BaseLfeAbsEdgeOptions" Visibility="Collapsed">
                                         <Grid Margin="0,6,0,0">
                                             <Grid.ColumnDefinitions><ColumnDefinition Width="*"/><ColumnDefinition Width="Auto"/></Grid.ColumnDefinitions>
-                                            <TextBlock Grid.Column="0" Text="{x:Static res:Strings.SliderLabel_VibrateOnNeutral}" Style="{StaticResource SliderLabel}" VerticalAlignment="Center"/>
+                                            <TextBlock Grid.Column="0" Text="{x:Static res:Strings.SliderLabel_VibrateOnNeutral}" Style="{StaticResource LfeLabel}" VerticalAlignment="Center"/>
                                             <ctrl:OffOnToggle Grid.Column="1" x:Name="BaseLfeAbsVibrateOnNeutral" Tag="abs" Margin="0,0,38,0" VerticalAlignment="Center" Checked="BaseLfeVibrateOnNeutral_Changed" Unchecked="BaseLfeVibrateOnNeutral_Changed"/>
                                         </Grid>
                                         <Grid Margin="0,6,0,0">
                                             <Grid.ColumnDefinitions><ColumnDefinition Width="*"/><ColumnDefinition Width="Auto"/></Grid.ColumnDefinitions>
-                                            <TextBlock Grid.Column="0" Text="{x:Static res:Strings.SliderLabel_ShiftDebounce}" Style="{StaticResource SliderLabel}" VerticalAlignment="Center"/>
+                                            <TextBlock Grid.Column="0" Text="{x:Static res:Strings.SliderLabel_ShiftDebounce}" Style="{StaticResource LfeLabel}" VerticalAlignment="Center"/>
                                             <TextBox Grid.Column="1" x:Name="BaseLfeAbsDebounceValue" Width="58" Margin="0,0,38,0" Style="{StaticResource SliderValueEditBox}" Tag="{Binding ElementName=BaseLfeAbsDebounceSlider}" KeyDown="SliderValueBox_KeyDown" LostFocus="SliderValueBox_LostFocus" Text="50 ms"/>
                                         </Grid>
                                         <Slider x:Name="BaseLfeAbsDebounceSlider" Tag="abs" Style="{StaticResource SettingSlider}" Minimum="0" Maximum="1000" TickFrequency="50" SmallChange="50" LargeChange="50" IsSnapToTickEnabled="True" Margin="0,2,0,0" ValueChanged="BaseLfeDebounce_ValueChanged"/>
@@ -704,18 +718,19 @@
                                     <ctrl:OffOnToggle x:Name="BaseLfeGearshiftEnable" Content="{x:Static res:Strings.Label_Enable}" HorizontalAlignment="Left" Margin="0,0,0,6" Checked="BaseLfeGearshiftEnable_Changed" Unchecked="BaseLfeGearshiftEnable_Changed"/>
                                     <Grid Margin="0,2,0,0">
                                         <Grid.ColumnDefinitions><ColumnDefinition Width="Auto"/><ColumnDefinition Width="*"/><ColumnDefinition Width="Auto"/></Grid.ColumnDefinitions>
-                                        <TextBlock Grid.Column="0" Text="{x:Static res:Strings.SliderLabel_Trigger}" Style="{StaticResource SliderLabel}" VerticalAlignment="Center"/>
+                                        <TextBlock Grid.Column="0" Text="{x:Static res:Strings.SliderLabel_Trigger}" Style="{StaticResource LfeLabel}" VerticalAlignment="Center"/>
                                         <TextBlock Grid.Column="1" x:Name="BaseLfeGearshiftTriggerText" Foreground="{StaticResource TextDimBrush}" FontSize="10" TextTrimming="CharacterEllipsis" VerticalAlignment="Center" Margin="6,0,4,0"/>
                                         <Button Grid.Column="2" Tag="gearshift:trigger" Click="BaseLfeFx_Click" ToolTip="{x:Static res:Strings.Tooltip_EditFormula}" Width="34" Height="22" Padding="2" Margin="4,0,0,0" Background="Transparent" BorderThickness="0" Cursor="Hand" VerticalAlignment="Center"><TextBlock Text="𝑓(𝑥)" FontFamily="Cambria Math, Segoe UI" FontSize="14" HorizontalAlignment="Center" VerticalAlignment="Center" Foreground="{DynamicResource TextDimBrush}"/></Button>
                                     </Grid>
                                     <ctrl:SegmentedControl x:Name="BaseLfeGearshiftTriggerMode" Tag="gearshift" HorizontalAlignment="Left" Margin="0,4,0,0" SelectionChanged="BaseLfeTriggerMode_Changed"><ListBoxItem Content="{x:Static res:Strings.TriggerMode_Level}"/><ListBoxItem Content="{x:Static res:Strings.TriggerMode_OnChange}"/></ctrl:SegmentedControl>
                                     <Grid Margin="0,6,0,0">
                                         <Grid.ColumnDefinitions><ColumnDefinition Width="*"/><ColumnDefinition Width="Auto"/><ColumnDefinition Width="Auto"/></Grid.ColumnDefinitions>
-                                        <TextBlock Grid.Column="0" Text="{x:Static res:Strings.SliderLabel_FrequencyHz}" Style="{StaticResource SliderLabel}" VerticalAlignment="Center"/>
+                                        <TextBlock Grid.Column="0" Text="{x:Static res:Strings.SliderLabel_FrequencyHz}" Style="{StaticResource LfeLabel}" VerticalAlignment="Center"/>
                                         <TextBox Grid.Column="1" x:Name="BaseLfeGearshiftFrequencyValue" Width="58" Style="{StaticResource SliderValueEditBox}" Tag="{Binding ElementName=BaseLfeGearshiftFrequencySlider}" KeyDown="SliderValueBox_KeyDown" LostFocus="SliderValueBox_LostFocus" Text="100"/>
                                         <Button Grid.Column="2" Tag="gearshift:frequency" Click="BaseLfeFx_Click" ToolTip="{x:Static res:Strings.Tooltip_EditFormula}" Width="34" Height="22" Padding="2" Margin="4,0,0,0" Background="Transparent" BorderThickness="0" Cursor="Hand" VerticalAlignment="Center"><TextBlock Text="𝑓(𝑥)" FontFamily="Cambria Math, Segoe UI" FontSize="14" HorizontalAlignment="Center" VerticalAlignment="Center" Foreground="{DynamicResource TextDimBrush}"/></Button>
                                     </Grid>
                                     <Slider x:Name="BaseLfeGearshiftFrequencySlider" Style="{StaticResource SettingSlider}" Minimum="20" Maximum="100" TickFrequency="1" Margin="0,2,0,0" ValueChanged="BaseLfeGearshiftFrequencySlider_ValueChanged"/>
+                                    <TextBlock x:Name="BaseLfeGearshiftFrequencyFormulaText" Visibility="Collapsed" Foreground="{StaticResource CyanBrush}" FontFamily="{StaticResource FontMono}" FontSize="11" TextTrimming="CharacterEllipsis" Margin="0,2,0,0"/>
                                     <StackPanel x:Name="BaseLfeGearshiftFreqLimits" Visibility="Collapsed" Margin="0,4,0,0">
                                         <Grid>
                                             <Grid.ColumnDefinitions><ColumnDefinition Width="*"/><ColumnDefinition Width="Auto"/></Grid.ColumnDefinitions>
@@ -730,27 +745,29 @@
                                     </StackPanel>
                                     <Grid Margin="0,6,0,0">
                                         <Grid.ColumnDefinitions><ColumnDefinition Width="*"/><ColumnDefinition Width="Auto"/><ColumnDefinition Width="Auto"/></Grid.ColumnDefinitions>
-                                        <TextBlock Grid.Column="0" Text="{x:Static res:Strings.SliderLabel_Intensity}" Style="{StaticResource SliderLabel}" VerticalAlignment="Center"/>
+                                        <TextBlock Grid.Column="0" Text="{x:Static res:Strings.SliderLabel_Intensity}" Style="{StaticResource LfeLabel}" VerticalAlignment="Center"/>
                                         <TextBox Grid.Column="1" x:Name="BaseLfeGearshiftIntensityValue" Width="58" Style="{StaticResource SliderValueEditBox}" Tag="{Binding ElementName=BaseLfeGearshiftIntensity}" KeyDown="SliderValueBox_KeyDown" LostFocus="SliderValueBox_LostFocus" Text="50"/>
                                         <Button Grid.Column="2" Tag="gearshift:intensity" Click="BaseLfeFx_Click" ToolTip="{x:Static res:Strings.Tooltip_EditFormula}" Width="34" Height="22" Padding="2" Margin="4,0,0,0" Background="Transparent" BorderThickness="0" Cursor="Hand" VerticalAlignment="Center"><TextBlock Text="𝑓(𝑥)" FontFamily="Cambria Math, Segoe UI" FontSize="14" HorizontalAlignment="Center" VerticalAlignment="Center" Foreground="{DynamicResource TextDimBrush}"/></Button>
                                     </Grid>
                                     <Slider x:Name="BaseLfeGearshiftIntensity" Style="{StaticResource SettingSlider}" Minimum="0" Maximum="100" TickFrequency="1" Margin="0,2,0,0" ValueChanged="BaseLfeGearshiftIntensity_ValueChanged"/>
+                                    <TextBlock x:Name="BaseLfeGearshiftIntensityFormulaText" Visibility="Collapsed" Foreground="{StaticResource CyanBrush}" FontFamily="{StaticResource FontMono}" FontSize="11" TextTrimming="CharacterEllipsis" Margin="0,2,0,0"/>
                                     <Grid Margin="0,6,0,0">
                                         <Grid.ColumnDefinitions><ColumnDefinition Width="*"/><ColumnDefinition Width="Auto"/><ColumnDefinition Width="Auto"/></Grid.ColumnDefinitions>
-                                        <TextBlock Grid.Column="0" Text="{x:Static res:Strings.SliderLabel_Smoothness}" Style="{StaticResource SliderLabel}" VerticalAlignment="Center"/>
+                                        <TextBlock Grid.Column="0" Text="{x:Static res:Strings.SliderLabel_Smoothness}" Style="{StaticResource LfeLabel}" VerticalAlignment="Center"/>
                                         <TextBox Grid.Column="1" x:Name="BaseLfeGearshiftSmoothnessValue" Width="58" Style="{StaticResource SliderValueEditBox}" Tag="{Binding ElementName=BaseLfeGearshiftSmoothness}" KeyDown="SliderValueBox_KeyDown" LostFocus="SliderValueBox_LostFocus" Text="100"/>
                                         <Button Grid.Column="2" Tag="gearshift:smoothness" Click="BaseLfeFx_Click" ToolTip="{x:Static res:Strings.Tooltip_EditFormula}" Width="34" Height="22" Padding="2" Margin="4,0,0,0" Background="Transparent" BorderThickness="0" Cursor="Hand" VerticalAlignment="Center"><TextBlock Text="𝑓(𝑥)" FontFamily="Cambria Math, Segoe UI" FontSize="14" HorizontalAlignment="Center" VerticalAlignment="Center" Foreground="{DynamicResource TextDimBrush}"/></Button>
                                     </Grid>
                                     <Slider x:Name="BaseLfeGearshiftSmoothness" Style="{StaticResource SettingSlider}" Minimum="0" Maximum="100" TickFrequency="1" Margin="0,2,0,0" ValueChanged="BaseLfeGearshiftSmoothness_ValueChanged"/>
+                                    <TextBlock x:Name="BaseLfeGearshiftSmoothnessFormulaText" Visibility="Collapsed" Foreground="{StaticResource CyanBrush}" FontFamily="{StaticResource FontMono}" FontSize="11" TextTrimming="CharacterEllipsis" Margin="0,2,0,0"/>
                                     <StackPanel x:Name="BaseLfeGearshiftEdgeOptions" Visibility="Collapsed">
                                         <Grid Margin="0,6,0,0">
                                             <Grid.ColumnDefinitions><ColumnDefinition Width="*"/><ColumnDefinition Width="Auto"/></Grid.ColumnDefinitions>
-                                            <TextBlock Grid.Column="0" Text="{x:Static res:Strings.SliderLabel_VibrateOnNeutral}" Style="{StaticResource SliderLabel}" VerticalAlignment="Center"/>
+                                            <TextBlock Grid.Column="0" Text="{x:Static res:Strings.SliderLabel_VibrateOnNeutral}" Style="{StaticResource LfeLabel}" VerticalAlignment="Center"/>
                                             <ctrl:OffOnToggle Grid.Column="1" x:Name="BaseLfeGearshiftVibrateOnNeutral" Tag="gearshift" Margin="0,0,38,0" VerticalAlignment="Center" Checked="BaseLfeVibrateOnNeutral_Changed" Unchecked="BaseLfeVibrateOnNeutral_Changed"/>
                                         </Grid>
                                         <Grid Margin="0,6,0,0">
                                             <Grid.ColumnDefinitions><ColumnDefinition Width="*"/><ColumnDefinition Width="Auto"/></Grid.ColumnDefinitions>
-                                            <TextBlock Grid.Column="0" Text="{x:Static res:Strings.SliderLabel_ShiftDebounce}" Style="{StaticResource SliderLabel}" VerticalAlignment="Center"/>
+                                            <TextBlock Grid.Column="0" Text="{x:Static res:Strings.SliderLabel_ShiftDebounce}" Style="{StaticResource LfeLabel}" VerticalAlignment="Center"/>
                                             <TextBox Grid.Column="1" x:Name="BaseLfeGearshiftDebounceValue" Width="58" Margin="0,0,38,0" Style="{StaticResource SliderValueEditBox}" Tag="{Binding ElementName=BaseLfeGearshiftDebounceSlider}" KeyDown="SliderValueBox_KeyDown" LostFocus="SliderValueBox_LostFocus" Text="50 ms"/>
                                         </Grid>
                                         <Slider x:Name="BaseLfeGearshiftDebounceSlider" Tag="gearshift" Style="{StaticResource SettingSlider}" Minimum="0" Maximum="1000" TickFrequency="50" SmallChange="50" LargeChange="50" IsSnapToTickEnabled="True" Margin="0,2,0,0" ValueChanged="BaseLfeDebounce_ValueChanged"/>
