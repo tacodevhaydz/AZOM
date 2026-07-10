@@ -457,6 +457,11 @@ namespace MozaPlugin.Protocol
                         $"[{string.Join(", ", axisUsages.Select(u => $"0x{u & 0xFFFF:X2}"))}] container='{mBoosterContainerId}'");
                 }
 
+                // changedIndex → usage is fixed by the report descriptor; caching
+                // it avoids a LINQ enumerator per changed value per report (the
+                // steering axis changes continuously at report rate).
+                var usageByChangedIndex = new Dictionary<int, uint>();
+
                 receiver.Received += (sender, e) =>
                 {
                     try
@@ -484,7 +489,11 @@ namespace MozaPlugin.Protocol
                             {
                                 int changedIndex = parser.GetNextChangedIndex();
                                 var value = parser.GetValue(changedIndex);
-                                uint usage = value.Usages.FirstOrDefault();
+                                if (!usageByChangedIndex.TryGetValue(changedIndex, out uint usage))
+                                {
+                                    usage = value.Usages.FirstOrDefault();
+                                    usageByChangedIndex[changedIndex] = usage;
+                                }
 
                                 if (kind == MozaHidClass.MBooster)
                                 {

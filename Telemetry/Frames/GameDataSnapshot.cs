@@ -119,17 +119,43 @@ namespace MozaPlugin.Telemetry.Frames
         // The track's content-folder name. AC's raw Static.track is the
         // authoritative source (the content/tracks/<folder> id); SimHub's
         // TrackId is the fallback. Reflection-only (no compile-time game ref).
+        // Member lookups are cached per runtime type — this runs every tick on
+        // the radar path, and uncached GetProperty/GetField per call was
+        // measurable churn. Statics are telemetry-tick-only, like the slot
+        // maps below.
+        private static Type? s_rawType;
+        private static PropertyInfo? s_rawStaticProp;
+        private static Type? s_staticType;
+        private static FieldInfo? s_staticTrackField;
+        private static PropertyInfo? s_staticTrackProp;
+
         private static string? ResolveTrackFolder(StatusDataBase data)
         {
             try
             {
                 object? raw = data.GetRawDataObject();
-                object? st = raw?.GetType().GetProperty("Static")?.GetValue(raw);
-                if (st != null)
+                if (raw != null)
                 {
-                    var t = (st.GetType().GetField("track")?.GetValue(st) as string)
-                          ?? (st.GetType().GetProperty("Track")?.GetValue(st) as string);
-                    if (!string.IsNullOrEmpty(t)) return t;
+                    var rt = raw.GetType();
+                    if (rt != s_rawType)
+                    {
+                        s_rawType = rt;
+                        s_rawStaticProp = rt.GetProperty("Static");
+                    }
+                    object? st = s_rawStaticProp?.GetValue(raw);
+                    if (st != null)
+                    {
+                        var stt = st.GetType();
+                        if (stt != s_staticType)
+                        {
+                            s_staticType = stt;
+                            s_staticTrackField = stt.GetField("track");
+                            s_staticTrackProp = stt.GetProperty("Track");
+                        }
+                        var t = (s_staticTrackField?.GetValue(st) as string)
+                              ?? (s_staticTrackProp?.GetValue(st) as string);
+                        if (!string.IsNullOrEmpty(t)) return t;
+                    }
                 }
             }
             catch { /* not AC, or shape changed — fall back to SimHub's id */ }
@@ -281,6 +307,10 @@ namespace MozaPlugin.Telemetry.Frames
         private static readonly System.Collections.Generic.Dictionary<int, int> _radarLastInRangeMs
             = new System.Collections.Generic.Dictionary<int, int>();        // carId -> last in-range tick
         private static string? _radarSlotTrack;
+        // Per-tick scratch, reused (telemetry-tick-only like the maps above).
+        private static readonly bool[] s_slotUsedScratch = new bool[RadarMaxSlots + 1];
+        private static readonly System.Collections.Generic.HashSet<int> s_inRangeScratch
+            = new System.Collections.Generic.HashSet<int>();
 
         // Assign each in-range opponent a STABLE ri slot (matches PitHouse). A car
         // keeps its slot while it stays relevant, so one car entering/leaving radar
@@ -297,10 +327,12 @@ namespace MozaPlugin.Telemetry.Frames
                 _radarSlotOf.Clear(); _radarLastInRangeMs.Clear(); _radarSlotTrack = track;
             }
             int now = Environment.TickCount;
-            var slotUsed = new bool[RadarMaxSlots + 1];
+            var slotUsed = s_slotUsedScratch;
+            Array.Clear(slotUsed, 0, slotUsed.Length);
             foreach (var s in _radarSlotOf.Values) if (s >= 1 && s <= RadarMaxSlots) slotUsed[s] = true;
 
-            var inRange = new System.Collections.Generic.HashSet<int>();
+            var inRange = s_inRangeScratch;
+            inRange.Clear();
             for (int idx = 0; idx < locs.Length; idx++)
             {
                 if (idx == playerIdx) continue;
@@ -363,15 +395,32 @@ namespace MozaPlugin.Telemetry.Frames
         // float[] of x,y,z per slot). Reflection-only so we don't take a
         // compile-time dependency on any game plugin; any failure returns null
         // and the caller falls back to SimHub's generic fields.
+        private static Type? s_gfxRawType;
+        private static PropertyInfo? s_rawGraphicsProp;
+        private static Type? s_gfxType;
+        private static FieldInfo? s_gfxCarCoordsField;
+
         private static float[]? TryReadRawCarCoordinates(StatusDataBase data)
         {
             try
             {
                 object? raw = data.GetRawDataObject();
                 if (raw == null) return null;
-                object? gfx = raw.GetType().GetProperty("Graphics")?.GetValue(raw);
+                var rt = raw.GetType();
+                if (rt != s_gfxRawType)
+                {
+                    s_gfxRawType = rt;
+                    s_rawGraphicsProp = rt.GetProperty("Graphics");
+                }
+                object? gfx = s_rawGraphicsProp?.GetValue(raw);
                 if (gfx == null) return null;
-                return gfx.GetType().GetField("CarCoordinates")?.GetValue(gfx) as float[];
+                var gt = gfx.GetType();
+                if (gt != s_gfxType)
+                {
+                    s_gfxType = gt;
+                    s_gfxCarCoordsField = gt.GetField("CarCoordinates");
+                }
+                return s_gfxCarCoordsField?.GetValue(gfx) as float[];
             }
             catch
             {
@@ -416,6 +465,12 @@ namespace MozaPlugin.Telemetry.Frames
         // while unavailable (map not yet recorded) and cached once valid.
         private static string? s_boundsTrack;
         private static (double minX, double maxX, double minZ, double maxZ)? s_boundsCache;
+        // Recorded-point count at the last ComputeMapBounds run — the negative
+        // cache key. While the map yields no valid bounds (track still being
+        // recorded), recompute only when the map has GROWN; the previous
+        // valid-only cache re-enumerated + sorted the whole map every tick for
+        // the entire first recorded lap.
+        private static int s_boundsCoordCount = -1;
         private static bool s_boundsDiag;
 
         private static (double minX, double maxX, double minZ, double maxZ)? GetMapBounds(
@@ -423,14 +478,39 @@ namespace MozaPlugin.Telemetry.Frames
         {
             if (map == null) return null;
             if (trackKey == s_boundsTrack && s_boundsCache.HasValue) return s_boundsCache;
+            int coordCount = TryGetMapCoordCount(map);
+            if (trackKey == s_boundsTrack && !s_boundsCache.HasValue
+                && coordCount >= 0 && coordCount == s_boundsCoordCount)
+                return null;
             var b = ComputeMapBounds(map);
             s_boundsTrack = trackKey;
             s_boundsCache = b;
+            s_boundsCoordCount = coordCount;
             if (b.HasValue)
                 MozaLog.Info($"[AZOM] track map bounds '{trackKey}': X {b.Value.minX:F0}..{b.Value.maxX:F0} " +
                     $"Z {b.Value.minZ:F0}..{b.Value.maxZ:F0} " +
                     $"({(int)(b.Value.maxX - b.Value.minX)}×{(int)(b.Value.maxZ - b.Value.minZ)} m, SimHub recorded map)");
             return b;
+        }
+
+        private static Type? s_mapType;
+        private static PropertyInfo? s_mapCoordsProp;
+
+        // O(1) recorded-point count via ICollection, or -1 when the shape is
+        // unknown (caller then recomputes per tick, the pre-cache behaviour).
+        private static int TryGetMapCoordCount(DataRecordBase map)
+        {
+            try
+            {
+                var mt = map.GetType();
+                if (mt != s_mapType)
+                {
+                    s_mapType = mt;
+                    s_mapCoordsProp = mt.GetProperty("CarCoordinates");
+                }
+                return (s_mapCoordsProp?.GetValue(map) as System.Collections.ICollection)?.Count ?? -1;
+            }
+            catch { return -1; }
         }
 
         // Fraction trimmed off each end of each axis to drop pit-lane / off-track
@@ -452,8 +532,13 @@ namespace MozaPlugin.Telemetry.Frames
         {
             try
             {
-                var coords = map.GetType().GetProperty("CarCoordinates")?.GetValue(map)
-                    as System.Collections.IEnumerable;
+                var mt = map.GetType();
+                if (mt != s_mapType)
+                {
+                    s_mapType = mt;
+                    s_mapCoordsProp = mt.GetProperty("CarCoordinates");
+                }
+                var coords = s_mapCoordsProp?.GetValue(map) as System.Collections.IEnumerable;
                 if (coords == null) return null;
                 bool relative = false;
                 try { relative = (map.GetType().GetProperty("HasRelativeCarCoordinates")?.GetValue(map) as bool?) ?? false; }
@@ -495,7 +580,14 @@ namespace MozaPlugin.Telemetry.Frames
         }
 
         // Extract (X, Z) from a recorded coordinate, however SimHub shapes it
-        // (double[]/float[] [x,y,z], or a point type with X/Z members).
+        // (double[]/float[] [x,y,z], or a point type with X/Z members). Member
+        // lookups cached per point type — ComputeMapBounds calls this once per
+        // recorded point.
+        private static Type? s_ptType;
+        private static FieldInfo? s_ptValueField;
+        private static PropertyInfo? s_ptXProp, s_ptZProp;
+        private static FieldInfo? s_ptXField, s_ptZField;
+
         private static bool TryPointXZ(object pt, out double x, out double z)
         {
             x = 0; z = 0;
@@ -504,23 +596,27 @@ namespace MozaPlugin.Telemetry.Frames
             try
             {
                 var ty = pt.GetType();
-                // SimHub recorded-map point (GameReaderCommon.PositionItem): the
-                // world coordinate lives in .Value as double[3] { X, Y, Z }.
-                var vf = ty.GetField("Value");
-                if (vf != null)
+                if (ty != s_ptType)
                 {
-                    var val = vf.GetValue(pt);
+                    s_ptType = ty;
+                    // SimHub recorded-map point (GameReaderCommon.PositionItem): the
+                    // world coordinate lives in .Value as double[3] { X, Y, Z }.
+                    s_ptValueField = ty.GetField("Value");
+                    s_ptXProp = ty.GetProperty("X") ?? ty.GetProperty("x");
+                    s_ptZProp = ty.GetProperty("Z") ?? ty.GetProperty("z");
+                    s_ptXField = ty.GetField("X") ?? ty.GetField("x");
+                    s_ptZField = ty.GetField("Z") ?? ty.GetField("z");
+                }
+                if (s_ptValueField != null)
+                {
+                    var val = s_ptValueField.GetValue(pt);
                     if (val is double[] vd && vd.Length >= 3) { x = vd[0]; z = vd[2]; return true; }
                     if (val is float[] vff && vff.Length >= 3) { x = vff[0]; z = vff[2]; return true; }
                 }
-                var px = ty.GetProperty("X") ?? ty.GetProperty("x");
-                var pz = ty.GetProperty("Z") ?? ty.GetProperty("z");
-                if (px != null && pz != null)
-                { x = Convert.ToDouble(px.GetValue(pt)); z = Convert.ToDouble(pz.GetValue(pt)); return true; }
-                var fx = ty.GetField("X") ?? ty.GetField("x");
-                var fz = ty.GetField("Z") ?? ty.GetField("z");
-                if (fx != null && fz != null)
-                { x = Convert.ToDouble(fx.GetValue(pt)); z = Convert.ToDouble(fz.GetValue(pt)); return true; }
+                if (s_ptXProp != null && s_ptZProp != null)
+                { x = Convert.ToDouble(s_ptXProp.GetValue(pt)); z = Convert.ToDouble(s_ptZProp.GetValue(pt)); return true; }
+                if (s_ptXField != null && s_ptZField != null)
+                { x = Convert.ToDouble(s_ptXField.GetValue(pt)); z = Convert.ToDouble(s_ptZField.GetValue(pt)); return true; }
             }
             catch { }
             return false;

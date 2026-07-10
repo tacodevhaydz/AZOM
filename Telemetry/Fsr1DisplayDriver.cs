@@ -47,14 +47,6 @@ namespace MozaPlugin.Telemetry
         private int _tickCounter;
         private int _lastStreamedIndex = -1;
 
-        // TEMP latency probe: real wall-clock tick/record rate vs the intended
-        // ~28 Hz, logged 1×/s. Reveals timer coarsening, tick overrun, or wire
-        // saturation behind a "slower than PitHouse" symptom. Remove once root-caused.
-        private readonly System.Diagnostics.Stopwatch _diagSw = System.Diagnostics.Stopwatch.StartNew();
-        private int _diagTicks;
-        private int _diagRecords;
-        private long _diagLastLogMs;
-
         // One-time-per-process guard for the catalog gapless self-check (runs on first Start).
         private static bool s_partitionsValidated;
 
@@ -294,7 +286,6 @@ namespace MozaPlugin.Telemetry
             int activeIdx = plugin?.GetActiveFsr1Index() ?? 0;
             var active = Fsr1DashboardCatalog.ByIndex(activeIdx);
             var live = Fsr1DashboardCatalog.LiveDashboards;
-            int streamedThisTick = 0;
 
             // Push records to the wheel only when actually driving it. In viz-only mode we
             // skip all streaming (the panel just wants the computed values for its preview).
@@ -319,7 +310,6 @@ namespace MozaPlugin.Telemetry
                         _connection.SendStream(
                             (StreamKind)((int)StreamKind.TierDash0 + slot),
                             RecordFor(dash));
-                        streamedThisTick++;
                     }
                 }
                 else
@@ -339,7 +329,6 @@ namespace MozaPlugin.Telemetry
                         _connection.SendStream(
                             (StreamKind)((int)StreamKind.TierDash0 + slot),
                             RecordFor(dash));
-                        streamedThisTick++;
                     }
                 }
             }
@@ -359,24 +348,6 @@ namespace MozaPlugin.Telemetry
                 _connection.SendStream(StreamKind.Enable, Fsr1DisplayEmitter.Keepalive43);
 
             _tickCounter++;
-
-            // TEMP latency probe — measured tick/record rate over real wall-clock.
-            _diagTicks++;
-            _diagRecords += streamedThisTick;
-            long diagNowMs = _diagSw.ElapsedMilliseconds;
-            long diagElapsed = diagNowMs - _diagLastLogMs;
-            if (diagElapsed >= 1000)
-            {
-                double secs = diagElapsed / 1000.0;
-                var b = _connection.CurrentBudget;
-                MozaLog.Info(
-                    $"[AZOM] FSR1 rate: {_diagTicks / secs:F1} tick/s, {_diagRecords / secs:F1} rec/s, " +
-                    $"mode={(active.Length == 0 ? "FLOOD-ALL" : $"active idx={activeIdx} ({active.Length} rec)")}, " +
-                    $"wire={b.BytesLastSec}B/s ({b.PercentBudget}% of target, peak {b.PeakBurstBytes})");
-                _diagTicks = 0;
-                _diagRecords = 0;
-                _diagLastLogMs = diagNowMs;
-            }
         }
 
         private static long Clamp(long v, long lo, long hi) => v < lo ? lo : (v > hi ? hi : v);

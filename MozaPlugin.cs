@@ -995,6 +995,8 @@ namespace MozaPlugin
                 // each radar build so a restart is verifiable from the log.
                 MozaLog.Info("[AZOM] BUILD radar-2026-06-29Y: suppress radar/track-map channels (patch/Location*, patch/riN) from the channel mapper UI");
 
+                MozaLog.WireDebugEnabled = _settings.VerboseWireDebugLog;
+
                 // Bridge-format JSONL wire trace at SimHub/Logs/moza-wire-*.jsonl.
                 // Opt-in via _settings.EnableWireTraceFileSink. Fresh file per launch.
                 if (_settings.EnableWireTraceFileSink)
@@ -4052,8 +4054,9 @@ namespace MozaPlugin
                 // stale cached identity/catalog. See TryHandleWheelConnectionLog.
                 if (rawDeviceId == 0x21)
                     TryHandleWheelConnectionLog(text);
-                MozaLog.Debug(
-                    $"[AZOM] firmware-debug src={(rawDeviceId == 0x21 ? "main" : rawDeviceId == 0x71 ? "wheel" : rawDeviceId == 0xB1 ? "display" : $"0x{rawDeviceId:X2}")}: {text}");
+                if (MozaLog.WireDebugEnabled)
+                    MozaLog.Debug(
+                        $"[AZOM] firmware-debug src={(rawDeviceId == 0x21 ? "main" : rawDeviceId == 0x71 ? "wheel" : rawDeviceId == 0xB1 ? "display" : $"0x{rawDeviceId:X2}")}: {text}");
                 return;
             }
             // Other 0x0E variants we don't yet know how to decode — drop

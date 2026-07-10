@@ -226,6 +226,11 @@ namespace MozaPlugin
         [Newtonsoft.Json.JsonIgnore]
         public bool EnableWireTraceFileSink { get; set; } = false;
 
+        // Per-frame wire/firmware-debug log lines (MozaLog.WireDebugEnabled).
+        // No UI — flip to false in MozaPluginSettings.json to silence
+        // frame-rate debug logging on the serial read thread.
+        public bool VerboseWireDebugLog { get; set; } = true;
+
         // Radar (patch/ri*, OpponentCount, PlayerIndex) + track-map
         // (patch/Location*) channels. Code-only toggle — not serialized, no UI.
         // TEMPORARILY true to test opponent-position + heading data on the wheel

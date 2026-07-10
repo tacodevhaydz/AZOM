@@ -1034,7 +1034,8 @@ namespace MozaPlugin.Protocol
                         }
                         // Diagnostic: per-chunk log for SerialStream session-data
                         // frames (0xC3 / wheel / 7C / 00) — session 0x09 chunk reception.
-                        if (data.Length >= 8 && data[0] == MozaProtocol.SerialStreamRespGroup
+                        if (MozaLog.WireDebugEnabled
+                            && data.Length >= 8 && data[0] == MozaProtocol.SerialStreamRespGroup
                             && data[1] == MozaProtocol.WheelDeviceIdSwapped
                             && data[2] == MozaProtocol.SerialStreamOpcodeData
                             && data[3] == 0x00)

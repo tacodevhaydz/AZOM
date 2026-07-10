@@ -292,16 +292,19 @@ namespace MozaPlugin.Telemetry
         internal const string CatalogProfileName = "WheelCatalog";
         private uint _catalogEndMarkerAtSynthesis;
         private int _catalogCountAtSynthesis;
-        // Concatenated catalog URLs at the last synthesis. The wheel streams
-        // its catalog via abbreviated/back-ref chunks the parser reconstructs
-        // and corrects IN PLACE, so the channel set can change while count and
-        // END marker stay constant. Without tracking content, an early synth
-        // built against an incomplete catalog (channels whose URLs hadn't yet
-        // resolved → empty SimHubProperty → live value 0) was never refreshed
-        // until a dashboard switch bumped the END marker — live game data
-        // stayed blank while test mode (which bypasses property resolution)
-        // worked. Re-synthesise when this signature changes too.
-        private string _catalogSignatureAtSynthesis = "";
+        // Content hash of the catalog URLs at the last synthesis. The wheel
+        // streams its catalog via abbreviated/back-ref chunks the parser
+        // reconstructs and corrects IN PLACE, so the channel set can change
+        // while count and END marker stay constant. Without tracking content,
+        // an early synth built against an incomplete catalog (channels whose
+        // URLs hadn't yet resolved → empty SimHubProperty → live value 0) was
+        // never refreshed until a dashboard switch bumped the END marker —
+        // live game data stayed blank while test mode (which bypasses property
+        // resolution) worked. Re-synthesise when this hash changes too.
+        // FNV-1a hash, not a joined string: this compare runs every tick on
+        // the timer thread for catalog-synthesised profiles, and joining a
+        // 200-URL catalog allocated ~KBs per tick.
+        private ulong _catalogHashAtSynthesis;
 
         // Catalog-stability debounce. The wheel advertises its catalog
         // PROGRESSIVELY at startup / dashboard switch (END 6→80→97 over ~3 s,
@@ -313,11 +316,34 @@ namespace MozaPlugin.Telemetry
         // changes we record it and wait until it has held steady for
         // CatalogDebounceTicks before synthesising, collapsing the burst into a
         // single emit. force=true (explicit swap / hot-switch) bypasses this.
-        private string _pendingCatalogSignature = "";
+        private ulong _pendingCatalogHash;
         private int _pendingCatalogCount = -1;
         private long _pendingCatalogSinceTicks;
         private static readonly long CatalogDebounceTicks =
             TimeSpan.FromMilliseconds(750).Ticks;
+
+        // FNV-1a over every catalog URL + a separator — the allocation-free
+        // equivalent of comparing string.Join("\n", catalog) values.
+        private static ulong ComputeCatalogHash(System.Collections.Generic.IReadOnlyList<string> catalog)
+        {
+            ulong h = 14695981039346656037UL;
+            const ulong prime = 1099511628211UL;
+            for (int i = 0; i < catalog.Count; i++)
+            {
+                var s = catalog[i];
+                if (s != null)
+                {
+                    for (int j = 0; j < s.Length; j++)
+                    {
+                        h ^= s[j];
+                        h *= prime;
+                    }
+                }
+                h ^= 0x0A;
+                h *= prime;
+            }
+            return h;
+        }
 
         // CRC32 reject counters for catalog (sess=0x01/FlagByte) and tile-server
         // (sess=0x03/0x0b) chunks. Surfaced via diagnostics for link-quality.
@@ -2999,10 +3025,10 @@ namespace MozaPlugin.Telemetry
             // end (0x00→0x3F over 64 emissions) and let partial re-advertisements
             // collapse the bound channel set. A real dashboard switch always
             // changes count or signature, so content-keying still catches it.
-            string catalogSignature = string.Join("\n", catalog);
+            ulong catalogHash = ComputeCatalogHash(catalog);
             if (currentIsSynthesised
                 && _catalogCountAtSynthesis == catalog.Count
-                && _catalogSignatureAtSynthesis == catalogSignature
+                && _catalogHashAtSynthesis == catalogHash
                 && !force)
                 return;
 
@@ -3015,11 +3041,11 @@ namespace MozaPlugin.Telemetry
             {
                 long nowTicks = DateTime.UtcNow.Ticks;
                 if (_pendingCatalogCount != catalog.Count
-                    || _pendingCatalogSignature != catalogSignature)
+                    || _pendingCatalogHash != catalogHash)
                 {
                     // Catalog just changed (or changed again mid-burst) — (re)arm.
                     _pendingCatalogCount = catalog.Count;
-                    _pendingCatalogSignature = catalogSignature;
+                    _pendingCatalogHash = catalogHash;
                     _pendingCatalogSinceTicks = nowTicks;
                     return;
                 }
@@ -3082,11 +3108,11 @@ namespace MozaPlugin.Telemetry
             // rebound idxs) always changes count or signature.
             bool generationChanged =
                 _catalogCountAtSynthesis != catalog.Count
-                || _catalogSignatureAtSynthesis != catalogSignature;
+                || _catalogHashAtSynthesis != catalogHash;
 
             _catalogEndMarkerAtSynthesis = _catalogParser.LastWheelEndMarker;
             _catalogCountAtSynthesis = catalog.Count;
-            _catalogSignatureAtSynthesis = catalogSignature;
+            _catalogHashAtSynthesis = catalogHash;
 
             // Going through the Profile setter so multi-broadcast expansion
             // and _tiers allocation match the mzdash path exactly. The setter
@@ -3548,8 +3574,8 @@ namespace MozaPlugin.Telemetry
                 // doesn't stall after game/profile/dashboard switches. The
                 // method early-returns when a real mzdash profile is loaded
                 // and is a no-op when catalog state hasn't moved since the
-                // last synthesis, so the cost is one ref + count compare in
-                // the steady case.
+                // last synthesis; the steady-state cost is an allocation-free
+                // catalog content hash.
                 MaybeSwapProfileForCatalog();
 
                 // Re-read _tiers: MaybeSwapProfileForCatalog may have rebuilt
@@ -4093,9 +4119,15 @@ namespace MozaPlugin.Telemetry
         private void TickEmitStringValues()
         {
             if (!TestMode && (!_gameRunning || !_profileTelemetryEnabled)) return;
+            // String sources change on the order of minutes (TrackId, CarModel…);
+            // resolving every channel's property + ToString per 30 ms tick was
+            // pure churn. Poll at ~4 Hz — a change is picked up within ≤250 ms,
+            // far inside the 15 s keepalive floor.
+            if (_tickCounter % StringPollTickInterval != 0) return;
             EmitStringChannels(force: false);
         }
 
+        private const int StringPollTickInterval = 8; // ~4 Hz at the 30 ms base tick
         private const int StringKeepaliveFloorMs = 15000; // PitHouse mean cadence
 
         /// <summary>Iterate the active profile's string channels and emit each
@@ -4685,6 +4717,14 @@ namespace MozaPlugin.Telemetry
         // mutate channel fields in place but never the URL set).
         private System.Collections.Generic.Dictionary<string, ChannelDefinition>? _v0ByUrl;
         private MultiStreamProfile? _v0ByUrlProfile;
+        // Per-channel change dedup (indexed by catalog position): V0 re-sent
+        // every channel at full tick rate; unchanged values now ride a 1 s
+        // keepalive floor instead. Changed values still go out immediately,
+        // and the floor re-covers the full set within 1 s of a session
+        // restart.
+        private double[]? _v0LastValue;
+        private int[]? _v0LastSentMs;
+        private const int V0KeepaliveFloorMs = 1000;
 
         private void SendV0ValueFrames(GameDataSnapshot snapshot)
         {
@@ -4742,6 +4782,15 @@ namespace MozaPlugin.Telemetry
             // brightness/dashboard-switch property pushes that contend for
             // _session02SeqLock. Holding the lock over IO-bound work was
             // observable as a UI freeze during teardown.
+            int nowTickMs = Environment.TickCount;
+            if (_v0LastValue == null || _v0LastValue.Length < catalog.Count)
+            {
+                _v0LastValue = new double[catalog.Count];
+                _v0LastSentMs = new int[catalog.Count];
+                for (int k = 0; k < _v0LastSentMs.Length; k++)
+                    _v0LastSentMs[k] = nowTickMs - 2 * V0KeepaliveFloorMs;   // force first send
+            }
+
             var prebuilt = new System.Collections.Generic.List<byte[]>(catalog.Count);
             for (int i = 0; i < catalog.Count; i++)
             {
@@ -4770,6 +4819,12 @@ namespace MozaPlugin.Telemetry
                 {
                     value = ch != null ? ResolveV0ChannelValue(ch, snapshot) : 0.0;
                 }
+
+                if (value == _v0LastValue[i]
+                    && unchecked(nowTickMs - _v0LastSentMs![i]) < V0KeepaliveFloorMs)
+                    continue;
+                _v0LastValue[i] = value;
+                _v0LastSentMs![i] = nowTickMs;
 
                 byte[] valueBytes = TelemetryFrameBuilder.EncodeV0Value(compression, value);
                 prebuilt.Add(TelemetryFrameBuilder.BuildV0ValueFrame(wheelIdx, valueBytes));
