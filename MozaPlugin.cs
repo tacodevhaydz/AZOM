@@ -1225,7 +1225,7 @@ namespace MozaPlugin
                     DetectionState,
                     _data,
                     () => _settings?.ProfileStore?.CurrentProfile?.BaseLfe,
-                    ResolveMBoosterCustomEffectFormula,   // NCalc/property → double
+                    CreateHapticsFormulaResolver(),   // NCalc/property → double, own engine
                     () => IsShuttingDown);
                 _baseLfeWorker.Start();
 
@@ -1237,7 +1237,7 @@ namespace MozaPlugin
                     settingsLookup: id => GetOrCreateMBoosterSettings(id),
                     isShuttingDown: () => IsShuttingDown,
                     onDeviceDetectedEdge: OnMBoosterDeviceDetected,
-                    customEffectFormulaEvaluator: ResolveMBoosterCustomEffectFormula,
+                    customEffectFormulaEvaluator: CreateHapticsFormulaResolver(),
                     onSerialResolved: OnMBoosterSerialResolved);
                 // Initial walk so any mBooster plugged in BEFORE SimHub launched
                 // appears immediately — without this, the user waits up to 5 s
@@ -3248,19 +3248,26 @@ namespace MozaPlugin
         internal string CurrentWheelKey() => _propertyResolver.CurrentWheelKey();
 
         /// <summary>
-        /// Evaluate a user-supplied mBooster custom-effect formula (a bare
-        /// SimHub property path or an NCalc <c>[prop]</c> formula) to a
-        /// double; 0 on any failure or before <see cref="_propertyResolver"/>
-        /// exists. Reuses the same resolver the telemetry channel-mapper
-        /// uses, so the dialect/property resolution is identical — see
-        /// Telemetry/NCalcExpressionEvaluator.cs. Called from the mBooster
-        /// effect worker's own background tick thread (same threading model
-        /// as the telemetry sender's calls into this resolver).
+        /// Build a formula/property → double resolver for a 50 Hz haptics worker
+        /// (LFE, mBooster). Same dialect and property resolution as the telemetry
+        /// channel-mapper, but formulas evaluate on the returned closure's OWN
+        /// engine instance — SimHub's NCalcEngineBase is not safe for concurrent
+        /// evaluation, so each evaluator serializes internally, and a private
+        /// instance keeps haptics ticks from queueing behind the 30 Hz telemetry
+        /// evaluations (see SimHubPropertyResolver.ResolveAsDouble overload).
+        /// Late-binds <see cref="_propertyResolver"/>: workers are constructed
+        /// before the resolver exists.
         /// </summary>
-        internal double ResolveMBoosterCustomEffectFormula(string? formula)
+        private Func<string?, double> CreateHapticsFormulaResolver()
         {
-            if (string.IsNullOrWhiteSpace(formula) || _propertyResolver == null) return 0.0;
-            return _propertyResolver.ResolveAsDouble(formula!);
+            var formula = new Telemetry.NCalcExpressionEvaluator();
+            return f =>
+            {
+                if (string.IsNullOrWhiteSpace(f)) return 0.0;
+                var resolver = _propertyResolver;
+                if (resolver == null) return 0.0;
+                return resolver.ResolveAsDouble(f!, formula);
+            };
         }
 
         /// <summary>SimHub's shared formula engine for the channel-mapper's formula

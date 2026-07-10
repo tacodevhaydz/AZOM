@@ -221,8 +221,6 @@ namespace MozaPlugin
         // Bridge-format JSONL wire trace at SimHub/Logs/moza-wire-*.jsonl.
         // Code-only toggle — not serialized so changing the default here
         // is the only way to flip it. Avoids stale persisted values.
-        // Currently ON while string-channel (sess=0x01 type=0x05) wiring is
-        // being verified; flip back to false once that work is signed off.
         [Newtonsoft.Json.JsonIgnore]
         public bool EnableWireTraceFileSink { get; set; } = false;
 
@@ -233,9 +231,8 @@ namespace MozaPlugin
 
         // Radar (patch/ri*, OpponentCount, PlayerIndex) + track-map
         // (patch/Location*) channels. Code-only toggle — not serialized, no UI.
-        // TEMPORARILY true to test opponent-position + heading data on the wheel
-        // (no tier-def enable-handshake change — that broke binding); set back to
-        // false before shipping until the feature is verified.
+        // Shipping enabled: the radar/track-map feature is staying on (no
+        // tier-def enable-handshake change — that broke binding).
         [Newtonsoft.Json.JsonIgnore]
         public bool EnableRadarTrackMapChannels { get; set; } = true;
 
