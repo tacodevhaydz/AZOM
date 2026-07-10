@@ -200,8 +200,12 @@ namespace MozaPlugin.Devices
                         settings.WheelSleepByPageGuid = new Dictionary<Guid, WheelSleepSettings>();
                     if (!settings.WheelSleepByPageGuid.TryGetValue(pageGuid, out var bundle) || bundle == null)
                     {
+                        // COW swap — the save debounce serializes these dicts
+                        // concurrently; never Add in place.
                         bundle = new WheelSleepSettings();
-                        settings.WheelSleepByPageGuid[pageGuid] = bundle;
+                        var next = new Dictionary<Guid, WheelSleepSettings>(settings.WheelSleepByPageGuid);
+                        next[pageGuid] = bundle;
+                        settings.WheelSleepByPageGuid = next;
                     }
                     if (bundle.Mode       < 0 && WheelSleepMode       >= 0) bundle.Mode       = WheelSleepMode;
                     if (bundle.TimeoutMin < 0 && WheelSleepTimeoutMin >= 0) bundle.TimeoutMin = WheelSleepTimeoutMin;
@@ -220,7 +224,9 @@ namespace MozaPlugin.Devices
                     if (!settings.WheelIdleByPageGuid.TryGetValue(pageGuid, out var idle) || idle == null)
                     {
                         idle = new WheelIdleSettings();
-                        settings.WheelIdleByPageGuid[pageGuid] = idle;
+                        var next = new Dictionary<Guid, WheelIdleSettings>(settings.WheelIdleByPageGuid);
+                        next[pageGuid] = idle;
+                        settings.WheelIdleByPageGuid = next;
                     }
                     if (idle.TelemetryEffect  < 0 && WheelIdleEffect            >= 0) idle.TelemetryEffect  = WheelIdleEffect;
                     if (idle.ButtonsEffect    < 0 && WheelButtonsIdleEffect     >= 0) idle.ButtonsEffect    = WheelButtonsIdleEffect;

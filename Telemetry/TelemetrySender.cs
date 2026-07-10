@@ -875,207 +875,221 @@ namespace MozaPlugin.Telemetry
         public MultiStreamProfile? Profile
         {
             get => _profile;
-            set
+            // Serialized: the setter runs on UI/init, the serial read thread
+            // (OnWheelInitiatedSwitch → null) and the tick thread
+            // (MaybeSwapProfileForCatalog); unserialized runs interleave and
+            // can publish one caller's _profile with another's _tiers. Body
+            // is pure computation + logging — no I/O waits (leaf lock).
+            set { lock (_profileSetLock) SetProfileLocked(value); }
+        }
+        private readonly object _profileSetLock = new object();
+
+        private void SetProfileLocked(MultiStreamProfile? value)
+        {
+            // Idempotency guard, layer 1 — reference identity. Callers
+            // (ApplyTelemetrySettings, OnWheelInitiatedSwitch,
+            // OnDashboardSwitched, MaybeSwapProfileForCatalog) can fire
+            // this setter several times in close succession with the
+            // same source profile — e.g. UI combo click →
+            // ApplyTelemetrySettings → next tick
+            // MaybeSwapProfileForCatalog sees catalog unchanged but
+            // assigns the cached synthesised profile back in. Each
+            // re-assignment re-runs the multi-broadcast expansion (~N
+            // new DashboardProfile allocations), rebuilds every per-
+            // tier FrameBuilder, and resets the OriginalChannels
+            // pristine snapshot. Reference-compare so the same input
+            // → no-op; null-to-null also short-circuits cleanly.
+            if (ReferenceEquals(value, _lastProfileSourceRef)) return;
+
+            // Idempotency guard, layer 2 — content equality. The
+            // catalog-synthesis path (MaybeSwapProfileForCatalog) builds
+            // a fresh MultiStreamProfile instance every call from the
+            // wheel's current catalog. If catalog content hasn't
+            // changed, the new instance is byte-equivalent to the
+            // previously-assigned one even though their object refs
+            // differ — and that triggers the same full FrameBuilder
+            // rebuild + tier-def re-emission as a real change. The
+            // wheel firmware has been observed (2026-05-26
+            // moza-wire-...-043633) to wedge sess=0x01 into a close-
+            // reopen loop when bombarded with 9 functionally-identical
+            // tier-defs in a few seconds. Catching content-equivalent
+            // assignments here means downstream rebuild + emission
+            // only fires on actual change. Hot-switch / cold-start
+            // emissions still work because they call
+            // ApplySubscription which sends tier-def directly, not via
+            // the Profile setter side effect.
+            //
+            // Gate on _profile being live too. If _profile was cleared
+            // (Stop/Reset path) but _lastProfileSourceRef still points
+            // at the prior assignment, the content match would no-op
+            // away the rebuild we actually need to bring _profile back.
+            if (value != null && _profile != null && _lastProfileSourceRef != null
+                && AreProfileContentsEquivalent(value, _lastProfileSourceRef))
             {
-                // Idempotency guard, layer 1 — reference identity. Callers
-                // (ApplyTelemetrySettings, OnWheelInitiatedSwitch,
-                // OnDashboardSwitched, MaybeSwapProfileForCatalog) can fire
-                // this setter several times in close succession with the
-                // same source profile — e.g. UI combo click →
-                // ApplyTelemetrySettings → next tick
-                // MaybeSwapProfileForCatalog sees catalog unchanged but
-                // assigns the cached synthesised profile back in. Each
-                // re-assignment re-runs the multi-broadcast expansion (~N
-                // new DashboardProfile allocations), rebuilds every per-
-                // tier FrameBuilder, and resets the OriginalChannels
-                // pristine snapshot. Reference-compare so the same input
-                // → no-op; null-to-null also short-circuits cleanly.
-                if (ReferenceEquals(value, _lastProfileSourceRef)) return;
-
-                // Idempotency guard, layer 2 — content equality. The
-                // catalog-synthesis path (MaybeSwapProfileForCatalog) builds
-                // a fresh MultiStreamProfile instance every call from the
-                // wheel's current catalog. If catalog content hasn't
-                // changed, the new instance is byte-equivalent to the
-                // previously-assigned one even though their object refs
-                // differ — and that triggers the same full FrameBuilder
-                // rebuild + tier-def re-emission as a real change. The
-                // wheel firmware has been observed (2026-05-26
-                // moza-wire-...-043633) to wedge sess=0x01 into a close-
-                // reopen loop when bombarded with 9 functionally-identical
-                // tier-defs in a few seconds. Catching content-equivalent
-                // assignments here means downstream rebuild + emission
-                // only fires on actual change. Hot-switch / cold-start
-                // emissions still work because they call
-                // ApplySubscription which sends tier-def directly, not via
-                // the Profile setter side effect.
-                //
-                // Gate on _profile being live too. If _profile was cleared
-                // (Stop/Reset path) but _lastProfileSourceRef still points
-                // at the prior assignment, the content match would no-op
-                // away the rebuild we actually need to bring _profile back.
-                if (value != null && _profile != null && _lastProfileSourceRef != null
-                    && AreProfileContentsEquivalent(value, _lastProfileSourceRef))
-                {
-                    // Swap the source ref to the latest instance so
-                    // ReferenceEquals catches further repeats at layer 1.
-                    _lastProfileSourceRef = value;
-                    return;
-                }
-                // Off→on transition (telemetry was disabled, user re-enabled
-                // it / selected a profile from the empty state): treat as an
-                // explicit "fresh attempt" signal and forgive any prior
-                // recovery-budget exhaustion so the new attempt starts with a
-                // clean budget. The existing wheel-hot-swap path covers the
-                // hardware-change case (ResetBindingTracking); this covers
-                // the user-driven case.
-                if (value != null && _lastProfileSourceRef == null)
-                {
-                    try { _recovery.Reset(); } catch { }
-                }
+                // Swap the source ref to the latest instance so
+                // ReferenceEquals catches further repeats at layer 1.
                 _lastProfileSourceRef = value;
+                return;
+            }
+            // Off→on transition (telemetry was disabled, user re-enabled
+            // it / selected a profile from the empty state): treat as an
+            // explicit "fresh attempt" signal and forgive any prior
+            // recovery-budget exhaustion so the new attempt starts with a
+            // clean budget. The existing wheel-hot-swap path covers the
+            // hardware-change case (ResetBindingTracking); this covers
+            // the user-driven case.
+            if (value != null && _lastProfileSourceRef == null)
+            {
+                try { _recovery.Reset(); } catch { }
+            }
+            _lastProfileSourceRef = value;
 
-                if (value != null && value.Tiers.Count > 0)
+            if (value != null && value.Tiers.Count > 0)
+            {
+                // Single broadcast: each tier fires at its own package rate.
+                // The prior strategy replicated every sub-tier into max(4, N+1)
+                // copies with parallel flag bytes to push slow-pkg channels at
+                // the base rate, but it also replicated the already-fast tier,
+                // multiplying wire load ~4× and saturating the shared base wire.
+                var subTiers = new System.Collections.Generic.List<DashboardProfile>(value.Tiers);
+                subTiers.Sort((a, b) => a.PackageLevel.CompareTo(b.PackageLevel));
+                int subCount = subTiers.Count;
+                int broadcasts = 1;
+                var expanded = new System.Collections.Generic.List<DashboardProfile>(subCount * broadcasts);
+                // One Channels copy per source sub-tier, shared across
+                // its broadcast replicas. COPY so the in-place mutate in
+                // SortTierChannelsByCatalogIdx doesn't corrupt the cached
+                // profile; SHARE so the dedup-by-reference in that sort
+                // still mutates each unique list exactly once.
+                var copiedChannelsForSrc =
+                    new System.Collections.Generic.Dictionary<DashboardProfile, System.Collections.Generic.List<ChannelDefinition>>();
+                foreach (var src in subTiers)
                 {
-                    // Single broadcast: each tier fires at its own package rate.
-                    // The prior strategy replicated every sub-tier into max(4, N+1)
-                    // copies with parallel flag bytes to push slow-pkg channels at
-                    // the base rate, but it also replicated the already-fast tier,
-                    // multiplying wire load ~4× and saturating the shared base wire.
-                    var subTiers = new System.Collections.Generic.List<DashboardProfile>(value.Tiers);
-                    subTiers.Sort((a, b) => a.PackageLevel.CompareTo(b.PackageLevel));
-                    int subCount = subTiers.Count;
-                    int broadcasts = 1;
-                    var expanded = new System.Collections.Generic.List<DashboardProfile>(subCount * broadcasts);
-                    // One Channels copy per source sub-tier, shared across
-                    // its broadcast replicas. COPY so the in-place mutate in
-                    // SortTierChannelsByCatalogIdx doesn't corrupt the cached
-                    // profile; SHARE so the dedup-by-reference in that sort
-                    // still mutates each unique list exactly once.
-                    var copiedChannelsForSrc =
-                        new System.Collections.Generic.Dictionary<DashboardProfile, System.Collections.Generic.List<ChannelDefinition>>();
+                    copiedChannelsForSrc[src] =
+                        new System.Collections.Generic.List<ChannelDefinition>(src.Channels);
+                }
+                for (int b = 0; b < broadcasts; b++)
+                {
                     foreach (var src in subTiers)
                     {
-                        copiedChannelsForSrc[src] =
-                            new System.Collections.Generic.List<ChannelDefinition>(src.Channels);
-                    }
-                    for (int b = 0; b < broadcasts; b++)
-                    {
-                        foreach (var src in subTiers)
+                        expanded.Add(new DashboardProfile
                         {
-                            expanded.Add(new DashboardProfile
-                            {
-                                Name = $"{src.Name}@b{b}",
-                                Channels = copiedChannelsForSrc[src],
-                                TotalBits = src.TotalBits,
-                                TotalBytes = src.TotalBytes,
-                                PackageLevel = src.PackageLevel,
-                                FlagByte = src.FlagByte,
-                            });
-                        }
+                            Name = $"{src.Name}@b{b}",
+                            Channels = copiedChannelsForSrc[src],
+                            TotalBits = src.TotalBits,
+                            TotalBytes = src.TotalBytes,
+                            PackageLevel = src.PackageLevel,
+                            FlagByte = src.FlagByte,
+                        });
                     }
-                    value = new MultiStreamProfile
-                    {
-                        Name = value.Name,
-                        PageCount = value.PageCount,
-                        Tiers = expanded,
-                        // Strings are out-of-band; carry through unchanged
-                        // (the expanded profile becomes the live _profile).
-                        StringChannels = value.StringChannels,
-                    };
                 }
+                value = new MultiStreamProfile
+                {
+                    Name = value.Name,
+                    PageCount = value.PageCount,
+                    Tiers = expanded,
+                    // Strings are out-of-band; carry through unchanged
+                    // (the expanded profile becomes the live _profile).
+                    StringChannels = value.StringChannels,
+                };
+            }
+            if (value == null || value.Tiers.Count == 0)
+            {
+                _tiers = null;
+                _baseTickMs = 33;
                 _profile = value;
-                if (value == null || value.Tiers.Count == 0)
+                return;
+            }
+
+            if (value.StringChannels.Count > 0)
+            {
+                var urls = string.Join(", ", value.StringChannels.Select(c =>
+                    string.IsNullOrEmpty(c.SimHubProperty)
+                        ? c.Url
+                        : $"{c.Url}→{c.SimHubProperty}"));
+                MozaLog.Debug(
+                    $"[AZOM] Profile '{value.Name}' has {value.StringChannels.Count} " +
+                    $"string channels (sess=0x01 type=0x05): {urls}");
+            }
+
+            // Base tick = fastest tier's pkg_level (smallest).
+            int minPkg = int.MaxValue;
+            foreach (var t in value.Tiers)
+                if (t.PackageLevel > 0 && t.PackageLevel < minPkg) minPkg = t.PackageLevel;
+            int baseTickMs = (minPkg == int.MaxValue) ? 30 : minPkg;
+            _baseTickMs = baseTickMs;
+
+            // Do NOT apply the catalog-driven sort+filter here. The
+            // catalog state at Profile-set time is often stale (cold
+            // start: catalog hasn't arrived; post-dashboard-switch:
+            // catalog still has the PREVIOUS dashboard's URLs because
+            // the wheel sends new catalog over ~1s after the
+            // Stop+Start cycle). Defer to ApplySubscription which
+            // (a) has a fresher catalog and (b) re-runs from the
+            // pristine OriginalChannels every time, so a stale-catalog
+            // filter result doesn't permanently strip channels.
+
+            // Built into a local and published only when fully filled — the
+            // tick thread samples _tiers unsynchronized and must never see
+            // null elements.
+            var tiers = new TierState[value.Tiers.Count];
+            var tierDiag = new System.Text.StringBuilder();
+            tierDiag.Append($"[AZOM] Profile setter: \"{value.Name}\" {value.Tiers.Count}t baseTickMs={baseTickMs}");
+            for (int i = 0; i < value.Tiers.Count; i++)
+            {
+                var tier = value.Tiers[i];
+                int tickInterval = Math.Max(1, tier.PackageLevel / baseTickMs);
+                // Lowest per-car radar/track-map slot in this tier (0 if none) —
+                // gates dynamic per-grid emission below. A tier whose lowest slot
+                // is above the live car count carries only absent cars this frame.
+                int minRadarSlot = 0;
+                bool tierHasSlots = false;
+                foreach (var ch in tier.Channels)
                 {
-                    _tiers = null;
-                    _baseTickMs = 33;
-                    return;
+                    int s = Dashboard.DashboardProfileStore.RadarTrackMapSlotIndex(ch.Url);
+                    if (s < 0) continue;
+                    if (!tierHasSlots || s < minRadarSlot) { minRadarSlot = s; tierHasSlots = true; }
                 }
-
-                if (value.StringChannels.Count > 0)
+                tierDiag.Append($" | t[{i}]={tier.Name} {tier.Channels.Count}ch pkg={tier.PackageLevel} bits={tier.TotalBits} bytes={tier.TotalBytes}");
+                tiers[i] = new TierState
                 {
-                    var urls = string.Join(", ", value.StringChannels.Select(c =>
-                        string.IsNullOrEmpty(c.SimHubProperty)
-                            ? c.Url
-                            : $"{c.Url}→{c.SimHubProperty}"));
-                    MozaLog.Debug(
-                        $"[AZOM] Profile '{value.Name}' has {value.StringChannels.Count} " +
-                        $"string channels (sess=0x01 type=0x05): {urls}");
-                }
+                    MinRadarSlot = tierHasSlots ? minRadarSlot : 0,
+                    // PitHouse capture 2026-04-29 in-game shows N=14 (legacy
+                    // convention 8+data) on this firmware, NOT Type02 N=16.
+                    // Hardcoding type02NConvention=false until per-firmware
+                    // detection is correct — the previous heuristic wrongly
+                    // pinned Type02 N for this wheel.
+                    Builder = new TelemetryFrameBuilder(tier, PropertyResolver,
+                        type02NConvention: false,
+                        deviceId: _targetDeviceId),
+                    TickInterval = tickInterval,
+                    // Snapshot the pristine (pre-filter) channel list so
+                    // ApplySubscription can refilter from scratch each call.
+                    OriginalChannels = new System.Collections.Generic.List<ChannelDefinition>(tier.Channels),
+                    OriginalTotalBits = tier.TotalBits,
+                    OriginalTotalBytes = tier.TotalBytes,
+                };
+            }
+            _builtWithResolverTarget = PropertyResolver?.Target;
+            MozaLog.Debug(tierDiag.ToString());
+            _profile = value;
+            _tiers = tiers;
 
-                // Base tick = fastest tier's pkg_level (smallest).
-                int minPkg = int.MaxValue;
-                foreach (var t in value.Tiers)
-                    if (t.PackageLevel > 0 && t.PackageLevel < minPkg) minPkg = t.PackageLevel;
-                _baseTickMs = (minPkg == int.MaxValue) ? 30 : minPkg;
-
-                // Do NOT apply the catalog-driven sort+filter here. The
-                // catalog state at Profile-set time is often stale (cold
-                // start: catalog hasn't arrived; post-dashboard-switch:
-                // catalog still has the PREVIOUS dashboard's URLs because
-                // the wheel sends new catalog over ~1s after the
-                // Stop+Start cycle). Defer to ApplySubscription which
-                // (a) has a fresher catalog and (b) re-runs from the
-                // pristine OriginalChannels every time, so a stale-catalog
-                // filter result doesn't permanently strip channels.
-
-                _tiers = new TierState[value.Tiers.Count];
-                var tierDiag = new System.Text.StringBuilder();
-                tierDiag.Append($"[AZOM] Profile setter: \"{value.Name}\" {value.Tiers.Count}t baseTickMs={_baseTickMs}");
-                for (int i = 0; i < value.Tiers.Count; i++)
-                {
-                    var tier = value.Tiers[i];
-                    int tickInterval = Math.Max(1, tier.PackageLevel / _baseTickMs);
-                    // Lowest per-car radar/track-map slot in this tier (0 if none) —
-                    // gates dynamic per-grid emission below. A tier whose lowest slot
-                    // is above the live car count carries only absent cars this frame.
-                    int minRadarSlot = 0;
-                    bool tierHasSlots = false;
-                    foreach (var ch in tier.Channels)
-                    {
-                        int s = Dashboard.DashboardProfileStore.RadarTrackMapSlotIndex(ch.Url);
-                        if (s < 0) continue;
-                        if (!tierHasSlots || s < minRadarSlot) { minRadarSlot = s; tierHasSlots = true; }
-                    }
-                    tierDiag.Append($" | t[{i}]={tier.Name} {tier.Channels.Count}ch pkg={tier.PackageLevel} bits={tier.TotalBits} bytes={tier.TotalBytes}");
-                    _tiers[i] = new TierState
-                    {
-                        MinRadarSlot = tierHasSlots ? minRadarSlot : 0,
-                        // PitHouse capture 2026-04-29 in-game shows N=14 (legacy
-                        // convention 8+data) on this firmware, NOT Type02 N=16.
-                        // Hardcoding type02NConvention=false until per-firmware
-                        // detection is correct — the previous heuristic wrongly
-                        // pinned Type02 N for this wheel.
-                        Builder = new TelemetryFrameBuilder(tier, PropertyResolver,
-                            type02NConvention: false,
-                            deviceId: _targetDeviceId),
-                        TickInterval = tickInterval,
-                        // Snapshot the pristine (pre-filter) channel list so
-                        // ApplySubscription can refilter from scratch each call.
-                        OriginalChannels = new System.Collections.Generic.List<ChannelDefinition>(tier.Channels),
-                        OriginalTotalBits = tier.TotalBits,
-                        OriginalTotalBytes = tier.TotalBytes,
-                    };
-                }
-                _builtWithResolverTarget = PropertyResolver?.Target;
-                MozaLog.Debug(tierDiag.ToString());
-
-                // Apply the catalog-driven filter + sort + FrameBuilder
-                // rebuild NOW if the catalog is available. Each Profile
-                // setter call builds initial FrameBuilders from the
-                // UNFILTERED 10-channel profile (so that OriginalChannels
-                // captures the pristine state). Without this immediate
-                // re-filter, value frames between Profile setter and the
-                // next ApplySubscription leak out at the wrong (10-channel,
-                // 37-byte) size — verified 2026-05-15. ApplySubscription
-                // will reset + re-filter again later when needed; calls
-                // are idempotent.
-                if (_catalogParser.Catalog != null
-                    && _catalogParser.Catalog.Count > 0)
-                {
-                    _tierDefEmitter.SortTierChannelsByCatalogIdx(value, _catalogParser.Catalog);
-                    _tierDefEmitter.RebuildFrameBuildersFromProfile();
-                }
+            // Apply the catalog-driven filter + sort + FrameBuilder
+            // rebuild NOW if the catalog is available. Each Profile
+            // setter call builds initial FrameBuilders from the
+            // UNFILTERED 10-channel profile (so that OriginalChannels
+            // captures the pristine state). Without this immediate
+            // re-filter, value frames between Profile setter and the
+            // next ApplySubscription leak out at the wrong (10-channel,
+            // 37-byte) size — verified 2026-05-15. ApplySubscription
+            // will reset + re-filter again later when needed; calls
+            // are idempotent.
+            var catalog = _catalogParser.Catalog;
+            if (catalog != null && catalog.Count > 0)
+            {
+                _tierDefEmitter.SortTierChannelsByCatalogIdx(value, catalog);
+                _tierDefEmitter.RebuildFrameBuildersFromProfile();
             }
         }
         private MultiStreamProfile? _profile;
@@ -1852,9 +1866,19 @@ namespace MozaPlugin.Telemetry
         private void StartTickTimer()
         {
             double intervalMs = _baseTickMs;
-            _sendTimer = new Timer(intervalMs) { AutoReset = true };
-            _sendTimer.Elapsed += OnTimerElapsed;
-            _sendTimer.Start();
+            var timer = new Timer(intervalMs) { AutoReset = true };
+            timer.Elapsed += OnTimerElapsed;
+            _sendTimer = timer;
+            // A Stop() landing between StartInner's last gate and the assignment
+            // above ran its Exchange against null — reclaim the orphan here.
+            if (_state == TelemetryState.Idle)
+            {
+                var orphan = Interlocked.Exchange(ref _sendTimer, null);
+                if (orphan != null) { orphan.Elapsed -= OnTimerElapsed; orphan.Dispose(); }
+                return;
+            }
+            try { timer.Start(); }
+            catch (ObjectDisposedException) { return; }   // lost to a concurrent Stop()
             TransitionTo(TelemetryState.Preamble, "StartInner: timer started");
         }
 
@@ -1929,12 +1953,14 @@ namespace MozaPlugin.Telemetry
             // top frames name the culprit in the diagnostics bundle.
             TransitionTo(TelemetryState.Idle, "Stop() ← " + DescribeStopCaller());
             _connection.MessageReceived -= _inboundDispatcher.OnMessageDuringPreamble;
-            if (_sendTimer != null)
+            // Stop() is reachable concurrently (read thread, recovery workers,
+            // poll timer, UI) — Exchange picks a single winner for the teardown.
+            var timer = Interlocked.Exchange(ref _sendTimer, null);
+            if (timer != null)
             {
-                _sendTimer.Stop();
-                _sendTimer.Elapsed -= OnTimerElapsed;
-                _sendTimer.Dispose();
-                _sendTimer = null;
+                timer.Stop();
+                timer.Elapsed -= OnTimerElapsed;
+                timer.Dispose();
             }
 
             // Drop anything already queued or sitting in the OS write buffer —
@@ -2002,7 +2028,7 @@ namespace MozaPlugin.Telemetry
             // exceptions during Stop+Start cycles under load.
             _propertyPushQueue.Clear();
             lock (_subscriptionResponseChunks) _subscriptionResponseChunks.Clear();
-            _subscriptionResponseDeadlineTicks = 0;
+            Interlocked.Exchange(ref _subscriptionResponseDeadlineTicks, 0);
             lock (_sessionCounts) _sessionCounts.Clear();
             // gap-recovery counter reset handled by _watchdog.Reset() above.
             // Reset catalog-growth tracking so the next Start's first
@@ -2437,7 +2463,7 @@ namespace MozaPlugin.Telemetry
         internal void OpenSubscriptionResponseCapture(long deadlineTicks)
         {
             lock (_subscriptionResponseChunks) _subscriptionResponseChunks.Clear();
-            _subscriptionResponseDeadlineTicks = deadlineTicks;
+            Interlocked.Exchange(ref _subscriptionResponseDeadlineTicks, deadlineTicks);
         }
 
         // ── Inbound-dispatcher accessors ─────────────────────────────────
@@ -2454,10 +2480,12 @@ namespace MozaPlugin.Telemetry
         // Wheel-ready latch + ack latch live in Sessions/SessionLifecycle.cs.
         internal void MarkWheelReadyObserved() => _sessionLife.MarkWheelReadyObserved();
         internal void ResetWheelReadyObserved() => _sessionLife.ResetWheelReadyObserved();
+        // Written on tick/start threads, read per inbound chunk on the serial
+        // read thread — Interlocked (x86 64-bit).
         internal long SubscriptionResponseDeadlineTicksField
         {
-            get => _subscriptionResponseDeadlineTicks;
-            set => _subscriptionResponseDeadlineTicks = value;
+            get => Interlocked.Read(ref _subscriptionResponseDeadlineTicks);
+            set => Interlocked.Exchange(ref _subscriptionResponseDeadlineTicks, value);
         }
         internal System.Collections.Generic.List<byte[]> SubscriptionResponseChunksList => _subscriptionResponseChunks;
         internal System.Collections.Generic.Dictionary<byte, int> TileServerHighestSeqMap => _tileServerHighestSeq;
@@ -2812,7 +2840,7 @@ namespace MozaPlugin.Telemetry
                 _retransmitter.Clear();
                 _propertyPushQueue.Clear();
                 lock (_subscriptionResponseChunks) _subscriptionResponseChunks.Clear();
-                _subscriptionResponseDeadlineTicks = 0;
+                Interlocked.Exchange(ref _subscriptionResponseDeadlineTicks, 0);
             }
 
             _tierDefEmitter.SendTierDefinition(reuseFlagBase);

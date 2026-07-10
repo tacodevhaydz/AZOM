@@ -183,6 +183,10 @@ namespace MozaPlugin
         private Timer _pollTimer = null!;
         private Timer _retryTimer = null!;
         private Timer _reconnectTimer = null!;
+        // CAS re-entry guard: a 5 s reconnect tick can outlast its interval
+        // (probe fallback ~600 ms/port under Wine, Disconnect joins at 1 s) —
+        // overlapping ticks must not run TryConnect* concurrently on a lane.
+        private int _reconnectTickInProgress;
         // 1 once SystemEvents.PowerModeChanged is subscribed, so End()/
         // CleanupPartialInit unsubscribe exactly once. PowerModeChanged is a
         // STATIC event — a live subscription leaks this plugin instance (and
@@ -1291,69 +1295,9 @@ namespace MozaPlugin
                 _reconnectTimer.Elapsed += (s, e) =>
                 {
                     if (IsShuttingDown) return;
-                    if (!_connection.IsConnected)
-                        _connectionCoordinator?.TryConnect();
-                    else
-                    {
-                        // Primary already latched. Two complementary self-heals:
-                        //  1. base→hub: the base has no wheel but one answered on
-                        //     the hub (broken base) → run the wheel pipeline over
-                        //     the hub. Runs FIRST and sets _wheellessBasePort so (2)
-                        //     can't immediately undo it.
-                        //  2. hub→base: the primary grabbed a hub before the
-                        //     wheelbase enumerated (wrong latch order) → hand it
-                        //     back to the base. Runs before TryConnectHub so the
-                        //     freed hub port is claimed by the hub manager this tick.
-                        _connectionCoordinator?.MigratePrimaryToHubIfNeeded();
-                        _connectionCoordinator?.MigratePrimaryToWheelbaseIfNeeded();
-                    }
-                    // AB9 probe is microseconds when registry is populated.
-                    // On Wine/Proton (no registry) the fallback would scan
-                    // every wine COM symlink and lock up SimHub; suppress when
-                    // registry is empty. DisableAb9Detection wins regardless.
-                    bool registryHasMoza =
-                        Protocol.MozaPortDiscovery.Instance.Enumerate().Count > 0;
-                    if (!_settings.DisableAb9Detection
-                        && registryHasMoza
-                        && !_ab9Manager.IsConnected)
-                        _connectionCoordinator?.TryConnectAb9();
-
-                    // Standalone-USB CM2 on its own port (0x0025) — same Wine guard.
-                    if (registryHasMoza && !_dashboardManager.IsConnected)
-                        _connectionCoordinator?.TryConnectDashboard();
-
-                    // Universal Hub on its own port (0x0020) — registry-only, same
-                    // Wine guard. The hub-only case is handled by the primary
-                    // (BaseAndHub) connection; this dedicated connection only takes
-                    // a hub the primary didn't claim (i.e. a base is the primary),
-                    // and no-ops when the hub port is already held by the primary.
-                    if (registryHasMoza && !_hubManager.IsConnected)
-                        _connectionCoordinator?.TryConnectHub();
-
-                    // Dedicated base-aux pipe — ONLY after a DELIBERATE base→hub
-                    // migration (broken base), identified by the _wheellessBasePort
-                    // latch. Must NOT gate on PrimaryBoundToHub alone: the primary
-                    // can be TRANSIENTLY on the hub during wrong-latch-order cold
-                    // start (hub enumerated before the base). If base-aux grabbed
-                    // the base then, it would hold the port and permanently block
-                    // MigratePrimaryToWheelbaseIfNeeded from reclaiming it — leaving
-                    // the primary stuck on the hub (wheel still works via the hub,
-                    // but the port is mislabeled "Wheelbase"). The latch is set only
-                    // by a real migration, so a transient hub latch never trips it.
-                    if (registryHasMoza && _connectionCoordinator?.WheellessBasePort != null && !_baseManager.IsConnected)
-                        _connectionCoordinator?.TryConnectBase();
-
-                    // Slice I: reconnect-timer mBooster Refresh re-enabled.
-                    try { _mboosterRegistry?.Refresh(); }
-                    catch (Exception ex) { MozaLog.Debug($"[AZOM/mBooster] Refresh: {ex.Message}"); }
-
-                    // Standalone pedals/handbrake on their own ports (registry-
-                    // only, same Wine guard as the other dedicated lanes).
-                    if (registryHasMoza)
-                    {
-                        try { _peripheralRegistry?.Refresh(); }
-                        catch (Exception ex) { MozaLog.Debug($"[AZOM] Standalone peripheral refresh: {ex.Message}"); }
-                    }
+                    if (Interlocked.CompareExchange(ref _reconnectTickInProgress, 1, 0) != 0) return;
+                    try { ReconnectTick(); }
+                    finally { Interlocked.Exchange(ref _reconnectTickInProgress, 0); }
                 };
                 _reconnectTimer.AutoReset = true;
                 if (_settings.ConnectionEnabled)
@@ -3426,27 +3370,42 @@ namespace MozaPlugin
             }
 
             // Profile × page × dashboard × channel → SimHub property path.
-            var middle = GetOrCreateActiveChannelMappings(pageGuid);
-            if (middle == null) return; // no profile/page resolvable yet
+            // COW: the serial-read/tick threads walk these dicts mid-apply
+            // (ApplyUserChannelMappings) and the save path serializes them —
+            // rebuild each level and reference-swap, never mutate in place.
+            var profile = _settings?.ProfileStore?.CurrentProfile;
+            if (profile == null) return;
+            var g = pageGuid ?? GetCurrentWheelPageGuid();
+            if (!g.HasValue) return; // no profile/page resolvable yet
 
-            if (!middle.TryGetValue(dashKey, out var inner))
-            {
-                inner = new System.Collections.Generic.Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
-                middle[dashKey] = inner;
-            }
+            var outer = profile.TelemetryChannelMappings;
+            var newMiddle = (outer != null && outer.TryGetValue(g.Value, out var oldMiddle) && oldMiddle != null)
+                ? new System.Collections.Generic.Dictionary<string, System.Collections.Generic.Dictionary<string, string>>(oldMiddle, StringComparer.OrdinalIgnoreCase)
+                : new System.Collections.Generic.Dictionary<string, System.Collections.Generic.Dictionary<string, string>>(StringComparer.OrdinalIgnoreCase);
+            var newInner = (newMiddle.TryGetValue(dashKey, out var oldInner) && oldInner != null)
+                ? new System.Collections.Generic.Dictionary<string, string>(oldInner, StringComparer.OrdinalIgnoreCase)
+                : new System.Collections.Generic.Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
 
             string trimmed = (propertyPath ?? "").Trim();
             if (string.IsNullOrEmpty(trimmed))
             {
-                inner.Remove(channelUrl);
-                // Tidy: drop empty inner dict, then empty middle dict, so the JSON
-                // doesn't accumulate empty objects after every reset-to-default.
-                if (inner.Count == 0) middle.Remove(dashKey);
+                newInner.Remove(channelUrl);
+                // Tidy: drop empty inner dict so the JSON doesn't accumulate
+                // empty objects after every reset-to-default.
+                if (newInner.Count == 0) newMiddle.Remove(dashKey);
+                else newMiddle[dashKey] = newInner;
             }
             else
             {
-                inner[channelUrl] = trimmed;
+                newInner[channelUrl] = trimmed;
+                newMiddle[dashKey] = newInner;
             }
+
+            var newOuter = outer != null
+                ? new System.Collections.Generic.Dictionary<Guid, System.Collections.Generic.Dictionary<string, System.Collections.Generic.Dictionary<string, string>>>(outer)
+                : new System.Collections.Generic.Dictionary<Guid, System.Collections.Generic.Dictionary<string, System.Collections.Generic.Dictionary<string, string>>>();
+            newOuter[g.Value] = newMiddle;
+            profile.TelemetryChannelMappings = newOuter;
 
             // Live-rewire the matching channel on the target sender's profile so the
             // next frame uses the new property. No tier-def restart.
@@ -3456,23 +3415,34 @@ namespace MozaPlugin
         }
 
         /// <summary>Clear all per-channel overrides for a page + its dashboard key(s).
-        /// Defaults to the current wheel page across all candidate keys.</summary>
+        /// Defaults to the current wheel page across all candidate keys.
+        /// COW like <see cref="SetChannelMapping"/> — readers walk these dicts
+        /// on the serial-read/tick threads.</summary>
         internal void ClearCurrentDashboardMappings(Guid? pageGuid = null, string? fixedDashKey = null)
         {
-            var middle = GetActiveChannelMappings(pageGuid);
-            if (middle == null) return;
+            var profile = _settings?.ProfileStore?.CurrentProfile;
+            var outer = profile?.TelemetryChannelMappings;
+            if (profile == null || outer == null) return;
+            var g = pageGuid ?? GetCurrentWheelPageGuid();
+            if (!g.HasValue || !outer.TryGetValue(g.Value, out var middle) || middle == null) return;
 
+            var newMiddle = new System.Collections.Generic.Dictionary<string, System.Collections.Generic.Dictionary<string, string>>(middle, StringComparer.OrdinalIgnoreCase);
             bool changed = false;
             if (!string.IsNullOrEmpty(fixedDashKey))
             {
-                if (middle.Remove(fixedDashKey!)) changed = true;
+                if (newMiddle.Remove(fixedDashKey!)) changed = true;
             }
             else
             {
                 foreach (var key in GetActiveDashboardKeyCandidates())
-                    if (middle.Remove(key)) changed = true;
+                    if (newMiddle.Remove(key)) changed = true;
             }
-            if (changed) SaveSettings();
+            if (!changed) return;
+
+            var newOuter = new System.Collections.Generic.Dictionary<Guid, System.Collections.Generic.Dictionary<string, System.Collections.Generic.Dictionary<string, string>>>(outer);
+            newOuter[g.Value] = newMiddle;
+            profile.TelemetryChannelMappings = newOuter;
+            SaveSettings();
         }
 
         // Dashboard binding state moved to DashboardBindingCoordinator.
@@ -3663,10 +3633,85 @@ namespace MozaPlugin
             mgr.SetTimerResolution(wanted);
         }
 
+        private void ReconnectTick()
+        {
+            if (!_connection.IsConnected)
+                _connectionCoordinator?.TryConnect();
+            else
+            {
+                // Primary already latched. Two complementary self-heals:
+                //  1. base→hub: the base has no wheel but one answered on
+                //     the hub (broken base) → run the wheel pipeline over
+                //     the hub. Runs FIRST and sets _wheellessBasePort so (2)
+                //     can't immediately undo it.
+                //  2. hub→base: the primary grabbed a hub before the
+                //     wheelbase enumerated (wrong latch order) → hand it
+                //     back to the base. Runs before TryConnectHub so the
+                //     freed hub port is claimed by the hub manager this tick.
+                _connectionCoordinator?.MigratePrimaryToHubIfNeeded();
+                _connectionCoordinator?.MigratePrimaryToWheelbaseIfNeeded();
+            }
+            // AB9 probe is microseconds when registry is populated.
+            // On Wine/Proton (no registry) the fallback would scan
+            // every wine COM symlink and lock up SimHub; suppress when
+            // registry is empty. DisableAb9Detection wins regardless.
+            bool registryHasMoza =
+                Protocol.MozaPortDiscovery.Instance.Enumerate().Count > 0;
+            if (!_settings.DisableAb9Detection
+                && registryHasMoza
+                && !_ab9Manager.IsConnected)
+                _connectionCoordinator?.TryConnectAb9();
+
+            // Standalone-USB CM2 on its own port (0x0025) — same Wine guard.
+            if (registryHasMoza && !_dashboardManager.IsConnected)
+                _connectionCoordinator?.TryConnectDashboard();
+
+            // Universal Hub on its own port (0x0020) — registry-only, same
+            // Wine guard. The hub-only case is handled by the primary
+            // (BaseAndHub) connection; this dedicated connection only takes
+            // a hub the primary didn't claim (i.e. a base is the primary),
+            // and no-ops when the hub port is already held by the primary.
+            if (registryHasMoza && !_hubManager.IsConnected)
+                _connectionCoordinator?.TryConnectHub();
+
+            // Dedicated base-aux pipe — ONLY after a DELIBERATE base→hub
+            // migration (broken base), identified by the _wheellessBasePort
+            // latch. Must NOT gate on PrimaryBoundToHub alone: the primary
+            // can be TRANSIENTLY on the hub during wrong-latch-order cold
+            // start (hub enumerated before the base). If base-aux grabbed
+            // the base then, it would hold the port and permanently block
+            // MigratePrimaryToWheelbaseIfNeeded from reclaiming it — leaving
+            // the primary stuck on the hub (wheel still works via the hub,
+            // but the port is mislabeled "Wheelbase"). The latch is set only
+            // by a real migration, so a transient hub latch never trips it.
+            if (registryHasMoza && _connectionCoordinator?.WheellessBasePort != null && !_baseManager.IsConnected)
+                _connectionCoordinator?.TryConnectBase();
+
+            // Slice I: reconnect-timer mBooster Refresh re-enabled.
+            try { _mboosterRegistry?.Refresh(); }
+            catch (Exception ex) { MozaLog.Debug($"[AZOM/mBooster] Refresh: {ex.Message}"); }
+
+            // Standalone pedals/handbrake on their own ports (registry-
+            // only, same Wine guard as the other dedicated lanes).
+            if (registryHasMoza)
+            {
+                try { _peripheralRegistry?.Refresh(); }
+                catch (Exception ex) { MozaLog.Debug($"[AZOM] Standalone peripheral refresh: {ex.Message}"); }
+            }
+        }
+
         private void PollStatus(object sender, ElapsedEventArgs e)
         {
             if (IsShuttingDown) return;
+            // System.Timers.Timer swallows exceptions silently — without this
+            // wrapper a deterministic throw halts the whole 5 s detection state
+            // machine with no log evidence.
+            try { PollStatusCore(); }
+            catch (Exception ex) { MozaLog.Warn($"[AZOM] PollStatus tick failed: {ex}"); }
+        }
 
+        private void PollStatusCore()
+        {
             // Responsiveness backstop: SimHub stops calling DataUpdate when a game
             // exits, so the timer raise + EcoQoS opt-out can only be released here once
             // IsGameActive goes false via feed-staleness (~3 s) — within one 5 s poll.
@@ -3777,10 +3822,11 @@ namespace MozaPlugin
                 // device. The grace window lets a slightly-late 0x18 reply set that
                 // flag before this fires, avoiding a duplicate deploy.
                 const long OldProtoFallbackGraceMs = 3000;
+                long oldProtoDetectedTicks = WheelDetectedUtcTicks;
                 if (DetectionState.OldWheelDetected
                     && !DetectionState.OldProtoFallbackDeployed
-                    && _wheelDetectedUtcTicks != 0
-                    && (DateTime.UtcNow.Ticks - _wheelDetectedUtcTicks) / TimeSpan.TicksPerMillisecond >= OldProtoFallbackGraceMs)
+                    && oldProtoDetectedTicks != 0
+                    && (DateTime.UtcNow.Ticks - oldProtoDetectedTicks) / TimeSpan.TicksPerMillisecond >= OldProtoFallbackGraceMs)
                 {
                     DetectionState.OldProtoFallbackDeployed = true;
                     if (DeviceDefinitionDeployer.DeployOldProtoWheel(_connection.DiscoveredPid))
@@ -3880,13 +3926,14 @@ namespace MozaPlugin
             // disconnect on a screenless ES wheel that has no display sub-device
             // to wait for. Old wheels have no display; exclude them outright.
             const long DisplayWedgeTimeoutMs = 60_000;
+            long wheelDetectedTicks = WheelDetectedUtcTicks;
             if (!DisplayWedgeRecoveryFired
                 && DetectionState.NewWheelDetected
                 && WheelModelInfo?.HasDisplay != false
                 && !IsDisplayDetected
-                && _wheelDetectedUtcTicks != 0)
+                && wheelDetectedTicks != 0)
             {
-                long elapsedMs = (DateTime.UtcNow.Ticks - _wheelDetectedUtcTicks)
+                long elapsedMs = (DateTime.UtcNow.Ticks - wheelDetectedTicks)
                     / TimeSpan.TicksPerMillisecond;
                 if (elapsedMs >= DisplayWedgeTimeoutMs)
                 {
@@ -4351,27 +4398,6 @@ namespace MozaPlugin
             var g = pageGuid ?? GetCurrentWheelPageGuid();
             if (!g.HasValue) return null;
             return profile.TelemetryChannelMappings.TryGetValue(g.Value, out var m) ? m : null;
-        }
-
-        /// <summary>
-        /// Get or create the channel-mapping dict for the active profile × the given
-        /// page (current wheel page when null). Returns null only when no profile is
-        /// selected or no page GUID is resolvable yet.
-        /// </summary>
-        internal Dictionary<string, Dictionary<string, string>>? GetOrCreateActiveChannelMappings(Guid? pageGuid = null)
-        {
-            var profile = _settings?.ProfileStore?.CurrentProfile;
-            if (profile == null) return null;
-            if (profile.TelemetryChannelMappings == null)
-                profile.TelemetryChannelMappings = new Dictionary<Guid, Dictionary<string, Dictionary<string, string>>>();
-            var g = pageGuid ?? GetCurrentWheelPageGuid();
-            if (!g.HasValue) return null;
-            if (!profile.TelemetryChannelMappings.TryGetValue(g.Value, out var m) || m == null)
-            {
-                m = new Dictionary<string, Dictionary<string, string>>(StringComparer.OrdinalIgnoreCase);
-                profile.TelemetryChannelMappings[g.Value] = m;
-            }
-            return m;
         }
 
         // ===== FSR1/CM1 field-mapping + index shims (external API surface) =====

@@ -73,6 +73,7 @@ namespace MozaPlugin.Settings
 
         // Debounce disk writes during rapid slider changes
         private Timer? _saveDebounceTimer;
+        private int _saveFailureStreak;
 
         /// <summary>
         /// Debounce disk writes: restart a 500ms timer on each call.
@@ -85,17 +86,37 @@ namespace MozaPlugin.Settings
             // instance would leak (unstopped, unwatched, still referencing _settings).
             lock (_saveDebounceLock)
             {
+                _saveFailureStreak = 0;
                 if (_saveDebounceTimer == null)
                 {
                     _saveDebounceTimer = new Timer(500) { AutoReset = false };
-                    _saveDebounceTimer.Elapsed += (s, e) =>
-                    {
-                        LogSleepBundleStateForSaveTrace("debounced-save");
-                        _plugin.SaveCommonSettings("MozaPluginSettings", _plugin.Settings);
-                    };
+                    _saveDebounceTimer.Elapsed += OnSaveDebounceElapsed;
                 }
                 _saveDebounceTimer.Stop();
                 _saveDebounceTimer.Start();
+            }
+        }
+
+        private void OnSaveDebounceElapsed(object? s, System.Timers.ElapsedEventArgs e)
+        {
+            try
+            {
+                LogSleepBundleStateForSaveTrace("debounced-save");
+                _plugin.SaveCommonSettings("MozaPluginSettings", _plugin.Settings);
+                _saveFailureStreak = 0;
+            }
+            catch (Exception ex)
+            {
+                // AutoReset=false + Timer swallowing throws would silently drop
+                // the save. Retry a few times, then surface and wait for the
+                // next change (ScheduleSave resets the streak).
+                if (++_saveFailureStreak <= 3)
+                {
+                    MozaLog.Warn($"[AZOM] Debounced settings save failed (retry {_saveFailureStreak}/3): {ex.Message}");
+                    try { _saveDebounceTimer?.Start(); } catch { }
+                }
+                else
+                    MozaLog.Error($"[AZOM] Debounced settings save failed repeatedly — waiting for next change: {ex.Message}");
             }
         }
 
@@ -415,19 +436,30 @@ namespace MozaPlugin.Settings
             }
         }
 
+        // Guards the copy-on-write swaps below. The bundles are seeded on the
+        // serial read thread while the UI reads the dicts and the save debounce
+        // JSON-serializes them — in-place Add would resize a dict mid-enumeration.
+        private readonly object _pageBundleSwapLock = new object();
+
         /// <summary>Get-or-create the per-page sleep bundle. Null only if no wheel identified.</summary>
         internal WheelSleepSettings? GetOrCreateActiveWheelSleep()
         {
             var g = _plugin.GetCurrentWheelPageGuid();
-            if (!g.HasValue || _plugin.Settings == null) return null;
-            if (_plugin.Settings.WheelSleepByPageGuid == null)
-                _plugin.Settings.WheelSleepByPageGuid = new Dictionary<Guid, WheelSleepSettings>();
-            if (!_plugin.Settings.WheelSleepByPageGuid.TryGetValue(g.Value, out var bundle) || bundle == null)
+            var settings = _plugin.Settings;
+            if (!g.HasValue || settings == null) return null;
+            lock (_pageBundleSwapLock)
             {
+                var dict = settings.WheelSleepByPageGuid;
+                if (dict != null && dict.TryGetValue(g.Value, out var bundle) && bundle != null)
+                    return bundle;
                 bundle = new WheelSleepSettings();
-                _plugin.Settings.WheelSleepByPageGuid[g.Value] = bundle;
+                var next = dict == null
+                    ? new Dictionary<Guid, WheelSleepSettings>()
+                    : new Dictionary<Guid, WheelSleepSettings>(dict);
+                next[g.Value] = bundle;
+                settings.WheelSleepByPageGuid = next;
+                return bundle;
             }
-            return bundle;
         }
 
         /// <summary>
@@ -448,15 +480,21 @@ namespace MozaPlugin.Settings
         internal WheelIdleSettings? GetOrCreateActiveWheelIdle()
         {
             var g = _plugin.GetCurrentWheelPageGuid();
-            if (!g.HasValue || _plugin.Settings == null) return null;
-            if (_plugin.Settings.WheelIdleByPageGuid == null)
-                _plugin.Settings.WheelIdleByPageGuid = new Dictionary<Guid, WheelIdleSettings>();
-            if (!_plugin.Settings.WheelIdleByPageGuid.TryGetValue(g.Value, out var bundle) || bundle == null)
+            var settings = _plugin.Settings;
+            if (!g.HasValue || settings == null) return null;
+            lock (_pageBundleSwapLock)
             {
+                var dict = settings.WheelIdleByPageGuid;
+                if (dict != null && dict.TryGetValue(g.Value, out var bundle) && bundle != null)
+                    return bundle;
                 bundle = new WheelIdleSettings();
-                _plugin.Settings.WheelIdleByPageGuid[g.Value] = bundle;
+                var next = dict == null
+                    ? new Dictionary<Guid, WheelIdleSettings>()
+                    : new Dictionary<Guid, WheelIdleSettings>(dict);
+                next[g.Value] = bundle;
+                settings.WheelIdleByPageGuid = next;
+                return bundle;
             }
-            return bundle;
         }
 
         /// <summary>

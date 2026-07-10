@@ -232,6 +232,11 @@ namespace MozaPlugin.Protocol
         private readonly System.Collections.Generic.LinkedList<string> _resyncSamples
             = new System.Collections.Generic.LinkedList<string>();
         private volatile bool _running;
+        // Per-open generation. Each I/O thread is bound to the generation of the
+        // FinishOpen that created it; Disconnect bumps it, so a thread that
+        // outlives its Join(1000) (syscall-wedged under Wine) exits when it
+        // wakes instead of re-attaching to the next open's port and queues.
+        private int _ioGeneration;
         private readonly object _lock = new object();
         private string? _lastPortName;
 
@@ -579,8 +584,9 @@ namespace MozaPlugin.Protocol
             port.DiscardOutBuffer();
 
             _running = true;
-            _readThread = new Thread(ReadLoop) { IsBackground = true, Name = "MozaSerialRead" };
-            _writeThread = new Thread(WriteLoop) { IsBackground = true, Name = "MozaSerialWrite" };
+            int gen = Interlocked.Increment(ref _ioGeneration);
+            _readThread = new Thread(() => ReadLoop(gen)) { IsBackground = true, Name = "MozaSerialRead" };
+            _writeThread = new Thread(() => WriteLoop(gen)) { IsBackground = true, Name = "MozaSerialWrite" };
 
             try
             {
@@ -618,6 +624,7 @@ namespace MozaPlugin.Protocol
 
         public void Disconnect()
         {
+            Interlocked.Increment(ref _ioGeneration);
             _running = false;
 
             // Close before joining so a syscall-wedged R/W returns to its loop.
@@ -633,8 +640,9 @@ namespace MozaPlugin.Protocol
                 catch (Exception ex) { MozaLog.Debug($"[AZOM] Port close: {ex.Message}"); }
             }
 
-            if (_lastPortName != null)
-                _activePorts.TryRemove(_lastPortName, out _);
+            var lastPort = _lastPortName;
+            if (lastPort != null)
+                _activePorts.TryRemove(lastPort, out _);
 
             _readThread?.Join(1000);
             _writeThread?.Join(1000);
@@ -796,7 +804,7 @@ namespace MozaPlugin.Protocol
             ClosePortAndNotify();
         }
 
-        private void ReadLoop()
+        private void ReadLoop(int gen)
         {
             MozaLog.Debug("[AZOM] Read thread started");
             int messageCount = 0;
@@ -812,7 +820,7 @@ namespace MozaPlugin.Protocol
             // the per-frame `data` copy handed to subscribers is freshly allocated.
             byte[] destuff = new byte[256];
 
-            while (_running)
+            while (_running && gen == Volatile.Read(ref _ioGeneration))
             {
                 try
                 {
@@ -1068,7 +1076,7 @@ namespace MozaPlugin.Protocol
             }
         }
 
-        private void WriteLoop()
+        private void WriteLoop(int gen)
         {
             MozaLog.Debug("[AZOM] Write thread started");
             int writeCount = 0;
@@ -1086,7 +1094,7 @@ namespace MozaPlugin.Protocol
             long lastBudgetWarnTs = 0;
             bool lastWasOneShot = false;
 
-            while (_running)
+            while (_running && gen == Volatile.Read(ref _ioGeneration))
             {
                 bool didWork = false;
 
@@ -1105,7 +1113,8 @@ namespace MozaPlugin.Protocol
                 //    one-shot FIFO. Loop drains all queued acks each iteration so
                 //    a flurry of inbound chunks (every wheel tick during a switch)
                 //    doesn't leave the back of the line stuck for another cycle.
-                while (_priorityQueue.TryDequeue(out var ackMsg))
+                while (gen == Volatile.Read(ref _ioGeneration)
+                    && _priorityQueue.TryDequeue(out var ackMsg))
                 {
                     int writtenAck = WriteFrame(ackMsg, ref stuffBuf, MozaProtocol.StuffedFrameSize(ackMsg));
                     if (writtenAck > 0)
@@ -1123,7 +1132,8 @@ namespace MozaPlugin.Protocol
 
                 // 1) One-shot FIFO with 4 ms inter-write pacing (bases drop unpaced bursts).
                 //    WriteBudget extends the gate under bandwidth pressure.
-                if (_oneShotQueue.TryDequeue(out var msg))
+                if (gen == Volatile.Read(ref _ioGeneration)
+                    && _oneShotQueue.TryDequeue(out var msg))
                 {
                     long now = System.Diagnostics.Stopwatch.GetTimestamp();
                     int stuffedSize = MozaProtocol.StuffedFrameSize(msg);
@@ -1153,7 +1163,7 @@ namespace MozaPlugin.Protocol
                 // 2) Stream lane drained after every FIFO item (retransmit bursts
                 //    can keep FIFO non-empty for seconds). No software gating —
                 //    latest-wins + OS write-buffer block provides backpressure.
-                for (int k = 0; k < _streamSlots.Length; k++)
+                for (int k = 0; k < _streamSlots.Length && gen == Volatile.Read(ref _ioGeneration); k++)
                 {
                     var slot = Interlocked.Exchange(ref _streamSlots[k], null);
                     if (slot == null) continue;
