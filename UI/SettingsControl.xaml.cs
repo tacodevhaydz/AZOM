@@ -681,12 +681,29 @@ namespace MozaPlugin
             SeedLfeParam(BaseLfeGearshiftIntensity, BaseLfeGearshiftIntensityValue, gs.Intensity, gs.IntensityFormula);
             SeedLfeParam(BaseLfeGearshiftSmoothness, BaseLfeGearshiftSmoothnessValue, gs.Smoothness, gs.SmoothnessFormula);
 
+            // Frequency band — shown only while a frequency formula is active.
+            SeedLfeFreqLimits(BaseLfeEngineFreqLimits, BaseLfeEngineFreqRange, BaseLfeEngineFreqRangeText, eng);
+            SeedLfeFreqLimits(BaseLfeAbsFreqLimits, BaseLfeAbsFreqRange, BaseLfeAbsFreqRangeText, ab);
+            SeedLfeFreqLimits(BaseLfeGearshiftFreqLimits, BaseLfeGearshiftFreqRange, BaseLfeGearshiftFreqRangeText, gs);
+
             // Edge refinements (vibrate-on-neutral + debounce) — every channel has
             // them, shown only while that channel is in On-change mode.
             SeedLfeEdge(BaseLfeEngineEdgeOptions, BaseLfeEngineVibrateOnNeutral, BaseLfeEngineDebounceSlider, BaseLfeEngineDebounceValue, eng);
             SeedLfeEdge(BaseLfeAbsEdgeOptions, BaseLfeAbsVibrateOnNeutral, BaseLfeAbsDebounceSlider, BaseLfeAbsDebounceValue, ab);
             SeedLfeEdge(BaseLfeGearshiftEdgeOptions, BaseLfeGearshiftVibrateOnNeutral, BaseLfeGearshiftDebounceSlider, BaseLfeGearshiftDebounceValue, gs);
         }
+
+        private static void SeedLfeFreqLimits(FrameworkElement panel, MozaControls.MozaRangeSlider range, TextBlock readout, BaseLfeChannel ch)
+        {
+            panel.Visibility = string.IsNullOrWhiteSpace(ch.FrequencyFormula) ? Visibility.Collapsed : Visibility.Visible;
+            double lo = Math.Max(0, Math.Min(200, ch.FrequencyMin));
+            double hi = Math.Max(0, Math.Min(200, ch.FrequencyMax));
+            range.LowValue = lo;
+            range.HighValue = hi;
+            readout.Text = LfeRangeText(lo, hi);
+        }
+
+        private static string LfeRangeText(double lo, double hi) => $"{(int)Math.Round(lo)} – {(int)Math.Round(hi)}";
 
         private static void SeedLfeEdge(FrameworkElement panel, System.Windows.Controls.Primitives.ToggleButton neutral, Slider debSlider, TextBox debBox, BaseLfeChannel ch)
         {
@@ -714,7 +731,7 @@ namespace MozaPlugin
         private static void SeedLfeTrigger(TextBlock text, string? formula)
         {
             bool has = !string.IsNullOrWhiteSpace(formula);
-            text.Text = has ? formula : "(always on)";
+            text.Text = has ? formula : Strings.Label_AlwaysOn;
             text.ToolTip = has ? formula : null;
         }
 
@@ -846,6 +863,21 @@ namespace MozaPlugin
         private void BaseLfeGearshiftTest_Click(object sender, RoutedEventArgs e)
             => _plugin.TriggerBaseLfeGearshiftTest();
 
+        // Frequency clamp band (Tag = channel) — double-ended slider, 0..200 Hz.
+        private void BaseLfeFreqRange_RangeChanged(object sender, EventArgs e)
+        {
+            if (_suppressEvents) return;
+            if (sender is not MozaControls.MozaRangeSlider rs || rs.Tag is not string ch) return;
+            float lo = (float)rs.LowValue, hi = (float)rs.HighValue;
+            if (FindName($"BaseLfe{LfeCap(ch)}FreqRangeText") is TextBlock t) t.Text = LfeRangeText(lo, hi);
+            _plugin.UpdateActiveProfile(p =>
+            {
+                var c = LfeChannelForTag(p.BaseLfe ??= new BaseLfeSettings(), ch);
+                c.FrequencyMin = lo; c.FrequencyMax = hi;
+            });
+            _plugin.SaveSettings();
+        }
+
         // "engine" → "Engine" (element-name prefix for the channel's controls).
         private static string LfeCap(string ch) => char.ToUpperInvariant(ch[0]) + ch.Substring(1);
 
@@ -862,26 +894,56 @@ namespace MozaPlugin
                 panel.Visibility = mode == BaseLfeTriggerMode.OnChange ? Visibility.Visible : Visibility.Collapsed;
         }
 
-        // Additive engine: the base sums concurrent channels, so drive all three
-        // as octave-spaced harmonic partials. Frequency scales by PERCENT of RPM
-        // (rpm/maxrpm) so it works for any vehicle from a 4000-rpm diesel to an
-        // 18000-rpm F1, and the *200 partial never exceeds the 200 Hz wire cap
-        // (rpm/maxrpm <= 1). Overwrites the ABS + Gearshift channels.
-        private void BaseLfeAdditiveEngine_Click(object sender, RoutedEventArgs e)
+        // Engine presets exploit the base SUMMING concurrent channels: all three
+        // run as Level partials gated on RPM, each a carrier whose frequency
+        // scales by PERCENT of RPM (rpm/maxrpm) so it fits any vehicle from a
+        // 2500-rpm diesel to an 18000-rpm F1 and never exceeds the 200 Hz wire cap
+        // (rpm/maxrpm <= 1). Nearby carriers beat against each other (independent
+        // hardware phases) for free roughness; a low carrier with reduced
+        // smoothness gives a lopey throb. Each preset overwrites all 3 channels.
+        private const string LfeRpm = "[DataCorePlugin.GameData.Rpms]";
+        private const string LfePct = "[DataCorePlugin.GameData.Rpms] / [DataCorePlugin.GameData.MaxRpm]";
+
+        // A summed engine partial: carrier at (rpm% × freqK) Hz, Level-gated on RPM.
+        private static BaseLfeChannel EnginePartial(int freqK, int intensity, int smoothness) => new BaseLfeChannel
         {
-            const string rpm = "[DataCorePlugin.GameData.Rpms]";
-            const string pct = "[DataCorePlugin.GameData.Rpms] / [DataCorePlugin.GameData.MaxRpm]";
+            Enabled = true,
+            TriggerMode = BaseLfeTriggerMode.Level,
+            TriggerFormula = LfeRpm,
+            FrequencyFormula = LfePct + " * " + freqK,
+            Frequency = freqK,
+            Intensity = intensity,
+            Smoothness = smoothness,
+        };
+
+        private void ApplyEnginePreset(BaseLfeChannel engine, BaseLfeChannel abs, BaseLfeChannel gearshift)
+        {
             _plugin.UpdateActiveProfile(p =>
             {
                 var lfe = p.BaseLfe ??= new BaseLfeSettings();
-                // fundamental / octave-up / sub-octave; modest amps (sum 60%).
-                lfe.Engine = new BaseLfeChannel { Enabled = true, TriggerMode = BaseLfeTriggerMode.Level, TriggerFormula = rpm, FrequencyFormula = pct + " * 100", Frequency = 80, Intensity = 30, Smoothness = 100 };
-                lfe.Abs = new BaseLfeChannel { Enabled = true, TriggerMode = BaseLfeTriggerMode.Level, TriggerFormula = rpm, FrequencyFormula = pct + " * 200", Frequency = 30, Intensity = 15, Smoothness = 100 };
-                lfe.Gearshift = new BaseLfeChannel { Enabled = true, TriggerMode = BaseLfeTriggerMode.Level, TriggerFormula = rpm, FrequencyFormula = pct + " * 50", Frequency = 30, Intensity = 15, Smoothness = 100 };
+                lfe.Engine = engine; lfe.Abs = abs; lfe.Gearshift = gearshift;
             });
             _plugin.SaveSettings();
             RefreshDisplay(this, EventArgs.Empty);
         }
+
+        // Clean, even harmonics: fundamental + octave-up + sub-octave (sum 60%).
+        private void BaseLfeAdditiveEngine_Click(object sender, RoutedEventArgs e)
+            => ApplyEnginePreset(EnginePartial(100, 30, 100), EnginePartial(200, 15, 100), EnginePartial(50, 15, 100));
+
+        // Big rig: heavy low diesel drone + a slow-throbbing sub (smoothness 55)
+        // + a slightly detuned partial (48 vs 45) that beats against the
+        // fundamental (~3 Hz at redline) for a heavy waver.
+        private void BaseLfeBigRig_Click(object sender, RoutedEventArgs e)
+            => ApplyEnginePreset(EnginePartial(45, 40, 100), EnginePartial(20, 26, 55), EnginePartial(48, 18, 100));
+
+        // Detuned V8: fundamental + a detuned twin (102 vs 95) that beats against
+        // it (~7 Hz at redline = the roughness) + a deep low-end pulse
+        // (smoothness 40) that lopes like a big-cam / misfiring idle and tightens
+        // with RPM. No random source is reachable from a formula, so the misfire
+        // is a periodic lope — physically what a steady dead-cylinder misfire is.
+        private void BaseLfeDetunedV8_Click(object sender, RoutedEventArgs e)
+            => ApplyEnginePreset(EnginePartial(95, 26, 100), EnginePartial(102, 22, 100), EnginePartial(28, 18, 40));
 
         private void BaseLfeDefaults_Click(object sender, RoutedEventArgs e)
         {

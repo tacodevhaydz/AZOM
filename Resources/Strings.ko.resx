@@ -694,4 +694,13 @@ Id: {2}</value></data>
   <data name="ShifterColor_White" xml:space="preserve"><value>흰색</value></data>
   <data name="Section_WheelbaseLfe" xml:space="preserve"><value>베이스 진동 효과</value></data>
   <data name="SliderLabel_Trigger" xml:space="preserve"><value>트리거</value></data>
+  <data name="Label_EnginePresets" xml:space="preserve"><value>엔진 프리셋:</value></data>
+  <data name="Preset_AdditiveEngine" xml:space="preserve"><value>가산 엔진</value></data>
+  <data name="Preset_BigRig" xml:space="preserve"><value>대형 트럭</value></data>
+  <data name="Preset_DetunedV8" xml:space="preserve"><value>디튠 V8</value></data>
+  <data name="Label_Defaults" xml:space="preserve"><value>기본값</value></data>
+  <data name="TriggerMode_Level" xml:space="preserve"><value>레벨</value></data>
+  <data name="TriggerMode_OnChange" xml:space="preserve"><value>변경 시</value></data>
+  <data name="Label_FormulaLimitsHz" xml:space="preserve"><value>수식 범위 (Hz)</value></data>
+  <data name="Label_AlwaysOn" xml:space="preserve"><value>(항상 켜짐)</value></data>
 </root>

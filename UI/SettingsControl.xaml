@@ -564,11 +564,13 @@
                         <ctrl:SectionCard x:Name="BaseLfeCard" Title="{x:Static res:Strings.Section_WheelbaseLfe}"
                                           Icon="{StaticResource IconShift}" Margin="0,0,0,14" Visibility="Collapsed">
                             <StackPanel>
-                                <StackPanel Orientation="Horizontal" Margin="0,0,0,10">
-                                    <Button Content="Additive Engine" Padding="12,3" Click="BaseLfeAdditiveEngine_Click"
-                                            ToolTip="Repurpose all 3 channels as summed engine harmonics (fundamental + octave + sub-octave), scaled by % of RPM so it fits any vehicle. Overwrites the ABS and Gearshift channels."/>
-                                    <Button Content="Defaults" Margin="8,0,0,0" Padding="12,3" Click="BaseLfeDefaults_Click"/>
-                                </StackPanel>
+                                <WrapPanel Margin="0,0,0,10">
+                                    <TextBlock Text="{x:Static res:Strings.Label_EnginePresets}" Foreground="{StaticResource TextDimBrush}" VerticalAlignment="Center" Margin="0,0,8,0"/>
+                                    <Button Content="{x:Static res:Strings.Preset_AdditiveEngine}" Margin="0,0,8,4" Padding="12,3" Click="BaseLfeAdditiveEngine_Click"/>
+                                    <Button Content="{x:Static res:Strings.Preset_BigRig}" Margin="0,0,8,4" Padding="12,3" Click="BaseLfeBigRig_Click"/>
+                                    <Button Content="{x:Static res:Strings.Preset_DetunedV8}" Margin="0,0,8,4" Padding="12,3" Click="BaseLfeDetunedV8_Click"/>
+                                    <Button Content="{x:Static res:Strings.Label_Defaults}" Margin="0,0,8,4" Padding="12,3" Click="BaseLfeDefaults_Click"/>
+                                </WrapPanel>
                                 <Grid>
                                     <Grid.ColumnDefinitions><ColumnDefinition Width="*"/><ColumnDefinition Width="*"/><ColumnDefinition Width="*"/></Grid.ColumnDefinitions>
                                 <StackPanel Grid.Column="0" Margin="0,0,8,0">
@@ -584,7 +586,7 @@
                                         <TextBlock Grid.Column="1" x:Name="BaseLfeEngineTriggerText" Foreground="{StaticResource TextDimBrush}" FontSize="10" TextTrimming="CharacterEllipsis" VerticalAlignment="Center" Margin="6,0,4,0"/>
                                         <Button Grid.Column="2" Tag="engine:trigger" Click="BaseLfeFx_Click" ToolTip="{x:Static res:Strings.Tooltip_EditFormula}" Width="34" Height="22" Padding="2" Margin="4,0,0,0" Background="Transparent" BorderThickness="0" Cursor="Hand" VerticalAlignment="Center"><TextBlock Text="𝑓(𝑥)" FontFamily="Cambria Math, Segoe UI" FontSize="14" HorizontalAlignment="Center" VerticalAlignment="Center" Foreground="{DynamicResource TextDimBrush}"/></Button>
                                     </Grid>
-                                    <ctrl:SegmentedControl x:Name="BaseLfeEngineTriggerMode" Tag="engine" HorizontalAlignment="Left" Margin="0,4,0,0" SelectionChanged="BaseLfeTriggerMode_Changed"><ListBoxItem Content="Level"/><ListBoxItem Content="On change"/></ctrl:SegmentedControl>
+                                    <ctrl:SegmentedControl x:Name="BaseLfeEngineTriggerMode" Tag="engine" HorizontalAlignment="Left" Margin="0,4,0,0" SelectionChanged="BaseLfeTriggerMode_Changed"><ListBoxItem Content="{x:Static res:Strings.TriggerMode_Level}"/><ListBoxItem Content="{x:Static res:Strings.TriggerMode_OnChange}"/></ctrl:SegmentedControl>
                                     <Grid Margin="0,6,0,0">
                                         <Grid.ColumnDefinitions><ColumnDefinition Width="*"/><ColumnDefinition Width="Auto"/><ColumnDefinition Width="Auto"/></Grid.ColumnDefinitions>
                                         <TextBlock Grid.Column="0" Text="{x:Static res:Strings.SliderLabel_FrequencyHz}" Style="{StaticResource SliderLabel}" VerticalAlignment="Center"/>
@@ -592,6 +594,18 @@
                                         <Button Grid.Column="2" Tag="engine:frequency" Click="BaseLfeFx_Click" ToolTip="{x:Static res:Strings.Tooltip_EditFormula}" Width="34" Height="22" Padding="2" Margin="4,0,0,0" Background="Transparent" BorderThickness="0" Cursor="Hand" VerticalAlignment="Center"><TextBlock Text="𝑓(𝑥)" FontFamily="Cambria Math, Segoe UI" FontSize="14" HorizontalAlignment="Center" VerticalAlignment="Center" Foreground="{DynamicResource TextDimBrush}"/></Button>
                                     </Grid>
                                     <Slider x:Name="BaseLfeEngineFrequencySlider" Style="{StaticResource SettingSlider}" Minimum="60" Maximum="100" TickFrequency="1" Margin="0,2,0,0" ValueChanged="BaseLfeEngineFrequencySlider_ValueChanged"/>
+                                    <StackPanel x:Name="BaseLfeEngineFreqLimits" Visibility="Collapsed" Margin="0,4,0,0">
+                                        <Grid>
+                                            <Grid.ColumnDefinitions><ColumnDefinition Width="*"/><ColumnDefinition Width="Auto"/></Grid.ColumnDefinitions>
+                                            <TextBlock Grid.Column="0" Text="{x:Static res:Strings.Label_FormulaLimitsHz}" Style="{StaticResource LabelText}" VerticalAlignment="Center"/>
+                                            <TextBlock Grid.Column="1" x:Name="BaseLfeEngineFreqRangeText" Foreground="{StaticResource CyanBrush}" FontFamily="{StaticResource FontMono}" FontSize="11" VerticalAlignment="Center"/>
+                                        </Grid>
+                                        <ctrl:MozaRangeSlider x:Name="BaseLfeEngineFreqRange" Tag="engine"
+                                                              Template="{StaticResource MozaRangeSliderThinTemplate}"
+                                                              MinHeight="0" Height="30" EdgePad="8" NodeSize="22" TrackThickness="6"
+                                                              Minimum="0" Maximum="200" LowValue="0" HighValue="200"
+                                                              RangeChanged="BaseLfeFreqRange_RangeChanged"/>
+                                    </StackPanel>
                                     <Grid Margin="0,6,0,0">
                                         <Grid.ColumnDefinitions><ColumnDefinition Width="*"/><ColumnDefinition Width="Auto"/><ColumnDefinition Width="Auto"/></Grid.ColumnDefinitions>
                                         <TextBlock Grid.Column="0" Text="{x:Static res:Strings.SliderLabel_Intensity}" Style="{StaticResource SliderLabel}" VerticalAlignment="Center"/>
@@ -633,7 +647,7 @@
                                         <TextBlock Grid.Column="1" x:Name="BaseLfeAbsTriggerText" Foreground="{StaticResource TextDimBrush}" FontSize="10" TextTrimming="CharacterEllipsis" VerticalAlignment="Center" Margin="6,0,4,0"/>
                                         <Button Grid.Column="2" Tag="abs:trigger" Click="BaseLfeFx_Click" ToolTip="{x:Static res:Strings.Tooltip_EditFormula}" Width="34" Height="22" Padding="2" Margin="4,0,0,0" Background="Transparent" BorderThickness="0" Cursor="Hand" VerticalAlignment="Center"><TextBlock Text="𝑓(𝑥)" FontFamily="Cambria Math, Segoe UI" FontSize="14" HorizontalAlignment="Center" VerticalAlignment="Center" Foreground="{DynamicResource TextDimBrush}"/></Button>
                                     </Grid>
-                                    <ctrl:SegmentedControl x:Name="BaseLfeAbsTriggerMode" Tag="abs" HorizontalAlignment="Left" Margin="0,4,0,0" SelectionChanged="BaseLfeTriggerMode_Changed"><ListBoxItem Content="Level"/><ListBoxItem Content="On change"/></ctrl:SegmentedControl>
+                                    <ctrl:SegmentedControl x:Name="BaseLfeAbsTriggerMode" Tag="abs" HorizontalAlignment="Left" Margin="0,4,0,0" SelectionChanged="BaseLfeTriggerMode_Changed"><ListBoxItem Content="{x:Static res:Strings.TriggerMode_Level}"/><ListBoxItem Content="{x:Static res:Strings.TriggerMode_OnChange}"/></ctrl:SegmentedControl>
                                     <Grid Margin="0,6,0,0">
                                         <Grid.ColumnDefinitions><ColumnDefinition Width="*"/><ColumnDefinition Width="Auto"/><ColumnDefinition Width="Auto"/></Grid.ColumnDefinitions>
                                         <TextBlock Grid.Column="0" Text="{x:Static res:Strings.SliderLabel_FrequencyHz}" Style="{StaticResource SliderLabel}" VerticalAlignment="Center"/>
@@ -641,6 +655,18 @@
                                         <Button Grid.Column="2" Tag="abs:frequency" Click="BaseLfeFx_Click" ToolTip="{x:Static res:Strings.Tooltip_EditFormula}" Width="34" Height="22" Padding="2" Margin="4,0,0,0" Background="Transparent" BorderThickness="0" Cursor="Hand" VerticalAlignment="Center"><TextBlock Text="𝑓(𝑥)" FontFamily="Cambria Math, Segoe UI" FontSize="14" HorizontalAlignment="Center" VerticalAlignment="Center" Foreground="{DynamicResource TextDimBrush}"/></Button>
                                     </Grid>
                                     <Slider x:Name="BaseLfeAbsFrequencySlider" Style="{StaticResource SettingSlider}" Minimum="5" Maximum="30" TickFrequency="1" Margin="0,2,0,0" ValueChanged="BaseLfeAbsFrequencySlider_ValueChanged"/>
+                                    <StackPanel x:Name="BaseLfeAbsFreqLimits" Visibility="Collapsed" Margin="0,4,0,0">
+                                        <Grid>
+                                            <Grid.ColumnDefinitions><ColumnDefinition Width="*"/><ColumnDefinition Width="Auto"/></Grid.ColumnDefinitions>
+                                            <TextBlock Grid.Column="0" Text="{x:Static res:Strings.Label_FormulaLimitsHz}" Style="{StaticResource LabelText}" VerticalAlignment="Center"/>
+                                            <TextBlock Grid.Column="1" x:Name="BaseLfeAbsFreqRangeText" Foreground="{StaticResource CyanBrush}" FontFamily="{StaticResource FontMono}" FontSize="11" VerticalAlignment="Center"/>
+                                        </Grid>
+                                        <ctrl:MozaRangeSlider x:Name="BaseLfeAbsFreqRange" Tag="abs"
+                                                              Template="{StaticResource MozaRangeSliderThinTemplate}"
+                                                              MinHeight="0" Height="30" EdgePad="8" NodeSize="22" TrackThickness="6"
+                                                              Minimum="0" Maximum="200" LowValue="0" HighValue="200"
+                                                              RangeChanged="BaseLfeFreqRange_RangeChanged"/>
+                                    </StackPanel>
                                     <Grid Margin="0,6,0,0">
                                         <Grid.ColumnDefinitions><ColumnDefinition Width="*"/><ColumnDefinition Width="Auto"/><ColumnDefinition Width="Auto"/></Grid.ColumnDefinitions>
                                         <TextBlock Grid.Column="0" Text="{x:Static res:Strings.SliderLabel_Intensity}" Style="{StaticResource SliderLabel}" VerticalAlignment="Center"/>
@@ -682,7 +708,7 @@
                                         <TextBlock Grid.Column="1" x:Name="BaseLfeGearshiftTriggerText" Foreground="{StaticResource TextDimBrush}" FontSize="10" TextTrimming="CharacterEllipsis" VerticalAlignment="Center" Margin="6,0,4,0"/>
                                         <Button Grid.Column="2" Tag="gearshift:trigger" Click="BaseLfeFx_Click" ToolTip="{x:Static res:Strings.Tooltip_EditFormula}" Width="34" Height="22" Padding="2" Margin="4,0,0,0" Background="Transparent" BorderThickness="0" Cursor="Hand" VerticalAlignment="Center"><TextBlock Text="𝑓(𝑥)" FontFamily="Cambria Math, Segoe UI" FontSize="14" HorizontalAlignment="Center" VerticalAlignment="Center" Foreground="{DynamicResource TextDimBrush}"/></Button>
                                     </Grid>
-                                    <ctrl:SegmentedControl x:Name="BaseLfeGearshiftTriggerMode" Tag="gearshift" HorizontalAlignment="Left" Margin="0,4,0,0" SelectionChanged="BaseLfeTriggerMode_Changed"><ListBoxItem Content="Level"/><ListBoxItem Content="On change"/></ctrl:SegmentedControl>
+                                    <ctrl:SegmentedControl x:Name="BaseLfeGearshiftTriggerMode" Tag="gearshift" HorizontalAlignment="Left" Margin="0,4,0,0" SelectionChanged="BaseLfeTriggerMode_Changed"><ListBoxItem Content="{x:Static res:Strings.TriggerMode_Level}"/><ListBoxItem Content="{x:Static res:Strings.TriggerMode_OnChange}"/></ctrl:SegmentedControl>
                                     <Grid Margin="0,6,0,0">
                                         <Grid.ColumnDefinitions><ColumnDefinition Width="*"/><ColumnDefinition Width="Auto"/><ColumnDefinition Width="Auto"/></Grid.ColumnDefinitions>
                                         <TextBlock Grid.Column="0" Text="{x:Static res:Strings.SliderLabel_FrequencyHz}" Style="{StaticResource SliderLabel}" VerticalAlignment="Center"/>
@@ -690,6 +716,18 @@
                                         <Button Grid.Column="2" Tag="gearshift:frequency" Click="BaseLfeFx_Click" ToolTip="{x:Static res:Strings.Tooltip_EditFormula}" Width="34" Height="22" Padding="2" Margin="4,0,0,0" Background="Transparent" BorderThickness="0" Cursor="Hand" VerticalAlignment="Center"><TextBlock Text="𝑓(𝑥)" FontFamily="Cambria Math, Segoe UI" FontSize="14" HorizontalAlignment="Center" VerticalAlignment="Center" Foreground="{DynamicResource TextDimBrush}"/></Button>
                                     </Grid>
                                     <Slider x:Name="BaseLfeGearshiftFrequencySlider" Style="{StaticResource SettingSlider}" Minimum="20" Maximum="100" TickFrequency="1" Margin="0,2,0,0" ValueChanged="BaseLfeGearshiftFrequencySlider_ValueChanged"/>
+                                    <StackPanel x:Name="BaseLfeGearshiftFreqLimits" Visibility="Collapsed" Margin="0,4,0,0">
+                                        <Grid>
+                                            <Grid.ColumnDefinitions><ColumnDefinition Width="*"/><ColumnDefinition Width="Auto"/></Grid.ColumnDefinitions>
+                                            <TextBlock Grid.Column="0" Text="{x:Static res:Strings.Label_FormulaLimitsHz}" Style="{StaticResource LabelText}" VerticalAlignment="Center"/>
+                                            <TextBlock Grid.Column="1" x:Name="BaseLfeGearshiftFreqRangeText" Foreground="{StaticResource CyanBrush}" FontFamily="{StaticResource FontMono}" FontSize="11" VerticalAlignment="Center"/>
+                                        </Grid>
+                                        <ctrl:MozaRangeSlider x:Name="BaseLfeGearshiftFreqRange" Tag="gearshift"
+                                                              Template="{StaticResource MozaRangeSliderThinTemplate}"
+                                                              MinHeight="0" Height="30" EdgePad="8" NodeSize="22" TrackThickness="6"
+                                                              Minimum="0" Maximum="200" LowValue="0" HighValue="200"
+                                                              RangeChanged="BaseLfeFreqRange_RangeChanged"/>
+                                    </StackPanel>
                                     <Grid Margin="0,6,0,0">
                                         <Grid.ColumnDefinitions><ColumnDefinition Width="*"/><ColumnDefinition Width="Auto"/><ColumnDefinition Width="Auto"/></Grid.ColumnDefinitions>
                                         <TextBlock Grid.Column="0" Text="{x:Static res:Strings.SliderLabel_Intensity}" Style="{StaticResource SliderLabel}" VerticalAlignment="Center"/>

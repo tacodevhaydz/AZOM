@@ -981,6 +981,41 @@
         </Border>
     </ControlTemplate>
 
+    <!-- Thin skin for MozaRangeSlider — matches the single-thumb SettingSlider
+         (6px dim track, cyan active range, 14x22 cyan thumbs), no card/labels.
+         Pair with compact metrics: EdgePad="8" NodeSize="22" TrackThickness="6"
+         MinHeight="0" Height≈28, Unit/Decimals irrelevant (no labels shown). -->
+    <ControlTemplate x:Key="MozaRangeSliderThinTemplate" TargetType="{x:Type controls:MozaRangeSlider}">
+        <Canvas x:Name="PART_Canvas" Background="Transparent">
+            <!-- Full track (dim) -->
+            <Path Fill="{StaticResource BgTrackBrush}"
+                  Data="{Binding TrackGeometry, RelativeSource={RelativeSource TemplatedParent}}"/>
+            <!-- Active sub-range between the thumbs -->
+            <Path Fill="{StaticResource CyanFillBrush}"
+                  Data="{Binding RangeGeometry, RelativeSource={RelativeSource TemplatedParent}}"/>
+            <!-- Low thumb: transparent NodeSize hit-square with a centered 14x22 cyan thumb -->
+            <Border Background="Transparent"
+                    Width="{Binding NodeSize, RelativeSource={RelativeSource TemplatedParent}}"
+                    Height="{Binding NodeSize, RelativeSource={RelativeSource TemplatedParent}}"
+                    Canvas.Left="{Binding LowThumbX, RelativeSource={RelativeSource TemplatedParent}}"
+                    Canvas.Top="{Binding ThumbTop, RelativeSource={RelativeSource TemplatedParent}}">
+                <Rectangle Width="14" Height="22" RadiusX="3" RadiusY="3"
+                           Fill="{StaticResource CyanBrush}" Effect="{StaticResource CyanGlowEffect}"
+                           HorizontalAlignment="Center" VerticalAlignment="Center" IsHitTestVisible="False"/>
+            </Border>
+            <!-- High thumb -->
+            <Border Background="Transparent"
+                    Width="{Binding NodeSize, RelativeSource={RelativeSource TemplatedParent}}"
+                    Height="{Binding NodeSize, RelativeSource={RelativeSource TemplatedParent}}"
+                    Canvas.Left="{Binding HighThumbX, RelativeSource={RelativeSource TemplatedParent}}"
+                    Canvas.Top="{Binding ThumbTop, RelativeSource={RelativeSource TemplatedParent}}">
+                <Rectangle Width="14" Height="22" RadiusX="3" RadiusY="3"
+                           Fill="{StaticResource CyanBrush}" Effect="{StaticResource CyanGlowEffect}"
+                           HorizontalAlignment="Center" VerticalAlignment="Center" IsHitTestVisible="False"/>
+            </Border>
+        </Canvas>
+    </ControlTemplate>
+
     <!-- ============================================================ -->
     <!-- Editable slider value box                                     -->
     <!-- ============================================================ -->

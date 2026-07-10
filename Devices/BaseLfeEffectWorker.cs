@@ -24,6 +24,7 @@ namespace MozaPlugin.Devices
     {
         private const int TickPeriodMs = 20;                    // 50 Hz
         private const double TickPeriodSec = TickPeriodMs / 1000.0;
+        private const double MaxWireHz = 200.0;                // freq field saturates here; source range for formula rescale
         private const long FeedStaleMs = 250;                  // feed paused/stopped → silence game-driven effects
         private const long GearshiftBurstMs = 120;             // per-shift / per-bump burst hold
         // Momentary test-button patterns.
@@ -257,7 +258,20 @@ namespace MozaPlugin.Devices
 
         private void EvalRender(BaseLfeChannel ch, out double freq, out double intensity01, out double smoothness01)
         {
-            freq = EvalParam(ch.FrequencyFormula, ch.Frequency);
+            // Plain slider value is used as-is. A formula's output is linearly
+            // RE-SCALED from the full 0..200 Hz wire range into the channel's
+            // permitted [min, max] band, so the whole dynamic range is preserved
+            // (compressed to fit) instead of flat-topping at the limits. The
+            // full 0..200 band is the identity map (presets unaffected).
+            if (string.IsNullOrWhiteSpace(ch.FrequencyFormula))
+                freq = ch.Frequency;
+            else
+            {
+                double lo = Math.Min(ch.FrequencyMin, ch.FrequencyMax);
+                double hi = Math.Max(ch.FrequencyMin, ch.FrequencyMax);
+                double raw01 = Clamp01(_evalFormula(ch.FrequencyFormula!) / MaxWireHz);
+                freq = lo + raw01 * (hi - lo);
+            }
             intensity01 = Clamp01(EvalParam(ch.IntensityFormula, ch.Intensity) / 100.0);
             smoothness01 = Clamp01(EvalParam(ch.SmoothnessFormula, ch.Smoothness) / 100.0);
         }

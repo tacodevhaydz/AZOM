@@ -700,4 +700,13 @@ Id: {2}</value></data>
   <data name="ShifterColor_White" xml:space="preserve"><value>Hvit</value></data>
   <data name="Section_WheelbaseLfe" xml:space="preserve"><value>VIBRASJONSEFFEKTER FOR BASE</value></data>
   <data name="SliderLabel_Trigger" xml:space="preserve"><value>Utløser</value></data>
+  <data name="Label_EnginePresets" xml:space="preserve"><value>Motorforhåndsinnstillinger:</value></data>
+  <data name="Preset_AdditiveEngine" xml:space="preserve"><value>Additiv motor</value></data>
+  <data name="Preset_BigRig" xml:space="preserve"><value>Vogntog</value></data>
+  <data name="Preset_DetunedV8" xml:space="preserve"><value>Ustemt V8</value></data>
+  <data name="Label_Defaults" xml:space="preserve"><value>Standard</value></data>
+  <data name="TriggerMode_Level" xml:space="preserve"><value>Nivå</value></data>
+  <data name="TriggerMode_OnChange" xml:space="preserve"><value>Ved endring</value></data>
+  <data name="Label_FormulaLimitsHz" xml:space="preserve"><value>Formelgrenser (Hz)</value></data>
+  <data name="Label_AlwaysOn" xml:space="preserve"><value>(alltid på)</value></data>
 </root>

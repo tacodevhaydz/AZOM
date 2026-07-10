@@ -756,5 +756,14 @@ namespace MozaPlugin.Resources
         public static string ShifterColor_Blue => Get("ShifterColor_Blue");
         public static string ShifterColor_Purple => Get("ShifterColor_Purple");
         public static string ShifterColor_White => Get("ShifterColor_White");
+        public static string Label_EnginePresets => Get("Label_EnginePresets");
+        public static string Preset_AdditiveEngine => Get("Preset_AdditiveEngine");
+        public static string Preset_BigRig => Get("Preset_BigRig");
+        public static string Preset_DetunedV8 => Get("Preset_DetunedV8");
+        public static string Label_Defaults => Get("Label_Defaults");
+        public static string TriggerMode_Level => Get("TriggerMode_Level");
+        public static string TriggerMode_OnChange => Get("TriggerMode_OnChange");
+        public static string Label_FormulaLimitsHz => Get("Label_FormulaLimitsHz");
+        public static string Label_AlwaysOn => Get("Label_AlwaysOn");
     }
 }

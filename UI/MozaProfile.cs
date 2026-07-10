@@ -283,10 +283,14 @@ namespace MozaPlugin
         // Trigger: pre-filled with the natural data source. Non-zero → active.
         public string TriggerFormula { get; set; } = "";
 
-        // Frequency (Hz). Slider clamped to the UI range; a formula is sent
-        // unclamped (the wire encoder saturates the freq field at 200 Hz).
+        // Frequency (Hz). Slider clamped to the UI range. When a FORMULA drives
+        // frequency, its output is clamped to [FrequencyMin, FrequencyMax] (the
+        // band the algorithm may operate in, 0..200 = the wire cap). The limits
+        // are ignored for a plain slider value.
         public float Frequency { get; set; } = 50;
         public string FrequencyFormula { get; set; } = "";
+        public float FrequencyMin { get; set; } = 0;
+        public float FrequencyMax { get; set; } = 200;
 
         // Intensity (0..100 %).
         public int Intensity { get; set; } = 50;
@@ -308,6 +312,8 @@ namespace MozaPlugin
             TriggerFormula = TriggerFormula,
             Frequency = Frequency,
             FrequencyFormula = FrequencyFormula,
+            FrequencyMin = FrequencyMin,
+            FrequencyMax = FrequencyMax,
             Intensity = Intensity,
             IntensityFormula = IntensityFormula,
             Smoothness = Smoothness,

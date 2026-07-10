@@ -695,4 +695,13 @@ Id: {2}</value></data>
   <data name="ShifterColor_White" xml:space="preserve"><value>Белый</value></data>
   <data name="Section_WheelbaseLfe" xml:space="preserve"><value>ЭФФЕКТЫ ВИБРАЦИИ БАЗЫ</value></data>
   <data name="SliderLabel_Trigger" xml:space="preserve"><value>Триггер</value></data>
+  <data name="Label_EnginePresets" xml:space="preserve"><value>Пресеты двигателя:</value></data>
+  <data name="Preset_AdditiveEngine" xml:space="preserve"><value>Аддитивный двигатель</value></data>
+  <data name="Preset_BigRig" xml:space="preserve"><value>Фура</value></data>
+  <data name="Preset_DetunedV8" xml:space="preserve"><value>Расстроенный V8</value></data>
+  <data name="Label_Defaults" xml:space="preserve"><value>По умолчанию</value></data>
+  <data name="TriggerMode_Level" xml:space="preserve"><value>Уровень</value></data>
+  <data name="TriggerMode_OnChange" xml:space="preserve"><value>При изменении</value></data>
+  <data name="Label_FormulaLimitsHz" xml:space="preserve"><value>Пределы формулы (Гц)</value></data>
+  <data name="Label_AlwaysOn" xml:space="preserve"><value>(всегда вкл.)</value></data>
 </root>

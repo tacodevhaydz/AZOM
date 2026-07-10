@@ -700,4 +700,13 @@ Id: {2}</value></data>
   <data name="ShifterColor_White" xml:space="preserve"><value>Blanco</value></data>
   <data name="Section_WheelbaseLfe" xml:space="preserve"><value>EFECTOS DE VIBRACIÓN DE LA BASE</value></data>
   <data name="SliderLabel_Trigger" xml:space="preserve"><value>Disparador</value></data>
+  <data name="Label_EnginePresets" xml:space="preserve"><value>Preajustes de motor:</value></data>
+  <data name="Preset_AdditiveEngine" xml:space="preserve"><value>Motor aditivo</value></data>
+  <data name="Preset_BigRig" xml:space="preserve"><value>Camión pesado</value></data>
+  <data name="Preset_DetunedV8" xml:space="preserve"><value>V8 desafinado</value></data>
+  <data name="Label_Defaults" xml:space="preserve"><value>Predeterminados</value></data>
+  <data name="TriggerMode_Level" xml:space="preserve"><value>Nivel</value></data>
+  <data name="TriggerMode_OnChange" xml:space="preserve"><value>Al cambiar</value></data>
+  <data name="Label_FormulaLimitsHz" xml:space="preserve"><value>Límites de fórmula (Hz)</value></data>
+  <data name="Label_AlwaysOn" xml:space="preserve"><value>(siempre activo)</value></data>
 </root>
