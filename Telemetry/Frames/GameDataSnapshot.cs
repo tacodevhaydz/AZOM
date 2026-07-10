@@ -109,11 +109,47 @@ namespace MozaPlugin.Telemetry.Frames
                 CurrentLap             = data.CurrentLap,
             };
             if (includeCarPositions)
-            {
-                snap.TrackFolderName = ResolveTrackFolder(data);
-                PopulateCarLocations(data, ref snap);
-            }
+                PopulateCarPositionsShared(data, ref snap);
             return snap;
+        }
+
+        // Car-position state (track folder, map bounds, car locations, radar
+        // slots) is profile-independent — identical for every sender that binds
+        // radar/track-map channels. A dual-display setup (wheel screen + CM2
+        // dash) runs TWO sender tick threads through here, and the slot maps /
+        // bounds cache / reflection caches / scratch buffers below are process
+        // statics — unsynchronized, they'd race. Compute once per game frame
+        // (SimHub allocates a fresh StatusDataBase per DataUpdate — the
+        // NewData/OldData swap — so the reference is the frame key) under a
+        // leaf lock; the other sender's tick copies the cached fields and
+        // shares the arrays (consumers only read them). Timer threads only —
+        // never the serial read thread.
+        private static readonly object s_carPosLock = new object();
+        private static StatusDataBase? s_carPosSource;
+        private static GameDataSnapshot s_carPosCache;   // car-position fields only
+
+        private static void PopulateCarPositionsShared(StatusDataBase data, ref GameDataSnapshot snap)
+        {
+            lock (s_carPosLock)
+            {
+                if (!ReferenceEquals(data, s_carPosSource))
+                {
+                    var fresh = default(GameDataSnapshot);
+                    fresh.TrackFolderName = ResolveTrackFolder(data);
+                    PopulateCarLocations(data, ref fresh);
+                    s_carPosCache = fresh;
+                    s_carPosSource = data;
+                }
+                snap.TrackFolderName = s_carPosCache.TrackFolderName;
+                snap.MapBoundsValid  = s_carPosCache.MapBoundsValid;
+                snap.MapMinX = s_carPosCache.MapMinX; snap.MapMaxX = s_carPosCache.MapMaxX;
+                snap.MapMinZ = s_carPosCache.MapMinZ; snap.MapMaxZ = s_carPosCache.MapMaxZ;
+                snap.PlayerLocation  = s_carPosCache.PlayerLocation;
+                snap.CarLocations    = s_carPosCache.CarLocations;
+                snap.CarRelative     = s_carPosCache.CarRelative;
+                snap.PlayerIndex     = s_carPosCache.PlayerIndex;
+                snap.RadarSlotCarIds = s_carPosCache.RadarSlotCarIds;
+            }
         }
 
         // The track's content-folder name. AC's raw Static.track is the
@@ -121,7 +157,7 @@ namespace MozaPlugin.Telemetry.Frames
         // TrackId is the fallback. Reflection-only (no compile-time game ref).
         // Member lookups are cached per runtime type — this runs every tick on
         // the radar path, and uncached GetProperty/GetField per call was
-        // measurable churn. Statics are telemetry-tick-only, like the slot
+        // measurable churn. Statics guarded by s_carPosLock, like the slot
         // maps below.
         private static Type? s_rawType;
         private static PropertyInfo? s_rawStaticProp;
@@ -307,7 +343,7 @@ namespace MozaPlugin.Telemetry.Frames
         private static readonly System.Collections.Generic.Dictionary<int, int> _radarLastInRangeMs
             = new System.Collections.Generic.Dictionary<int, int>();        // carId -> last in-range tick
         private static string? _radarSlotTrack;
-        // Per-tick scratch, reused (telemetry-tick-only like the maps above).
+        // Per-frame scratch, reused (guarded by s_carPosLock like the maps above).
         private static readonly bool[] s_slotUsedScratch = new bool[RadarMaxSlots + 1];
         private static readonly System.Collections.Generic.HashSet<int> s_inRangeScratch
             = new System.Collections.Generic.HashSet<int>();
@@ -368,7 +404,7 @@ namespace MozaPlugin.Telemetry.Frames
         // position, so the list index churns; we pin each stable driver Id to a
         // fixed slot (player -> 0, the ri0 magic-header slot that's skipped;
         // others first-seen 1..N). Cleared on track change so a fresh session
-        // re-packs from slot 1. Single-threaded (telemetry tick), so no lock.
+        // re-packs from slot 1. Guarded by s_carPosLock.
         private static readonly Dictionary<string, int> _oppSlotById = new Dictionary<string, int>();
         private static string? _oppSlotTrack;
         private static int _oppSlotNext = 1;
