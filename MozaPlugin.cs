@@ -1724,11 +1724,21 @@ namespace MozaPlugin
             string? gear = data?.NewData?.Gear;
             if (string.IsNullOrEmpty(gear)) return;
 
-            // LFE-capable firmware: the complex gearshift (cmd 0x77) REPLACES the
-            // classic base-gearshift-event (cmd 0x76) and is driven entirely by
-            // BaseLfeEffectWorker's own gear-trigger edge detection — skip the
-            // classic path so the base never sees a double buzz.
-            if (_data.BaseSupportsLfe) return;
+            // LFE-capable firmware: the complex gearshift (cmd 0x77, LFE channel
+            // id 0) handles gear-shift feedback ONLY while that channel is enabled
+            // and edge-triggered (OnChange) — then the worker fires it and we skip
+            // the classic bump to avoid a double buzz. But if the channel is
+            // repurposed as a continuous partial (Level mode, e.g. the Additive
+            // Engine preset) or disabled, fall through to the classic bump (cmd
+            // 0x76), which coexists with the three LFE channels, so gear shifts are
+            // still felt while all three channels drive the engine.
+            if (_data.BaseSupportsLfe)
+            {
+                var lfeGear = _settings?.ProfileStore?.CurrentProfile?.BaseLfe?.Gearshift;
+                bool lfeHandlesGearshift = lfeGear != null && lfeGear.Enabled
+                    && lfeGear.TriggerMode == BaseLfeTriggerMode.OnChange;
+                if (lfeHandlesGearshift) return;
+            }
 
             if (_data.GearshiftVibration <= 0) return;
             if (_lastGearString == null)
