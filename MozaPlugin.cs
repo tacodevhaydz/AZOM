@@ -3275,6 +3275,21 @@ namespace MozaPlugin
         internal SimHub.Plugins.OutputPlugins.Dash.TemplatingCommon.NCalcEngineBase? ChannelFormulaEngine
             => _propertyResolver?.FormulaEngine;
 
+        // UI-thread formula preview (LFE "current value" readouts). Own evaluator
+        // instance so it never contends with the haptics worker's engine; UI-thread
+        // only, so no locking needed beyond ResolveAsDouble's internal serialization.
+        private Telemetry.NCalcExpressionEvaluator? _uiFormulaEvaluator;
+
+        /// <summary>Evaluate a haptics formula/property to a double for a UI preview. 0 if unavailable.</summary>
+        internal double EvalHapticsFormula(string? formula)
+        {
+            if (string.IsNullOrWhiteSpace(formula)) return 0.0;
+            var resolver = _propertyResolver;
+            if (resolver == null) return 0.0;
+            _uiFormulaEvaluator ??= new Telemetry.NCalcExpressionEvaluator();
+            return resolver.ResolveAsDouble(formula!, _uiFormulaEvaluator);
+        }
+
         /// <summary>
         /// Candidate dashboard keys (highest priority first):
         /// <c>wheel:&lt;id&gt;</c>, <c>file:&lt;filename&gt;:&lt;sha1-8&gt;</c>, <c>builtin:&lt;name&gt;</c>.

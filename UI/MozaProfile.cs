@@ -322,6 +322,18 @@ namespace MozaPlugin
         public bool VibrateOnNeutral { get; set; } = false;
         public int DebounceMs { get; set; } = 50;
 
+        /// <summary>Map a raw frequency-formula output (0..200 Hz wire domain) into
+        /// this channel's [min,max] band — the value actually sent. Shared by the
+        /// worker's render and the UI "current value" readout so they never drift.</summary>
+        public double RescaleFreq(double rawEval)
+        {
+            double lo = System.Math.Min(FrequencyMin, FrequencyMax);
+            double hi = System.Math.Max(FrequencyMin, FrequencyMax);
+            double raw01 = rawEval / 200.0;
+            if (raw01 < 0) raw01 = 0; else if (raw01 > 1) raw01 = 1;
+            return lo + raw01 * (hi - lo);
+        }
+
         public BaseLfeChannel Clone() => new BaseLfeChannel
         {
             Enabled = Enabled,

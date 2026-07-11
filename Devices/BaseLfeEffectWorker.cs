@@ -24,7 +24,6 @@ namespace MozaPlugin.Devices
     {
         private const int TickPeriodMs = 20;                    // 50 Hz
         private const double TickPeriodSec = TickPeriodMs / 1000.0;
-        private const double MaxWireHz = 200.0;                // freq field saturates here; source range for formula rescale
         private const long FeedStaleMs = 250;                  // feed paused/stopped → silence game-driven effects
         private const long GearshiftBurstMs = 120;             // per-shift / per-bump burst hold
         // Momentary test-button patterns. Which pattern a slot's Test plays is
@@ -278,12 +277,7 @@ namespace MozaPlugin.Devices
             if (string.IsNullOrWhiteSpace(ch.FrequencyFormula))
                 freq = ch.Frequency;
             else
-            {
-                double lo = Math.Min(ch.FrequencyMin, ch.FrequencyMax);
-                double hi = Math.Max(ch.FrequencyMin, ch.FrequencyMax);
-                double raw01 = Clamp01(_evalFormula(ch.FrequencyFormula!) / MaxWireHz);
-                freq = lo + raw01 * (hi - lo);
-            }
+                freq = ch.RescaleFreq(_evalFormula(ch.FrequencyFormula!));
             intensity01 = Clamp01(EvalParam(ch.IntensityFormula, ch.Intensity) / 100.0);
             smoothness01 = Clamp01(EvalParam(ch.SmoothnessFormula, ch.Smoothness) / 100.0);
         }

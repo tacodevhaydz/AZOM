@@ -694,6 +694,35 @@ namespace MozaPlugin
             SeedLfeEdge(BaseLfeEngineEdgeOptions, BaseLfeEngineVibrateOnNeutral, BaseLfeEngineDebounceSlider, BaseLfeEngineDebounceValue, eng);
             SeedLfeEdge(BaseLfeAbsEdgeOptions, BaseLfeAbsVibrateOnNeutral, BaseLfeAbsDebounceSlider, BaseLfeAbsDebounceValue, ab);
             SeedLfeEdge(BaseLfeGearshiftEdgeOptions, BaseLfeGearshiftVibrateOnNeutral, BaseLfeGearshiftDebounceSlider, BaseLfeGearshiftDebounceValue, gs);
+
+            // Live formula readouts next to ƒ(x) (shown only when that param has a
+            // formula). Re-evaluated each RefreshDisplay tick. Frequency uses the
+            // channel's own rescale so it matches the value the worker sends.
+            UpdateLfeCalc(BaseLfeEngineTriggerCalc, eng.TriggerFormula, r => r);
+            UpdateLfeCalc(BaseLfeEngineFrequencyCalc, eng.FrequencyFormula, eng.RescaleFreq);
+            UpdateLfeCalc(BaseLfeEngineIntensityCalc, eng.IntensityFormula, r => Math.Max(0, Math.Min(100, r)));
+            UpdateLfeCalc(BaseLfeEngineSmoothnessCalc, eng.SmoothnessFormula, r => Math.Max(0, Math.Min(100, r)));
+            UpdateLfeCalc(BaseLfeAbsTriggerCalc, ab.TriggerFormula, r => r);
+            UpdateLfeCalc(BaseLfeAbsFrequencyCalc, ab.FrequencyFormula, ab.RescaleFreq);
+            UpdateLfeCalc(BaseLfeAbsIntensityCalc, ab.IntensityFormula, r => Math.Max(0, Math.Min(100, r)));
+            UpdateLfeCalc(BaseLfeAbsSmoothnessCalc, ab.SmoothnessFormula, r => Math.Max(0, Math.Min(100, r)));
+            UpdateLfeCalc(BaseLfeGearshiftTriggerCalc, gs.TriggerFormula, r => r);
+            UpdateLfeCalc(BaseLfeGearshiftFrequencyCalc, gs.FrequencyFormula, gs.RescaleFreq);
+            UpdateLfeCalc(BaseLfeGearshiftIntensityCalc, gs.IntensityFormula, r => Math.Max(0, Math.Min(100, r)));
+            UpdateLfeCalc(BaseLfeGearshiftSmoothnessCalc, gs.SmoothnessFormula, r => Math.Max(0, Math.Min(100, r)));
+        }
+
+        // Evaluate a param's formula and show the shaped result next to ƒ(x)
+        // (hidden when there is no formula — the slider/value box shows it then).
+        private void UpdateLfeCalc(TextBlock calc, string? formula, Func<double, double> shape)
+        {
+            bool has = !string.IsNullOrWhiteSpace(formula);
+            calc.Visibility = has ? Visibility.Visible : Visibility.Collapsed;
+            if (!has) return;
+            double v = shape(_plugin.EvalHapticsFormula(formula));
+            calc.Text = Math.Abs(v) >= 10
+                ? Math.Round(v).ToString("0")
+                : v.ToString("0.##", System.Globalization.CultureInfo.InvariantCulture);
         }
 
         private static void SeedLfeFreqLimits(FrameworkElement panel, MozaControls.MozaRangeSlider range, TextBlock readout, BaseLfeChannel ch)
