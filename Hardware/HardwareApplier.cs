@@ -260,8 +260,10 @@ namespace MozaPlugin.Hardware
             if (knobMode  >= 0) _data.WheelKnobMode          = knobMode;
             if (stickMode >= 0) _data.WheelStickMode         = stickMode;
             // Per-knob signal modes — overlay-only (no profile baseline), mirrored
-            // for UI display like the other input modes. Not re-pushed to hardware
-            // here; the wheel firmware persists them (newer FW drops readback).
+            // for UI display here; re-pushed to the wheel (change-gated) in the
+            // NewWheelDetected block below so a per-game BUTTON/KNOB choice reaches
+            // the wheel on profile switch (firmware persists a single value, so a
+            // readback alone can't re-assert a different profile's saved mode).
             if (ov?.WheelKnobSignalModes != null)
                 for (int i = 0; i < Math.Min(_data.WheelKnobSignalModes.Length, ov.WheelKnobSignalModes.Length); i++)
                     if (ov.WheelKnobSignalModes[i] >= 0) _data.WheelKnobSignalModes[i] = ov.WheelKnobSignalModes[i];
@@ -365,6 +367,30 @@ namespace MozaPlugin.Hardware
                 if (knobIdleEffect >= 0 && hasKnob && hasIdleLed && WheelCfgChanged("wheel-knob-idle-effect", knobIdleEffect))  _deviceManager.WriteSetting("wheel-knob-idle-effect", knobIdleEffect);
                 if (knobLedMode    >= 0 && hasKnob && WheelCfgChanged("wheel-knob-led-mode", knobLedMode))        _deviceManager.WriteSetting("wheel-knob-led-mode", knobLedMode);
                 if (btnLedMode     >= 0 && hasBtn  && WheelCfgChanged("wheel-buttons-led-mode", btnLedMode))      _deviceManager.WriteSetting("wheel-buttons-led-mode", btnLedMode);
+
+                // Knob input signal mode (encoder = BUTTON vs KNOB) — overlay-only,
+                // per-(profile x wheel-page). Re-push on connect/profile-switch,
+                // change-gated like the LED/brightness settings above: the wheel
+                // firmware persists a single value, so a per-game mode only reaches
+                // the wheel if we re-assert it here. Legacy single mode on wheels
+                // without per-knob support; per-knob wheel-knob-signal-mode{fw}
+                // (logical->firmware index remapped) on those that report it. The UI
+                // only edits one family per wheel, so the overlay only carries the
+                // family this wheel supports — writing whatever is set is safe.
+                if (knobMode >= 0 && hasKnob && WheelCfgChanged("wheel-knob-mode", knobMode))
+                    _deviceManager.WriteSetting("wheel-knob-mode", knobMode);
+                if (hasKnob && ov?.WheelKnobSignalModes != null)
+                {
+                    int nSig = Math.Min(model.KnobCount, ov.WheelKnobSignalModes.Length);
+                    for (int i = 0; i < nSig && i < 5; i++)
+                    {
+                        int sm = ov.WheelKnobSignalModes[i];
+                        if (sm < 0) continue;
+                        int fwIdx = model.SignalModeFirmwareIndex(i);
+                        if (WheelCfgChanged($"wheel-knob-signal-mode{fwIdx}", sm))
+                            _deviceManager.WriteSetting($"wheel-knob-signal-mode{fwIdx}", sm);
+                    }
+                }
                 if (idleEffect >= 0 && idleSpeed >= 0 && hasRpm && hasIdleLed
                         && WheelCfgChanged("wheel-telemetry-idle-interval", ((long)idleEffect << 32) | (uint)idleSpeed))
                     _deviceManager.WriteArray("wheel-telemetry-idle-interval",
