@@ -903,6 +903,17 @@ namespace MozaPlugin
         private void BaseLfeGearshiftTest_Click(object sender, RoutedEventArgs e)
             => _plugin.TriggerBaseLfeGearshiftTest();
 
+        // Presets Test: fire every ENABLED slot's mode-based test at once. They
+        // sum on the base, so this previews the combined feel of the whole setup.
+        private void BaseLfePresetsTest_Click(object sender, RoutedEventArgs e)
+        {
+            var lfe = _plugin.Settings?.ProfileStore?.CurrentProfile?.BaseLfe;
+            if (lfe == null) return;
+            if (lfe.Engine?.Enabled == true) _plugin.TriggerBaseLfeEngineTest();
+            if (lfe.Abs?.Enabled == true) _plugin.TriggerBaseLfeAbsTest();
+            if (lfe.Gearshift?.Enabled == true) _plugin.TriggerBaseLfeGearshiftTest();
+        }
+
         // Frequency clamp band (Tag = channel) — double-ended slider, 0..200 Hz.
         private void BaseLfeFreqRange_RangeChanged(object sender, EventArgs e)
         {

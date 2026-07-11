@@ -510,6 +510,7 @@
                                         <ColumnDefinition Width="Auto"/>
                                         <ColumnDefinition Width="Auto"/>
                                         <ColumnDefinition Width="*"/>
+                                        <ColumnDefinition Width="Auto"/>
                                     </Grid.ColumnDefinitions>
                                     <!-- Accent bar -->
                                     <Rectangle Grid.Column="0"
@@ -558,6 +559,12 @@
                                             </LinearGradientBrush>
                                         </Rectangle.Fill>
                                     </Rectangle>
+                                    <!-- Optional header-right content (HeaderedContentControl.Header);
+                                         null on most cards → Auto column collapses to nothing. -->
+                                    <ContentPresenter Grid.Column="4"
+                                                      Content="{TemplateBinding Header}"
+                                                      VerticalAlignment="Center"
+                                                      Margin="12,0,0,0"/>
                                 </Grid>
                             </Border>
                             <!-- Body -->

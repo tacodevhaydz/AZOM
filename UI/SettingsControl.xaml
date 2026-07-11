@@ -918,7 +918,13 @@
                 <ScrollViewer VerticalScrollBarVisibility="Auto" Padding="22,18,22,8">
                     <StackPanel>
                         <!-- LFE-GEN-START -->
-                        <ctrl:SectionCard Title="{x:Static res:Strings.Section_EnginePresets}" Icon="{StaticResource IconShift}" Margin="0,0,0,14">
+                        <Grid>
+                            <Grid.ColumnDefinitions><ColumnDefinition Width="*"/><ColumnDefinition Width="*"/></Grid.ColumnDefinitions>
+                            <Grid.RowDefinitions><RowDefinition Height="Auto"/><RowDefinition Height="Auto"/></Grid.RowDefinitions>
+                        <ctrl:SectionCard Grid.Row="0" Grid.Column="0" VerticalAlignment="Top" Title="{x:Static res:Strings.Section_EnginePresets}" Icon="{StaticResource IconShift}" Margin="0,0,7,14">
+                            <ctrl:SectionCard.Header>
+                                <Button Content="{x:Static res:Strings.Label_Test}" Padding="10,2" Click="BaseLfePresetsTest_Click"/>
+                            </ctrl:SectionCard.Header>
                             <WrapPanel>
                                 <Button Content="{x:Static res:Strings.Preset_AdditiveEngine}" Margin="0,0,8,4" Padding="14,5" Click="BaseLfeAdditiveEngine_Click"/>
                                 <Button Content="{x:Static res:Strings.Preset_BigRig}" Margin="0,0,8,4" Padding="14,5" Click="BaseLfeBigRig_Click"/>
@@ -926,13 +932,12 @@
                                 <Button Content="{x:Static res:Strings.Label_Defaults}" Margin="0,0,8,4" Padding="14,5" Click="BaseLfeDefaults_Click"/>
                             </WrapPanel>
                         </ctrl:SectionCard>
-                        <ctrl:SectionCard Title="{x:Static res:Strings.Section_EffectsSlot1}" Icon="{StaticResource IconShift}" Margin="0,0,0,14">
+                        <ctrl:SectionCard Grid.Row="0" Grid.Column="1" VerticalAlignment="Top" Title="{x:Static res:Strings.Section_EffectsSlot1}" Icon="{StaticResource IconShift}" Margin="7,0,0,14">
+                            <ctrl:SectionCard.Header>
+                                <Button x:Name="BaseLfeEngineTestButton" Content="{x:Static res:Strings.Label_Test}" Padding="10,2" Click="BaseLfeEngineTest_Click"/>
+                            </ctrl:SectionCard.Header>
                             <StackPanel>
-                                <Grid Margin="0,0,0,6">
-                                    <Grid.ColumnDefinitions><ColumnDefinition Width="*"/><ColumnDefinition Width="Auto"/></Grid.ColumnDefinitions>
-                                    <ctrl:OffOnToggle Grid.Column="0" x:Name="BaseLfeEngineEnable" Content="{x:Static res:Strings.Label_Enable}" HorizontalAlignment="Left" VerticalAlignment="Center" Checked="BaseLfeEngineEnable_Changed" Unchecked="BaseLfeEngineEnable_Changed"/>
-                                    <Button Grid.Column="1" x:Name="BaseLfeEngineTestButton" Content="{x:Static res:Strings.Label_Test}" Padding="10,2" Click="BaseLfeEngineTest_Click"/>
-                                </Grid>
+                                <ctrl:OffOnToggle x:Name="BaseLfeEngineEnable" Content="{x:Static res:Strings.Label_Enable}" FontSize="14.5" FontWeight="Normal" HorizontalAlignment="Left" Margin="0,0,0,8" Checked="BaseLfeEngineEnable_Changed" Unchecked="BaseLfeEngineEnable_Changed"/>
                                 <Grid Margin="0,0,0,8">
                                     <Grid.ColumnDefinitions><ColumnDefinition Width="Auto"/><ColumnDefinition Width="*"/></Grid.ColumnDefinitions>
                                     <TextBlock Grid.Column="0" Text="{x:Static res:Strings.Label_Mode}" Style="{StaticResource LfeLabel}" VerticalAlignment="Center"/>
@@ -1000,13 +1005,12 @@
                                     </StackPanel>
                             </StackPanel>
                         </ctrl:SectionCard>
-                        <ctrl:SectionCard Title="{x:Static res:Strings.Section_EffectsSlot2}" Icon="{StaticResource IconShift}" Margin="0,0,0,14">
+                        <ctrl:SectionCard Grid.Row="1" Grid.Column="0" VerticalAlignment="Top" Title="{x:Static res:Strings.Section_EffectsSlot2}" Icon="{StaticResource IconShift}" Margin="0,0,7,0">
+                            <ctrl:SectionCard.Header>
+                                <Button x:Name="BaseLfeAbsTestButton" Content="{x:Static res:Strings.Label_Test}" Padding="10,2" Click="BaseLfeAbsTest_Click"/>
+                            </ctrl:SectionCard.Header>
                             <StackPanel>
-                                <Grid Margin="0,0,0,6">
-                                    <Grid.ColumnDefinitions><ColumnDefinition Width="*"/><ColumnDefinition Width="Auto"/></Grid.ColumnDefinitions>
-                                    <ctrl:OffOnToggle Grid.Column="0" x:Name="BaseLfeAbsEnable" Content="{x:Static res:Strings.Label_Enable}" HorizontalAlignment="Left" VerticalAlignment="Center" Checked="BaseLfeAbsEnable_Changed" Unchecked="BaseLfeAbsEnable_Changed"/>
-                                    <Button Grid.Column="1" x:Name="BaseLfeAbsTestButton" Content="{x:Static res:Strings.Label_Test}" Padding="10,2" Click="BaseLfeAbsTest_Click"/>
-                                </Grid>
+                                <ctrl:OffOnToggle x:Name="BaseLfeAbsEnable" Content="{x:Static res:Strings.Label_Enable}" FontSize="14.5" FontWeight="Normal" HorizontalAlignment="Left" Margin="0,0,0,8" Checked="BaseLfeAbsEnable_Changed" Unchecked="BaseLfeAbsEnable_Changed"/>
                                 <Grid Margin="0,0,0,8">
                                     <Grid.ColumnDefinitions><ColumnDefinition Width="Auto"/><ColumnDefinition Width="*"/></Grid.ColumnDefinitions>
                                     <TextBlock Grid.Column="0" Text="{x:Static res:Strings.Label_Mode}" Style="{StaticResource LfeLabel}" VerticalAlignment="Center"/>
@@ -1074,13 +1078,12 @@
                                     </StackPanel>
                             </StackPanel>
                         </ctrl:SectionCard>
-                        <ctrl:SectionCard Title="{x:Static res:Strings.Section_EffectsSlot3}" Icon="{StaticResource IconShift}" Margin="0,0,0,14">
+                        <ctrl:SectionCard Grid.Row="1" Grid.Column="1" VerticalAlignment="Top" Title="{x:Static res:Strings.Section_EffectsSlot3}" Icon="{StaticResource IconShift}" Margin="7,0,0,0">
+                            <ctrl:SectionCard.Header>
+                                <Button x:Name="BaseLfeGearshiftTestButton" Content="{x:Static res:Strings.Label_Test}" Padding="10,2" Click="BaseLfeGearshiftTest_Click"/>
+                            </ctrl:SectionCard.Header>
                             <StackPanel>
-                                <Grid Margin="0,0,0,6">
-                                    <Grid.ColumnDefinitions><ColumnDefinition Width="*"/><ColumnDefinition Width="Auto"/></Grid.ColumnDefinitions>
-                                    <ctrl:OffOnToggle Grid.Column="0" x:Name="BaseLfeGearshiftEnable" Content="{x:Static res:Strings.Label_Enable}" HorizontalAlignment="Left" VerticalAlignment="Center" Checked="BaseLfeGearshiftEnable_Changed" Unchecked="BaseLfeGearshiftEnable_Changed"/>
-                                    <Button Grid.Column="1" x:Name="BaseLfeGearshiftTestButton" Content="{x:Static res:Strings.Label_Test}" Padding="10,2" Click="BaseLfeGearshiftTest_Click"/>
-                                </Grid>
+                                <ctrl:OffOnToggle x:Name="BaseLfeGearshiftEnable" Content="{x:Static res:Strings.Label_Enable}" FontSize="14.5" FontWeight="Normal" HorizontalAlignment="Left" Margin="0,0,0,8" Checked="BaseLfeGearshiftEnable_Changed" Unchecked="BaseLfeGearshiftEnable_Changed"/>
                                 <Grid Margin="0,0,0,8">
                                     <Grid.ColumnDefinitions><ColumnDefinition Width="Auto"/><ColumnDefinition Width="*"/></Grid.ColumnDefinitions>
                                     <TextBlock Grid.Column="0" Text="{x:Static res:Strings.Label_Mode}" Style="{StaticResource LfeLabel}" VerticalAlignment="Center"/>
@@ -1148,6 +1151,7 @@
                                     </StackPanel>
                             </StackPanel>
                         </ctrl:SectionCard>
+                        </Grid>
                         <!-- LFE-GEN-END -->
                     </StackPanel>
                 </ScrollViewer>
