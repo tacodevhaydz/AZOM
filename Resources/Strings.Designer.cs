@@ -765,5 +765,15 @@ namespace MozaPlugin.Resources
         public static string TriggerMode_OnChange => Get("TriggerMode_OnChange");
         public static string Label_FormulaLimitsHz => Get("Label_FormulaLimitsHz");
         public static string Label_AlwaysOn => Get("Label_AlwaysOn");
+        public static string TabHeader_WheelbaseLfe => Get("TabHeader_WheelbaseLfe");
+        public static string Section_EnginePresets => Get("Section_EnginePresets");
+        public static string Section_EffectsSlot1 => Get("Section_EffectsSlot1");
+        public static string Section_EffectsSlot2 => Get("Section_EffectsSlot2");
+        public static string Section_EffectsSlot3 => Get("Section_EffectsSlot3");
+        public static string Label_Mode => Get("Label_Mode");
+        public static string Mode_Engine => Get("Mode_Engine");
+        public static string Mode_Abs => Get("Mode_Abs");
+        public static string Mode_Gearshift => Get("Mode_Gearshift");
+        public static string Mode_Custom => Get("Mode_Custom");
     }
 }

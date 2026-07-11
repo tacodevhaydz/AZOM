@@ -709,4 +709,14 @@ Id: {2}</value></data>
   <data name="TriggerMode_OnChange" xml:space="preserve"><value>Al cambiar</value></data>
   <data name="Label_FormulaLimitsHz" xml:space="preserve"><value>Límites de fórmula (Hz)</value></data>
   <data name="Label_AlwaysOn" xml:space="preserve"><value>(siempre activo)</value></data>
+  <data name="TabHeader_WheelbaseLfe" xml:space="preserve"><value>Efectos LFE</value></data>
+  <data name="Section_EnginePresets" xml:space="preserve"><value>Preajustes de motor</value></data>
+  <data name="Section_EffectsSlot1" xml:space="preserve"><value>Ranura de efectos 1</value></data>
+  <data name="Section_EffectsSlot2" xml:space="preserve"><value>Ranura de efectos 2</value></data>
+  <data name="Section_EffectsSlot3" xml:space="preserve"><value>Ranura de efectos 3</value></data>
+  <data name="Label_Mode" xml:space="preserve"><value>Modo</value></data>
+  <data name="Mode_Engine" xml:space="preserve"><value>Motor</value></data>
+  <data name="Mode_Abs" xml:space="preserve"><value>ABS</value></data>
+  <data name="Mode_Gearshift" xml:space="preserve"><value>Cambio</value></data>
+  <data name="Mode_Custom" xml:space="preserve"><value>Personal.</value></data>
 </root>

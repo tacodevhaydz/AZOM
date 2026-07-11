@@ -479,7 +479,7 @@ namespace MozaPlugin
             // command coexists with the LFE channels); the LFE card is shown
             // additionally, full-width below, only on LFE-capable firmware.
             bool lfeSupported = _data.BaseSupportsLfe;
-            BaseLfeCard.Visibility = lfeSupported
+            BaseLfeTab.Visibility = lfeSupported
                 ? System.Windows.Visibility.Visible : System.Windows.Visibility.Collapsed;
             if (lfeSupported)
                 SeedBaseLfeControls(gsProfile?.BaseLfe);
@@ -661,6 +661,9 @@ namespace MozaPlugin
             var gs = fx.Gearshift ?? new BaseLfeChannel();
 
             BaseLfeEngineEnable.IsChecked = eng.Enabled;
+            BaseLfeEngineMode.SelectedIndex = (int)eng.Mode;
+            BaseLfeAbsMode.SelectedIndex = (int)ab.Mode;
+            BaseLfeGearshiftMode.SelectedIndex = (int)gs.Mode;
             BaseLfeEngineTriggerMode.SelectedIndex = (int)eng.TriggerMode;
             BaseLfeAbsTriggerMode.SelectedIndex = (int)ab.TriggerMode;
             BaseLfeGearshiftTriggerMode.SelectedIndex = (int)gs.TriggerMode;
@@ -737,6 +740,10 @@ namespace MozaPlugin
             bool has = !string.IsNullOrWhiteSpace(formula);
             text.Text = has ? formula : Strings.Label_AlwaysOn;
             text.ToolTip = has ? formula : null;
+            // Match the frequency/intensity/smoothness formula lines: cyan mono for
+            // a live formula, dim UI font for the "(always on)" placeholder.
+            text.Foreground = (System.Windows.Media.Brush)text.FindResource(has ? "CyanBrush" : "TextDimBrush");
+            text.FontFamily = (System.Windows.Media.FontFamily)text.FindResource(has ? "FontMono" : "FontUi");
         }
 
         // Slider handlers only fire on user drag (a set formula disables the
@@ -884,6 +891,22 @@ namespace MozaPlugin
 
         // "engine" → "Engine" (element-name prefix for the channel's controls).
         private static string LfeCap(string ch) => char.ToUpperInvariant(ch[0]) + ch.Substring(1);
+
+        // Slot role (Tag = channel). Applies a trigger/limits/character template
+        // for the chosen effect type; Custom leaves the slot's values untouched.
+        // The slot's fixed wire id / render path is unaffected. Re-seed to reflect
+        // the applied template across all the slot's controls.
+        private void BaseLfeMode_Changed(object sender, SelectionChangedEventArgs e)
+        {
+            if (_suppressEvents) return;
+            if (sender is not System.Windows.Controls.Primitives.Selector sel || sel.Tag is not string ch) return;
+            int idx = sel.SelectedIndex;
+            if (idx < 0) return;
+            var mode = (BaseLfeMode)idx;
+            _plugin.UpdateActiveProfile(p => BaseLfeSettings.ApplyMode(LfeChannelForTag(p.BaseLfe ??= new BaseLfeSettings(), ch), mode));
+            _plugin.SaveSettings();
+            RefreshDisplay(this, EventArgs.Empty);
+        }
 
         // Trigger mode: Level (continuous) vs On-change (burst). Tag = channel name.
         // The edge refinements (neutral/debounce) only apply in On-change mode.

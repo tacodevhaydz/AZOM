@@ -27,9 +27,12 @@ namespace MozaPlugin.Devices
         private const double MaxWireHz = 200.0;                // freq field saturates here; source range for formula rescale
         private const long FeedStaleMs = 250;                  // feed paused/stopped → silence game-driven effects
         private const long GearshiftBurstMs = 120;             // per-shift / per-bump burst hold
-        // Momentary test-button patterns.
+        // Momentary test-button patterns. Which pattern a slot's Test plays is
+        // chosen by the slot's Mode (Engine sweep / ABS pulse / Gearshift bump /
+        // Custom tone), not the slot's fixed wire id — see RenderTest.
         private const long EngineTestMs = 2000;                // engine test = 2 s frequency sweep
         private const long AbsTestMs = 1000;                   // abs test = 1 s pulse burst
+        private const long CustomTestMs = 1000;                // custom test = 1 s steady tone at the slot's values
         private const double GsTestBump1EndMs = 70;            // gearshift test = two rapid bumps
         private const double GsTestBump2StartMs = 180;
         private const double GsTestBump2EndMs = 250;
@@ -52,8 +55,9 @@ namespace MozaPlugin.Devices
         private volatile bool _latestGameActive;
         private long _lastFrameTicks;
 
-        // Momentary test triggers.
-        private long _engineTestUntil, _engineTestStart, _absTestUntil, _gsTestStart;
+        // Momentary test triggers — one start timestamp per slot (0 = idle). The
+        // pattern + duration come from the slot's Mode at render time.
+        private long _engineTestStart, _absTestStart, _gearTestStart;
 
         // Per-channel state (worker thread only). Every channel carries both the
         // continuous phase and the OnChange edge state, so any channel can run in
@@ -112,21 +116,10 @@ namespace MozaPlugin.Devices
             Interlocked.Exchange(ref _lastFrameTicks, Stopwatch.GetTimestamp());
         }
 
-        /// <summary>Engine test: 2 s frequency sweep (idle → slider pitch).</summary>
-        public void PostEngineTest()
-        {
-            long now = Stopwatch.GetTimestamp();
-            Interlocked.Exchange(ref _engineTestStart, now);
-            Interlocked.Exchange(ref _engineTestUntil, now + Stopwatch.Frequency * EngineTestMs / 1000);
-        }
-
-        /// <summary>ABS test: 1 s pulse burst.</summary>
-        public void PostAbsTest()
-            => Interlocked.Exchange(ref _absTestUntil, Stopwatch.GetTimestamp() + Stopwatch.Frequency * AbsTestMs / 1000);
-
-        /// <summary>Gearshift test: two rapid bumps.</summary>
-        public void PostGearshiftTest()
-            => Interlocked.Exchange(ref _gsTestStart, Stopwatch.GetTimestamp());
+        // Each slot's Test plays the pattern for that slot's current Mode.
+        public void PostEngineTest() => Interlocked.Exchange(ref _engineTestStart, Stopwatch.GetTimestamp());
+        public void PostAbsTest() => Interlocked.Exchange(ref _absTestStart, Stopwatch.GetTimestamp());
+        public void PostGearshiftTest() => Interlocked.Exchange(ref _gearTestStart, Stopwatch.GetTimestamp());
 
         private void Loop()
         {
@@ -192,68 +185,87 @@ namespace MozaPlugin.Devices
             return st.BurstUntil > now;
         }
 
-        // ── Engine (2 s sweep test) ───────────────────────────────────────────
+        // ── Engine slot (wire id 1, continuous stream) ────────────────────────
         private void TickEngine(BaseLfeSettings lfe, bool feedLive)
         {
             var ch = lfe.Engine ?? DefaultLfe.Engine;
-            long now = Stopwatch.GetTimestamp();
-            bool testActive = Interlocked.Read(ref _engineTestUntil) > now;
-            bool active = testActive || ActiveByGame(ch, feedLive, ref _engineSt);
-            if (!active) { DisableIf(ref _engineSt, MozaBaseLfeProtocol.LfeEffect.Engine); return; }
-
-            double freq, intensity01, smoothness01;
-            if (testActive)
-            {
-                double t = (now - Interlocked.Read(ref _engineTestStart)) * 1000.0 / Stopwatch.Frequency / EngineTestMs;
-                if (t < 0) t = 0; if (t > 1) t = 1;
-                freq = Clamp(ch.Frequency, 0, 500) * (0.12 + 0.88 * t);
-                intensity01 = ClampPct(ch.Intensity) / 100.0;
-                smoothness01 = ClampPct(ch.Smoothness) / 100.0;
-            }
-            else EvalRender(ch, out freq, out intensity01, out smoothness01);
-            _base.SendBaseLfeEngineStream(playing: true, freq, Envelope(intensity01, ref _engineSt.Phase, freq, smoothness01));
+            if (TickTest(ref _engineTestStart, ch, ref _engineSt, MozaBaseLfeProtocol.LfeEffect.Engine,
+                         (f, a) => _base.SendBaseLfeEngineStream(playing: true, f, a))) return;
+            if (!ActiveByGame(ch, feedLive, ref _engineSt)) { DisableIf(ref _engineSt, MozaBaseLfeProtocol.LfeEffect.Engine); return; }
+            EvalRender(ch, out double freq, out double int01, out double smooth01);
+            _base.SendBaseLfeEngineStream(playing: true, freq, Envelope(int01, ref _engineSt.Phase, freq, smooth01));
             _engineSt.Active = true;
         }
 
-        // ── ABS (1 s burst test) ──────────────────────────────────────────────
+        // ── ABS slot (wire id 2, continuous stream) ───────────────────────────
         private void TickAbs(BaseLfeSettings lfe, bool feedLive)
         {
             var ch = lfe.Abs ?? DefaultLfe.Abs;
-            bool testActive = Interlocked.Read(ref _absTestUntil) > Stopwatch.GetTimestamp();
-            bool active = testActive || ActiveByGame(ch, feedLive, ref _absSt);
-            if (!active) { DisableIf(ref _absSt, MozaBaseLfeProtocol.LfeEffect.Abs); return; }
-
-            double freq, intensity01, smoothness01;
-            if (testActive) { freq = Clamp(ch.Frequency, 0, 500); intensity01 = ClampPct(ch.Intensity) / 100.0; smoothness01 = ClampPct(ch.Smoothness) / 100.0; }
-            else EvalRender(ch, out freq, out intensity01, out smoothness01);
-            _base.SendBaseLfeAbsStream(playing: true, freq, Envelope(intensity01, ref _absSt.Phase, freq, smoothness01));
+            if (TickTest(ref _absTestStart, ch, ref _absSt, MozaBaseLfeProtocol.LfeEffect.Abs,
+                         (f, a) => _base.SendBaseLfeAbsStream(playing: true, f, a))) return;
+            if (!ActiveByGame(ch, feedLive, ref _absSt)) { DisableIf(ref _absSt, MozaBaseLfeProtocol.LfeEffect.Abs); return; }
+            EvalRender(ch, out double freq, out double int01, out double smooth01);
+            _base.SendBaseLfeAbsStream(playing: true, freq, Envelope(int01, ref _absSt.Phase, freq, smooth01));
             _absSt.Active = true;
         }
 
-        // ── Gearshift (two-bump test) ─────────────────────────────────────────
+        // ── Gearshift slot (wire id 0, one-shot burst) ────────────────────────
         private void TickGearshift(BaseLfeSettings lfe, bool feedLive)
         {
             var ch = lfe.Gearshift ?? DefaultLfe.Gearshift;
-            long now = Stopwatch.GetTimestamp();
-
-            bool testBump = false;
-            long ts = Interlocked.Read(ref _gsTestStart);
-            if (ts > 0)
-            {
-                double ms = (now - ts) * 1000.0 / Stopwatch.Frequency;
-                if (ms < GsTestBump1EndMs) testBump = true;
-                else if (ms >= GsTestBump2StartMs && ms < GsTestBump2EndMs) testBump = true;
-                else if (ms >= GsTestBump2EndMs) Interlocked.Exchange(ref _gsTestStart, 0);
-            }
-
-            bool active = testBump || ActiveByGame(ch, feedLive, ref _gearSt);
-            if (!active) { DisableIf(ref _gearSt, MozaBaseLfeProtocol.LfeEffect.Gearshift); return; }
-
-            double freq, intensity01, smoothness01;
-            if (testBump) { freq = Clamp(ch.Frequency, 0, 500); intensity01 = ClampPct(ch.Intensity) / 100.0; smoothness01 = ClampPct(ch.Smoothness) / 100.0; }
-            else EvalRender(ch, out freq, out intensity01, out smoothness01);
-            _base.SendBaseLfeGearshiftBurst(freq, Envelope(intensity01, ref _gearSt.Phase, freq, smoothness01));
+            if (TickTest(ref _gearTestStart, ch, ref _gearSt, MozaBaseLfeProtocol.LfeEffect.Gearshift,
+                         (f, a) => _base.SendBaseLfeGearshiftBurst(f, a))) return;
+            if (!ActiveByGame(ch, feedLive, ref _gearSt)) { DisableIf(ref _gearSt, MozaBaseLfeProtocol.LfeEffect.Gearshift); return; }
+            EvalRender(ch, out double freq, out double int01, out double smooth01);
+            _base.SendBaseLfeGearshiftBurst(freq, Envelope(int01, ref _gearSt.Phase, freq, smooth01));
             _gearSt.Active = true;
+        }
+
+        // Test playback for one slot. Returns true while the test owns the slot
+        // (rendered a frame or a silent gap); false once elapsed so the caller
+        // falls through to the normal game-driven path. Pattern chosen by Mode.
+        private bool TickTest(ref long testStart, BaseLfeChannel ch, ref ChannelState st,
+                              MozaBaseLfeProtocol.LfeEffect id, Action<double, double> send)
+        {
+            long ts = Interlocked.Read(ref testStart);
+            if (ts <= 0) return false;
+            double ms = (Stopwatch.GetTimestamp() - ts) * 1000.0 / Stopwatch.Frequency;
+            if (!RenderTest(ch.Mode, ms, ch, out bool playing, out double freq, out double int01, out double smooth01))
+            {
+                Interlocked.Exchange(ref testStart, 0);     // window elapsed → hand back to the game path
+                return false;
+            }
+            if (playing) { send(freq, Envelope(int01, ref st.Phase, freq, smooth01)); st.Active = true; }
+            else DisableIf(ref st, id);                      // silent gap (gearshift between bumps)
+            return true;
+        }
+
+        // Momentary test pattern for a slot's Mode. Returns false once the window
+        // has elapsed. Uses the slot's static (fallback) values so a parked car
+        // (formula → 0) still produces a felt test. `playing` gates the gearshift
+        // inter-bump gap.
+        private bool RenderTest(BaseLfeMode mode, double ms, BaseLfeChannel ch,
+                                out bool playing, out double freq, out double int01, out double smooth01)
+        {
+            freq = Clamp(ch.Frequency, 0, 500);
+            int01 = ClampPct(ch.Intensity) / 100.0;
+            smooth01 = ClampPct(ch.Smoothness) / 100.0;
+            playing = true;
+            switch (mode)
+            {
+                case BaseLfeMode.Engine:                      // 2 s idle→pitch sweep
+                    if (ms > EngineTestMs) return false;
+                    freq = Clamp(ch.Frequency, 0, 500) * (0.12 + 0.88 * Clamp01(ms / EngineTestMs));
+                    return true;
+                case BaseLfeMode.Abs:                         // 1 s pulse (pulse from smoothness envelope)
+                    return ms <= AbsTestMs;
+                case BaseLfeMode.Gearshift:                   // two rapid bumps
+                    if (ms >= GsTestBump2EndMs) return false;
+                    playing = ms < GsTestBump1EndMs || (ms >= GsTestBump2StartMs && ms < GsTestBump2EndMs);
+                    return true;
+                default:                                      // Custom — 1 s steady tone at the slot's values
+                    return ms <= CustomTestMs;
+            }
         }
 
         private void EvalRender(BaseLfeChannel ch, out double freq, out double intensity01, out double smoothness01)

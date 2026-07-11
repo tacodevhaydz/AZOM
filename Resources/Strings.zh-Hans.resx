@@ -704,4 +704,14 @@ Id: {2}</value></data>
   <data name="TriggerMode_OnChange" xml:space="preserve"><value>变化时</value></data>
   <data name="Label_FormulaLimitsHz" xml:space="preserve"><value>公式范围 (Hz)</value></data>
   <data name="Label_AlwaysOn" xml:space="preserve"><value>(始终开启)</value></data>
+  <data name="TabHeader_WheelbaseLfe" xml:space="preserve"><value>LFE 效果</value></data>
+  <data name="Section_EnginePresets" xml:space="preserve"><value>引擎预设</value></data>
+  <data name="Section_EffectsSlot1" xml:space="preserve"><value>效果槽 1</value></data>
+  <data name="Section_EffectsSlot2" xml:space="preserve"><value>效果槽 2</value></data>
+  <data name="Section_EffectsSlot3" xml:space="preserve"><value>效果槽 3</value></data>
+  <data name="Label_Mode" xml:space="preserve"><value>模式</value></data>
+  <data name="Mode_Engine" xml:space="preserve"><value>引擎</value></data>
+  <data name="Mode_Abs" xml:space="preserve"><value>ABS</value></data>
+  <data name="Mode_Gearshift" xml:space="preserve"><value>换挡</value></data>
+  <data name="Mode_Custom" xml:space="preserve"><value>自定义</value></data>
 </root>

@@ -273,9 +273,26 @@ namespace MozaPlugin
         OnChange = 1,
     }
 
+    /// <summary>
+    /// A slot's role. Selecting a mode applies a template (trigger + limits +
+    /// character) via BaseLfeSettings.ApplyMode; Custom leaves everything as-is.
+    /// The slot's wire effect id / render behavior is fixed (slots must stay on
+    /// distinct ids so the base sums them) — the mode only presets the values.
+    /// </summary>
+    public enum BaseLfeMode
+    {
+        Engine = 0,
+        Abs = 1,
+        Gearshift = 2,
+        Custom = 3,
+    }
+
     public sealed class BaseLfeChannel
     {
         public bool Enabled { get; set; } = false;
+
+        // Slot role (last-applied template); Custom = freely edited.
+        public BaseLfeMode Mode { get; set; } = BaseLfeMode.Custom;
 
         // Level = continuous while trigger != 0; OnChange = burst on trigger change.
         public BaseLfeTriggerMode TriggerMode { get; set; } = BaseLfeTriggerMode.Level;
@@ -308,6 +325,7 @@ namespace MozaPlugin
         public BaseLfeChannel Clone() => new BaseLfeChannel
         {
             Enabled = Enabled,
+            Mode = Mode,
             TriggerMode = TriggerMode,
             TriggerFormula = TriggerFormula,
             Frequency = Frequency,
@@ -343,12 +361,55 @@ namespace MozaPlugin
         public const string AbsTrigger = "[DataCorePlugin.GameData.ABSActive]";
         public const string GearshiftTrigger = "[DataCorePlugin.GameData.Gear]";
 
+        // RPM-scaled engine sweep (0..200 domain, rescaled into the slot's limits).
+        public const string EngineFrequencySweep = "[DataCorePlugin.GameData.Rpms] / [DataCorePlugin.GameData.MaxRpm] * 200";
+
+        // Slot 1/2/3 default to the Engine/ABS/Gearshift roles (their fixed wire ids).
         public BaseLfeChannel Engine { get; set; } = new BaseLfeChannel
-        { Frequency = 100, Intensity = 50, Smoothness = 100, TriggerFormula = EngineTrigger, FrequencyFormula = EngineFrequency };
+        { Mode = BaseLfeMode.Engine, Frequency = 100, Intensity = 50, Smoothness = 100, TriggerFormula = EngineTrigger, FrequencyFormula = EngineFrequency };
         public BaseLfeChannel Abs { get; set; } = new BaseLfeChannel
-        { Frequency = 15, Intensity = 50, Smoothness = 40, TriggerFormula = AbsTrigger };
+        { Mode = BaseLfeMode.Abs, Frequency = 15, Intensity = 50, Smoothness = 40, TriggerFormula = AbsTrigger };
         public BaseLfeChannel Gearshift { get; set; } = new BaseLfeChannel
-        { Frequency = 40, Intensity = 100, Smoothness = 100, TriggerFormula = GearshiftTrigger, TriggerMode = BaseLfeTriggerMode.OnChange };
+        { Mode = BaseLfeMode.Gearshift, Frequency = 40, Intensity = 100, Smoothness = 100, TriggerFormula = GearshiftTrigger, TriggerMode = BaseLfeTriggerMode.OnChange };
+
+        /// <summary>
+        /// Apply a slot role's template: trigger (formula + Level/OnChange),
+        /// frequency band, and character defaults. Custom leaves the slot as-is.
+        /// Enabled is preserved. The slot's wire id / render path is unchanged.
+        /// </summary>
+        public static void ApplyMode(BaseLfeChannel ch, BaseLfeMode mode)
+        {
+            if (ch == null) return;
+            ch.Mode = mode;
+            switch (mode)
+            {
+                case BaseLfeMode.Engine:
+                    ch.TriggerFormula = EngineTrigger;
+                    ch.TriggerMode = BaseLfeTriggerMode.Level;
+                    ch.FrequencyFormula = EngineFrequencySweep;   // rescaled into the band below
+                    ch.Frequency = 100; ch.FrequencyMin = 30; ch.FrequencyMax = 130;
+                    ch.IntensityFormula = ""; ch.Intensity = 50;
+                    ch.SmoothnessFormula = ""; ch.Smoothness = 100;
+                    break;
+                case BaseLfeMode.Abs:
+                    ch.TriggerFormula = AbsTrigger;
+                    ch.TriggerMode = BaseLfeTriggerMode.Level;
+                    ch.FrequencyFormula = ""; ch.Frequency = 15; ch.FrequencyMin = 5; ch.FrequencyMax = 30;
+                    ch.IntensityFormula = ""; ch.Intensity = 50;
+                    ch.SmoothnessFormula = ""; ch.Smoothness = 40;   // amplitude pulse
+                    break;
+                case BaseLfeMode.Gearshift:
+                    ch.TriggerFormula = GearshiftTrigger;
+                    ch.TriggerMode = BaseLfeTriggerMode.OnChange;
+                    ch.FrequencyFormula = ""; ch.Frequency = 40; ch.FrequencyMin = 20; ch.FrequencyMax = 100;
+                    ch.IntensityFormula = ""; ch.Intensity = 100;
+                    ch.SmoothnessFormula = ""; ch.Smoothness = 100;
+                    ch.VibrateOnNeutral = false; ch.DebounceMs = 50;
+                    break;
+                case BaseLfeMode.Custom:
+                    break;   // leave every value untouched
+            }
+        }
 
         public BaseLfeSettings Clone()
         {
