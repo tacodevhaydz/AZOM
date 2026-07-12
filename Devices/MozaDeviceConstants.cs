@@ -48,6 +48,9 @@ namespace MozaPlugin.Devices
             { "W17",     "503269ba-fc50-44d4-9844-8800da5f9f10" },  // CS Pro (firmware reports "W17", was "CSP")
             { "W18",     "14c84064-a968-43b9-ab92-a02f512632ce" },  // KS Pro (firmware reports "W18")
             { "W13",     "c4f0cf35-e68c-4756-a04a-b2f8b5d6dbf3" },  // FSR V2 (firmware reports "W13", was "FSR2")
+            // Lamborghini Revuelto (firmware "W11"). Pinned to the value the UUID-v5
+            // prefix logic already produces for "W11", so the GUID stays fixed.
+            { "W11",     "0a3da9a2-d091-5e2a-bc39-6b0915ad1f9b" },
             // ES entry wheel (firmware reports "ES", read from module id 0x18).
             // Pinned so the ES device GUID is stable regardless of the UUID-v5
             // prefix logic. ES wheels had no model-specific template before; this

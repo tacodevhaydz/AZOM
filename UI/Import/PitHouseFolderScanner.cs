@@ -90,9 +90,11 @@ namespace MozaPlugin.UI.Import
         }
 
         /// <summary>
-        /// Enumerate all .json files under <paramref name="presetsRoot"/>/<paramref name="cat"/>,
-        /// reading just the header fields. Returns alphabetised by display label.
-        /// Returns an empty list if the subfolder doesn't exist.
+        /// Enumerate the preset files under <paramref name="presetsRoot"/>/<paramref name="cat"/>,
+        /// reading just the header fields. Covers both legacy raw-JSON presets
+        /// (<c>*.json</c>) and the ZIP-wrapped <c>*.mzpreset</c> container.
+        /// Returns alphabetised by display label. Returns an empty list if the
+        /// subfolder doesn't exist.
         /// </summary>
         public static List<PresetHeader> ListCategory(string presetsRoot, Category cat)
         {
@@ -105,7 +107,9 @@ namespace MozaPlugin.UI.Import
             string[] files;
             try
             {
-                files = Directory.GetFiles(subPath, "*.json", SearchOption.TopDirectoryOnly);
+                files = Directory.GetFiles(subPath, "*.json", SearchOption.TopDirectoryOnly)
+                    .Concat(Directory.GetFiles(subPath, "*.mzpreset", SearchOption.TopDirectoryOnly))
+                    .ToArray();
             }
             catch
             {
@@ -126,11 +130,11 @@ namespace MozaPlugin.UI.Import
         {
             try
             {
-                // Only need top-level fields, so a streamed read would be
-                // marginally faster but the presets are <100KB each — full
-                // JObject.Parse is simpler and reliable.
-                var text = File.ReadAllText(file);
-                var root = JObject.Parse(text);
+                // Only need top-level fields, but the presets are <100KB each,
+                // so a full parse is simpler and reliable. LoadRoot unwraps the
+                // .mzpreset ZIP container or reads legacy raw JSON transparently.
+                var (root, _) = PitHousePresetArchive.LoadRoot(file);
+                if (root == null) return null;
                 var header = new PresetHeader
                 {
                     Path = file,

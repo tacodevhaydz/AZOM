@@ -41,6 +41,8 @@ namespace MozaPlugin.Devices
         private readonly Func<string, MBoosterDeviceSettings?> _settingsLookup;
         private readonly Func<bool> _isShuttingDown;
         private readonly Action<MBoosterDeviceController>? _onDeviceDetectedEdge;
+        private readonly Func<string, double> _customEffectFormulaEvaluator;
+        private readonly Action<string, string>? _onSerialResolved;
 
         // Collision logging — emit at most one warning per (role, identity-tail)
         // combo per session to avoid spam.
@@ -78,12 +80,16 @@ namespace MozaPlugin.Devices
             MozaData data,
             Func<string, MBoosterDeviceSettings?> settingsLookup,
             Func<bool> isShuttingDown,
-            Action<MBoosterDeviceController>? onDeviceDetectedEdge = null)
+            Action<MBoosterDeviceController>? onDeviceDetectedEdge = null,
+            Func<string, double>? customEffectFormulaEvaluator = null,
+            Action<string, string>? onSerialResolved = null)
         {
             _data = data ?? throw new ArgumentNullException(nameof(data));
             _settingsLookup = settingsLookup ?? throw new ArgumentNullException(nameof(settingsLookup));
             _isShuttingDown = isShuttingDown ?? (() => false);
             _onDeviceDetectedEdge = onDeviceDetectedEdge;
+            _customEffectFormulaEvaluator = customEffectFormulaEvaluator ?? (_ => 0.0);
+            _onSerialResolved = onSerialResolved;
         }
 
         /// <summary>
@@ -125,10 +131,20 @@ namespace MozaPlugin.Devices
                         identity: kvp.Key,
                         portName: kvp.Value.PortName,
                         settingsLookup: () => _settingsLookup(kvp.Key),
-                        isShuttingDown: _isShuttingDown);
+                        isShuttingDown: _isShuttingDown,
+                        customEffectFormulaEvaluator: _customEffectFormulaEvaluator,
+                        containerId: kvp.Value.ContainerId);
                     // Wire rising-edge detection to the plugin-level handler
                     // (applies profile, reads calibration, etc.).
                     c.DetectedRisingEdge += () => OnControllerDetected(c);
+                    // Forward the serial-interrogation result so the plugin can
+                    // re-key per-device settings from the transport identity to
+                    // the stable serial (settings follow the physical unit).
+                    c.SerialResolved += (id, ser) =>
+                    {
+                        try { _onSerialResolved?.Invoke(id, ser); }
+                        catch (Exception ex) { MozaLog.Debug($"[AZOM/mBooster] OnSerialResolved: {ex.Message}"); }
+                    };
                     _byIdentity[kvp.Key] = c;
                     _order.Add(c);
                     (added ??= new List<MBoosterDeviceController>()).Add(c);
@@ -226,9 +242,11 @@ namespace MozaPlugin.Devices
         /// <c>MozaData.{Throttle,Brake,Clutch}Position</c>. First-wins on
         /// role collision (logged once per (role, identity) combo).
         /// </summary>
-        public void OnHidAxisUpdate(string identity, double pos01)
+        public void OnHidAxisUpdate(string identity, string containerId, int axisIndex, double pos01)
         {
             if (string.IsNullOrEmpty(identity)) return;
+            if (axisIndex < 0) axisIndex = 0;
+            if (axisIndex >= MBoosterDeviceController.MaxAxes) return;
             if (double.IsNaN(pos01)) pos01 = 0;
             if (pos01 < 0) pos01 = 0;
             if (pos01 > 1) pos01 = 1;
@@ -238,7 +256,14 @@ namespace MozaPlugin.Devices
             {
                 if (!_byIdentity.TryGetValue(identity, out c))
                 {
-                    c = FindByInstancePrefixLocked(identity);
+                    // Container-ID rung: the HID + CDC interfaces of one physical
+                    // device share a Container ID, so this pairs them even when
+                    // Windows gives the two interfaces unrelated instance IDs (the
+                    // common multi-lane case — see docs). No-ops when the ID is
+                    // empty/absent (older drivers / Wine), falling through to the
+                    // prefix + single-device rungs exactly as before.
+                    c = FindByContainerIdLocked(containerId);
+                    if (c == null) c = FindByInstancePrefixLocked(identity);
                     if (c == null && _byIdentity.Count == 1)
                     {
                         // Real-hardware logs show the HID and CDC interfaces of
@@ -270,29 +295,52 @@ namespace MozaPlugin.Devices
             // it's a real hardware calibration write (mbooster-brake-travel-
             // start/end); the device's own firmware already clips/rescales
             // the raw signal before this HID read ever sees it.
-            var settings = _settingsLookup(c.Identity);
+            // Axis 0 (the master unit's pedal) carries the host-side Pedal Feel
+            // shaping (deadzone / max force / input curve) exactly as the
+            // single-axis path always has — those controls are calibrated
+            // against the master pedal. Chained axes (1+) route raw for now;
+            // per-axis Pedal Feel is a follow-up (Stage 3).
+            // Per-axis Pedal Feel: shape EACH pedal's HID by ITS OWN config —
+            // the master (axis 0) from the lane's flat fields, each chained pedal
+            // from its per-pedal entry. Host-side only (deadzone / max force /
+            // input curve); the wire calibration is applied separately in
+            // ApplyMBoosterToHardware.
+            var laneSettings = _settingsLookup(c.Identity);
+            IMBoosterPedalConfig? cfg = laneSettings;
+            if (axisIndex > 0)
+            {
+                var pedals = laneSettings?.Pedals;
+                cfg = (pedals != null && pedals.TryGetValue(axisIndex, out var pp)) ? pp : null;
+            }
+
             double posPct = pos01 * 100.0;
-            if (settings != null)
+            if (cfg != null)
             {
                 // Raw 0-100% HID travel isn't a fixed 0-200kg scale — it's
-                // whatever the device's OWN Max Threshold calibration
-                // (Sim Input Mapping) currently says 100% is. -1 means the
-                // user has never touched that control from this plugin (see
-                // MaxThresholdKg's sentinel doc comment) — the device may
-                // already be calibrated to something else entirely (real
-                // Pit House captures commonly show ~100-125kg, not 200kg),
-                // but there's no way to read that back, so 200kg remains
-                // the best available guess in that case.
-                double fullScaleKg = settings.MaxThresholdKg >= 0 ? settings.MaxThresholdKg : 200.0;
-                if (settings.DeadzoneKg > 0 || settings.MaxForceKg < fullScaleKg)
-                    posPct = ApplyDeadzoneAndMaxForce(posPct, settings.DeadzoneKg, settings.MaxForceKg, fullScaleKg);
+                // whatever this pedal's OWN Max Threshold calibration (Sim Input
+                // Mapping) currently says 100% is (200kg fallback when unset).
+                double fullScaleKg = cfg.MaxThresholdKg >= 0 ? cfg.MaxThresholdKg : 200.0;
+                if (cfg.DeadzoneKg > 0 || cfg.MaxForceKg < fullScaleKg)
+                    posPct = ApplyDeadzoneAndMaxForce(posPct, cfg.DeadzoneKg, cfg.MaxForceKg, fullScaleKg);
+                // Store the pre-input-curve percent for EVERY axis so the UI's
+                // live curve markers follow whichever pedal is selected (axis 0
+                // also mirrored to LastRawPercentPreCurve for legacy callers).
+                if (axisIndex < c.LastAxisRawPercentPreCurve.Length) c.LastAxisRawPercentPreCurve[axisIndex] = posPct;
+                if (axisIndex == 0) c.LastRawPercentPreCurve = posPct;
+                if (cfg.InputCurveY != null && cfg.InputCurveY.Length == 5)
+                    posPct = EvaluateInputCurve(cfg.InputCurveY, posPct);
             }
-            c.LastRawPercentPreCurve = posPct;
-            if (settings?.InputCurveY != null && settings.InputCurveY.Length == 5)
-                posPct = EvaluateInputCurve(settings.InputCurveY, posPct);
-            pos01 = posPct / 100.0;
+            else
+            {
+                if (axisIndex < c.LastAxisRawPercentPreCurve.Length) c.LastAxisRawPercentPreCurve[axisIndex] = posPct;
+                if (axisIndex == 0) c.LastRawPercentPreCurve = posPct;
+            }
 
-            c.LastHidPosition = pos01;
+            double shaped01 = posPct / 100.0;
+            if (axisIndex == 0) c.LastHidPosition = shaped01;
+
+            c.LastAxisPositions[axisIndex] = shaped01;
+            if (axisIndex + 1 > c.AxisCount) c.AxisCount = axisIndex + 1;
 
             // Merge step: re-compute the active positions across all devices
             // every time any one of them ticks. Cheap (N ≤ 3 typically).
@@ -498,6 +546,49 @@ namespace MozaPlugin.Devices
             return null;
         }
 
+        /// <summary>
+        /// Pair a HID axis stream to its CDC lane by Windows Container ID — the
+        /// robust path when the two interfaces of one physical device get
+        /// unrelated instance IDs (so exact + prefix both fail), which the
+        /// real-hardware finding in docs/protocol/devices/mbooster.md shows is
+        /// the norm. The Container ID is identical across all interfaces of one
+        /// composite device. Must be called with <see cref="_lock"/> held.
+        /// Returns null when the HID side reported no Container ID (older
+        /// drivers / Wine) so the caller falls through to the other rungs.
+        /// </summary>
+        private MBoosterDeviceController? FindByContainerIdLocked(string containerId)
+        {
+            if (string.IsNullOrEmpty(containerId)) return null;
+            foreach (var kvp in _byIdentity)
+            {
+                var c = kvp.Value;
+                if (!string.IsNullOrEmpty(c.ContainerId) &&
+                    string.Equals(c.ContainerId, containerId, StringComparison.OrdinalIgnoreCase))
+                {
+                    LogContainerPairingOnce(containerId, c.Identity);
+                    return c;
+                }
+            }
+            return null;
+        }
+
+        private readonly HashSet<string> _containerPairingsLogged =
+            new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+
+        private void LogContainerPairingOnce(string containerId, string cdcIdentity)
+        {
+            bool isNew;
+            lock (_containerPairingsLogged)
+                isNew = _containerPairingsLogged.Add(containerId);
+            if (isNew)
+            {
+                MozaLog.Info(
+                    $"[AZOM/mBooster] Paired HID axis to CDC device " +
+                    $"'{MBoosterDeviceController.ShortIdentity(cdcIdentity)}' via Container ID " +
+                    $"'{containerId}' (exact identity match failed — the expected multi-lane path).");
+            }
+        }
+
         private static string InstancePrefix(string id)
         {
             if (string.IsNullOrEmpty(id)) return "";
@@ -574,49 +665,70 @@ namespace MozaPlugin.Devices
         {
             bool throttleSet = false, brakeSet = false, clutchSet = false;
             // First-wins iteration over _order while holding the lock so the
-            // controller list can't mutate underneath us.
+            // controller list can't mutate underneath us. Each lane hosts up to
+            // 3 pedal axes; every axis routes independently by its own role.
             lock (_lock)
             {
                 for (int i = 0; i < _order.Count; i++)
                 {
                     var c = _order[i];
                     var s = _settingsLookup(c.Identity);
-                    if (s == null) continue;
-                    // MozaData position fields are int (0..100, the same scale
-                    // the existing HID reader writes). Round explicitly.
-                    int v100 = (int)Math.Round(c.LastHidPosition * 100.0);
-                    if (v100 < 0) v100 = 0; if (v100 > 100) v100 = 100;
-                    switch (s.Role)
+                    int axisCount = c.AxisCount > 0 ? c.AxisCount : 1;
+                    if (axisCount > MBoosterDeviceController.MaxAxes) axisCount = MBoosterDeviceController.MaxAxes;
+                    for (int a = 0; a < axisCount; a++)
                     {
-                        case MBoosterRole.Throttle:
-                            if (!throttleSet)
-                            {
-                                _data.ThrottlePosition = v100;
-                                throttleSet = true;
-                            }
-                            else { LogCollisionOnce("throttle", c.Identity); }
-                            break;
-                        case MBoosterRole.Brake:
-                            if (!brakeSet)
-                            {
-                                _data.BrakePosition = v100;
-                                brakeSet = true;
-                            }
-                            else { LogCollisionOnce("brake", c.Identity); }
-                            break;
-                        case MBoosterRole.Clutch:
-                            if (!clutchSet)
-                            {
-                                _data.ClutchPosition = v100;
-                                clutchSet = true;
-                            }
-                            else { LogCollisionOnce("clutch", c.Identity); }
-                            break;
-                        case MBoosterRole.Disabled:
-                        default:
-                            break;
+                        var role = ResolveAxisRole(s, a, axisCount);
+                        if (role == MBoosterRole.Disabled) continue;
+                        // MozaData position fields are int (0..100, the same scale
+                        // the existing HID reader writes). Round explicitly.
+                        int v100 = (int)Math.Round(c.LastAxisPositions[a] * 100.0);
+                        if (v100 < 0) v100 = 0; if (v100 > 100) v100 = 100;
+                        switch (role)
+                        {
+                            case MBoosterRole.Throttle:
+                                if (!throttleSet) { _data.ThrottlePosition = v100; throttleSet = true; }
+                                else { LogCollisionOnce("throttle", c.Identity); }
+                                break;
+                            case MBoosterRole.Brake:
+                                if (!brakeSet) { _data.BrakePosition = v100; brakeSet = true; }
+                                else { LogCollisionOnce("brake", c.Identity); }
+                                break;
+                            case MBoosterRole.Clutch:
+                                if (!clutchSet) { _data.ClutchPosition = v100; clutchSet = true; }
+                                else { LogCollisionOnce("clutch", c.Identity); }
+                                break;
+                        }
                     }
                 }
+            }
+        }
+
+        /// <summary>
+        /// Role for one axis of a lane. An explicit per-axis override
+        /// (<see cref="MBoosterDeviceSettings.AxisRoles"/>, set by the UI when
+        /// the user remaps) always wins. Otherwise: a single-axis device uses
+        /// the legacy <see cref="MBoosterDeviceSettings.Role"/> (exact backward
+        /// compat); a multi-pedal chain defaults by axis order to
+        /// [Throttle, Brake, Clutch]. That order is the standard Moza pedal
+        /// usage convention — real hardware (support bundle 2026-07-07) exposes
+        /// the chain's pedals as GenericDesktop axes Rx(0x33)/Ry(0x34)/Rz(0x35),
+        /// which ascending-sorted give index 0/1/2, and Moza maps Rx→throttle,
+        /// Ry→brake, Rz→clutch (see MozaHidClass.Pedals). The user remaps via
+        /// the UI if a given unit's wiring differs.
+        /// </summary>
+        internal static MBoosterRole ResolveAxisRole(MBoosterDeviceSettings? s, int axisIndex, int axisCount)
+        {
+            var roles = s?.AxisRoles;
+            if (roles != null && axisIndex >= 0 && axisIndex < roles.Length)
+                return roles[axisIndex];
+            if (axisCount <= 1)
+                return s?.Role ?? MBoosterRole.Disabled;
+            switch (axisIndex)
+            {
+                case 0:  return MBoosterRole.Throttle;  // Rx (0x33)
+                case 1:  return MBoosterRole.Brake;     // Ry (0x34)
+                case 2:  return MBoosterRole.Clutch;    // Rz (0x35)
+                default: return MBoosterRole.Disabled;
             }
         }
 

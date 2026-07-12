@@ -11,6 +11,7 @@ using System.Windows.Media;
 using GameReaderCommon;
 using SimHub.Plugins;
 using MozaPlugin.Devices;
+using MozaPlugin.Devices.StalksTruckSim;
 using MozaPlugin.Hardware;
 using MozaPlugin.Protocol;
 using MozaPlugin.Resources;
@@ -182,6 +183,10 @@ namespace MozaPlugin
         private Timer _pollTimer = null!;
         private Timer _retryTimer = null!;
         private Timer _reconnectTimer = null!;
+        // CAS re-entry guard: a 5 s reconnect tick can outlast its interval
+        // (probe fallback ~600 ms/port under Wine, Disconnect joins at 1 s) —
+        // overlapping ticks must not run TryConnect* concurrently on a lane.
+        private int _reconnectTickInProgress;
         // 1 once SystemEvents.PowerModeChanged is subscribed, so End()/
         // CleanupPartialInit unsubscribe exactly once. PowerModeChanged is a
         // STATIC event — a live subscription leaks this plugin instance (and
@@ -194,6 +199,7 @@ namespace MozaPlugin
         // (hub-port-power / cmd 0x64): that device answered the base probe, so it is
         // a known wheelbase and rejects hub commands ("Unexpected cmd: 100").
         private MozaHidReader _hidReader = null!;
+        private StalksTruckSimController _stalksController = null!;
         private PluginManager _pluginManager = null!;
         private SimHubPropertyResolver _propertyResolver = null!;
         internal SimHubPropertyResolver PropertyResolver => _propertyResolver;
@@ -338,6 +344,8 @@ namespace MozaPlugin
         internal void WriteFloatIfHandbrakeDetected(string command, int value) => _hardwareApplier.WriteFloatIfHandbrakeDetected(command, value);
         internal void WriteIfPedalsDetected(string command, int value) => _hardwareApplier.WriteIfPedalsDetected(command, value);
         internal void WriteFloatIfPedalsDetected(string command, int value) => _hardwareApplier.WriteFloatIfPedalsDetected(command, value);
+        internal void WriteIfShifterDetected(string command, int value) => _hardwareApplier.WriteIfShifterDetected(command, value);
+        internal void WriteArrayIfShifterDetected(string command, byte[] payload) => _hardwareApplier.WriteArrayIfShifterDetected(command, payload);
         internal void WriteIfBaseAmbientSupported(string command, int value) => _hardwareApplier.WriteIfBaseAmbientSupported(command, value);
         internal void WriteColorIfWheelDetected(string command, byte r, byte g, byte b) => _hardwareApplier.WriteColorIfWheelDetected(command, r, g, b);
         internal void WriteColorIfDashDetected(string command, byte r, byte g, byte b) => _hardwareApplier.WriteColorIfDashDetected(command, r, g, b);
@@ -349,6 +357,7 @@ namespace MozaPlugin
         internal void ApplyBaseAmbientToHardware(MozaProfile? profile) => _hardwareApplier.ApplyBaseAmbientToHardware(profile);
         internal void ApplyHandbrakeToHardware(MozaProfile? profile) => _hardwareApplier.ApplyHandbrakeToHardware(profile);
         internal void ApplyPedalsToHardware(MozaProfile? profile) => _hardwareApplier.ApplyPedalsToHardware(profile);
+        internal void ApplyShifterToHardware(MozaProfile? profile) => _hardwareApplier.ApplyShifterToHardware(profile);
         internal void ApplyAb9ToHardware(MozaProfile? profile) => _hardwareApplier.ApplyAb9ToHardware(profile);
         internal void ApplyWheelExtensionSettings(MozaWheelExtensionSettings extSettings, string? pageModelPrefix = null) => _hardwareApplier.ApplyWheelExtensionSettings(extSettings, pageModelPrefix);
         /// <summary>
@@ -400,6 +409,10 @@ namespace MozaPlugin
 
         // AB9 host-rendered engine-vibration worker. See Devices/Ab9EngineVibrationWorker.cs.
         private Ab9EngineVibrationWorker? _ab9Worker;
+
+        // Wheelbase LFE worker (complex gearshift / engine / ABS on base fw
+        // >= 1.2.10.10). See Devices/BaseLfeEffectWorker.cs.
+        private BaseLfeEffectWorker? _baseLfeWorker;
 
         // Keeps the process responsive in the background: opts out of EcoQoS
         // throttling during active gameplay, and holds the 1 ms timer during gameplay
@@ -764,6 +777,8 @@ namespace MozaPlugin
         internal bool IsBaseAmbientLedSupported => DetectionState.BaseAmbientLedSupported;
         internal bool IsHandbrakeDetected => DetectionState.HandbrakeDetected;
         internal bool IsPedalsDetected => DetectionState.PedalsDetected;
+        internal bool IsShifterDetected => DetectionState.ShifterDetected;
+        internal bool IsShifterHasLeds => DetectionState.ShifterHasLeds;
         internal bool IsHubDetected => DetectionState.HubDetected;
         internal bool IsAb9Detected => DetectionState.Ab9Detected;
         internal MozaAb9DeviceManager Ab9Manager => _ab9Manager;
@@ -979,6 +994,8 @@ namespace MozaPlugin
                 // game switch re-runs Init on the already-loaded assembly). Bump on
                 // each radar build so a restart is verifiable from the log.
                 MozaLog.Info("[AZOM] BUILD radar-2026-06-29Y: suppress radar/track-map channels (patch/Location*, patch/riN) from the channel mapper UI");
+
+                MozaLog.WireDebugEnabled = _settings.VerboseWireDebugLog;
 
                 // Bridge-format JSONL wire trace at SimHub/Logs/moza-wire-*.jsonl.
                 // Opt-in via _settings.EnableWireTraceFileSink. Fresh file per launch.
@@ -1200,6 +1217,18 @@ namespace MozaPlugin
                     () => IsShuttingDown);
                 _ab9Worker.Start();
 
+                // Wheelbase LFE worker — tick gates on connection/detection +
+                // BaseSupportsLfe (base fw >= 1.2.10.10). Emits on the base
+                // primary pipe (_deviceManager).
+                _baseLfeWorker = new BaseLfeEffectWorker(
+                    _deviceManager,
+                    DetectionState,
+                    _data,
+                    () => _settings?.ProfileStore?.CurrentProfile?.BaseLfe,
+                    CreateHapticsFormulaResolver(),   // NCalc/property → double, own engine
+                    () => IsShuttingDown);
+                _baseLfeWorker.Start();
+
                 // mBooster Pedals registry — multi-device owner. Refresh() is
                 // called from the reconnect timer alongside TryConnectAb9. Each
                 // detected mBooster spawns its own controller + 50 Hz worker.
@@ -1207,7 +1236,9 @@ namespace MozaPlugin
                     _data,
                     settingsLookup: id => GetOrCreateMBoosterSettings(id),
                     isShuttingDown: () => IsShuttingDown,
-                    onDeviceDetectedEdge: OnMBoosterDeviceDetected);
+                    onDeviceDetectedEdge: OnMBoosterDeviceDetected,
+                    customEffectFormulaEvaluator: CreateHapticsFormulaResolver(),
+                    onSerialResolved: OnMBoosterSerialResolved);
                 // Initial walk so any mBooster plugged in BEFORE SimHub launched
                 // appears immediately — without this, the user waits up to 5 s
                 // for the reconnect timer to fire.
@@ -1266,69 +1297,9 @@ namespace MozaPlugin
                 _reconnectTimer.Elapsed += (s, e) =>
                 {
                     if (IsShuttingDown) return;
-                    if (!_connection.IsConnected)
-                        _connectionCoordinator?.TryConnect();
-                    else
-                    {
-                        // Primary already latched. Two complementary self-heals:
-                        //  1. base→hub: the base has no wheel but one answered on
-                        //     the hub (broken base) → run the wheel pipeline over
-                        //     the hub. Runs FIRST and sets _wheellessBasePort so (2)
-                        //     can't immediately undo it.
-                        //  2. hub→base: the primary grabbed a hub before the
-                        //     wheelbase enumerated (wrong latch order) → hand it
-                        //     back to the base. Runs before TryConnectHub so the
-                        //     freed hub port is claimed by the hub manager this tick.
-                        _connectionCoordinator?.MigratePrimaryToHubIfNeeded();
-                        _connectionCoordinator?.MigratePrimaryToWheelbaseIfNeeded();
-                    }
-                    // AB9 probe is microseconds when registry is populated.
-                    // On Wine/Proton (no registry) the fallback would scan
-                    // every wine COM symlink and lock up SimHub; suppress when
-                    // registry is empty. DisableAb9Detection wins regardless.
-                    bool registryHasMoza =
-                        Protocol.MozaPortDiscovery.Instance.Enumerate().Count > 0;
-                    if (!_settings.DisableAb9Detection
-                        && registryHasMoza
-                        && !_ab9Manager.IsConnected)
-                        _connectionCoordinator?.TryConnectAb9();
-
-                    // Standalone-USB CM2 on its own port (0x0025) — same Wine guard.
-                    if (registryHasMoza && !_dashboardManager.IsConnected)
-                        _connectionCoordinator?.TryConnectDashboard();
-
-                    // Universal Hub on its own port (0x0020) — registry-only, same
-                    // Wine guard. The hub-only case is handled by the primary
-                    // (BaseAndHub) connection; this dedicated connection only takes
-                    // a hub the primary didn't claim (i.e. a base is the primary),
-                    // and no-ops when the hub port is already held by the primary.
-                    if (registryHasMoza && !_hubManager.IsConnected)
-                        _connectionCoordinator?.TryConnectHub();
-
-                    // Dedicated base-aux pipe — ONLY after a DELIBERATE base→hub
-                    // migration (broken base), identified by the _wheellessBasePort
-                    // latch. Must NOT gate on PrimaryBoundToHub alone: the primary
-                    // can be TRANSIENTLY on the hub during wrong-latch-order cold
-                    // start (hub enumerated before the base). If base-aux grabbed
-                    // the base then, it would hold the port and permanently block
-                    // MigratePrimaryToWheelbaseIfNeeded from reclaiming it — leaving
-                    // the primary stuck on the hub (wheel still works via the hub,
-                    // but the port is mislabeled "Wheelbase"). The latch is set only
-                    // by a real migration, so a transient hub latch never trips it.
-                    if (registryHasMoza && _connectionCoordinator?.WheellessBasePort != null && !_baseManager.IsConnected)
-                        _connectionCoordinator?.TryConnectBase();
-
-                    // Slice I: reconnect-timer mBooster Refresh re-enabled.
-                    try { _mboosterRegistry?.Refresh(); }
-                    catch (Exception ex) { MozaLog.Debug($"[AZOM/mBooster] Refresh: {ex.Message}"); }
-
-                    // Standalone pedals/handbrake on their own ports (registry-
-                    // only, same Wine guard as the other dedicated lanes).
-                    if (registryHasMoza)
-                    {
-                        try { _peripheralRegistry?.Refresh(); }
-                        catch (Exception ex) { MozaLog.Debug($"[AZOM] Standalone peripheral refresh: {ex.Message}"); }
-                    }
+                    if (Interlocked.CompareExchange(ref _reconnectTickInProgress, 1, 0) != 0) return;
+                    try { ReconnectTick(); }
+                    finally { Interlocked.Exchange(ref _reconnectTickInProgress, 0); }
                 };
                 _reconnectTimer.AutoReset = true;
                 if (_settings.ConnectionEnabled)
@@ -1338,12 +1309,18 @@ namespace MozaPlugin
                 // Slice G: HID event subscription re-enabled.
                 if (_mboosterRegistry != null)
                 {
-                    _hidReader.MBoosterAxisChanged += (identity, pos01) =>
+                    _hidReader.MBoosterAxisChanged += (identity, containerId, axisIndex, pos01) =>
                     {
-                        try { _mboosterRegistry.OnHidAxisUpdate(identity, pos01); }
+                        try { _mboosterRegistry.OnHidAxisUpdate(identity, containerId, axisIndex, pos01); }
                         catch (Exception ex) { MozaLog.Debug($"[AZOM/mBooster] HID dispatch: {ex.Message}"); }
                     };
                 }
+                // Truck-sim stalk keyboard emulation: subscribe before Start() so no
+                // button edges are missed. Only acts when the Stalks mode is TruckSim
+                // and an ETS2/ATS game is foreground (gated inside the controller).
+                _stalksController = new StalksTruckSimController();
+                _stalksController.ApplySettings(_settings.StalksMode, _settings.StalksTruckSim);
+                _hidReader.StalksButtonChanged += _stalksController.OnStalkButton;
                 _hidReader.Start();
                 _propertyResolver = new SimHubPropertyResolver(_pluginManager, _data, _hidReader);
                 _hardwareApplier = new HardwareApplier(this, _data, _deviceManager, _ab9Manager, DetectionState);
@@ -1546,6 +1523,7 @@ namespace MozaPlugin
 
             // Halt the AB9 engine-vib worker before disposing the AB9 manager.
             try { _ab9Worker?.Stop(); _ab9Worker = null; } catch { }
+            try { _baseLfeWorker?.Stop(); _baseLfeWorker = null; } catch { }
             // Release the timer-resolution request + power-throttling opt-out.
             try { _responsiveness?.Dispose(); _responsiveness = null; } catch { }
             // Dispose every mBooster controller — same reason: stop workers
@@ -1605,6 +1583,7 @@ namespace MozaPlugin
             try { _profileCoordinator?.DetachProfileStore(); } catch { }
             try { _deviceManager?.Dispose(); } catch { }
             try { _hidReader?.Dispose(); } catch { }
+            try { _stalksController?.Dispose(); } catch { }
             if (ownTelemetrySender)
             {
                 try { _telemetrySender?.Dispose(); } catch { }
@@ -1673,6 +1652,21 @@ namespace MozaPlugin
         private string? _lastAb9GearString;
         private DateTime _lastAb9GearShiftSendUtc = DateTime.MinValue;
 
+        // Wheelbase LFE momentary test triggers (from the UI test buttons). No-op
+        // when the firmware doesn't support LFE. Each plays a fixed pattern:
+        // engine = 2 s sweep, ABS = 1 s burst, gearshift = two rapid bumps.
+        public void TriggerBaseLfeEngineTest() { if (_data.BaseSupportsLfe) _baseLfeWorker?.PostEngineTest(); }
+        public void TriggerBaseLfeAbsTest() { if (_data.BaseSupportsLfe) _baseLfeWorker?.PostAbsTest(); }
+        public void TriggerBaseLfeGearshiftTest() { if (_data.BaseSupportsLfe) _baseLfeWorker?.PostGearshiftTest(); }
+
+        /// <summary>Latest (carrier freq Hz, amplitude 0..1) for the 3 LFE slots — drives the settings scope.</summary>
+        public (double freq, double amp)[] GetLfeScopeSamples()
+        {
+            var w = _baseLfeWorker;
+            if (w == null) return new[] { (0.0, 0.0), (0.0, 0.0), (0.0, 0.0) };
+            return new[] { (w.ScopeEngineFreq, w.ScopeEngineAmp), (w.ScopeAbsFreq, w.ScopeAbsAmp), (w.ScopeGearFreq, w.ScopeGearAmp) };
+        }
+
         // Fire a one-shot base-gearshift-event on gear change. Gated by
         // GearshiftVibration > 0 and a debounce. By default, transitions
         // *into* neutral don't fire (H-pattern produces two transitions
@@ -1681,9 +1675,26 @@ namespace MozaPlugin
         private void CheckGearshiftEvent(GameData data)
         {
             if (!_data.IsConnected) return;
-            if (_data.GearshiftVibration <= 0) return;
             string? gear = data?.NewData?.Gear;
             if (string.IsNullOrEmpty(gear)) return;
+
+            // LFE-capable firmware: the complex gearshift (cmd 0x77, LFE channel
+            // id 0) handles gear-shift feedback ONLY while that channel is enabled
+            // and edge-triggered (OnChange) — then the worker fires it and we skip
+            // the classic bump to avoid a double buzz. But if the channel is
+            // repurposed as a continuous partial (Level mode, e.g. the Additive
+            // Engine preset) or disabled, fall through to the classic bump (cmd
+            // 0x76), which coexists with the three LFE channels, so gear shifts are
+            // still felt while all three channels drive the engine.
+            if (_data.BaseSupportsLfe)
+            {
+                var lfeGear = _settings?.ProfileStore?.CurrentProfile?.BaseLfe?.Gearshift;
+                bool lfeHandlesGearshift = lfeGear != null && lfeGear.Enabled
+                    && lfeGear.TriggerMode == BaseLfeTriggerMode.OnChange;
+                if (lfeHandlesGearshift) return;
+            }
+
+            if (_data.GearshiftVibration <= 0) return;
             if (_lastGearString == null)
             {
                 _lastGearString = gear;
@@ -1764,6 +1775,9 @@ namespace MozaPlugin
             // doesn't make the feed look quiet.
             Interlocked.Exchange(ref _autoStandbyLastDataUpdateTicks, DateTime.UtcNow.Ticks);
             _autoStandbyLastGameRunning = data.GameRunning;
+            // Feed the truck-sim stalk controller the current game context so it can
+            // gate keyboard output to a running ETS2/ATS session.
+            try { _stalksController?.SetGameContext(pluginManager.GameName, data.GameRunning); } catch { }
             // Heading probe (diagnostic): dump SimHub heading/radar/spotter props a
             // handful of times while a game runs so we can identify AC's live heading
             // source for the radar preamble. Self-limits to ~20 logs (~once/sec).
@@ -1830,6 +1844,11 @@ namespace MozaPlugin
             double maxRpm = data.NewData?.MaxRpm ?? 0.0;
             bool engineOn = data.GameRunning && !data.GamePaused && !data.GameInMenu;
             _ab9Worker?.PostFrame(rpm, maxRpm, engineOn);
+
+            // Wheelbase LFE worker: just feed liveness (running & not paused/in-menu).
+            // All per-channel values (RPM, ABSActive, Gear, …) come from the
+            // channels' own formulas, evaluated live via the property resolver.
+            _baseLfeWorker?.PostFrame(engineOn);
 
             // Control Mapper variant-provider bridge: drive wheel-change detection
             // each tick when registered; otherwise retry registration up to the
@@ -2047,6 +2066,11 @@ namespace MozaPlugin
             var b = data.ButtonStates;
             for (int i = 0; i < b.Length; i++)
                 if (b[i]) h = (h * 31) + (i + 2);
+            // Stalks live on their own button surface (see MozaData.StalksButtonStates)
+            // but pressing them is still user activity — keep it counting toward standby.
+            var s = data.StalksButtonStates;
+            for (int i = 0; i < s.Length; i++)
+                if (s[i]) h = (h * 31) + (i + 1000);
             return h;
         }
 
@@ -2055,18 +2079,72 @@ namespace MozaPlugin
         /// in the current profile. Called by the registry and the effect
         /// worker on every tick — must be allocation-free for known devices.
         /// </summary>
+        // Transport-identity → "mbooster:<serial>" once a lane's serial is
+        // interrogated. Populated on OnMBoosterSerialResolved; read lock-free in
+        // GetOrCreateMBoosterSettings. Deliberately NOT resolved via the
+        // registry there — MergePositions calls in while holding the registry
+        // lock, so consulting the registry under _mboosterSettingsLock would
+        // invert the lock order.
+        private readonly System.Collections.Concurrent.ConcurrentDictionary<string, string> _mboosterSerialByIdentity =
+            new System.Collections.Concurrent.ConcurrentDictionary<string, string>(StringComparer.OrdinalIgnoreCase);
+        private readonly object _mboosterSettingsLock = new object();
+
         internal MBoosterDeviceSettings GetOrCreateMBoosterSettings(string identity)
         {
-            var profile = _settings?.ProfileStore?.CurrentProfile;
-            if (profile == null) return new MBoosterDeviceSettings();
-            if (profile.MBoosterSettings == null)
-                profile.MBoosterSettings = new Dictionary<string, MBoosterDeviceSettings>(StringComparer.OrdinalIgnoreCase);
-            if (!profile.MBoosterSettings.TryGetValue(identity, out var s) || s == null)
+            // Resolve a transport identity to the device's stable serial key so
+            // per-device settings follow the physical unit across USB ports.
+            string key = identity ?? "";
+            string original = key;
+            if (!string.IsNullOrEmpty(key) && _mboosterSerialByIdentity.TryGetValue(key, out var serialKey))
+                key = serialKey;
+
+            lock (_mboosterSettingsLock)
             {
-                s = new MBoosterDeviceSettings();
-                profile.MBoosterSettings[identity] = s;
+                var profile = _settings?.ProfileStore?.CurrentProfile;
+                if (profile == null) return new MBoosterDeviceSettings();
+                if (profile.MBoosterSettings == null)
+                    profile.MBoosterSettings = new Dictionary<string, MBoosterDeviceSettings>(StringComparer.OrdinalIgnoreCase);
+                var dict = profile.MBoosterSettings;
+
+                // Lazily migrate a transient transport-keyed entry to the serial
+                // key in the current profile. A serial-keyed entry, if one
+                // already exists (the user's saved config from a prior session),
+                // wins — the transport entry is a just-created placeholder.
+                if (!string.Equals(original, key, StringComparison.OrdinalIgnoreCase)
+                    && dict.TryGetValue(original, out var stale))
+                {
+                    if (!dict.ContainsKey(key)) dict[key] = stale;
+                    dict.Remove(original);
+                }
+
+                if (!dict.TryGetValue(key, out var s) || s == null)
+                {
+                    s = new MBoosterDeviceSettings();
+                    dict[key] = s;
+                }
+                return s;
             }
-            return s;
+        }
+
+        /// <summary>
+        /// A lane's 32-char Moza serial has been interrogated. Record the
+        /// identity→serial mapping (so settings lookups re-key to it), migrate
+        /// the current profile's entry, and re-apply the now serial-keyed
+        /// settings to the device — at detect we applied the transient
+        /// transport-keyed entry, but the real config may live under the serial
+        /// key from a prior session. Runs on the connection read thread.
+        /// </summary>
+        private void OnMBoosterSerialResolved(string identity, string serial)
+        {
+            if (IsShuttingDown || string.IsNullOrEmpty(identity) || string.IsNullOrEmpty(serial)) return;
+            _mboosterSerialByIdentity[identity] = "mbooster:" + serial;
+            try
+            {
+                var settings = GetOrCreateMBoosterSettings(identity); // resolves + migrates current profile
+                var controller = _mboosterRegistry?.FindByIdentity(identity);
+                if (controller != null) ApplyMBoosterToHardware(controller, settings);
+            }
+            catch (Exception ex) { MozaLog.Warn($"[AZOM/mBooster] serial re-key for {MBoosterDeviceController.ShortIdentity(identity)}: {ex.Message}"); }
         }
 
         /// <summary>
@@ -2104,48 +2182,83 @@ namespace MozaPlugin
         internal void ApplyMBoosterToHardware(MBoosterDeviceController controller, MBoosterDeviceSettings s)
         {
             if (controller == null || s == null || !controller.IsConnected) return;
-            // Direction / min / max — write only if the user has set them.
-            if (s.Direction >= 0)
+
+            // Route Direction / Min / Max / output-curve to the command slot
+            // matching the pedal's ROLE. This used to be hardcoded to the
+            // "throttle" slot, which is wrong for a mBooster used as a brake or
+            // clutch (and for a chain whose master pedal isn't the throttle) —
+            // the calibration silently landed on the wrong pedal's command.
+            // The role is the master pedal's (axis 0): ResolveAxisRole gives the
+            // legacy Role for a single unit or the chain default/override
+            // otherwise. Per-pedal calibration for the OTHER chained pedals is a
+            // follow-up (needs a per-pedal settings UI); this fixes the routing
+            // for the pedal the current single calibration set configures.
+            int axisCount = controller.AxisCount > 0 ? controller.AxisCount : 1;
+            // Apply EACH hosted pedal's calibration to its role-specific command.
+            // Pedal 0 (master) keeps its calibration in the flat fields (the
+            // existing UI); the additional chained pedals (axes 1+) store theirs
+            // in s.Pedals[axis]. An unconfigured pedal (all -1 / null) writes
+            // nothing.
+            for (int axis = 0; axis < axisCount && axis < global::MozaPlugin.Devices.MBoosterDeviceController.MaxAxes; axis++)
             {
-                // Direction is a per-pedal field on real Moza pedals; on
-                // mBooster (single-axis) we route through the throttle dir
-                // slot. Brake/clutch dirs are reserved for symmetry but
-                // unlikely to be wired on a single-axis unit.
-                controller.SendIntWrite("mbooster-throttle-dir", s.Direction);
+                var role = global::MozaPlugin.Devices.MozaMBoosterRegistry.ResolveAxisRole(s, axis, axisCount);
+                string? prefix =
+                    role == global::MozaPlugin.Devices.MBoosterRole.Throttle ? "throttle"
+                    : role == global::MozaPlugin.Devices.MBoosterRole.Brake ? "brake"
+                    : role == global::MozaPlugin.Devices.MBoosterRole.Clutch ? "clutch"
+                    : null;
+                if (prefix == null) continue;
+
+                // This pedal's full config: master flat fields (axis 0) or its
+                // per-pedal entry. An unconfigured chained pedal writes nothing.
+                global::MozaPlugin.Devices.IMBoosterPedalConfig cfg;
+                if (axis == 0) cfg = s;
+                else if (s.Pedals != null && s.Pedals.TryGetValue(axis, out var p) && p != null) cfg = p;
+                else continue;
+
+                if (cfg.Direction >= 0) controller.SendIntWrite($"mbooster-{prefix}-dir", cfg.Direction);
+                if (cfg.Min >= 0) controller.SendIntWrite($"mbooster-{prefix}-min", cfg.Min);
+                if (cfg.Max >= 0) controller.SendIntWrite($"mbooster-{prefix}-max", cfg.Max);
+                if (cfg.CurveY != null && cfg.CurveY.Length == 5)
+                {
+                    // Resample at the fixed 20/40/60/80/100 breakpoints in case
+                    // CurveX has been horizontally dragged (see
+                    // MozaMBoosterRegistry.ResampleCurveAtFixedBreakpoints) —
+                    // identity when it hasn't.
+                    var resampled = global::MozaPlugin.Devices.MozaMBoosterRegistry.ResampleCurveAtFixedBreakpoints(cfg.CurveX, cfg.CurveY);
+                    for (int k = 0; k < 5; k++)
+                        controller.SendFloatWrite($"mbooster-{prefix}-y{k + 1}", resampled[k]);
+                }
+
+                // Load-cell / physical settings share the single brake-named wire
+                // command set, so each mBooster UNIT is addressed by its own
+                // device id (0x12 host, 0x1d/0x1e chain ports). Pedal travel +
+                // endstop exist on every pedal mode; sensor ratio + max threshold
+                // are load-cell-only and the UI only lets you set them for a
+                // brake (unset = -1 = skipped). Calibration above stays per-role
+                // on 0x12 — the host aggregates the output mapping (capture-verified).
+                byte dev = global::MozaPlugin.Devices.MBoosterDeviceController.MotorDeviceForAxis(axis);
+                if (cfg.TravelStartMm >= 0)
+                    controller.SendIntWrite("mbooster-brake-travel-start",
+                        global::MozaPlugin.Protocol.MozaMBoosterProtocol.EncodeTravelMm(cfg.TravelStartMm), dev);
+                if (cfg.TravelEndMm >= 0)
+                    controller.SendIntWrite("mbooster-brake-travel-end",
+                        global::MozaPlugin.Protocol.MozaMBoosterProtocol.EncodeTravelMm(cfg.TravelEndMm), dev);
+                if (cfg.EndstopFrontStiffness >= 0)
+                    controller.SendIntWrite("mbooster-brake-endstop-front",
+                        global::MozaPlugin.Protocol.MozaMBoosterProtocol.EncodeEndstopStiffness(cfg.EndstopFrontStiffness), dev);
+                if (cfg.EndstopEndStiffness >= 0)
+                    controller.SendIntWrite("mbooster-brake-endstop-end",
+                        global::MozaPlugin.Protocol.MozaMBoosterProtocol.EncodeEndstopStiffness(cfg.EndstopEndStiffness), dev);
+                if (role == global::MozaPlugin.Devices.MBoosterRole.Brake)
+                {
+                    if (cfg.SensorOutputRatioPct >= 0)
+                        controller.SendFloatWrite("mbooster-brake-angle-ratio", cfg.SensorOutputRatioPct, dev);
+                    if (cfg.MaxThresholdKg >= 0)
+                        controller.SendIntWrite("mbooster-brake-threshold",
+                            global::MozaPlugin.Protocol.MozaMBoosterProtocol.EncodeThresholdKg(cfg.MaxThresholdKg), dev);
+                }
             }
-            if (s.Min >= 0) controller.SendIntWrite("mbooster-throttle-min", s.Min);
-            if (s.Max >= 0) controller.SendIntWrite("mbooster-throttle-max", s.Max);
-            if (s.CurveY != null && s.CurveY.Length == 5)
-            {
-                // Resample at the fixed 20/40/60/80/100 breakpoints in case
-                // CurveX has been horizontally dragged (see
-                // MozaMBoosterRegistry.ResampleCurveAtFixedBreakpoints) —
-                // identity when it hasn't.
-                var resampled = global::MozaPlugin.Devices.MozaMBoosterRegistry.ResampleCurveAtFixedBreakpoints(s.CurveX, s.CurveY);
-                controller.SendFloatWrite("mbooster-throttle-y1", resampled[0]);
-                controller.SendFloatWrite("mbooster-throttle-y2", resampled[1]);
-                controller.SendFloatWrite("mbooster-throttle-y3", resampled[2]);
-                controller.SendFloatWrite("mbooster-throttle-y4", resampled[3]);
-                controller.SendFloatWrite("mbooster-throttle-y5", resampled[4]);
-            }
-            // Sim Input Mapping (Pit House-style).
-            if (s.SensorOutputRatioPct >= 0)
-                controller.SendFloatWrite("mbooster-brake-angle-ratio", s.SensorOutputRatioPct);
-            if (s.MaxThresholdKg >= 0)
-                controller.SendIntWrite("mbooster-brake-threshold",
-                    global::MozaPlugin.Protocol.MozaMBoosterProtocol.EncodeThresholdKg(s.MaxThresholdKg));
-            if (s.TravelStartMm >= 0)
-                controller.SendIntWrite("mbooster-brake-travel-start",
-                    global::MozaPlugin.Protocol.MozaMBoosterProtocol.EncodeTravelMm(s.TravelStartMm));
-            if (s.TravelEndMm >= 0)
-                controller.SendIntWrite("mbooster-brake-travel-end",
-                    global::MozaPlugin.Protocol.MozaMBoosterProtocol.EncodeTravelMm(s.TravelEndMm));
-            if (s.EndstopFrontStiffness >= 0)
-                controller.SendIntWrite("mbooster-brake-endstop-front",
-                    global::MozaPlugin.Protocol.MozaMBoosterProtocol.EncodeEndstopStiffness(s.EndstopFrontStiffness));
-            if (s.EndstopEndStiffness >= 0)
-                controller.SendIntWrite("mbooster-brake-endstop-end",
-                    global::MozaPlugin.Protocol.MozaMBoosterProtocol.EncodeEndstopStiffness(s.EndstopEndStiffness));
         }
 
         // Resolve a dashboard name to its parsed MultiStreamProfile without firing
@@ -2182,6 +2295,7 @@ namespace MozaPlugin
             // are disposed; the tick gates on connection state but joining here
             // keeps shutdown deterministic.
             try { _ab9Worker?.Stop(); _ab9Worker = null; } catch { }
+            try { _baseLfeWorker?.Stop(); _baseLfeWorker = null; } catch { }
             // Release the timer-resolution request + power-throttling opt-out on
             // shutdown/reload so neither leaks past the plugin's lifetime.
             try { _responsiveness?.Dispose(); _responsiveness = null; } catch { }
@@ -2198,6 +2312,14 @@ namespace MozaPlugin
             // which means users hear vibrations for ten seconds after closing
             // SimHub mid-session. Worker is stopped above so this can't race.
             try { _ab9Manager?.SendEngineSilence(); } catch { }
+            // Flush LFE effects so the base doesn't latch a waveform on teardown.
+            try
+            {
+                _deviceManager?.SendBaseLfeDisable(Protocol.MozaBaseLfeProtocol.LfeEffect.Engine);
+                _deviceManager?.SendBaseLfeDisable(Protocol.MozaBaseLfeProtocol.LfeEffect.Abs);
+                _deviceManager?.SendBaseLfeDisable(Protocol.MozaBaseLfeProtocol.LfeEffect.Gearshift);
+            }
+            catch { }
 
             // Dispose every mBooster controller — fires disable frames + closes
             // each connection. Must happen before MozaData is torn down so the
@@ -2335,6 +2457,7 @@ namespace MozaPlugin
 
             // 6. Dispose I/O sources; skip sender+connection if keeping wire alive.
             _hidReader?.Dispose();
+            try { _stalksController?.Dispose(); } catch { }
             if (!keepWireAlive)
             {
                 _telemetrySender?.Dispose();
@@ -2599,6 +2722,17 @@ namespace MozaPlugin
         }
 
         internal MozaHidReader HidReader => _hidReader;
+
+        /// <summary>Live truck-sim stalk controller (for the settings UI's
+        /// "Re-sync wipers" action). Null until Init runs.</summary>
+        internal StalksTruckSimController StalksController => _stalksController;
+
+        /// <summary>Re-apply the current Stalks mode + truck-sim config to the live
+        /// controller. Call from the settings UI after editing + SaveSettings().</summary>
+        internal void ApplyStalksSettings()
+        {
+            try { _stalksController?.ApplySettings(_settings.StalksMode, _settings.StalksTruckSim); } catch { }
+        }
 
         // ===== ProfileCoordinator shims (external API surface) =====
         // Settings persistence + profile system live in Settings/ProfileCoordinator.cs.
@@ -3121,10 +3255,48 @@ namespace MozaPlugin
         public object? GetPropertyValueForDisplay(string? path) => _propertyResolver.GetValueForDisplay(path);
         internal string CurrentWheelKey() => _propertyResolver.CurrentWheelKey();
 
+        /// <summary>
+        /// Build a formula/property → double resolver for a 50 Hz haptics worker
+        /// (LFE, mBooster). Same dialect and property resolution as the telemetry
+        /// channel-mapper, but formulas evaluate on the returned closure's OWN
+        /// engine instance — SimHub's NCalcEngineBase is not safe for concurrent
+        /// evaluation, so each evaluator serializes internally, and a private
+        /// instance keeps haptics ticks from queueing behind the 30 Hz telemetry
+        /// evaluations (see SimHubPropertyResolver.ResolveAsDouble overload).
+        /// Late-binds <see cref="_propertyResolver"/>: workers are constructed
+        /// before the resolver exists.
+        /// </summary>
+        private Func<string?, double> CreateHapticsFormulaResolver()
+        {
+            var formula = new Telemetry.NCalcExpressionEvaluator();
+            return f =>
+            {
+                if (string.IsNullOrWhiteSpace(f)) return 0.0;
+                var resolver = _propertyResolver;
+                if (resolver == null) return 0.0;
+                return resolver.ResolveAsDouble(f!, formula);
+            };
+        }
+
         /// <summary>SimHub's shared formula engine for the channel-mapper's formula
         /// picker; null if engine construction failed (formulas then read as default).</summary>
         internal SimHub.Plugins.OutputPlugins.Dash.TemplatingCommon.NCalcEngineBase? ChannelFormulaEngine
             => _propertyResolver?.FormulaEngine;
+
+        // UI-thread formula preview (LFE "current value" readouts). Own evaluator
+        // instance so it never contends with the haptics worker's engine; UI-thread
+        // only, so no locking needed beyond ResolveAsDouble's internal serialization.
+        private Telemetry.NCalcExpressionEvaluator? _uiFormulaEvaluator;
+
+        /// <summary>Evaluate a haptics formula/property to a double for a UI preview. 0 if unavailable.</summary>
+        internal double EvalHapticsFormula(string? formula)
+        {
+            if (string.IsNullOrWhiteSpace(formula)) return 0.0;
+            var resolver = _propertyResolver;
+            if (resolver == null) return 0.0;
+            _uiFormulaEvaluator ??= new Telemetry.NCalcExpressionEvaluator();
+            return resolver.ResolveAsDouble(formula!, _uiFormulaEvaluator);
+        }
 
         /// <summary>
         /// Candidate dashboard keys (highest priority first):
@@ -3230,27 +3402,42 @@ namespace MozaPlugin
             }
 
             // Profile × page × dashboard × channel → SimHub property path.
-            var middle = GetOrCreateActiveChannelMappings(pageGuid);
-            if (middle == null) return; // no profile/page resolvable yet
+            // COW: the serial-read/tick threads walk these dicts mid-apply
+            // (ApplyUserChannelMappings) and the save path serializes them —
+            // rebuild each level and reference-swap, never mutate in place.
+            var profile = _settings?.ProfileStore?.CurrentProfile;
+            if (profile == null) return;
+            var g = pageGuid ?? GetCurrentWheelPageGuid();
+            if (!g.HasValue) return; // no profile/page resolvable yet
 
-            if (!middle.TryGetValue(dashKey, out var inner))
-            {
-                inner = new System.Collections.Generic.Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
-                middle[dashKey] = inner;
-            }
+            var outer = profile.TelemetryChannelMappings;
+            var newMiddle = (outer != null && outer.TryGetValue(g.Value, out var oldMiddle) && oldMiddle != null)
+                ? new System.Collections.Generic.Dictionary<string, System.Collections.Generic.Dictionary<string, string>>(oldMiddle, StringComparer.OrdinalIgnoreCase)
+                : new System.Collections.Generic.Dictionary<string, System.Collections.Generic.Dictionary<string, string>>(StringComparer.OrdinalIgnoreCase);
+            var newInner = (newMiddle.TryGetValue(dashKey, out var oldInner) && oldInner != null)
+                ? new System.Collections.Generic.Dictionary<string, string>(oldInner, StringComparer.OrdinalIgnoreCase)
+                : new System.Collections.Generic.Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
 
             string trimmed = (propertyPath ?? "").Trim();
             if (string.IsNullOrEmpty(trimmed))
             {
-                inner.Remove(channelUrl);
-                // Tidy: drop empty inner dict, then empty middle dict, so the JSON
-                // doesn't accumulate empty objects after every reset-to-default.
-                if (inner.Count == 0) middle.Remove(dashKey);
+                newInner.Remove(channelUrl);
+                // Tidy: drop empty inner dict so the JSON doesn't accumulate
+                // empty objects after every reset-to-default.
+                if (newInner.Count == 0) newMiddle.Remove(dashKey);
+                else newMiddle[dashKey] = newInner;
             }
             else
             {
-                inner[channelUrl] = trimmed;
+                newInner[channelUrl] = trimmed;
+                newMiddle[dashKey] = newInner;
             }
+
+            var newOuter = outer != null
+                ? new System.Collections.Generic.Dictionary<Guid, System.Collections.Generic.Dictionary<string, System.Collections.Generic.Dictionary<string, string>>>(outer)
+                : new System.Collections.Generic.Dictionary<Guid, System.Collections.Generic.Dictionary<string, System.Collections.Generic.Dictionary<string, string>>>();
+            newOuter[g.Value] = newMiddle;
+            profile.TelemetryChannelMappings = newOuter;
 
             // Live-rewire the matching channel on the target sender's profile so the
             // next frame uses the new property. No tier-def restart.
@@ -3260,23 +3447,34 @@ namespace MozaPlugin
         }
 
         /// <summary>Clear all per-channel overrides for a page + its dashboard key(s).
-        /// Defaults to the current wheel page across all candidate keys.</summary>
+        /// Defaults to the current wheel page across all candidate keys.
+        /// COW like <see cref="SetChannelMapping"/> — readers walk these dicts
+        /// on the serial-read/tick threads.</summary>
         internal void ClearCurrentDashboardMappings(Guid? pageGuid = null, string? fixedDashKey = null)
         {
-            var middle = GetActiveChannelMappings(pageGuid);
-            if (middle == null) return;
+            var profile = _settings?.ProfileStore?.CurrentProfile;
+            var outer = profile?.TelemetryChannelMappings;
+            if (profile == null || outer == null) return;
+            var g = pageGuid ?? GetCurrentWheelPageGuid();
+            if (!g.HasValue || !outer.TryGetValue(g.Value, out var middle) || middle == null) return;
 
+            var newMiddle = new System.Collections.Generic.Dictionary<string, System.Collections.Generic.Dictionary<string, string>>(middle, StringComparer.OrdinalIgnoreCase);
             bool changed = false;
             if (!string.IsNullOrEmpty(fixedDashKey))
             {
-                if (middle.Remove(fixedDashKey!)) changed = true;
+                if (newMiddle.Remove(fixedDashKey!)) changed = true;
             }
             else
             {
                 foreach (var key in GetActiveDashboardKeyCandidates())
-                    if (middle.Remove(key)) changed = true;
+                    if (newMiddle.Remove(key)) changed = true;
             }
-            if (changed) SaveSettings();
+            if (!changed) return;
+
+            var newOuter = new System.Collections.Generic.Dictionary<Guid, System.Collections.Generic.Dictionary<string, System.Collections.Generic.Dictionary<string, string>>>(outer);
+            newOuter[g.Value] = newMiddle;
+            profile.TelemetryChannelMappings = newOuter;
+            SaveSettings();
         }
 
         // Dashboard binding state moved to DashboardBindingCoordinator.
@@ -3467,10 +3665,85 @@ namespace MozaPlugin
             mgr.SetTimerResolution(wanted);
         }
 
+        private void ReconnectTick()
+        {
+            if (!_connection.IsConnected)
+                _connectionCoordinator?.TryConnect();
+            else
+            {
+                // Primary already latched. Two complementary self-heals:
+                //  1. base→hub: the base has no wheel but one answered on
+                //     the hub (broken base) → run the wheel pipeline over
+                //     the hub. Runs FIRST and sets _wheellessBasePort so (2)
+                //     can't immediately undo it.
+                //  2. hub→base: the primary grabbed a hub before the
+                //     wheelbase enumerated (wrong latch order) → hand it
+                //     back to the base. Runs before TryConnectHub so the
+                //     freed hub port is claimed by the hub manager this tick.
+                _connectionCoordinator?.MigratePrimaryToHubIfNeeded();
+                _connectionCoordinator?.MigratePrimaryToWheelbaseIfNeeded();
+            }
+            // AB9 probe is microseconds when registry is populated.
+            // On Wine/Proton (no registry) the fallback would scan
+            // every wine COM symlink and lock up SimHub; suppress when
+            // registry is empty. DisableAb9Detection wins regardless.
+            bool registryHasMoza =
+                Protocol.MozaPortDiscovery.Instance.Enumerate().Count > 0;
+            if (!_settings.DisableAb9Detection
+                && registryHasMoza
+                && !_ab9Manager.IsConnected)
+                _connectionCoordinator?.TryConnectAb9();
+
+            // Standalone-USB CM2 on its own port (0x0025) — same Wine guard.
+            if (registryHasMoza && !_dashboardManager.IsConnected)
+                _connectionCoordinator?.TryConnectDashboard();
+
+            // Universal Hub on its own port (0x0020) — registry-only, same
+            // Wine guard. The hub-only case is handled by the primary
+            // (BaseAndHub) connection; this dedicated connection only takes
+            // a hub the primary didn't claim (i.e. a base is the primary),
+            // and no-ops when the hub port is already held by the primary.
+            if (registryHasMoza && !_hubManager.IsConnected)
+                _connectionCoordinator?.TryConnectHub();
+
+            // Dedicated base-aux pipe — ONLY after a DELIBERATE base→hub
+            // migration (broken base), identified by the _wheellessBasePort
+            // latch. Must NOT gate on PrimaryBoundToHub alone: the primary
+            // can be TRANSIENTLY on the hub during wrong-latch-order cold
+            // start (hub enumerated before the base). If base-aux grabbed
+            // the base then, it would hold the port and permanently block
+            // MigratePrimaryToWheelbaseIfNeeded from reclaiming it — leaving
+            // the primary stuck on the hub (wheel still works via the hub,
+            // but the port is mislabeled "Wheelbase"). The latch is set only
+            // by a real migration, so a transient hub latch never trips it.
+            if (registryHasMoza && _connectionCoordinator?.WheellessBasePort != null && !_baseManager.IsConnected)
+                _connectionCoordinator?.TryConnectBase();
+
+            // Slice I: reconnect-timer mBooster Refresh re-enabled.
+            try { _mboosterRegistry?.Refresh(); }
+            catch (Exception ex) { MozaLog.Debug($"[AZOM/mBooster] Refresh: {ex.Message}"); }
+
+            // Standalone pedals/handbrake on their own ports (registry-
+            // only, same Wine guard as the other dedicated lanes).
+            if (registryHasMoza)
+            {
+                try { _peripheralRegistry?.Refresh(); }
+                catch (Exception ex) { MozaLog.Debug($"[AZOM] Standalone peripheral refresh: {ex.Message}"); }
+            }
+        }
+
         private void PollStatus(object sender, ElapsedEventArgs e)
         {
             if (IsShuttingDown) return;
+            // System.Timers.Timer swallows exceptions silently — without this
+            // wrapper a deterministic throw halts the whole 5 s detection state
+            // machine with no log evidence.
+            try { PollStatusCore(); }
+            catch (Exception ex) { MozaLog.Warn($"[AZOM] PollStatus tick failed: {ex}"); }
+        }
 
+        private void PollStatusCore()
+        {
             // Responsiveness backstop: SimHub stops calling DataUpdate when a game
             // exits, so the timer raise + EcoQoS opt-out can only be released here once
             // IsGameActive goes false via feed-staleness (~3 s) — within one 5 s poll.
@@ -3499,6 +3772,14 @@ namespace MozaPlugin
             _dashboardBindingCoordinator?.TickPendingDashboardRetry();
             _dualDisplay?.TickCm2DashboardReassert();
             _dualDisplay?.TickCm1Discriminator();
+            // FSR1 self-heal: _fsr1Driver is per-instance (unlike the persistent
+            // tier-def sender) and is only started via the event-driven
+            // StartTelemetryIfReady, which a persistent-wire reload skips for an
+            // already-known wheel (LastKnownWheelModel still set → DeviceProber
+            // first-sight block gated out) — orphaning the group-0x42 push into a
+            // dark screen with nothing to restart it. Reconcile it here like the
+            // CM2/CM1 drivers above. Idempotent: no-op unless a stopped FSR1.
+            _dualDisplay?.StartFsr1DriverIfNeeded();
 
             if (!_connection.IsConnected) return;
 
@@ -3581,10 +3862,11 @@ namespace MozaPlugin
                 // device. The grace window lets a slightly-late 0x18 reply set that
                 // flag before this fires, avoiding a duplicate deploy.
                 const long OldProtoFallbackGraceMs = 3000;
+                long oldProtoDetectedTicks = WheelDetectedUtcTicks;
                 if (DetectionState.OldWheelDetected
                     && !DetectionState.OldProtoFallbackDeployed
-                    && _wheelDetectedUtcTicks != 0
-                    && (DateTime.UtcNow.Ticks - _wheelDetectedUtcTicks) / TimeSpan.TicksPerMillisecond >= OldProtoFallbackGraceMs)
+                    && oldProtoDetectedTicks != 0
+                    && (DateTime.UtcNow.Ticks - oldProtoDetectedTicks) / TimeSpan.TicksPerMillisecond >= OldProtoFallbackGraceMs)
                 {
                     DetectionState.OldProtoFallbackDeployed = true;
                     if (DeviceDefinitionDeployer.DeployOldProtoWheel(_connection.DiscoveredPid))
@@ -3625,6 +3907,11 @@ namespace MozaPlugin
                 _deviceManager.SendPresenceProbe(MozaProtocol.DeviceHandbrake);
             if (!DetectionState.PedalsDetected)
                 _deviceManager.SendPresenceProbe(MozaProtocol.DevicePedals);
+            // HGP/SGP attached to the base's peripheral port (dev 0x1A). A shifter on
+            // its own USB port is found by MozaStandalonePeripheralRegistry instead;
+            // one behind the Universal Hub answers on the dedicated hub pipe.
+            if (!DetectionState.ShifterDetected)
+                _deviceManager.SendPresenceProbe(MozaProtocol.DeviceHPattern);
             // No hub-port-power poll on the wheelbase connection — a Universal Hub
             // is found by the dedicated hub connection on its own port, never by
             // sending hub commands to a device we already know is a wheelbase.
@@ -3679,13 +3966,14 @@ namespace MozaPlugin
             // disconnect on a screenless ES wheel that has no display sub-device
             // to wait for. Old wheels have no display; exclude them outright.
             const long DisplayWedgeTimeoutMs = 60_000;
+            long wheelDetectedTicks = WheelDetectedUtcTicks;
             if (!DisplayWedgeRecoveryFired
                 && DetectionState.NewWheelDetected
                 && WheelModelInfo?.HasDisplay != false
                 && !IsDisplayDetected
-                && _wheelDetectedUtcTicks != 0)
+                && wheelDetectedTicks != 0)
             {
-                long elapsedMs = (DateTime.UtcNow.Ticks - _wheelDetectedUtcTicks)
+                long elapsedMs = (DateTime.UtcNow.Ticks - wheelDetectedTicks)
                     / TimeSpan.TicksPerMillisecond;
                 if (elapsedMs >= DisplayWedgeTimeoutMs)
                 {
@@ -3804,8 +4092,9 @@ namespace MozaPlugin
                 // stale cached identity/catalog. See TryHandleWheelConnectionLog.
                 if (rawDeviceId == 0x21)
                     TryHandleWheelConnectionLog(text);
-                MozaLog.Debug(
-                    $"[AZOM] firmware-debug src={(rawDeviceId == 0x21 ? "main" : rawDeviceId == 0x71 ? "wheel" : rawDeviceId == 0xB1 ? "display" : $"0x{rawDeviceId:X2}")}: {text}");
+                if (MozaLog.WireDebugEnabled)
+                    MozaLog.Debug(
+                        $"[AZOM] firmware-debug src={(rawDeviceId == 0x21 ? "main" : rawDeviceId == 0x71 ? "wheel" : rawDeviceId == 0xB1 ? "display" : $"0x{rawDeviceId:X2}")}: {text}");
                 return;
             }
             // Other 0x0E variants we don't yet know how to decode — drop
@@ -4012,6 +4301,10 @@ namespace MozaPlugin
                 case MozaProtocol.DevicePedals:
                     _deviceProber.MarkPedalsDetected();
                     break;
+                // DeviceHPattern == DeviceSequential (0x1A) — one case covers both.
+                case MozaProtocol.DeviceHPattern:
+                    _deviceProber.MarkShifterDetected();
+                    break;
             }
         }
 
@@ -4146,27 +4439,6 @@ namespace MozaPlugin
             var g = pageGuid ?? GetCurrentWheelPageGuid();
             if (!g.HasValue) return null;
             return profile.TelemetryChannelMappings.TryGetValue(g.Value, out var m) ? m : null;
-        }
-
-        /// <summary>
-        /// Get or create the channel-mapping dict for the active profile × the given
-        /// page (current wheel page when null). Returns null only when no profile is
-        /// selected or no page GUID is resolvable yet.
-        /// </summary>
-        internal Dictionary<string, Dictionary<string, string>>? GetOrCreateActiveChannelMappings(Guid? pageGuid = null)
-        {
-            var profile = _settings?.ProfileStore?.CurrentProfile;
-            if (profile == null) return null;
-            if (profile.TelemetryChannelMappings == null)
-                profile.TelemetryChannelMappings = new Dictionary<Guid, Dictionary<string, Dictionary<string, string>>>();
-            var g = pageGuid ?? GetCurrentWheelPageGuid();
-            if (!g.HasValue) return null;
-            if (!profile.TelemetryChannelMappings.TryGetValue(g.Value, out var m) || m == null)
-            {
-                m = new Dictionary<string, Dictionary<string, string>>(StringComparer.OrdinalIgnoreCase);
-                profile.TelemetryChannelMappings[g.Value] = m;
-            }
-            return m;
         }
 
         // ===== FSR1/CM1 field-mapping + index shims (external API surface) =====

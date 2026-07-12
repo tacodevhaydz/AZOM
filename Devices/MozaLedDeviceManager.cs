@@ -1159,9 +1159,7 @@ namespace MozaPlugin.Devices
             StreamKind? streamBase = null, int maxStreamChunks = 0)
         {
             int dataLen = count * 4;
-            // Round up to next multiple of 20 for chunk alignment
-            int bufferLen = ((dataLen + 19) / 20) * 20;
-            var colorData = new byte[bufferLen];
+            var colorData = new byte[dataLen];
 
             for (int i = 0; i < count; i++)
             {
@@ -1172,20 +1170,23 @@ namespace MozaPlugin.Devices
                 colorData[offset + 3] = colors[i].B;
             }
 
-            // Fill padding entries with unused index 0xFF so firmware doesn't
-            // interpret zero-padding as "set LED 0 to black" (causes button 0 flicker)
-            for (int pos = dataLen; pos < bufferLen; pos += 4)
-                colorData[pos] = 0xFF;
-
-            // Reuse one 20-byte chunk buffer across the loop. WriteArray's
-            // BuildWriteMessage copies `payload` into its own list before this
-            // method returns, so overwriting `chunk` on the next iteration is
-            // safe and saves N-1 allocations per LED update at 60Hz.
-            var chunk = new byte[20];
+            // Emit variable-length chunks of up to 5 LEDs (20 bytes) each, matching
+            // PitHouse byte-for-byte: the wheel frames on the length byte, so the final
+            // partial chunk carries ONLY its real LEDs and is short (14 buttons → 5+5+4,
+            // last frame 16 bytes). Do NOT pad the last chunk up to 20 bytes with a
+            // filler record — a trailing index-0xFF record corrupts the button-input
+            // matrix on stricter wheel firmware (issue #100: TSW on FW U-V01 — buttons
+            // stop registering after the first button-LED frame), and PitHouse never
+            // emits one (0/90 live colour frames on this wheel). Sending only the real
+            // LEDs also avoids the original zero-pad "button 0 flicker" the 0xFF padding
+            // was working around. Chunk COUNT is unchanged (ceil(dataLen/20)), so the
+            // per-chunk stream-slot assignment below is unaffected.
             int chunkIdx = 0;
-            for (int pos = 0; pos < bufferLen; pos += 20)
+            for (int pos = 0; pos < dataLen; pos += 20)
             {
-                Array.Copy(colorData, pos, chunk, 0, 20);
+                int len = Math.Min(20, dataLen - pos);
+                var chunk = new byte[len];
+                Array.Copy(colorData, pos, chunk, 0, len);
                 if (streamBase.HasValue && chunkIdx < maxStreamChunks)
                     plugin.DeviceManager.WriteArrayStream(
                         command, chunk, (StreamKind)((int)streamBase.Value + chunkIdx));

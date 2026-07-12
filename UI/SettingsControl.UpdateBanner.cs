@@ -52,8 +52,11 @@ namespace MozaPlugin
 
                 RefreshUpdateNotifications();
                 RefreshLastCheckedText();
-                UpdateInstallCoordinator.Instance.Progress += OnAboutInstallProgress;
-                UpdateInstallCoordinator.Instance.Completed += OnAboutInstallCompleted;
+                HookInstallCoordinator();
+                // Tab containers reparent this control, so Loaded/Unloaded fire
+                // repeatedly — re-hook on every Loaded (PluginBanners pattern),
+                // else the banner goes deaf after the first Unloaded.
+                Loaded += OnLoadedRehookUpdateBanner;
                 Unloaded += OnUnloadedCancelUpdateCheck;
             }
             catch (Exception ex)
@@ -62,13 +65,31 @@ namespace MozaPlugin
             }
         }
 
+        private bool _installCoordinatorHooked;
+
+        private void HookInstallCoordinator()
+        {
+            if (_installCoordinatorHooked) return;
+            UpdateInstallCoordinator.Instance.Progress += OnAboutInstallProgress;
+            UpdateInstallCoordinator.Instance.Completed += OnAboutInstallCompleted;
+            _installCoordinatorHooked = true;
+        }
+
+        private void OnLoadedRehookUpdateBanner(object sender, RoutedEventArgs e)
+            => HookInstallCoordinator();
+
         private void OnUnloadedCancelUpdateCheck(object sender, RoutedEventArgs e)
         {
             try { _updateCheckCts?.Cancel(); } catch { }
-            // Unsubscribe from the shared install coordinator, but don't cancel
-            // an in-flight install — it runs to completion regardless of UI.
-            UpdateInstallCoordinator.Instance.Progress -= OnAboutInstallProgress;
-            UpdateInstallCoordinator.Instance.Completed -= OnAboutInstallCompleted;
+            // Unsubscribe from the shared install coordinator (re-hooked on the
+            // next Loaded), but don't cancel an in-flight install — it runs to
+            // completion regardless of UI.
+            if (_installCoordinatorHooked)
+            {
+                UpdateInstallCoordinator.Instance.Progress -= OnAboutInstallProgress;
+                UpdateInstallCoordinator.Instance.Completed -= OnAboutInstallCompleted;
+                _installCoordinatorHooked = false;
+            }
         }
 
         // Repaints the About > Updates card banner + release-notes panel. Called

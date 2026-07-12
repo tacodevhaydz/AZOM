@@ -197,6 +197,17 @@ namespace MozaPlugin.Devices
             "handbrake-y1", "handbrake-y2", "handbrake-y3", "handbrake-y4", "handbrake-y5",
         };
 
+        // Shifter settings read on the base/hub-relayed path (where HGP-vs-SGP is not
+        // known from a PID, so the LED reads are issued too — an SGP answers and
+        // populates its LEDs, an HGP's LED reads simply sunset). The standalone-USB
+        // lane instead reads a per-model list via StandalonePeripheralDescriptor so a
+        // standalone HGP never issues LED reads at all.
+        internal static readonly string[] ShifterSettingsReadCommands = new[]
+        {
+            "shifter-direction", "shifter-paddle-sync", "shifter-hid-mode", "shifter-apply-mode",
+            "shifter-brightness", "shifter-colors",
+        };
+
         internal static readonly string[] PedalsSettingsReadCommands = new[]
         {
             "pedals-throttle-dir", "pedals-throttle-min", "pedals-throttle-max",
@@ -310,6 +321,24 @@ namespace MozaPlugin.Devices
             if (issueReads)
                 _deviceManager.ReadSettings(PedalsSettingsReadCommands);
             MozaLog.Info("[AZOM] Pedals detected");
+        }
+
+        /// <summary>First-sight detection cascade for the HGP/SGP shifter.
+        /// See <see cref="MarkHandbrakeDetected"/> for <paramref name="issueReads"/>.
+        /// The standalone-USB lane passes <c>issueReads:false</c> and issues its own
+        /// per-model read list (incl. SGP LED commands) from the controller — this
+        /// path's list is the common non-LED subset used on a base/hub-relayed pipe.</summary>
+        public void MarkShifterDetected(bool issueReads = true)
+        {
+            if (_detectionState.ShifterDetected) return;
+            // Owner first, then flag (see MarkHandbrakeDetected).
+            _detectionState.ShifterOwner = _deviceManager;
+            _detectionState.ShifterDetected = true;
+            _plugin.ApplyShifterToHardware(_plugin.Settings?.ProfileStore?.CurrentProfile);
+            if (issueReads)
+                _deviceManager.ReadSettings(ShifterSettingsReadCommands);
+            MozaLog.Info("[AZOM] Shifter detected" +
+                (_detectionState.ShifterHasLeds ? " (SGP)" : " (HGP)"));
         }
 
         /// <summary>
@@ -445,6 +474,9 @@ namespace MozaPlugin.Devices
                     _deviceManager.ReadSetting("base-hw-sub");
                     _deviceManager.ReadSetting("base-mcu-uid");
                     _deviceManager.ReadSetting("base-identity-11");
+                    // Numeric firmware version (dev 0x12, group 0x04) — gates the
+                    // wheelbase LFE effects via MozaData.BaseSupportsLfe.
+                    _deviceManager.ReadSetting("base-fw-version");
                 }
             }
 
@@ -827,6 +859,20 @@ namespace MozaPlugin.Devices
 
                 case "pedals-throttle-dir":
                     MarkPedalsDetected();
+                    break;
+
+                // First shifter response on a base/hub-relayed pipe. On the
+                // standalone-USB lane the controller already latched detection at
+                // connect (this early-returns) and issued its own read list.
+                case "shifter-direction":
+                    MarkShifterDetected();
+                    break;
+
+                // Only the SGP answers a brightness read — its reply is what reveals
+                // LED capability on a relayed pipe (the standalone lane knows this
+                // from the PID instead).
+                case "shifter-brightness":
+                    _detectionState.ShifterHasLeds = true;
                     break;
 
                 case "hub-port1-power":

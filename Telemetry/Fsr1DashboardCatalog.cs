@@ -36,6 +36,17 @@ namespace MozaPlugin.Telemetry
         public long FullScale = 0;
         /// <summary>True when the field's semantics are proven; false = raw/experimental slot.</summary>
         public bool Decoded = true;
+        // ── Sub-byte / bit-packed geometry (LSB-first). Set by the ground-truth catalog for the
+        //    firmware's 10-bit tyre/pressure packs, GearDrsErs, and compact flag bundles. ──
+        /// <summary>In-byte LSB-first bit of the field's LSB (0 = mask 0x01). Pairs with BitWidth.</summary>
+        public int StartBit = 0;
+        /// <summary>Sub-byte field bit width (1..24); 0 = byte-aligned (Offsets/Encoding govern).</summary>
+        public int BitWidth = 0;
+        /// <summary>Default output gain applied when no user override: wire = value·DefaultScale +
+        /// DefaultBias. Ground truth: tyre temps use Bias +300 (10-bit, −300..723 °C headroom),
+        /// lap times use Scale 1000 (seconds → ms). A user Scale/Bias override wins over these.</summary>
+        public double DefaultScale = 1.0;
+        public double DefaultBias = 0.0;
 
         /// <summary>Largest value the field's byte width can represent.</summary>
         public long CapabilityMax => Encoding switch
@@ -77,8 +88,9 @@ namespace MozaPlugin.Telemetry
             BitOffset = bitOffset; BitWidth = bitWidth; MsbFirst = msbFirst;
         }
 
-        /// <summary>Byte-boundary, whole-byte, MSB-first → emit via the unchanged byte path.</summary>
-        public bool IsByteAligned => (BitOffset & 7) == 0 && (BitWidth & 7) == 0 && MsbFirst;
+        /// <summary>Byte-boundary + whole number of bytes → emit via the byte path (big/little
+        /// endian per <see cref="Enc"/>). Anything sub-byte goes through the LSB-first bit packer.</summary>
+        public bool IsByteAligned => (BitOffset & 7) == 0 && (BitWidth & 7) == 0;
         public int ByteStart => BitOffset >> 3;
         public int ByteEnd => (BitOffset + BitWidth - 1) >> 3;
     }
@@ -112,254 +124,363 @@ namespace MozaPlugin.Telemetry
     /// </summary>
     internal static class Fsr1DashboardCatalog
     {
+        // ── Ground-truth field builders ─────────────────────────────────────────
+        // Records are laid out with an auto-advancing cursor (data starts at byte 5), mirroring
+        // PitHouse's FormulaSteeringTelemetryDataPackN classes which concatenate each strategy's
+        // whole-byte output in order. U8/U16/U24 advance whole bytes (big-endian on the wire);
+        // Bits() advances a sub-byte LSB-first field; Pack10x4() lays a 4×10-bit LSB group
+        // (TyreTemperature / TyrePressure strategies = 5 bytes). See docs § Group 0x42.
+        private sealed class Fields
+        {
+            private readonly System.Collections.Generic.List<Fsr1FieldDef> _list =
+                new System.Collections.Generic.List<Fsr1FieldDef>();
+            private int _bit = 5 * 8;  // cursor: absolute payload bit, data begins at byte 5
 
-        // ===== Auto-generated from usb-capture/fsr1 (tools/.. gencatalog) =====
+            private Fields Add(Fsr1FieldDef f, int bits) { _list.Add(f); _bit += bits; return this; }
+
+            public Fields U8(string id, string label, string prop = "", double bias = 0.0) =>
+                Add(MakeByte(id, label, _bit >> 3, Fsr1Encoding.U8, prop, bias: bias), 8);
+            public Fields U16(string id, string label, string prop = "", long fullScale = 0) =>
+                Add(MakeByte(id, label, _bit >> 3, Fsr1Encoding.U16_BE, prop, fullScale), 16);
+            public Fields U24(string id, string label, string prop = "", double scale = 1.0) =>
+                Add(MakeByte(id, label, _bit >> 3, Fsr1Encoding.U24_BE, prop, scale: scale), 24);
+            public Fields Bits(string id, string label, int width, string prop = "", long fullScale = 0, double scale = 1.0, double bias = 0.0) =>
+                Add(MakeBits(id, label, _bit, width, prop, fullScale, scale, bias), width);
+            /// <summary>Four 10-bit values LSB-packed into 5 bytes (tyre temp / pressure group).
+            /// bias = +300 for tyre temps (firmware decodes value−300 for sub-zero headroom).</summary>
+            public Fields Pack10x4(string idPrefix, string labelPrefix, string[] suffix, string[] props, double bias = 0.0)
+            {
+                for (int i = 0; i < 4; i++)
+                    Bits(idPrefix + suffix[i], labelPrefix + " " + suffix[i], 10, i < props.Length ? props[i] : "", bias: bias);
+                return this;
+            }
+            /// <summary>GearDrsErs strategy: gear[0:4] · ERS deploy mode[4:6] (2-bit) · DRS[6] (1-bit),
+            /// bit 7 spare. Verified from capture: the 2-bit field is ERS mode (0–3), the 1-bit is DRS.</summary>
+            public Fields GearDrsErs(string idp)
+            {
+                int b = _bit;
+                // Gear wire value = SimHub gear + 1 (firmware: 0=R, 1=N, 2=1st…); verified from capture.
+                _list.Add(MakeBits(idp + "Gear", "Gear", b, 4, "DataCorePlugin.GameData.Gear", bias: 1.0));
+                _list.Add(MakeBits(idp + "Ers", "ERS mode", b + 4, 2, ErsDeployMode));
+                _list.Add(MakeBits(idp + "Drs", "DRS", b + 6, 1, "DataCorePlugin.GameData.DRSEnabled"));
+                _bit += 8;
+                return this;
+            }
+            /// <summary>Compact&lt;4,4&gt;: two 4-bit LSB values in one byte.</summary>
+            public Fields Nibbles(string id0, string l0, string p0, string id1, string l1, string p1, double bias0 = 0.0, double bias1 = 0.0)
+            {
+                int b = _bit;
+                _list.Add(MakeBits(id0, l0, b, 4, p0, bias: bias0));
+                _list.Add(MakeBits(id1, l1, b + 4, 4, p1, bias: bias1));
+                _bit += 8;
+                return this;
+            }
+            /// <summary>Compact&lt;1,…&gt;: up to seven 1-bit flags LSB in one byte.</summary>
+            public Fields Flags(params (string id, string label, string prop)[] flags)
+            {
+                int b = _bit;
+                for (int i = 0; i < flags.Length; i++)
+                    _list.Add(MakeBits(flags[i].id, flags[i].label, b + i, 1, flags[i].prop));
+                _bit += 8;
+                return this;
+            }
+            public Fsr1FieldDef[] Done() => _list.ToArray();
+        }
+
+        private static Fsr1FieldDef MakeByte(string id, string label, int byteStart, Fsr1Encoding enc, string prop, long fullScale = 0, double scale = 1.0, double bias = 0.0)
+        {
+            int w = enc == Fsr1Encoding.U8 ? 1 : enc == Fsr1Encoding.U24_BE ? 3 : 2;
+            var offs = new int[w];
+            for (int i = 0; i < w; i++) offs[i] = byteStart + i;
+            return new Fsr1FieldDef { FieldId = id, Label = label, Offsets = offs, Encoding = enc,
+                Kind = Fsr1FieldKind.Direct, DefaultProperty = prop, Decoded = true, FullScale = fullScale,
+                DefaultScale = scale, DefaultBias = bias };
+        }
+
+        private static Fsr1FieldDef MakeBits(string id, string label, int bitOffset, int bitWidth, string prop, long fullScale = 0, double scale = 1.0, double bias = 0.0)
+        {
+            int b0 = bitOffset >> 3, b1 = (bitOffset + bitWidth - 1) >> 3;
+            var offs = new int[b1 - b0 + 1];
+            for (int i = 0; i < offs.Length; i++) offs[i] = b0 + i;
+            return new Fsr1FieldDef { FieldId = id, Label = label, Offsets = offs, Encoding = Fsr1Encoding.U24_BE,
+                StartBit = bitOffset & 7, BitWidth = bitWidth, Kind = Fsr1FieldKind.Direct,
+                DefaultProperty = prop, Decoded = true, FullScale = fullScale, DefaultScale = scale, DefaultBias = bias };
+        }
+
+        // SimHub generic game-data property prefix. Field DefaultProperty = G + "<Name>".
+        private const string G = "DataCorePlugin.GameData.";
+        // PitHouse tyre/pressure wheel order within a 4×10-bit group: FL, FR, RL, RR
+        // (verified by decoding a captured session — tyre0=FL, tyre1=FR, tyre2=RL, tyre3=RR).
+        private static readonly string[] Corners = { "FL", "FR", "RL", "RR" };
+        // The FSR1 firmware's tyre pages want the game's INNER (carcass) temp for the inner group and
+        // the SURFACE temp for the outer group — SimHub's generic TyreTemperature* is only the surface,
+        // so we bind the F1 raw arrays PitHouse itself uses. F1 wheel order is RL,RR,FL,FR (1-based
+        // suffix 01,02,03,04); our group order is FL,FR,RL,RR → suffix 03,04,01,02.
+        private const string F1Raw = "DataCorePlugin.GameRawData.PacketCarTelemetryData.m_carTelemetryData01.";
+        private const string F1RawStatus = "DataCorePlugin.GameRawData.PacketCarStatusData.m_carStatusData01.";
+        // ERS deploy mode 0–3 (3 = overtake) drives the firmware's OVERTAKE highlight; the game value
+        // maps straight into the 2-bit field. Live delta to session best (signed seconds) for gap fields.
+        private const string ErsDeployMode = F1RawStatus + "m_ersDeployMode";
+        private const string LiveDelta = "PersistantTrackerPlugin.SessionBestLiveDeltaSeconds";
+        private static readonly string[] InnerTempProps =
+        {
+            F1Raw + "m_tyresInnerTemperature03", F1Raw + "m_tyresInnerTemperature04",
+            F1Raw + "m_tyresInnerTemperature01", F1Raw + "m_tyresInnerTemperature02",
+        };
+        private static readonly string[] SurfaceTempProps =
+        {
+            F1Raw + "m_tyresSurfaceTemperature03", F1Raw + "m_tyresSurfaceTemperature04",
+            F1Raw + "m_tyresSurfaceTemperature01", F1Raw + "m_tyresSurfaceTemperature02",
+        };
+        private static readonly string[] TyrePressProps =
+        {
+            G + "TyrePressureFrontLeft", G + "TyrePressureFrontRight",
+            G + "TyrePressureRearLeft", G + "TyrePressureRearRight",
+        };
+        // Tyre-temp 10-bit fields carry a +300 wire bias (firmware decodes value−300 °C).
+        private const double TyreTempBias = 300.0;
+        // Lap-time 24-bit fields carry the game value in milliseconds (SimHub seconds × 1000).
+        private const double MsScale = 1000.0;
+
+        // Ground-truth catalog, derived by decompiling PitHouse's FormulaSteeringTelemetryDataPackN
+        // classes (Pack N = record type 0x0N). Each record is that Pack's exact ordered field list;
+        // strategies fix the encoding: tyre temp / tyre pressure = 4×10-bit LSB packs (5 bytes),
+        // brake temp / speed / rpm / int16 = 16-bit big-endian, lap times = 24-bit BE (ms),
+        // int8 / gear / temp = 8-bit, GearDrsErs / compact bundles = sub-byte LSB. See docs § Group 0x42.
         public static readonly Fsr1Dashboard[] Dashboards =
         {
             new()
             {
-                RecordType = 0x01, Key = "type-01", Label = "Dashboard 01 — dashboard", IsLive = true,
+                RecordType = 0x01, Key = "type-01", Label = "Dashboard 01 — tyre / timing", IsLive = true,
                 PayloadLen = 25, LiveB1 = 0x00, LiveB2 = 0x00,
-                Fields = new[]
-                {
-                    new Fsr1FieldDef { FieldId = "g5", Label = "Gauge @5 (16-bit)", Offsets = new[] { 5, 6 }, Encoding = Fsr1Encoding.U16_BE, Kind = Fsr1FieldKind.Direct, Decoded = false },
-                    new Fsr1FieldDef { FieldId = "g7", Label = "Gauge @7 (16-bit)", Offsets = new[] { 7, 8 }, Encoding = Fsr1Encoding.U16_BE, Kind = Fsr1FieldKind.Direct, Decoded = false },
-                    new Fsr1FieldDef { FieldId = "g9", Label = "Gauge @9 (16-bit)", Offsets = new[] { 9, 10 }, Encoding = Fsr1Encoding.U16_BE, Kind = Fsr1FieldKind.Direct, Decoded = false },
-                    new Fsr1FieldDef { FieldId = "g11", Label = "Gauge @11 (16-bit)", Offsets = new[] { 11, 12 }, Encoding = Fsr1Encoding.U16_BE, Kind = Fsr1FieldKind.Direct, Decoded = false },
-                    new Fsr1FieldDef { FieldId = "g13", Label = "Gauge @13 (16-bit)", Offsets = new[] { 13, 14 }, Encoding = Fsr1Encoding.U16_BE, Kind = Fsr1FieldKind.Direct, Decoded = false },
-                    new Fsr1FieldDef { FieldId = "g15", Label = "Gauge @15 (16-bit)", Offsets = new[] { 15, 16 }, Encoding = Fsr1Encoding.U16_BE, Kind = Fsr1FieldKind.Direct, Decoded = false },
-                    new Fsr1FieldDef { FieldId = "g17", Label = "Gauge @17 (16-bit)", Offsets = new[] { 17, 18 }, Encoding = Fsr1Encoding.U16_BE, Kind = Fsr1FieldKind.Direct, Decoded = false },
-                    new Fsr1FieldDef { FieldId = "g19", Label = "Gauge @19 (16-bit)", Offsets = new[] { 19, 20 }, Encoding = Fsr1Encoding.U16_BE, Kind = Fsr1FieldKind.Direct, Decoded = false },
-                    new Fsr1FieldDef { FieldId = "g21", Label = "Gauge @21 (16-bit)", Offsets = new[] { 21, 22 }, Encoding = Fsr1Encoding.U16_BE, Kind = Fsr1FieldKind.Direct, Decoded = false },
-                    new Fsr1FieldDef { FieldId = "g23", Label = "Gauge @23 (16-bit)", Offsets = new[] { 23, 24 }, Encoding = Fsr1Encoding.U16_BE, Kind = Fsr1FieldKind.Direct, Decoded = false },
-                },
+                Fields = new Fields()
+                    .Pack10x4("tti", "Tyre inner", Corners, InnerTempProps, TyreTempBias)
+                    .U24("clt", "Current lap time", G + "CurrentLapTime", MsScale)
+                    .U16("frl", "Fuel remain laps", "")
+                    .U16("fsl", "Fuel surplus laps", "")
+                    .U16("spd", "Speed", G + "SpeedKmh")
+                    .U8("pos", "Position", G + "Position")
+                    .U8("lap", "Lap", G + "CurrentLap")
+                    .U8("ersR", "ERS remaining", G + "ERSPercent")
+                    .U8("ersD", "ERS deployed", "")
+                    .U8("ersH", "ERS harvested", "")
+                    .GearDrsErs("gde")
+                    .Done(),
             },
             new()
             {
-                RecordType = 0x02, Key = "type-02", Label = "Dashboard 02 — RPM / gear", IsLive = true,
+                RecordType = 0x02, Key = "type-02", Label = "Dashboard 02 — brake temps", IsLive = true,
                 PayloadLen = 18, LiveB1 = 0x00, LiveB2 = 0x00,
-                Fields = new[]
-                {
-                    new Fsr1FieldDef { FieldId = "g5", Label = "Gauge @5 (16-bit)", Offsets = new[] { 5, 6 }, Encoding = Fsr1Encoding.U16_BE, Kind = Fsr1FieldKind.Direct, Decoded = false },
-                    new Fsr1FieldDef { FieldId = "g7", Label = "Gauge @7 (16-bit)", Offsets = new[] { 7, 8 }, Encoding = Fsr1Encoding.U16_BE, Kind = Fsr1FieldKind.Direct, Decoded = false },
-                    new Fsr1FieldDef { FieldId = "g9", Label = "Gauge @9 (16-bit)", Offsets = new[] { 9, 10 }, Encoding = Fsr1Encoding.U16_BE, Kind = Fsr1FieldKind.Direct, Decoded = false },
-                    new Fsr1FieldDef { FieldId = "g11", Label = "Gauge @11 (16-bit)", Offsets = new[] { 11, 12 }, Encoding = Fsr1Encoding.U16_BE, Kind = Fsr1FieldKind.Direct, Decoded = false },
-                    new Fsr1FieldDef { FieldId = "g13", Label = "Gauge @13 (16-bit)", Offsets = new[] { 13, 14 }, Encoding = Fsr1Encoding.U16_BE, Kind = Fsr1FieldKind.Direct, Decoded = false },
-                    new Fsr1FieldDef { FieldId = "g15", Label = "Gauge @15 (16-bit)", Offsets = new[] { 15, 16 }, Encoding = Fsr1Encoding.U16_BE, Kind = Fsr1FieldKind.Direct, Decoded = false },
-                    new Fsr1FieldDef { FieldId = "b17", Label = "Slot @17 (8-bit)", Offsets = new[] { 17 }, Encoding = Fsr1Encoding.U8, Kind = Fsr1FieldKind.Direct, Decoded = false },
-                },
+                Fields = new Fields()
+                    .U16("btFL", "Brake temp FL", G + "BrakeTemperatureFrontLeft")
+                    .U16("btFR", "Brake temp FR", G + "BrakeTemperatureFrontRight")
+                    .U16("btRL", "Brake temp RL", G + "BrakeTemperatureRearLeft")
+                    .U16("btRR", "Brake temp RR", G + "BrakeTemperatureRearRight")
+                    .U16("spd", "Speed", G + "SpeedKmh")
+                    .U8("fuel", "Fuel remaining", G + "Fuel")
+                    .U8("ersR", "ERS remaining", G + "ERSPercent")
+                    .GearDrsErs("gde")
+                    .Done(),
             },
             new()
             {
-                RecordType = 0x03, Key = "type-03", Label = "Dashboard 03 — dashboard", IsLive = true,
+                RecordType = 0x03, Key = "type-03", Label = "Dashboard 03 — wear", IsLive = true,
                 PayloadLen = 19, LiveB1 = 0x00, LiveB2 = 0x00,
-                Fields = new[]
-                {
-                    new Fsr1FieldDef { FieldId = "g5", Label = "Gauge @5 (16-bit)", Offsets = new[] { 5, 6 }, Encoding = Fsr1Encoding.U16_BE, Kind = Fsr1FieldKind.Direct, Decoded = false },
-                    new Fsr1FieldDef { FieldId = "g7", Label = "Gauge @7 (16-bit)", Offsets = new[] { 7, 8 }, Encoding = Fsr1Encoding.U16_BE, Kind = Fsr1FieldKind.Direct, Decoded = false },
-                    new Fsr1FieldDef { FieldId = "g9", Label = "Gauge @9 (16-bit)", Offsets = new[] { 9, 10 }, Encoding = Fsr1Encoding.U16_BE, Kind = Fsr1FieldKind.Direct, Decoded = false },
-                    new Fsr1FieldDef { FieldId = "g11", Label = "Gauge @11 (16-bit)", Offsets = new[] { 11, 12 }, Encoding = Fsr1Encoding.U16_BE, Kind = Fsr1FieldKind.Direct, Decoded = false },
-                    new Fsr1FieldDef { FieldId = "g13", Label = "Gauge @13 (16-bit)", Offsets = new[] { 13, 14 }, Encoding = Fsr1Encoding.U16_BE, Kind = Fsr1FieldKind.Direct, Decoded = false },
-                    new Fsr1FieldDef { FieldId = "g15", Label = "Gauge @15 (16-bit)", Offsets = new[] { 15, 16 }, Encoding = Fsr1Encoding.U16_BE, Kind = Fsr1FieldKind.Direct, Decoded = false },
-                    new Fsr1FieldDef { FieldId = "g17", Label = "Gauge @17 (16-bit)", Offsets = new[] { 17, 18 }, Encoding = Fsr1Encoding.U16_BE, Kind = Fsr1FieldKind.Direct, Decoded = false },
-                },
+                Fields = new Fields()
+                    .U16("spd", "Speed", G + "SpeedKmh")
+                    .U8("twFL", "Tyre wear FL", G + "TyreWearFrontLeft")
+                    .U8("twFR", "Tyre wear FR", G + "TyreWearFrontRight")
+                    .U8("twRL", "Tyre wear RL", G + "TyreWearRearLeft")
+                    .U8("twRR", "Tyre wear RR", G + "TyreWearRearRight")
+                    .U8("wwFL", "Wing wear FL", "")
+                    .U8("wwFR", "Wing wear FR", "")
+                    .U8("wwR", "Wing wear R", "")
+                    .U8("engWear", "Engine wear", "")
+                    .U8("gbxWear", "Gearbox wear", "")
+                    .U8("ersR", "ERS remaining", G + "ERSPercent")
+                    .U8("fuel", "Fuel remaining", G + "Fuel")
+                    .GearDrsErs("gde")
+                    .Done(),
             },
             new()
             {
-                RecordType = 0x04, Key = "type-04", Label = "Dashboard 04 — dashboard", IsLive = true,
+                RecordType = 0x04, Key = "type-04", Label = "Dashboard 04 — timing / RPM", IsLive = true,
                 PayloadLen = 23, LiveB1 = 0x00, LiveB2 = 0x00,
-                Fields = new[]
-                {
-                    new Fsr1FieldDef { FieldId = "g5", Label = "Gauge @5 (16-bit)", Offsets = new[] { 5, 6 }, Encoding = Fsr1Encoding.U16_BE, Kind = Fsr1FieldKind.Direct, Decoded = false },
-                    new Fsr1FieldDef { FieldId = "g7", Label = "Gauge @7 (16-bit)", Offsets = new[] { 7, 8 }, Encoding = Fsr1Encoding.U16_BE, Kind = Fsr1FieldKind.Direct, Decoded = false },
-                    new Fsr1FieldDef { FieldId = "g9", Label = "Gauge @9 (16-bit)", Offsets = new[] { 9, 10 }, Encoding = Fsr1Encoding.U16_BE, Kind = Fsr1FieldKind.Direct, Decoded = false },
-                    new Fsr1FieldDef { FieldId = "g11", Label = "Gauge @11 (16-bit)", Offsets = new[] { 11, 12 }, Encoding = Fsr1Encoding.U16_BE, Kind = Fsr1FieldKind.Direct, Decoded = false },
-                    new Fsr1FieldDef { FieldId = "g13", Label = "Gauge @13 (16-bit)", Offsets = new[] { 13, 14 }, Encoding = Fsr1Encoding.U16_BE, Kind = Fsr1FieldKind.Direct, Decoded = false },
-                    new Fsr1FieldDef { FieldId = "g15", Label = "Gauge @15 (16-bit)", Offsets = new[] { 15, 16 }, Encoding = Fsr1Encoding.U16_BE, Kind = Fsr1FieldKind.Direct, Decoded = false },
-                    new Fsr1FieldDef { FieldId = "g17", Label = "Gauge @17 (16-bit)", Offsets = new[] { 17, 18 }, Encoding = Fsr1Encoding.U16_BE, Kind = Fsr1FieldKind.Direct, Decoded = false },
-                    new Fsr1FieldDef { FieldId = "g19", Label = "Gauge @19 (16-bit)", Offsets = new[] { 19, 20 }, Encoding = Fsr1Encoding.U16_BE, Kind = Fsr1FieldKind.Direct, Decoded = false },
-                    new Fsr1FieldDef { FieldId = "g21", Label = "Gauge @21 (16-bit)", Offsets = new[] { 21, 22 }, Encoding = Fsr1Encoding.U16_BE, Kind = Fsr1FieldKind.Direct, Decoded = false },
-                },
+                Fields = new Fields()
+                    .U24("clt", "Current lap time", G + "CurrentLapTime", MsScale)
+                    .U24("llt", "Last lap time", G + "LastLapTime", MsScale)
+                    .U24("blt", "Best lap time", G + "BestLapTime", MsScale)
+                    .U16("spd", "Speed", G + "SpeedKmh")
+                    .U16("rpm", "RPM", G + "Rpms")
+                    .U16("maxRpm", "Max RPM", G + "MaxRpm")
+                    .U8("ersR", "ERS remaining", G + "ERSPercent")
+                    .U8("fuel", "Fuel remaining", G + "Fuel")
+                    .GearDrsErs("gde")
+                    .Done(),
             },
             new()
             {
-                RecordType = 0x05, Key = "type-05", Label = "Dashboard 05 — dashboard", IsLive = true,
+                RecordType = 0x05, Key = "type-05", Label = "Dashboard 05 — timing / wear", IsLive = true,
                 PayloadLen = 25, LiveB1 = 0x00, LiveB2 = 0x00,
-                Fields = new[]
-                {
-                    new Fsr1FieldDef { FieldId = "g5", Label = "Gauge @5 (16-bit)", Offsets = new[] { 5, 6 }, Encoding = Fsr1Encoding.U16_BE, Kind = Fsr1FieldKind.Direct, Decoded = false },
-                    new Fsr1FieldDef { FieldId = "g7", Label = "Gauge @7 (16-bit)", Offsets = new[] { 7, 8 }, Encoding = Fsr1Encoding.U16_BE, Kind = Fsr1FieldKind.Direct, Decoded = false },
-                    new Fsr1FieldDef { FieldId = "g9", Label = "Gauge @9 (16-bit)", Offsets = new[] { 9, 10 }, Encoding = Fsr1Encoding.U16_BE, Kind = Fsr1FieldKind.Direct, Decoded = false },
-                    new Fsr1FieldDef { FieldId = "g11", Label = "Gauge @11 (16-bit)", Offsets = new[] { 11, 12 }, Encoding = Fsr1Encoding.U16_BE, Kind = Fsr1FieldKind.Direct, Decoded = false },
-                    new Fsr1FieldDef { FieldId = "g13", Label = "Gauge @13 (16-bit)", Offsets = new[] { 13, 14 }, Encoding = Fsr1Encoding.U16_BE, Kind = Fsr1FieldKind.Direct, Decoded = false },
-                    new Fsr1FieldDef { FieldId = "g15", Label = "Gauge @15 (16-bit)", Offsets = new[] { 15, 16 }, Encoding = Fsr1Encoding.U16_BE, Kind = Fsr1FieldKind.Direct, Decoded = false },
-                    new Fsr1FieldDef { FieldId = "g17", Label = "Gauge @17 (16-bit)", Offsets = new[] { 17, 18 }, Encoding = Fsr1Encoding.U16_BE, Kind = Fsr1FieldKind.Direct, Decoded = false },
-                    new Fsr1FieldDef { FieldId = "g19", Label = "Gauge @19 (16-bit)", Offsets = new[] { 19, 20 }, Encoding = Fsr1Encoding.U16_BE, Kind = Fsr1FieldKind.Direct, Decoded = false },
-                    new Fsr1FieldDef { FieldId = "g21", Label = "Gauge @21 (16-bit)", Offsets = new[] { 21, 22 }, Encoding = Fsr1Encoding.U16_BE, Kind = Fsr1FieldKind.Direct, Decoded = false },
-                    new Fsr1FieldDef { FieldId = "g23", Label = "Gauge @23 (16-bit)", Offsets = new[] { 23, 24 }, Encoding = Fsr1Encoding.U16_BE, Kind = Fsr1FieldKind.Direct, Decoded = false },
-                },
+                Fields = new Fields()
+                    .U24("clt", "Current lap time", G + "CurrentLapTime", MsScale)
+                    .U24("llt", "Last lap time", G + "LastLapTime", MsScale)
+                    .U24("blt", "Best lap time", G + "BestLapTime", MsScale)
+                    .U16("spd", "Speed", G + "SpeedKmh")
+                    .U8("twFL", "Tyre wear FL", G + "TyreWearFrontLeft")
+                    .U8("twFR", "Tyre wear FR", G + "TyreWearFrontRight")
+                    .U8("twRL", "Tyre wear RL", G + "TyreWearRearLeft")
+                    .U8("twRR", "Tyre wear RR", G + "TyreWearRearRight")
+                    .U8("pos", "Position", G + "Position")
+                    .U8("cars", "Car count", G + "OpponentsCount")
+                    .U8("lap", "Lap", G + "CurrentLap")
+                    .U8("laps", "Lap count", G + "TotalLaps")
+                    .U8("gear", "Gear", G + "Gear", bias: 1.0)
+                    .Done(),
             },
             new()
             {
-                RecordType = 0x06, Key = "type-06", Label = "Dashboard 06 — multi-gauge", IsLive = true,
+                RecordType = 0x06, Key = "type-06", Label = "Dashboard 06 — timing / gap", IsLive = true,
                 PayloadLen = 25, LiveB1 = 0x00, LiveB2 = 0x08,
-                Fields = new[]
-                {
-                    new Fsr1FieldDef { FieldId = "g5", Label = "Gauge @5 (16-bit)", Offsets = new[] { 5, 6 }, Encoding = Fsr1Encoding.U16_BE, Kind = Fsr1FieldKind.Direct, Decoded = false },
-                    new Fsr1FieldDef { FieldId = "g7", Label = "Gauge @7 (16-bit)", Offsets = new[] { 7, 8 }, Encoding = Fsr1Encoding.U16_BE, Kind = Fsr1FieldKind.Direct, Decoded = false },
-                    new Fsr1FieldDef { FieldId = "g9", Label = "Gauge @9 (16-bit)", Offsets = new[] { 9, 10 }, Encoding = Fsr1Encoding.U16_BE, Kind = Fsr1FieldKind.Direct, Decoded = false },
-                    new Fsr1FieldDef { FieldId = "g11", Label = "Gauge @11 (16-bit)", Offsets = new[] { 11, 12 }, Encoding = Fsr1Encoding.U16_BE, Kind = Fsr1FieldKind.Direct, Decoded = false },
-                    new Fsr1FieldDef { FieldId = "g13", Label = "Gauge @13 (16-bit)", Offsets = new[] { 13, 14 }, Encoding = Fsr1Encoding.U16_BE, Kind = Fsr1FieldKind.Direct, Decoded = false },
-                    new Fsr1FieldDef { FieldId = "g15", Label = "Gauge @15 (16-bit)", Offsets = new[] { 15, 16 }, Encoding = Fsr1Encoding.U16_BE, Kind = Fsr1FieldKind.Direct, Decoded = false },
-                    new Fsr1FieldDef { FieldId = "g17", Label = "Gauge @17 (16-bit)", Offsets = new[] { 17, 18 }, Encoding = Fsr1Encoding.U16_BE, Kind = Fsr1FieldKind.Direct, Decoded = false },
-                    new Fsr1FieldDef { FieldId = "g19", Label = "Gauge @19 (16-bit)", Offsets = new[] { 19, 20 }, Encoding = Fsr1Encoding.U16_BE, Kind = Fsr1FieldKind.Direct, Decoded = false },
-                    new Fsr1FieldDef { FieldId = "g21", Label = "Gauge @21 (16-bit)", Offsets = new[] { 21, 22 }, Encoding = Fsr1Encoding.U16_BE, Kind = Fsr1FieldKind.Direct, Decoded = false },
-                    new Fsr1FieldDef { FieldId = "g23", Label = "Gauge @23 (16-bit)", Offsets = new[] { 23, 24 }, Encoding = Fsr1Encoding.U16_BE, Kind = Fsr1FieldKind.Direct, Decoded = false },
-                },
+                Fields = new Fields()
+                    .U24("clt", "Current lap time", G + "CurrentLapTime", MsScale)
+                    .U24("llt", "Last lap time", G + "LastLapTime", MsScale)
+                    .U24("blt", "Best lap time", G + "BestLapTime", MsScale)
+                    .U24("gap", "Gap", LiveDelta, MsScale)
+                    .U16("spd", "Speed", G + "SpeedKmh")
+                    .U16("rpm", "RPM", G + "Rpms")
+                    .U8("pos", "Position", G + "Position")
+                    .U8("fuel", "Fuel remaining", G + "Fuel")
+                    .U8("ersR", "ERS remaining", G + "ERSPercent")
+                    .GearDrsErs("gde")
+                    .Done(),
             },
             new()
             {
-                RecordType = 0x08, Key = "type-08", Label = "Dashboard 08 — dashboard", IsLive = true,
+                RecordType = 0x08, Key = "type-08", Label = "Dashboard 08 — tyres / brakes", IsLive = true,
                 PayloadLen = 23, LiveB1 = 0x00, LiveB2 = 0x00,
-                Fields = new[]
-                {
-                    new Fsr1FieldDef { FieldId = "g5", Label = "Gauge @5 (16-bit)", Offsets = new[] { 5, 6 }, Encoding = Fsr1Encoding.U16_BE, Kind = Fsr1FieldKind.Direct, Decoded = false },
-                    new Fsr1FieldDef { FieldId = "g7", Label = "Gauge @7 (16-bit)", Offsets = new[] { 7, 8 }, Encoding = Fsr1Encoding.U16_BE, Kind = Fsr1FieldKind.Direct, Decoded = false },
-                    new Fsr1FieldDef { FieldId = "g9", Label = "Gauge @9 (16-bit)", Offsets = new[] { 9, 10 }, Encoding = Fsr1Encoding.U16_BE, Kind = Fsr1FieldKind.Direct, Decoded = false },
-                    new Fsr1FieldDef { FieldId = "g11", Label = "Gauge @11 (16-bit)", Offsets = new[] { 11, 12 }, Encoding = Fsr1Encoding.U16_BE, Kind = Fsr1FieldKind.Direct, Decoded = false },
-                    new Fsr1FieldDef { FieldId = "g13", Label = "Gauge @13 (16-bit)", Offsets = new[] { 13, 14 }, Encoding = Fsr1Encoding.U16_BE, Kind = Fsr1FieldKind.Direct, Decoded = false },
-                    new Fsr1FieldDef { FieldId = "g15", Label = "Gauge @15 (16-bit)", Offsets = new[] { 15, 16 }, Encoding = Fsr1Encoding.U16_BE, Kind = Fsr1FieldKind.Direct, Decoded = false },
-                    new Fsr1FieldDef { FieldId = "g17", Label = "Gauge @17 (16-bit)", Offsets = new[] { 17, 18 }, Encoding = Fsr1Encoding.U16_BE, Kind = Fsr1FieldKind.Direct, Decoded = false },
-                    new Fsr1FieldDef { FieldId = "g19", Label = "Gauge @19 (16-bit)", Offsets = new[] { 19, 20 }, Encoding = Fsr1Encoding.U16_BE, Kind = Fsr1FieldKind.Direct, Decoded = false },
-                    new Fsr1FieldDef { FieldId = "g21", Label = "Gauge @21 (16-bit)", Offsets = new[] { 21, 22 }, Encoding = Fsr1Encoding.U16_BE, Kind = Fsr1FieldKind.Direct, Decoded = false },
-                },
+                Fields = new Fields()
+                    .Pack10x4("tti", "Tyre inner", Corners, InnerTempProps, TyreTempBias)
+                    .Pack10x4("tto", "Tyre outer", Corners, SurfaceTempProps, TyreTempBias)
+                    .U16("btFL", "Brake temp FL", G + "BrakeTemperatureFrontLeft")
+                    .U16("btFR", "Brake temp FR", G + "BrakeTemperatureFrontRight")
+                    .U16("btRL", "Brake temp RL", G + "BrakeTemperatureRearLeft")
+                    .U16("btRR", "Brake temp RR", G + "BrakeTemperatureRearRight")
+                    .Done(),
             },
             new()
             {
                 RecordType = 0x09, Key = "type-09", Label = "Dashboard 09 — timing", IsLive = true,
                 PayloadLen = 24, LiveB1 = 0x00, LiveB2 = 0x08,
-                // Decoded from a probe-validated user profile (lap-time dashboard). Lap times
-                // are 3-byte (u24) values — they exceed u16 in ms. See wheel-0x17.md § Group 0x42.
-                Fields = new[]
-                {
-                    new Fsr1FieldDef { FieldId = "g5",  Label = "Current lap time", Offsets = new[] { 5, 6, 7 },    Encoding = Fsr1Encoding.U24_BE, Kind = Fsr1FieldKind.Direct, DefaultProperty = "DataCorePlugin.GameData.CurrentLapTime", Decoded = true },
-                    new Fsr1FieldDef { FieldId = "g8",  Label = "Last lap time",    Offsets = new[] { 8, 9, 10 },   Encoding = Fsr1Encoding.U24_BE, Kind = Fsr1FieldKind.Direct, DefaultProperty = "DataCorePlugin.GameData.LastLapTime", Decoded = true },
-                    new Fsr1FieldDef { FieldId = "g11", Label = "Best lap time",    Offsets = new[] { 11, 12, 13 }, Encoding = Fsr1Encoding.U24_BE, Kind = Fsr1FieldKind.Direct, DefaultProperty = "DataCorePlugin.GameData.BestLapTime", Decoded = true },
-                    new Fsr1FieldDef { FieldId = "g14", Label = "Gauge @14 (24-bit)", Offsets = new[] { 14, 15, 16 }, Encoding = Fsr1Encoding.U24_BE, Kind = Fsr1FieldKind.Direct, Decoded = false },
-                    new Fsr1FieldDef { FieldId = "g17", Label = "Speed (km/h)",     Offsets = new[] { 17, 18 },     Encoding = Fsr1Encoding.U16_BE, Kind = Fsr1FieldKind.Direct, DefaultProperty = "DataCorePlugin.GameData.SpeedKmh", Decoded = true },
-                    new Fsr1FieldDef { FieldId = "b19", Label = "Position",         Offsets = new[] { 19 },         Encoding = Fsr1Encoding.U8,     Kind = Fsr1FieldKind.Direct, DefaultProperty = "DataCorePlugin.GameData.Position", Decoded = true },
-                    new Fsr1FieldDef { FieldId = "b20", Label = "RPM %",            Offsets = new[] { 20 },         Encoding = Fsr1Encoding.U8,     Kind = Fsr1FieldKind.Direct, DefaultProperty = "DataCorePlugin.GameData.CarSettings_CurrentDisplayedRPMPercent", Decoded = true },
-                    new Fsr1FieldDef { FieldId = "b21", Label = "TC level",         Offsets = new[] { 21 },         Encoding = Fsr1Encoding.U8,     Kind = Fsr1FieldKind.Direct, DefaultProperty = "DataCorePlugin.GameData.TCLevel", Decoded = true },
-                    new Fsr1FieldDef { FieldId = "b22", Label = "ABS level",        Offsets = new[] { 22 },         Encoding = Fsr1Encoding.U8,     Kind = Fsr1FieldKind.Direct, DefaultProperty = "DataCorePlugin.GameData.ABSLevel", Decoded = true },
-                    new Fsr1FieldDef { FieldId = "b23", Label = "Gear",             Offsets = new[] { 23 },         Encoding = Fsr1Encoding.U8,     Kind = Fsr1FieldKind.Direct, DefaultProperty = "DataCorePlugin.GameData.Gear", Decoded = true },
-                },
+                Fields = new Fields()
+                    .U24("clt", "Current lap time", G + "CurrentLapTime", MsScale)
+                    .U24("llt", "Last lap time", G + "LastLapTime", MsScale)
+                    .U24("blt", "Best lap time", G + "BestLapTime", MsScale)
+                    .U24("gap", "Gap", LiveDelta, MsScale)
+                    .U16("spd", "Speed", G + "SpeedKmh")
+                    .U8("pos", "Position", G + "Position")
+                    .U8("ersR", "ERS remaining", G + "ERSPercent")
+                    .U8("tc", "TC level", G + "TCLevel")
+                    .U8("abs", "ABS level", G + "ABSLevel")
+                    .U8("gear", "Gear", G + "Gear", bias: 1.0)
+                    .Done(),
             },
             new()
             {
-                RecordType = 0x0b, Key = "type-0b", Label = "Dashboard 0B — dashboard", IsLive = true,
+                RecordType = 0x0b, Key = "type-0b", Label = "Dashboard 0B — timing / bias", IsLive = true,
                 PayloadLen = 15, LiveB1 = 0x00, LiveB2 = 0x04,
-                Fields = new[]
-                {
-                    new Fsr1FieldDef { FieldId = "g5", Label = "Gauge @5 (16-bit)", Offsets = new[] { 5, 6 }, Encoding = Fsr1Encoding.U16_BE, Kind = Fsr1FieldKind.Direct, Decoded = false },
-                    new Fsr1FieldDef { FieldId = "g7", Label = "Gauge @7 (16-bit)", Offsets = new[] { 7, 8 }, Encoding = Fsr1Encoding.U16_BE, Kind = Fsr1FieldKind.Direct, Decoded = false },
-                    new Fsr1FieldDef { FieldId = "g9", Label = "Gauge @9 (16-bit)", Offsets = new[] { 9, 10 }, Encoding = Fsr1Encoding.U16_BE, Kind = Fsr1FieldKind.Direct, Decoded = false },
-                    new Fsr1FieldDef { FieldId = "g11", Label = "Gauge @11 (16-bit)", Offsets = new[] { 11, 12 }, Encoding = Fsr1Encoding.U16_BE, Kind = Fsr1FieldKind.Direct, Decoded = false },
-                    new Fsr1FieldDef { FieldId = "g13", Label = "Gauge @13 (16-bit)", Offsets = new[] { 13, 14 }, Encoding = Fsr1Encoding.U16_BE, Kind = Fsr1FieldKind.Direct, Decoded = false },
-                },
+                Fields = new Fields()
+                    .U24("llt", "Last lap time", G + "LastLapTime", MsScale)
+                    .U24("blt", "Best lap time", G + "BestLapTime", MsScale)
+                    .U16("fuelTemp", "Fuel temp", "")
+                    .U16("bias", "Brake bias", G + "BrakeBias")
+                    .Done(),
             },
             new()
             {
-                RecordType = 0x0c, Key = "type-0c", Label = "Dashboard 0C — dashboard", IsLive = true,
+                RecordType = 0x0c, Key = "type-0c", Label = "Dashboard 0C — timing / RPM", IsLive = true,
                 PayloadLen = 18, LiveB1 = 0x00, LiveB2 = 0x02,
-                Fields = new[]
-                {
-                    new Fsr1FieldDef { FieldId = "g5", Label = "Gauge @5 (16-bit)", Offsets = new[] { 5, 6 }, Encoding = Fsr1Encoding.U16_BE, Kind = Fsr1FieldKind.Direct, Decoded = false },
-                    new Fsr1FieldDef { FieldId = "g7", Label = "Gauge @7 (16-bit)", Offsets = new[] { 7, 8 }, Encoding = Fsr1Encoding.U16_BE, Kind = Fsr1FieldKind.Direct, Decoded = false },
-                    new Fsr1FieldDef { FieldId = "g9", Label = "Gauge @9 (16-bit)", Offsets = new[] { 9, 10 }, Encoding = Fsr1Encoding.U16_BE, Kind = Fsr1FieldKind.Direct, Decoded = false },
-                    new Fsr1FieldDef { FieldId = "g11", Label = "Gauge @11 (16-bit)", Offsets = new[] { 11, 12 }, Encoding = Fsr1Encoding.U16_BE, Kind = Fsr1FieldKind.Direct, Decoded = false },
-                    new Fsr1FieldDef { FieldId = "g13", Label = "Gauge @13 (16-bit)", Offsets = new[] { 13, 14 }, Encoding = Fsr1Encoding.U16_BE, Kind = Fsr1FieldKind.Direct, Decoded = false },
-                    new Fsr1FieldDef { FieldId = "g15", Label = "Gauge @15 (16-bit)", Offsets = new[] { 15, 16 }, Encoding = Fsr1Encoding.U16_BE, Kind = Fsr1FieldKind.Direct, Decoded = false },
-                    new Fsr1FieldDef { FieldId = "b17", Label = "Slot @17 (8-bit)", Offsets = new[] { 17 }, Encoding = Fsr1Encoding.U8, Kind = Fsr1FieldKind.Direct, Decoded = false },
-                },
+                Fields = new Fields()
+                    .U24("clt", "Current lap time", G + "CurrentLapTime", MsScale)
+                    .U24("gap", "Gap", LiveDelta, MsScale)
+                    .U16("spd", "Speed", G + "SpeedKmh")
+                    .U16("rpm", "RPM", G + "Rpms")
+                    .U16("maxRpm", "Max RPM", G + "MaxRpm")
+                    .U8("gear", "Gear", G + "Gear", bias: 1.0)
+                    .Done(),
             },
             new()
             {
-                RecordType = 0x0d, Key = "type-0d", Label = "Dashboard 0D — dashboard", IsLive = true,
+                RecordType = 0x0d, Key = "type-0d", Label = "Dashboard 0D — tyres / pressure", IsLive = true,
                 PayloadLen = 25, LiveB1 = 0x00, LiveB2 = 0x00,
-                Fields = new[]
-                {
-                    new Fsr1FieldDef { FieldId = "g5", Label = "Gauge @5 (16-bit)", Offsets = new[] { 5, 6 }, Encoding = Fsr1Encoding.U16_BE, Kind = Fsr1FieldKind.Direct, Decoded = false },
-                    new Fsr1FieldDef { FieldId = "g7", Label = "Gauge @7 (16-bit)", Offsets = new[] { 7, 8 }, Encoding = Fsr1Encoding.U16_BE, Kind = Fsr1FieldKind.Direct, Decoded = false },
-                    new Fsr1FieldDef { FieldId = "g9", Label = "Gauge @9 (16-bit)", Offsets = new[] { 9, 10 }, Encoding = Fsr1Encoding.U16_BE, Kind = Fsr1FieldKind.Direct, Decoded = false },
-                    new Fsr1FieldDef { FieldId = "g11", Label = "Gauge @11 (16-bit)", Offsets = new[] { 11, 12 }, Encoding = Fsr1Encoding.U16_BE, Kind = Fsr1FieldKind.Direct, Decoded = false },
-                    new Fsr1FieldDef { FieldId = "g13", Label = "Gauge @13 (16-bit)", Offsets = new[] { 13, 14 }, Encoding = Fsr1Encoding.U16_BE, Kind = Fsr1FieldKind.Direct, Decoded = false },
-                    new Fsr1FieldDef { FieldId = "g15", Label = "Gauge @15 (16-bit)", Offsets = new[] { 15, 16 }, Encoding = Fsr1Encoding.U16_BE, Kind = Fsr1FieldKind.Direct, Decoded = false },
-                    new Fsr1FieldDef { FieldId = "g17", Label = "Gauge @17 (16-bit)", Offsets = new[] { 17, 18 }, Encoding = Fsr1Encoding.U16_BE, Kind = Fsr1FieldKind.Direct, Decoded = false },
-                    new Fsr1FieldDef { FieldId = "g19", Label = "Gauge @19 (16-bit)", Offsets = new[] { 19, 20 }, Encoding = Fsr1Encoding.U16_BE, Kind = Fsr1FieldKind.Direct, Decoded = false },
-                    new Fsr1FieldDef { FieldId = "g21", Label = "Gauge @21 (16-bit)", Offsets = new[] { 21, 22 }, Encoding = Fsr1Encoding.U16_BE, Kind = Fsr1FieldKind.Direct, Decoded = false },
-                    new Fsr1FieldDef { FieldId = "g23", Label = "Gauge @23 (16-bit)", Offsets = new[] { 23, 24 }, Encoding = Fsr1Encoding.U16_BE, Kind = Fsr1FieldKind.Direct, Decoded = false },
-                },
+                Fields = new Fields()
+                    .Pack10x4("tti", "Tyre inner", Corners, InnerTempProps, TyreTempBias)
+                    .Pack10x4("tto", "Tyre outer", Corners, SurfaceTempProps, TyreTempBias)
+                    .U8("cars", "Car count", G + "OpponentsCount")
+                    .U8("lap", "Lap", G + "CurrentLap")
+                    .U8("laps", "Lap count", G + "TotalLaps")
+                    .Pack10x4("tp", "Tyre pressure", Corners, TyrePressProps)
+                    .U8("trackT", "Track temp", G + "RoadTemperature")
+                    .U8("airT", "Air temp", G + "AirTemperature")
+                    .Done(),
             },
             new()
             {
-                RecordType = 0x0e, Key = "type-0e", Label = "Dashboard 0E — multi-field", IsLive = true,
+                RecordType = 0x0e, Key = "type-0e", Label = "Dashboard 0E — race info", IsLive = true,
                 PayloadLen = 24, LiveB1 = 0x0e, LiveB2 = 0x01,
-                Fields = new[]
-                {
-                    new Fsr1FieldDef { FieldId = "g5", Label = "Gauge @5 (16-bit)", Offsets = new[] { 5, 6 }, Encoding = Fsr1Encoding.U16_BE, Kind = Fsr1FieldKind.Direct, Decoded = false },
-                    new Fsr1FieldDef { FieldId = "g7", Label = "Gauge @7 (16-bit)", Offsets = new[] { 7, 8 }, Encoding = Fsr1Encoding.U16_BE, Kind = Fsr1FieldKind.Direct, Decoded = false },
-                    new Fsr1FieldDef { FieldId = "g9", Label = "Gauge @9 (16-bit)", Offsets = new[] { 9, 10 }, Encoding = Fsr1Encoding.U16_BE, Kind = Fsr1FieldKind.Direct, Decoded = false },
-                    new Fsr1FieldDef { FieldId = "g11", Label = "Gauge @11 (16-bit)", Offsets = new[] { 11, 12 }, Encoding = Fsr1Encoding.U16_BE, Kind = Fsr1FieldKind.Direct, Decoded = false },
-                    new Fsr1FieldDef { FieldId = "g13", Label = "Gauge @13 (16-bit)", Offsets = new[] { 13, 14 }, Encoding = Fsr1Encoding.U16_BE, Kind = Fsr1FieldKind.Direct, Decoded = false },
-                    new Fsr1FieldDef { FieldId = "g15", Label = "Gauge @15 (16-bit)", Offsets = new[] { 15, 16 }, Encoding = Fsr1Encoding.U16_BE, Kind = Fsr1FieldKind.Direct, Decoded = false },
-                    new Fsr1FieldDef { FieldId = "g17", Label = "Gauge @17 (16-bit)", Offsets = new[] { 17, 18 }, Encoding = Fsr1Encoding.U16_BE, Kind = Fsr1FieldKind.Direct, Decoded = false },
-                    new Fsr1FieldDef { FieldId = "g19", Label = "Gauge @19 (16-bit)", Offsets = new[] { 19, 20 }, Encoding = Fsr1Encoding.U16_BE, Kind = Fsr1FieldKind.Direct, Decoded = false },
-                    new Fsr1FieldDef { FieldId = "g21", Label = "Gauge @21 (16-bit)", Offsets = new[] { 21, 22 }, Encoding = Fsr1Encoding.U16_BE, Kind = Fsr1FieldKind.Direct, Decoded = false },
-                    new Fsr1FieldDef { FieldId = "b23", Label = "Slot @23 (8-bit)", Offsets = new[] { 23 }, Encoding = Fsr1Encoding.U8, Kind = Fsr1FieldKind.Direct, Decoded = false },
-                },
+                Fields = new Fields()
+                    .U24("gap", "Gap", LiveDelta, MsScale)
+                    .U16("frl", "Fuel remain laps", "")
+                    .U16("spd", "Speed", G + "SpeedKmh")
+                    .U16("rpm", "RPM", G + "Rpms")
+                    .U8("lap", "Lap", G + "CurrentLap")
+                    .U8("pos", "Position", G + "Position")
+                    .U8("fuel", "Fuel remaining", G + "Fuel")
+                    .U8("tc", "TC level", G + "TCLevel")
+                    .U8("abs", "ABS level", G + "ABSLevel")
+                    .U8("boost", "Boost", "")
+                    .U8("ecu", "ECU map", G + "EngineMap")
+                    .U8("tc2", "TC2", "")
+                    .U8("fuelClass", "Fuel class", "")
+                    .U8("gear", "Gear", G + "Gear", bias: 1.0)
+                    .Done(),
             },
             new()
             {
                 RecordType = 0x11, Key = "type-11", Label = "Dashboard 11 — GT (A)", IsLive = true,
                 PayloadLen = 25, LiveB1 = 0x00, LiveB2 = 0x06,
-                // GT-style page record A (streamed interleaved with type-12). Decoded from a
-                // probe-validated user profile; unmapped slots left raw. See wheel-0x17.md.
-                Fields = new[]
-                {
-                    new Fsr1FieldDef { FieldId = "g5",  Label = "Gauge @5 (24-bit)",  Offsets = new[] { 5, 6, 7 },   Encoding = Fsr1Encoding.U24_BE, Kind = Fsr1FieldKind.Direct, Decoded = false },
-                    new Fsr1FieldDef { FieldId = "g8",  Label = "Estimated lap time", Offsets = new[] { 8, 9, 10 },  Encoding = Fsr1Encoding.U24_BE, Kind = Fsr1FieldKind.Direct, DefaultProperty = "DataCorePlugin.GameData.EstimatedLapTime", Decoded = true },
-                    new Fsr1FieldDef { FieldId = "g11", Label = "Gauge @11 (16-bit)", Offsets = new[] { 11, 12 },    Encoding = Fsr1Encoding.U16_BE, Kind = Fsr1FieldKind.Direct, Decoded = false },
-                    new Fsr1FieldDef { FieldId = "g13", Label = "Gauge @13 (16-bit)", Offsets = new[] { 13, 14 },    Encoding = Fsr1Encoding.U16_BE, Kind = Fsr1FieldKind.Direct, Decoded = false },
-                    new Fsr1FieldDef { FieldId = "b15", Label = "Slot @15 (8-bit)",   Offsets = new[] { 15 },        Encoding = Fsr1Encoding.U8,     Kind = Fsr1FieldKind.Direct, Decoded = false },
-                    new Fsr1FieldDef { FieldId = "g16", Label = "Speed (km/h)",       Offsets = new[] { 16, 17 },    Encoding = Fsr1Encoding.U16_BE, Kind = Fsr1FieldKind.Direct, DefaultProperty = "DataCorePlugin.GameData.SpeedKmh", Decoded = true },
-                    new Fsr1FieldDef { FieldId = "g18", Label = "Fuel — remaining laps", Offsets = new[] { 18, 19 }, Encoding = Fsr1Encoding.U16_BE, Kind = Fsr1FieldKind.Direct, DefaultProperty = "DataCorePlugin.GameData.FuelLaps", Decoded = true },
-                    new Fsr1FieldDef { FieldId = "b20", Label = "Gear",               Offsets = new[] { 20 },        Encoding = Fsr1Encoding.U8,     Kind = Fsr1FieldKind.Direct, DefaultProperty = "DataCorePlugin.GameData.Gear", Decoded = true },
-                    new Fsr1FieldDef { FieldId = "g21", Label = "Gauge @21 (16-bit)", Offsets = new[] { 21, 22 },    Encoding = Fsr1Encoding.U16_BE, Kind = Fsr1FieldKind.Direct, Decoded = false },
-                    new Fsr1FieldDef { FieldId = "g23", Label = "Gauge @23 (16-bit)", Offsets = new[] { 23, 24 },    Encoding = Fsr1Encoding.U16_BE, Kind = Fsr1FieldKind.Direct, Decoded = false },
-                },
+                Fields = new Fields()
+                    .U24("stl", "Session time left", "", MsScale)
+                    .U24("elt", "Estimated lap time", "", MsScale)
+                    .U24("gap", "Gap", LiveDelta, MsScale)
+                    .U16("rpm", "RPM", G + "Rpms")
+                    .U16("spd", "Speed", G + "SpeedKmh")
+                    .U16("frl", "Fuel remain laps", "")
+                    .Nibbles("gear", "Gear", G + "Gear", "abs", "ABS level", G + "ABSLevel", bias0: 1.0)
+                    .U8("pos", "Position", G + "Position")
+                    .U8("clutch", "Clutch", G + "Clutch")
+                    .U8("brake", "Brake", G + "Brake")
+                    .U8("throttle", "Throttle", G + "Throttle")
+                    .Done(),
             },
             new()
             {
                 RecordType = 0x12, Key = "type-12", Label = "Dashboard 12 — GT (B)", IsLive = true,
                 PayloadLen = 25, LiveB1 = 0x00, LiveB2 = 0x00,
-                // GT-style page record B (streamed interleaved with type-11). Decoded from a
-                // probe-validated user profile. TC2/light-stage have no generic aggregate
-                // channel in Telemetry.json, so ship unmapped. See wheel-0x17.md § Group 0x42.
-                Fields = new[]
-                {
-                    new Fsr1FieldDef { FieldId = "g5",  Label = "Tyre pressure FL",  Offsets = new[] { 5, 6 },       Encoding = Fsr1Encoding.U16_BE, Kind = Fsr1FieldKind.Direct, DefaultProperty = "DataCorePlugin.GameData.TyrePressureFrontLeft", Decoded = true },
-                    new Fsr1FieldDef { FieldId = "g7",  Label = "Gauge @7 (24-bit)", Offsets = new[] { 7, 8, 9 },    Encoding = Fsr1Encoding.U24_BE, Kind = Fsr1FieldKind.Direct, Decoded = false },
-                    new Fsr1FieldDef { FieldId = "g10", Label = "Fuel used (l)",     Offsets = new[] { 10, 11 },     Encoding = Fsr1Encoding.U16_BE, Kind = Fsr1FieldKind.Direct, DefaultProperty = "DataCorePlugin.GameData.FuelUsed", Decoded = true },
-                    new Fsr1FieldDef { FieldId = "g12", Label = "Fuel per lap (l)",  Offsets = new[] { 12, 13 },     Encoding = Fsr1Encoding.U16_BE, Kind = Fsr1FieldKind.Direct, DefaultProperty = "DataCorePlugin.GameData.FuelConsumeLap", Decoded = true },
-                    new Fsr1FieldDef { FieldId = "g14", Label = "Fuel level",        Offsets = new[] { 14, 15 },     Encoding = Fsr1Encoding.U16_BE, Kind = Fsr1FieldKind.Direct, DefaultProperty = "DataCorePlugin.GameData.Fuel", Decoded = true },
-                    new Fsr1FieldDef { FieldId = "g16", Label = "Last lap time",     Offsets = new[] { 16, 17, 18 }, Encoding = Fsr1Encoding.U24_BE, Kind = Fsr1FieldKind.Direct, DefaultProperty = "DataCorePlugin.GameData.LastLapTime", Decoded = true },
-                    new Fsr1FieldDef { FieldId = "b19", Label = "Total laps",        Offsets = new[] { 19 },         Encoding = Fsr1Encoding.U8,     Kind = Fsr1FieldKind.Direct, DefaultProperty = "DataCorePlugin.GameData.TotalLaps", Decoded = true },
-                    new Fsr1FieldDef { FieldId = "b20", Label = "TC level",          Offsets = new[] { 20 },         Encoding = Fsr1Encoding.U8,     Kind = Fsr1FieldKind.Direct, DefaultProperty = "DataCorePlugin.GameData.TCLevel", Decoded = true },
-                    new Fsr1FieldDef { FieldId = "b21", Label = "Slot @21 (TC2)",    Offsets = new[] { 21 },         Encoding = Fsr1Encoding.U8,     Kind = Fsr1FieldKind.Direct, Decoded = false },
-                    new Fsr1FieldDef { FieldId = "b22", Label = "Slot @22 (8-bit)",  Offsets = new[] { 22 },         Encoding = Fsr1Encoding.U8,     Kind = Fsr1FieldKind.Direct, Decoded = false },
-                    new Fsr1FieldDef { FieldId = "b23", Label = "Slot @23 (lights)", Offsets = new[] { 23 },         Encoding = Fsr1Encoding.U8,     Kind = Fsr1FieldKind.Direct, Decoded = false },
-                    new Fsr1FieldDef { FieldId = "b24", Label = "Slot @24 (8-bit)",  Offsets = new[] { 24 },         Encoding = Fsr1Encoding.U8,     Kind = Fsr1FieldKind.Direct, Decoded = false },
-                },
+                Fields = new Fields()
+                    .Pack10x4("tp", "Tyre pressure", Corners, TyrePressProps)
+                    .U16("fuelUsed", "Fuel used", "")
+                    .U16("fuelAvg", "Fuel avg / lap", "")
+                    .U16("fuelRem", "Fuel remaining", G + "Fuel")
+                    .U24("llt", "Last lap time", G + "LastLapTime", MsScale)
+                    .U8("lap", "Lap", G + "CurrentLap")
+                    .Nibbles("tc", "TC level", G + "TCLevel", "ecu", "ECU map", G + "EngineMap")
+                    .U8("tcCut", "TC cut", "")
+                    .Flags(("lowBeam", "Low beam", ""), ("highBeam", "High beam", ""), ("rain", "Rain light", ""),
+                           ("wipers", "Wipers", ""), ("ign", "Ignition", ""), ("engine", "Engine on", ""), ("tyreType", "Tyre type", ""))
+                    .U8("sector", "Sector", G + "CurrentSectorIndex")
+                    .U8("redline", "Redline reached", "")
+                    .Done(),
             },
         };
 
@@ -516,6 +637,7 @@ namespace MozaPlugin.Telemetry
             bool anyBit = false;
             foreach (var f in composed)
             {
+                if (f.BitWidth > 0) { anyBit = true; break; }   // catalog default is bit-packed
                 var mm = plugin?.GetFsr1FieldMapping(dash.Key, f.FieldId);
                 if (mm != null && (mm.StartBit != null || mm.BitWidth != null)) { anyBit = true; break; }
             }
@@ -591,12 +713,15 @@ namespace MozaPlugin.Telemetry
                 var m = plugin?.GetFsr1FieldMapping(dash.Key, f.FieldId);
                 int defStart = f.Offsets.Length > 0 ? f.Offsets[0] : 5;
                 int defEnd = f.Offsets.Length > 0 ? f.Offsets[f.Offsets.Length - 1] : defStart;
-                if (m != null && (m.StartBit != null || m.BitWidth != null))
+                bool mapBit = m != null && (m.StartBit != null || m.BitWidth != null);
+                if (mapBit || f.BitWidth > 0)
                 {
-                    int byteStart = m.StartOffset ?? defStart;
-                    int bo = byteStart * 8 + (m.StartBit ?? 0);
-                    int bw = m.BitWidth ?? ((defEnd - defStart + 1) * 8);
-                    items.Add((f, bo, bw, Fsr1Encoding.U24_BE, m.MsbFirst ?? true, aligned: false));
+                    // Bit geometry from the mapping override if present, else the catalog default.
+                    int byteStart = m?.StartOffset ?? defStart;
+                    int startBit = m?.StartBit ?? f.StartBit;
+                    int bo = byteStart * 8 + startBit;
+                    int bw = m?.BitWidth ?? (f.BitWidth > 0 ? f.BitWidth : (defEnd - defStart + 1) * 8);
+                    items.Add((f, bo, bw, Fsr1Encoding.U24_BE, false, aligned: false));
                 }
                 else
                 {
@@ -646,29 +771,44 @@ namespace MozaPlugin.Telemetry
             return result;
         }
 
-        /// <summary>Debug self-check: every live record's DEFAULT fields must tile
-        /// <c>[5, PayloadLen-1]</c> with no gap/overlap. Logs each violation; returns false if
-        /// any. Run once at startup so a future catalog edit that breaks the partition is caught.</summary>
+        /// <summary>Debug self-check: every live record's DEFAULT partition must tile
+        /// <c>[5, PayloadLen-1]</c> with no BIT overlap and every data byte covered. Bit-aware
+        /// (handles the 10-bit tyre/pressure packs + compact bundles). Logs each violation; returns
+        /// false if any. Run once at startup so a catalog edit that breaks a layout is caught.</summary>
         internal static bool ValidateDefaultPartitions()
         {
             bool ok = true;
             foreach (var dash in LiveDashboards)
             {
-                int expect = 5;
-                foreach (var f in dash.Fields)
+                var slots = ResolvePartition(null, dash);   // plugin=null → catalog defaults only
+                // 1. No two fields own the same bit (sort by bit, ensure non-overlap).
+                var ord = new System.Collections.Generic.List<Fsr1Slot>(slots);
+                ord.Sort((a, b) => a.BitOffset.CompareTo(b.BitOffset));
+                int prevEnd = 5 * 8;
+                foreach (var s in ord)
                 {
-                    int s = f.Offsets.Length > 0 ? f.Offsets[0] : 5;
-                    int e = f.Offsets.Length > 0 ? f.Offsets[f.Offsets.Length - 1] : s;
-                    if (s != expect)
+                    if (s.BitOffset < prevEnd)
                     {
-                        MozaLog.Warn($"[AZOM] FSR1 catalog {dash.Key}: field {f.FieldId} starts at {s}, expected {expect} (gap/overlap).");
+                        MozaLog.Warn($"[AZOM] FSR1 catalog {dash.Key}: field {s.Field.FieldId} bit {s.BitOffset} overlaps prior end {prevEnd}.");
                         ok = false;
                     }
-                    expect = e + 1;
+                    prevEnd = System.Math.Max(prevEnd, s.BitOffset + s.BitWidth);
                 }
-                if (expect != dash.PayloadLen)
+                // 2. Every data byte [5, PayloadLen-1] is covered by some field.
+                for (int b = 5; b <= dash.PayloadLen - 1; b++)
                 {
-                    MozaLog.Warn($"[AZOM] FSR1 catalog {dash.Key}: fields end at {expect - 1}, expected {dash.PayloadLen - 1} (trailing gap/overflow).");
+                    bool covered = false;
+                    foreach (var s in slots) if (s.ByteStart <= b && b <= s.ByteEnd) { covered = true; break; }
+                    if (!covered)
+                    {
+                        MozaLog.Warn($"[AZOM] FSR1 catalog {dash.Key}: data byte {b} uncovered.");
+                        ok = false;
+                    }
+                }
+                // 3. Fields must not spill past the record.
+                if (prevEnd > dash.PayloadLen * 8)
+                {
+                    MozaLog.Warn($"[AZOM] FSR1 catalog {dash.Key}: fields end at bit {prevEnd}, past record end {dash.PayloadLen * 8}.");
                     ok = false;
                 }
             }

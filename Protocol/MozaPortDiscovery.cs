@@ -24,6 +24,7 @@ namespace MozaPlugin.Protocol
         public const ushort MozaVid = 0x346E;
 
         private const string EnumUsbPath = @"SYSTEM\CurrentControlSet\Enum\USB";
+        private const string EnumHidPath = @"SYSTEM\CurrentControlSet\Enum\HID";
 
         // Cache TTL — short enough to pick up plug/unplug between reconnect
         // ticks (5 s), long enough that wheelbase + AB9 managers running
@@ -37,15 +38,22 @@ namespace MozaPlugin.Protocol
             public readonly ushort Pid;                  // 0x1000
             public readonly string FriendlyName;         // "USB Serial Device (COM5)"
             public readonly string InstanceId;           // "a&399b951f&0&0000"
+            // Windows Container ID GUID — identical across every interface/function
+            // of one physical composite device (CDC + HID). Empty if the registry
+            // key had none. Used to pair an mBooster's HID axis stream to its CDC
+            // lane deterministically even when Windows assigns the two interfaces
+            // unrelated instance IDs (see docs/protocol/devices/mbooster.md).
+            public readonly string ContainerId;          // "{4d36e978-...}"
             public readonly MozaDeviceCategory Category; // derived from Pid via MozaUsbIds.Categorize
 
-            public PortInfo(string portName, ushort vid, ushort pid, string friendlyName, string instanceId)
+            public PortInfo(string portName, ushort vid, ushort pid, string friendlyName, string instanceId, string containerId = "")
             {
                 PortName = portName;
                 Vid = vid;
                 Pid = pid;
                 FriendlyName = friendlyName ?? string.Empty;
                 InstanceId = instanceId ?? string.Empty;
+                ContainerId = containerId ?? string.Empty;
                 Category = MozaUsbIds.Categorize(pid);
             }
         }
@@ -150,6 +158,36 @@ namespace MozaPlugin.Protocol
             return false;
         }
 
+        /// <summary>
+        /// Read the Windows Container ID for a HID device from its HidSharp
+        /// <c>DevicePath</c> (<c>\\?\HID#VID_xxxx&amp;PID_xxxx&amp;MI_xx#&lt;instance&gt;#{guid}</c>).
+        /// The Container ID is identical across every interface/function of one
+        /// physical composite device, so it pairs an mBooster's HID axis stream
+        /// to its CDC lane even when Windows assigns the two interfaces
+        /// unrelated instance IDs (see docs/protocol/devices/mbooster.md "HID
+        /// identity reconciliation"). Returns "" if the path is malformed, the
+        /// registry key is absent, or the value is missing (e.g. under Wine).
+        /// </summary>
+        public string GetHidContainerId(string devicePath)
+        {
+            if (string.IsNullOrEmpty(devicePath)) return string.Empty;
+            // Split on '#': [\\?\HID, VID_..&PID_..&MI_.., <instance>, {guid}]
+            var parts = devicePath.Split('#');
+            if (parts.Length < 3 || string.IsNullOrEmpty(parts[1]) || string.IsNullOrEmpty(parts[2]))
+                return string.Empty;
+            try
+            {
+                using var key = Registry.LocalMachine.OpenSubKey(
+                    $@"{EnumHidPath}\{parts[1]}\{parts[2]}", writable: false);
+                return (key?.GetValue("ContainerID") as string) ?? string.Empty;
+            }
+            catch (Exception ex)
+            {
+                MozaLog.Debug($"[AZOM] HID ContainerID read failed for '{devicePath}': {ex.GetType().Name}: {ex.Message}");
+                return string.Empty;
+            }
+        }
+
         /// <summary>Force the next <see cref="Enumerate"/> call to re-walk the registry.</summary>
         public void Invalidate()
         {
@@ -224,7 +262,11 @@ namespace MozaPlugin.Protocol
                         if (!liveCom.Contains(portName!)) continue;
 
                         var friendly = (instanceKey.GetValue("FriendlyName") as string) ?? string.Empty;
-                        results.Add(new PortInfo(portName!, MozaVid, pid, friendly, instanceName));
+                        // ContainerID groups all interfaces of one physical device;
+                        // read from the instance key (REG_SZ). Absent on some driver
+                        // stacks / under Wine — empty string is the graceful default.
+                        var containerId = (instanceKey.GetValue("ContainerID") as string) ?? string.Empty;
+                        results.Add(new PortInfo(portName!, MozaVid, pid, friendly, instanceName, containerId));
                     }
                 }
             }

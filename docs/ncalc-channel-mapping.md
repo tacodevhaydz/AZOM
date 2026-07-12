@@ -65,8 +65,16 @@ return their default `0`/`null`) instead of breaking the resolver.
   `object EvalForDisplay(string)` via `ParseValueOrDefault`.
 - A `ConcurrentDictionary<string, ExpressionValue>` caches compiled
   `ExpressionValue` objects across frames (don't realloc per tick).
-- A single lock around evaluation: the ~30 ms telemetry tick thread and the
-  500 ms UI display tick both evaluate against the one engine instance.
+- A single lock around evaluation — **load-bearing**: `NCalcEngineBase` is not
+  safe for concurrent evaluation on one instance (per-eval mutation of plain
+  collections; see [`docs/simhub.md`](simhub.md) § Formula Engine). The
+  resolver's shared evaluator serves the ~30 ms telemetry tick and the 500 ms
+  UI display tick; the 50 Hz haptics workers (LFE, mBooster) get their OWN
+  evaluator instances via `MozaPlugin.CreateHapticsFormulaResolver()` +
+  `SimHubPropertyResolver.ResolveAsDouble(path, formula)` so their ticks never
+  queue behind telemetry/UI evaluations. Stateful functions (`blink()`,
+  `changed()`, `inertia()`) keep per-engine state, so isolation also keeps each
+  consumer's timing state independent.
 - Exposes the `NCalcEngineBase Engine` for the UI's advanced formula dialog.
 
 ### `SimHubPropertyResolver`

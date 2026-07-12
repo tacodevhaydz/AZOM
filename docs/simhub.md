@@ -76,6 +76,18 @@ SimHub.Logging.Current.Error("message");
 
 Writes to SimHub's log file.
 
+## Formula Engine (NCalcEngineBase) Thread Safety
+
+`SimHub.Plugins.OutputPlugins.Dash.TemplatingCommon.NCalcEngineBase` (implements `IFormulaEngine`) is the engine behind dashboard formulas; the plugin reuses it for NCalc channel mappings (see [`ncalc-channel-mapping.md`](ncalc-channel-mapping.md)). Verified by decompiling `SimHub.Plugins.dll` (ilspycmd): **one instance is NOT safe for concurrent evaluation.** The evaluation path mutates unsynchronized per-instance state:
+
+- `VariableStack` — a plain `HashSet<string>` `Add`/`Remove`d around **every** `[property]` variable resolution (its recursion guard). Two concurrent evaluations on one instance can corrupt it or trip spurious recursion detection.
+- The stateful dashboard functions — `blink()`, `changed()`, `increasing()`/`decreasing()`, `minimum()`/`maximum()`, `scroll()`, `inertia()` — read-modify-write plain `Dictionary`s keyed by expression.
+- `rand` — a `System.Random` (not thread-safe; concurrent use can wedge it to all-zero output).
+
+The engine does lock where SimHub expects cross-thread access (`CacheLock` around the expression caches; the shared result caches are concurrent types), but evaluation itself assumes a single caller. SimHub's own usage matches: engine instances are created per consumer context (an `instanceCount` static tracks them), not shared across threads.
+
+**Consequence for plugins:** serialize all evaluation on a given instance (a lock around `ParseValueOrDefault`), and give independent consumer threads their own instances rather than sharing one — construction is cheap (`new NCalcEngineBase()` binds to `PluginManager.Instance` internally). Side effect worth knowing: the stateful functions keep per-instance state, so two engines evaluating the same `blink(...)` expression advance independent timers.
+
 ## Application Lifecycle (Restart / Exit)
 
 `PluginManager` exposes a supported hook for asking SimHub to exit — and optionally relaunch itself. This is the mechanism a plugin uses to restart SimHub after an in-app self-update so the freshly-swapped DLL gets loaded. Verified by decompiling `SimHub.Plugins.dll` (`SimHub.Plugins.PluginManager`):

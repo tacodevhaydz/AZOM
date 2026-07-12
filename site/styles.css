@@ -90,6 +90,9 @@ header.nav.scrolled{ border-bottom-color:var(--line); background:rgba(7,8,9,.86)
 .spon-btn .hrt{ color:var(--accent); font-size:13px; line-height:1; transition:transform .18s ease; }
 .spon-btn:hover{ border-color:var(--accent); }
 .spon-btn:hover .hrt{ transform:scale(1.18); }
+.guide-btn{ border-color:var(--accent-dim); color:var(--accent); font-weight:600; }
+.guide-btn:hover{ border-color:var(--accent); background:rgba(0,229,255,.08); color:#fff; }
+.guide-btn.active{ border-color:var(--accent); color:var(--accent); background:rgba(0,229,255,.1); }
 .menu-btn{ display:none; }
 
 /* ---------- backdrop ---------- */
@@ -407,7 +410,10 @@ footer{ border-top:1px solid var(--line); padding:70px 0 46px; background:var(--
 }
 @media (max-width:680px){
   .nav-links{ display:none; }
-  .nav-cta .btn.sm:not(.spon-btn):not(.primary){ display:none; }
+  .nav-cta .btn.sm:not(.guide-btn):not(.primary){ display:none; }
+  header.nav .wrap{ padding:0 16px; }
+  .nav-cta{ gap:8px; }
+  .nav-cta .btn.sm{ padding:9px 13px; }
   .feat-grid{ grid-template-columns:1fr; }
   .card.wide{ grid-column:span 1; }
   .band{ padding:70px 0; }

@@ -103,6 +103,30 @@ namespace MozaControls
                 new PropertyMetadata(null));
         public Brush? AccentBrush { get => (Brush?)GetValue(AccentBrushProperty); set => SetValue(AccentBrushProperty, value); }
 
+        // -------- Layout metrics (DP-driven so a compact/thin skin can shrink
+        // the node + insets; defaults reproduce the original EQ-style look). --------
+
+        /// <summary>Horizontal inset (px) on each end of the track, room for the node at the extremes.</summary>
+        public static readonly DependencyProperty EdgePadProperty =
+            DependencyProperty.Register(nameof(EdgePad), typeof(double), typeof(MozaRangeSlider),
+                new FrameworkPropertyMetadata(22.0, FrameworkPropertyMetadataOptions.AffectsRender,
+                    (d, e) => ((MozaRangeSlider)d).Recompute()));
+        public double EdgePad { get => (double)GetValue(EdgePadProperty); set => SetValue(EdgePadProperty, value); }
+
+        /// <summary>Thumb hit-node size (px), square. The visible thumb centers within it.</summary>
+        public static readonly DependencyProperty NodeSizeProperty =
+            DependencyProperty.Register(nameof(NodeSize), typeof(double), typeof(MozaRangeSlider),
+                new FrameworkPropertyMetadata(34.0, FrameworkPropertyMetadataOptions.AffectsRender,
+                    (d, e) => ((MozaRangeSlider)d).Recompute()));
+        public double NodeSize { get => (double)GetValue(NodeSizeProperty); set => SetValue(NodeSizeProperty, value); }
+
+        /// <summary>Track/range bar thickness (px).</summary>
+        public static readonly DependencyProperty TrackThicknessProperty =
+            DependencyProperty.Register(nameof(TrackThickness), typeof(double), typeof(MozaRangeSlider),
+                new FrameworkPropertyMetadata(4.0, FrameworkPropertyMetadataOptions.AffectsRender,
+                    (d, e) => ((MozaRangeSlider)d).Recompute()));
+        public double TrackThickness { get => (double)GetValue(TrackThicknessProperty); set => SetValue(TrackThicknessProperty, value); }
+
         // -------- Read-only geometry / thumb positions surfaced to template --------
 
         private static readonly DependencyPropertyKey TrackGeometryKey =
@@ -156,11 +180,6 @@ namespace MozaControls
         public double EndLabelTop => (double)GetValue(EndLabelTopProperty);
 
         // -------- Layout constants --------
-        private const double PadLeft = 22;
-        private const double PadRight = 22;
-        private const double NodeSize = 34;
-        private const double NodeHalf = NodeSize / 2.0;
-        private const double TrackThickness = 4;
         private const double EndLabelGap = 10; // px below track to endpoint labels
 
         public override void OnApplyTemplate()
@@ -220,10 +239,11 @@ namespace MozaControls
 
         private int FindClosestThumb(Point p)
         {
-            double r = NodeHalf + 6.0;
+            double nodeHalf = NodeSize / 2.0;
+            double r = nodeHalf + 6.0;
             double r2 = r * r;
-            double lowCx = LowThumbX + NodeHalf, lowCy = ThumbTop + NodeHalf;
-            double highCx = HighThumbX + NodeHalf, highCy = ThumbTop + NodeHalf;
+            double lowCx = LowThumbX + nodeHalf, lowCy = ThumbTop + nodeHalf;
+            double highCx = HighThumbX + nodeHalf, highCy = ThumbTop + nodeHalf;
             double dLow = (p.X - lowCx) * (p.X - lowCx) + (p.Y - lowCy) * (p.Y - lowCy);
             double dHigh = (p.X - highCx) * (p.X - highCx) + (p.Y - highCy) * (p.Y - highCy);
             // Ties (thumbs overlapping at MinGap=0) resolve to whichever is closer;
@@ -235,8 +255,8 @@ namespace MozaControls
         private void ApplyDrag(Point p)
         {
             double w = _canvas?.ActualWidth ?? ActualWidth;
-            double plotW = Math.Max(1, w - PadLeft - PadRight);
-            double frac = (p.X - PadLeft) / plotW;
+            double plotW = Math.Max(1, w - EdgePad - EdgePad);
+            double frac = (p.X - EdgePad) / plotW;
             if (frac < 0) frac = 0; if (frac > 1) frac = 1;
             double val = Minimum + frac * (Maximum - Minimum);
             double decimals = Math.Max(0, Decimals);
@@ -265,21 +285,22 @@ namespace MozaControls
             double h = ActualHeight;
             if (w <= 0 || h <= 0) return;
 
-            double plotW = Math.Max(1, w - PadLeft - PadRight);
+            double plotW = Math.Max(1, w - EdgePad - EdgePad);
             double range = Math.Max(1e-6, Maximum - Minimum);
-            double thumbCy = NodeHalf + 4;
+            double nodeHalf = NodeSize / 2.0;
+            double thumbCy = nodeHalf + 4;
 
             double lowClamped = Math.Max(Minimum, Math.Min(Maximum, LowValue));
             double highClamped = Math.Max(Minimum, Math.Min(Maximum, HighValue));
 
             double lowFrac = (lowClamped - Minimum) / range;
             double highFrac = (highClamped - Minimum) / range;
-            double lowX = PadLeft + lowFrac * plotW;
-            double highX = PadLeft + highFrac * plotW;
+            double lowX = EdgePad + lowFrac * plotW;
+            double highX = EdgePad + highFrac * plotW;
 
-            SetValue(LowThumbXKey, lowX - NodeHalf);
-            SetValue(HighThumbXKey, highX - NodeHalf);
-            SetValue(ThumbTopKey, thumbCy - NodeHalf);
+            SetValue(LowThumbXKey, lowX - nodeHalf);
+            SetValue(HighThumbXKey, highX - nodeHalf);
+            SetValue(ThumbTopKey, thumbCy - nodeHalf);
 
             string fmt = "F" + Math.Max(0, Decimals);
             string unit = Unit ?? "";
@@ -287,11 +308,11 @@ namespace MozaControls
             SetValue(HighLabelKey, highClamped.ToString(fmt, CultureInfo.InvariantCulture));
             SetValue(MinLabelKey, Minimum.ToString(fmt, CultureInfo.InvariantCulture) + unit);
             SetValue(MaxLabelKey, Maximum.ToString(fmt, CultureInfo.InvariantCulture) + unit);
-            SetValue(EndLabelTopKey, thumbCy + NodeHalf + EndLabelGap);
+            SetValue(EndLabelTopKey, thumbCy + nodeHalf + EndLabelGap);
 
             // Full track (dim) spans the whole Minimum..Maximum span.
             var track = new RectangleGeometry(
-                new Rect(PadLeft, thumbCy - TrackThickness / 2.0, plotW, TrackThickness),
+                new Rect(EdgePad, thumbCy - TrackThickness / 2.0, plotW, TrackThickness),
                 TrackThickness / 2.0, TrackThickness / 2.0);
             track.Freeze();
             SetValue(TrackGeometryKey, track);

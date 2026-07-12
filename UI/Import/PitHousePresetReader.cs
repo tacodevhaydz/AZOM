@@ -1,6 +1,5 @@
 using System;
 using System.IO;
-using Newtonsoft.Json;
 using Newtonsoft.Json.Linq;
 using MozaPlugin.Resources;
 
@@ -31,23 +30,11 @@ namespace MozaPlugin.UI.Import
         /// </summary>
         public static (PitHousePreset? preset, string error) Read(string path)
         {
-            if (string.IsNullOrEmpty(path) || !File.Exists(path))
-                return (null, string.Format(Strings.Import_Error_InvalidJson, path ?? ""));
-
-            JObject root;
-            try
-            {
-                var text = File.ReadAllText(path);
-                root = JObject.Parse(text);
-            }
-            catch (JsonException ex)
-            {
-                return (null, string.Format(Strings.Import_Error_InvalidJson, ex.Message));
-            }
-            catch (IOException ex)
-            {
-                return (null, string.Format(Strings.Import_Error_InvalidJson, ex.Message));
-            }
+            // Unwraps the ZIP-wrapped .mzpreset container or reads legacy raw
+            // JSON, detected by content — see PitHousePresetArchive.
+            var (root, loadError) = PitHousePresetArchive.LoadRoot(path);
+            if (root == null)
+                return (null, string.Format(Strings.Import_Error_InvalidJson, loadError));
 
             var deviceType = (string?)root["deviceType"] ?? "";
             if (!IsSupportedDeviceType(deviceType))

@@ -82,6 +82,15 @@ namespace MozaPlugin.Protocol
         DashRpmColor9 = 45,
         DashRpmBitmask = 46,      // CM2 dash-send-telemetry (41 FD DE) — after colours
         DashFlagColors = 47,      // CM2 dash-flag-colors (32 08 00, 18-byte array)
+
+        // ── Wheelbase LFE lanes (absolute slots 48+) ─────────────────────────
+        // Host-rendered wheelbase low-frequency effects (cmd 0x2D/0x77) on the
+        // BASE primary connection. Engine (continuous while driving) and ABS
+        // (while ABS active) can be live simultaneously, so they get separate
+        // latest-wins lanes and never coalesce into one another. Gearshift is a
+        // discrete burst → the paced one-shot FIFO, so it needs no lane.
+        BaseLfeEngine = 48,
+        BaseLfeAbs = 49,
     }
 
     /// <summary>Device family targeted by the serial probe fallback (registry-empty case).</summary>
@@ -112,6 +121,10 @@ namespace MozaPlugin.Protocol
         // fallback is ever enabled; no probe-emission branch is wired today.
         PedalsOnly,
         HandbrakeOnly,
+        // Standalone-USB HGP (0x001E) / SGP (0x0023) shifter, one per
+        // MozaStandalonePeripheralRegistry controller. Registry-only like the
+        // pedals/handbrake targets; no probe-emission branch is wired.
+        ShifterOnly,
     }
 
     public class MozaSerialConnection : IDisposable
@@ -125,11 +138,12 @@ namespace MozaPlugin.Protocol
         //   29..47 — LED lanes (wheel RPM colour chunks + bitmasks, CM2 RPM/flag) —
         //            high-rate latest-wins LED writes moved off the throttled one-shot
         //            FIFO. See the LED StreamKind members.
+        //   48..49 — wheelbase LFE lanes (engine + ABS host-rendered effect streams).
         // A CM2 on its own USB connection runs at base 0 on THAT connection, so the
         // second block is only used when two pipelines share one connection.
-        // NOTE: keep this >= (highest LED StreamKind + 1). The static ctor below
+        // NOTE: keep this >= (highest StreamKind + 1). The static ctor below
         // asserts the regions are disjoint and fit.
-        private const int StreamSlotCount = 48;
+        private const int StreamSlotCount = 50;
 
         // Startup slot-layout invariant: the LED lanes (29+) must not alias the
         // wheel value pipeline (0..10), AB9/mBooster (11..17), or the CM2 second
@@ -145,6 +159,11 @@ namespace MozaPlugin.Protocol
                 "LED stream slots must start after the CM2 value pipeline (18..28)");
             System.Diagnostics.Debug.Assert(ledLast < StreamSlotCount,
                 "StreamSlotCount too small for the LED stream slots");
+            const int lfeLast = (int)StreamKind.BaseLfeAbs;      // 49 (highest slot overall)
+            System.Diagnostics.Debug.Assert(lfeLast > ledLast,
+                "wheelbase LFE stream slots must start after the LED lanes");
+            System.Diagnostics.Debug.Assert(lfeLast < StreamSlotCount,
+                "StreamSlotCount too small for the wheelbase LFE stream slots");
         }
 
         // Ports held by a live connection — probe path skips these (Wine pty
@@ -213,6 +232,11 @@ namespace MozaPlugin.Protocol
         private readonly System.Collections.Generic.LinkedList<string> _resyncSamples
             = new System.Collections.Generic.LinkedList<string>();
         private volatile bool _running;
+        // Per-open generation. Each I/O thread is bound to the generation of the
+        // FinishOpen that created it; Disconnect bumps it, so a thread that
+        // outlives its Join(1000) (syscall-wedged under Wine) exits when it
+        // wakes instead of re-attaching to the next open's port and queues.
+        private int _ioGeneration;
         private readonly object _lock = new object();
         private string? _lastPortName;
 
@@ -560,8 +584,9 @@ namespace MozaPlugin.Protocol
             port.DiscardOutBuffer();
 
             _running = true;
-            _readThread = new Thread(ReadLoop) { IsBackground = true, Name = "MozaSerialRead" };
-            _writeThread = new Thread(WriteLoop) { IsBackground = true, Name = "MozaSerialWrite" };
+            int gen = Interlocked.Increment(ref _ioGeneration);
+            _readThread = new Thread(() => ReadLoop(gen)) { IsBackground = true, Name = "MozaSerialRead" };
+            _writeThread = new Thread(() => WriteLoop(gen)) { IsBackground = true, Name = "MozaSerialWrite" };
 
             try
             {
@@ -599,6 +624,7 @@ namespace MozaPlugin.Protocol
 
         public void Disconnect()
         {
+            Interlocked.Increment(ref _ioGeneration);
             _running = false;
 
             // Close before joining so a syscall-wedged R/W returns to its loop.
@@ -614,8 +640,9 @@ namespace MozaPlugin.Protocol
                 catch (Exception ex) { MozaLog.Debug($"[AZOM] Port close: {ex.Message}"); }
             }
 
-            if (_lastPortName != null)
-                _activePorts.TryRemove(_lastPortName, out _);
+            var lastPort = _lastPortName;
+            if (lastPort != null)
+                _activePorts.TryRemove(lastPort, out _);
 
             _readThread?.Join(1000);
             _writeThread?.Join(1000);
@@ -777,7 +804,7 @@ namespace MozaPlugin.Protocol
             ClosePortAndNotify();
         }
 
-        private void ReadLoop()
+        private void ReadLoop(int gen)
         {
             MozaLog.Debug("[AZOM] Read thread started");
             int messageCount = 0;
@@ -793,7 +820,7 @@ namespace MozaPlugin.Protocol
             // the per-frame `data` copy handed to subscribers is freshly allocated.
             byte[] destuff = new byte[256];
 
-            while (_running)
+            while (_running && gen == Volatile.Read(ref _ioGeneration))
             {
                 try
                 {
@@ -1007,7 +1034,8 @@ namespace MozaPlugin.Protocol
                         }
                         // Diagnostic: per-chunk log for SerialStream session-data
                         // frames (0xC3 / wheel / 7C / 00) — session 0x09 chunk reception.
-                        if (data.Length >= 8 && data[0] == MozaProtocol.SerialStreamRespGroup
+                        if (MozaLog.WireDebugEnabled
+                            && data.Length >= 8 && data[0] == MozaProtocol.SerialStreamRespGroup
                             && data[1] == MozaProtocol.WheelDeviceIdSwapped
                             && data[2] == MozaProtocol.SerialStreamOpcodeData
                             && data[3] == 0x00)
@@ -1049,7 +1077,7 @@ namespace MozaPlugin.Protocol
             }
         }
 
-        private void WriteLoop()
+        private void WriteLoop(int gen)
         {
             MozaLog.Debug("[AZOM] Write thread started");
             int writeCount = 0;
@@ -1067,7 +1095,7 @@ namespace MozaPlugin.Protocol
             long lastBudgetWarnTs = 0;
             bool lastWasOneShot = false;
 
-            while (_running)
+            while (_running && gen == Volatile.Read(ref _ioGeneration))
             {
                 bool didWork = false;
 
@@ -1086,7 +1114,8 @@ namespace MozaPlugin.Protocol
                 //    one-shot FIFO. Loop drains all queued acks each iteration so
                 //    a flurry of inbound chunks (every wheel tick during a switch)
                 //    doesn't leave the back of the line stuck for another cycle.
-                while (_priorityQueue.TryDequeue(out var ackMsg))
+                while (gen == Volatile.Read(ref _ioGeneration)
+                    && _priorityQueue.TryDequeue(out var ackMsg))
                 {
                     int writtenAck = WriteFrame(ackMsg, ref stuffBuf, MozaProtocol.StuffedFrameSize(ackMsg));
                     if (writtenAck > 0)
@@ -1104,7 +1133,8 @@ namespace MozaPlugin.Protocol
 
                 // 1) One-shot FIFO with 4 ms inter-write pacing (bases drop unpaced bursts).
                 //    WriteBudget extends the gate under bandwidth pressure.
-                if (_oneShotQueue.TryDequeue(out var msg))
+                if (gen == Volatile.Read(ref _ioGeneration)
+                    && _oneShotQueue.TryDequeue(out var msg))
                 {
                     long now = System.Diagnostics.Stopwatch.GetTimestamp();
                     int stuffedSize = MozaProtocol.StuffedFrameSize(msg);
@@ -1134,7 +1164,7 @@ namespace MozaPlugin.Protocol
                 // 2) Stream lane drained after every FIFO item (retransmit bursts
                 //    can keep FIFO non-empty for seconds). No software gating —
                 //    latest-wins + OS write-buffer block provides backpressure.
-                for (int k = 0; k < _streamSlots.Length; k++)
+                for (int k = 0; k < _streamSlots.Length && gen == Volatile.Read(ref _ioGeneration); k++)
                 {
                     var slot = Interlocked.Exchange(ref _streamSlots[k], null);
                     if (slot == null) continue;

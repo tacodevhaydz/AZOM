@@ -256,6 +256,249 @@ namespace MozaPlugin
     }
 
     /// <summary>
+    /// One wheelbase LFE channel (Engine / ABS / Gearshift). Each of the four
+    /// parameters is dual-mode: a static slider value, OR an NCalc/property
+    /// formula that overrides it (empty formula → slider). The formula is a bare
+    /// SimHub property path or an NCalc/js: expression, evaluated live per tick
+    /// via the same resolver the channel-mapper uses. The "trigger" gates the
+    /// channel: non-zero = active (level, for Engine/ABS) or fires a burst on
+    /// change (edge, for Gearshift). See BaseLfeEffectWorker.
+    /// </summary>
+    /// <summary>How a channel's trigger gates it.</summary>
+    public enum BaseLfeTriggerMode
+    {
+        /// <summary>Active while the trigger is non-zero (continuous — engine/abs, and partials).</summary>
+        Level = 0,
+        /// <summary>Fire a burst whenever the trigger value changes (event — gearshift).</summary>
+        OnChange = 1,
+    }
+
+    /// <summary>
+    /// A slot's role. Selecting a mode applies a template (trigger + limits +
+    /// character) via BaseLfeSettings.ApplyMode; Custom leaves everything as-is.
+    /// The slot's wire effect id / render behavior is fixed (slots must stay on
+    /// distinct ids so the base sums them) — the mode only presets the values.
+    /// </summary>
+    public enum BaseLfeMode
+    {
+        Engine = 0,
+        Abs = 1,
+        Gearshift = 2,
+        Custom = 3,
+    }
+
+    public sealed class BaseLfeChannel
+    {
+        public bool Enabled { get; set; } = false;
+
+        // Slot role (last-applied template); Custom = freely edited.
+        public BaseLfeMode Mode { get; set; } = BaseLfeMode.Custom;
+
+        // Level = continuous while trigger != 0; OnChange = burst on trigger change.
+        public BaseLfeTriggerMode TriggerMode { get; set; } = BaseLfeTriggerMode.Level;
+
+        // Trigger: pre-filled with the natural data source. Non-zero → active.
+        public string TriggerFormula { get; set; } = "";
+
+        // Frequency (Hz). Slider clamped to the UI range. When a FORMULA drives
+        // frequency, its output is clamped to [FrequencyMin, FrequencyMax] (the
+        // band the algorithm may operate in, 0..200 = the wire cap). The limits
+        // are ignored for a plain slider value.
+        public float Frequency { get; set; } = 50;
+        public string FrequencyFormula { get; set; } = "";
+        public float FrequencyMin { get; set; } = 0;
+        public float FrequencyMax { get; set; } = 200;
+
+        // Intensity (0..100 %).
+        public int Intensity { get; set; } = 50;
+        public string IntensityFormula { get; set; } = "";
+
+        // Smoothness (0..100): 100 = steady amplitude, 0 = full-swing pulse.
+        public int Smoothness { get; set; } = 100;
+        public string SmoothnessFormula { get; set; } = "";
+
+        // Edge-trigger refinements — only meaningful in OnChange mode: fire when
+        // the trigger drops into neutral (≈0), and a minimum ms between bursts.
+        public bool VibrateOnNeutral { get; set; } = false;
+        public int DebounceMs { get; set; } = 50;
+
+        /// <summary>Map a raw frequency-formula output (0..200 Hz wire domain) into
+        /// this channel's [min,max] band — the value actually sent. Shared by the
+        /// worker's render and the UI "current value" readout so they never drift.</summary>
+        public double RescaleFreq(double rawEval)
+        {
+            double lo = System.Math.Min(FrequencyMin, FrequencyMax);
+            double hi = System.Math.Max(FrequencyMin, FrequencyMax);
+            double raw01 = rawEval / 200.0;
+            if (raw01 < 0) raw01 = 0; else if (raw01 > 1) raw01 = 1;
+            return lo + raw01 * (hi - lo);
+        }
+
+        public BaseLfeChannel Clone() => new BaseLfeChannel
+        {
+            Enabled = Enabled,
+            Mode = Mode,
+            TriggerMode = TriggerMode,
+            TriggerFormula = TriggerFormula,
+            Frequency = Frequency,
+            FrequencyFormula = FrequencyFormula,
+            FrequencyMin = FrequencyMin,
+            FrequencyMax = FrequencyMax,
+            Intensity = Intensity,
+            IntensityFormula = IntensityFormula,
+            Smoothness = Smoothness,
+            SmoothnessFormula = SmoothnessFormula,
+            VibrateOnNeutral = VibrateOnNeutral,
+            DebounceMs = DebounceMs,
+        };
+    }
+
+    /// <summary>
+    /// Wheelbase "low-frequency effects" (LFE) — Engine, ABS, and complex
+    /// Gearshift vibration, available on base firmware >= 1.2.10.10 (see
+    /// MozaData.BaseSupportsLfe). HOST-RENDERED streams (cmd 0x2D/0x77, see
+    /// MozaBaseLfeProtocol / BaseLfeEffectWorker) — no device round-trip.
+    ///
+    /// Each channel exposes trigger + frequency + intensity + smoothness, each a
+    /// slider OR a formula. The default formulas reproduce the built-in behavior
+    /// (engine tracks RPM, ABS pulses on ABSActive, gearshift fires on gear
+    /// change) but are fully editable.
+    /// </summary>
+    public sealed class BaseLfeSettings
+    {
+        // Default trigger/frequency formulas — the "vary it" formula is exposed,
+        // not hidden. Editable; empty falls back to the slider.
+        public const string EngineTrigger = "[DataCorePlugin.GameData.Rpms]";
+        public const string EngineFrequency = "[DataCorePlugin.GameData.Rpms] / [DataCorePlugin.GameData.MaxRpm] * 100";
+        public const string AbsTrigger = "[DataCorePlugin.GameData.ABSActive]";
+        public const string GearshiftTrigger = "[DataCorePlugin.GameData.Gear]";
+
+        // RPM-scaled engine sweep (0..200 domain, rescaled into the slot's limits).
+        public const string EngineFrequencySweep = "[DataCorePlugin.GameData.Rpms] / [DataCorePlugin.GameData.MaxRpm] * 200";
+
+        // Slot 1/2/3 default to the Engine/ABS/Gearshift roles (their fixed wire ids).
+        public BaseLfeChannel Engine { get; set; } = new BaseLfeChannel
+        { Mode = BaseLfeMode.Engine, Frequency = 100, Intensity = 50, Smoothness = 100, TriggerFormula = EngineTrigger, FrequencyFormula = EngineFrequency };
+        public BaseLfeChannel Abs { get; set; } = new BaseLfeChannel
+        { Mode = BaseLfeMode.Abs, Frequency = 15, Intensity = 50, Smoothness = 40, TriggerFormula = AbsTrigger };
+        public BaseLfeChannel Gearshift { get; set; } = new BaseLfeChannel
+        { Mode = BaseLfeMode.Gearshift, Frequency = 40, Intensity = 100, Smoothness = 100, TriggerFormula = GearshiftTrigger, TriggerMode = BaseLfeTriggerMode.OnChange };
+
+        /// <summary>
+        /// Apply a slot role's template: trigger (formula + Level/OnChange),
+        /// frequency band, and character defaults. Custom leaves the slot as-is.
+        /// Enabled is preserved. The slot's wire id / render path is unchanged.
+        /// </summary>
+        public static void ApplyMode(BaseLfeChannel ch, BaseLfeMode mode)
+        {
+            if (ch == null) return;
+            ch.Mode = mode;
+            switch (mode)
+            {
+                case BaseLfeMode.Engine:
+                    ch.TriggerFormula = EngineTrigger;
+                    ch.TriggerMode = BaseLfeTriggerMode.Level;
+                    ch.FrequencyFormula = EngineFrequencySweep;   // rescaled into the band below
+                    ch.Frequency = 100; ch.FrequencyMin = 30; ch.FrequencyMax = 130;
+                    ch.IntensityFormula = ""; ch.Intensity = 50;
+                    ch.SmoothnessFormula = ""; ch.Smoothness = 100;
+                    break;
+                case BaseLfeMode.Abs:
+                    ch.TriggerFormula = AbsTrigger;
+                    ch.TriggerMode = BaseLfeTriggerMode.Level;
+                    ch.FrequencyFormula = ""; ch.Frequency = 15; ch.FrequencyMin = 5; ch.FrequencyMax = 30;
+                    ch.IntensityFormula = ""; ch.Intensity = 50;
+                    ch.SmoothnessFormula = ""; ch.Smoothness = 40;   // amplitude pulse
+                    break;
+                case BaseLfeMode.Gearshift:
+                    ch.TriggerFormula = GearshiftTrigger;
+                    ch.TriggerMode = BaseLfeTriggerMode.OnChange;
+                    ch.FrequencyFormula = ""; ch.Frequency = 40; ch.FrequencyMin = 20; ch.FrequencyMax = 100;
+                    ch.IntensityFormula = ""; ch.Intensity = 100;
+                    ch.SmoothnessFormula = ""; ch.Smoothness = 100;
+                    ch.VibrateOnNeutral = false; ch.DebounceMs = 50;
+                    break;
+                case BaseLfeMode.Custom:
+                    // Unrestricted: full frequency range (slider + formula band).
+                    // Trigger / formulas / intensity / smoothness are left untouched.
+                    ch.FrequencyMin = 0; ch.FrequencyMax = 200;
+                    break;
+            }
+        }
+
+        public BaseLfeSettings Clone()
+        {
+            return new BaseLfeSettings
+            {
+                Engine = Engine?.Clone() ?? new BaseLfeChannel(),
+                Abs = Abs?.Clone() ?? new BaseLfeChannel(),
+                Gearshift = Gearshift?.Clone() ?? new BaseLfeChannel(),
+            };
+        }
+
+        // ── Built-in preset factories (the original preset buttons) ───────────
+        // The base SUMS concurrent channels, so these drive all 3 slots as summed
+        // partials gated on RPM, each scaling by % of RPM so they fit any vehicle.
+        // Frequency formula spans the full 0..200 Hz domain; the partial's actual
+        // range lives in the [0, freqK] limit band. This keeps the live rescale
+        // identical to a bare "× freqK" (RescaleFreq(pct×200) over [0,freqK] = pct×freqK)
+        // while making the band == the real range, so the Test button's band-sweep
+        // matches the in-game frequency instead of overshooting to 200 Hz.
+        private const string PctOfRpm = "[DataCorePlugin.GameData.Rpms] / [DataCorePlugin.GameData.MaxRpm] * 200";
+        private const string Throttle = "[DataCorePlugin.GameData.Throttle]";
+        private const string SpeedKmh = "[DataCorePlugin.GameData.SpeedKmh]";
+
+        // Intensity that scales with engine load: floorPct % at closed throttle
+        // (idle/coasting) up to 100% flat out. SimHub has no universal engine-load
+        // channel, so throttle position is the proxy. baseInt is the full-load peak.
+        private static string LoadIntensity(int baseInt, int floorPct)
+            => baseInt + " * (" + floorPct + " + " + (100 - floorPct) + " * " + Throttle + " / 100.0) / 100.0";
+
+        // Engine partial: pitch tracks % RPM (over the [0, freqK] band); intensity is
+        // baseInt scaled by throttle/load. Base SUMS the 3 slots into one engine.
+        private static BaseLfeChannel Partial(int freqK, int baseInt, int smoothness, int floorPct) => new BaseLfeChannel
+        {
+            Enabled = true,
+            Mode = BaseLfeMode.Custom,
+            TriggerMode = BaseLfeTriggerMode.Level,
+            TriggerFormula = EngineTrigger,
+            FrequencyFormula = PctOfRpm,
+            FrequencyMin = 0,
+            FrequencyMax = freqK,
+            Frequency = freqK,
+            IntensityFormula = LoadIntensity(baseInt, floorPct),
+            Intensity = baseInt,
+            Smoothness = smoothness,
+        };
+        // Road partial: fixed low pitch; intensity grows with speed (tyre/road texture).
+        private static BaseLfeChannel RoadPartial(int freqHz, string speedScale, int smoothness) => new BaseLfeChannel
+        {
+            Enabled = true,
+            Mode = BaseLfeMode.Custom,
+            TriggerMode = BaseLfeTriggerMode.Level,
+            TriggerFormula = SpeedKmh,
+            Frequency = freqHz,
+            IntensityFormula = SpeedKmh + " * " + speedScale,
+            Intensity = 40,
+            Smoothness = smoothness,
+        };
+        public static BaseLfeSettings AdditiveEngine() => new BaseLfeSettings { Engine = Partial(100, 30, 100, 35), Abs = Partial(200, 15, 100, 35), Gearshift = Partial(50, 15, 100, 35) };
+        public static BaseLfeSettings BigRig() => new BaseLfeSettings { Engine = Partial(45, 40, 100, 50), Abs = Partial(20, 26, 55, 50), Gearshift = Partial(48, 18, 100, 50) };
+        public static BaseLfeSettings DetunedV8() => new BaseLfeSettings { Engine = Partial(95, 26, 100, 40), Abs = Partial(102, 22, 100, 40), Gearshift = Partial(28, 18, 40, 40) };
+        public static BaseLfeSettings RoadRumble() => new BaseLfeSettings { Engine = RoadPartial(30, "0.40", 100), Abs = RoadPartial(45, "0.30", 80), Gearshift = RoadPartial(22, "0.35", 60) };
+    }
+
+    /// <summary>A named snapshot of the three LFE slots. Built-ins are code-generated
+    /// (BuiltIn=true, not persisted); user presets live in MozaPluginSettings.BaseLfePresets.</summary>
+    public sealed class BaseLfePreset
+    {
+        public string Name { get; set; } = "";
+        public bool BuiltIn { get; set; } = false;
+        public BaseLfeSettings Settings { get; set; } = new BaseLfeSettings();
+        public BaseLfePreset Clone() => new BaseLfePreset { Name = Name, BuiltIn = BuiltIn, Settings = Settings?.Clone() ?? new BaseLfeSettings() };
+    }
+
+    /// <summary>
     /// A named profile snapshot of all Moza device configuration.
     /// Extends SimHub's ProfileBase for native per-game profile switching.
     /// All integer settings use -1 as sentinel for "not included in this profile".
@@ -325,6 +568,10 @@ namespace MozaPlugin
         public int DashFlagsBrightness { get; set; } = -1;
         public int DashDisplayBrightness { get; set; } = -1;
         public int DashDisplayStandbyMin { get; set; } = -1;
+        // VGS display-rotation mode (0=off, 1=smooth, 2=immediate). Sentinel -1 =
+        // fall through to the plugin-settings baseline. Pushed via session-0x02
+        // ff-record kind=5; VGS-only (see WheelModelInfo.SupportsDisplayRotation).
+        public int DashDisplayRotation { get; set; } = -1;
         // Indicator/display modes (raw device-stored values, sentinel = leave alone).
         public int DashRpmIndicatorMode { get; set; } = -1;
         public int DashRpmDisplayMode { get; set; } = -1;
@@ -372,11 +619,20 @@ namespace MozaPlugin
         public int[]? PedalsBrakeCurve { get; set; }             // [5] values 0-100
         public int[]? PedalsClutchCurve { get; set; }            // [5] values 0-100
 
+        // ===== Shifter settings (HGP/SGP). -1 = untouched. =====
+        public int ShifterDirection { get; set; } = -1;   // 0=Normal, 1=Reversed
+        public int ShifterPaddleSync { get; set; } = -1;  // 1/2
+        public int ShifterHidMode { get; set; } = -1;     // 0/1 game-compat mode
+        public int ShifterApplyMode { get; set; } = -1;   // 0/1
+        public int ShifterBrightness { get; set; } = -1;  // SGP LED brightness 0-10
+        public int ShifterLed1Index { get; set; } = -1;   // SGP LED S1 palette index 0-7
+        public int ShifterLed2Index { get; set; } = -1;   // SGP LED S2 palette index 0-7
+
         // ===== Color arrays (packed as R<<16 | G<<8 | B) =====
         public int[]? WheelRpmColors { get; set; }       // [10]
         public int[]? WheelRpmBlinkColors { get; set; }  // [10]
-        public int[]? WheelButtonColors { get; set; }     // [14]
-        public bool[]? WheelButtonDefaultDuringTelemetry { get; set; } // [14]
+        public int[]? WheelButtonColors { get; set; }     // [16]
+        public bool[]? WheelButtonDefaultDuringTelemetry { get; set; } // [16]
         public int[]? WheelFlagColors { get; set; }       // [6]
         public int[]? WheelIdleColor { get; set; }        // [1]
         public int[]? WheelESRpmColors { get; set; }     // [10]
@@ -397,6 +653,16 @@ namespace MozaPlugin
         // older serialized profiles untouched on load and avoids pushing default
         // values to a device that isn't attached.
         public Ab9Settings? Ab9 { get; set; }
+
+        // ===== Wheelbase LFE effects (base firmware >= 1.2.10.10) =====
+        // Null until the user touches the Wheelbase LFE panel for this profile —
+        // leaves older serialized profiles untouched on load. Host-rendered; not
+        // captured from device reads.
+        public BaseLfeSettings? BaseLfe { get; set; }
+
+        // Name of the LFE preset last selected for this profile (drives the preset
+        // dropdown; "" = none/custom). Persisted so the dropdown remembers its pick.
+        public string BaseLfePresetName { get; set; } = "";
 
         // ===== mBooster Pedals (per-device) =====
         // Per-device settings keyed by USB device instance ID (stable across
@@ -521,6 +787,7 @@ namespace MozaPlugin
             // Dashboard
             DashRpmBrightness = p.DashRpmBrightness; DashFlagsBrightness = p.DashFlagsBrightness;
             DashDisplayBrightness = p.DashDisplayBrightness; DashDisplayStandbyMin = p.DashDisplayStandbyMin;
+            DashDisplayRotation = p.DashDisplayRotation;
             DashRpmIndicatorMode = p.DashRpmIndicatorMode; DashRpmDisplayMode = p.DashRpmDisplayMode;
             DashFlagsIndicatorMode = p.DashFlagsIndicatorMode;
 
@@ -549,6 +816,12 @@ namespace MozaPlugin
             PedalsBrakeCurve = CloneArray(p.PedalsBrakeCurve);
             PedalsClutchCurve = CloneArray(p.PedalsClutchCurve);
 
+            // Shifter (HGP/SGP)
+            ShifterDirection = p.ShifterDirection; ShifterPaddleSync = p.ShifterPaddleSync;
+            ShifterHidMode = p.ShifterHidMode; ShifterApplyMode = p.ShifterApplyMode;
+            ShifterBrightness = p.ShifterBrightness;
+            ShifterLed1Index = p.ShifterLed1Index; ShifterLed2Index = p.ShifterLed2Index;
+
             // Colors (deep copy)
             WheelRpmColors = CloneArray(p.WheelRpmColors);
             WheelRpmBlinkColors = CloneArray(p.WheelRpmBlinkColors);
@@ -569,6 +842,8 @@ namespace MozaPlugin
             DashFlagColors = CloneArray(p.DashFlagColors);
 
             Ab9 = p.Ab9?.Clone();
+            BaseLfe = p.BaseLfe?.Clone();
+            BaseLfePresetName = p.BaseLfePresetName;
 
             // mBooster — deep-copy each per-device settings entry.
             MBoosterSettings = new Dictionary<string, MBoosterDeviceSettings>(StringComparer.OrdinalIgnoreCase);
@@ -718,22 +993,36 @@ namespace MozaPlugin
             FfbCurveX1 = data.FfbCurveX1; FfbCurveX2 = data.FfbCurveX2; FfbCurveX3 = data.FfbCurveX3; FfbCurveX4 = data.FfbCurveX4;
             FfbCurveY1 = data.FfbCurveY1; FfbCurveY2 = data.FfbCurveY2; FfbCurveY3 = data.FfbCurveY3; FfbCurveY4 = data.FfbCurveY4; FfbCurveY5 = data.FfbCurveY5;
 
-            // Handbrake
-            HandbrakeMode = data.HandbrakeMode;
-            HandbrakeButtonThreshold = data.HandbrakeButtonThreshold;
-            HandbrakeDirection = data.HandbrakeDirection;
-            HandbrakeMin = data.HandbrakeMin; HandbrakeMax = data.HandbrakeMax;
-            HandbrakeCurve = (int[])data.HandbrakeCurve.Clone();
+            // Handbrake — only once the device has reported its calibration, so a
+            // pre-read default (e.g. min/max 0) isn't baked into the profile.
+            if (data.HandbrakeSettingsRead)
+            {
+                HandbrakeMode = data.HandbrakeMode;
+                HandbrakeButtonThreshold = data.HandbrakeButtonThreshold;
+                HandbrakeDirection = data.HandbrakeDirection;
+                HandbrakeMin = data.HandbrakeMin; HandbrakeMax = data.HandbrakeMax;
+                HandbrakeCurve = (int[])data.HandbrakeCurve.Clone();
+            }
 
-            // Pedals
-            PedalsThrottleDir = data.PedalsThrottleDir; PedalsBrakeDir = data.PedalsBrakeDir; PedalsClutchDir = data.PedalsClutchDir;
-            PedalsThrottleMin = data.PedalsThrottleMin; PedalsThrottleMax = data.PedalsThrottleMax;
-            PedalsBrakeMin = data.PedalsBrakeMin; PedalsBrakeMax = data.PedalsBrakeMax;
-            PedalsClutchMin = data.PedalsClutchMin; PedalsClutchMax = data.PedalsClutchMax;
-            PedalsBrakeAngleRatio = data.PedalsBrakeAngleRatio;
-            PedalsThrottleCurve = (int[])data.PedalsThrottleCurve.Clone();
-            PedalsBrakeCurve = (int[])data.PedalsBrakeCurve.Clone();
-            PedalsClutchCurve = (int[])data.PedalsClutchCurve.Clone();
+            // Pedals — gated the same way (see handbrake note above).
+            if (data.PedalsSettingsRead)
+            {
+                PedalsThrottleDir = data.PedalsThrottleDir; PedalsBrakeDir = data.PedalsBrakeDir; PedalsClutchDir = data.PedalsClutchDir;
+                PedalsThrottleMin = data.PedalsThrottleMin; PedalsThrottleMax = data.PedalsThrottleMax;
+                PedalsBrakeMin = data.PedalsBrakeMin; PedalsBrakeMax = data.PedalsBrakeMax;
+                PedalsClutchMin = data.PedalsClutchMin; PedalsClutchMax = data.PedalsClutchMax;
+                PedalsBrakeAngleRatio = data.PedalsBrakeAngleRatio;
+                PedalsThrottleCurve = (int[])data.PedalsThrottleCurve.Clone();
+                PedalsBrakeCurve = (int[])data.PedalsBrakeCurve.Clone();
+                PedalsClutchCurve = (int[])data.PedalsClutchCurve.Clone();
+            }
+
+            // Shifter (HGP/SGP). Device-read fields, like handbrake/pedals above —
+            // only read on detect (no telemetry drift), so capturing _data is safe.
+            ShifterDirection = data.ShifterDirection; ShifterPaddleSync = data.ShifterPaddleSync;
+            ShifterHidMode = data.ShifterHidMode; ShifterApplyMode = data.ShifterApplyMode;
+            ShifterBrightness = data.ShifterBrightness;
+            ShifterLed1Index = data.ShifterLed1Index; ShifterLed2Index = data.ShifterLed2Index;
 
             // NOTE: wheel-LED / ES-wheel / Dash / Base-ambient / Gearshift / AB9
             // fields are NOT captured here. They are written directly to the
@@ -764,6 +1053,7 @@ namespace MozaPlugin
             if (DashFlagsBrightness   < 0) DashFlagsBrightness   = settings.DashFlagsBrightness;
             if (DashDisplayBrightness < 0) DashDisplayBrightness = settings.DashDisplayBrightness;
             if (DashDisplayStandbyMin < 0) DashDisplayStandbyMin = settings.DashDisplayStandbyMin;
+            if (DashDisplayRotation   < 0) DashDisplayRotation   = settings.DashDisplayRotation;
             if (DashRpmBlinkColors == null && settings.DashRpmBlinkColors != null)
                 DashRpmBlinkColors = (int[])settings.DashRpmBlinkColors.Clone();
 

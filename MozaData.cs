@@ -19,6 +19,11 @@ namespace MozaPlugin
         /// </summary>
         public volatile bool IsDashboardConnected;
         public volatile bool BaseSettingsRead;
+        // Set once the device has reported its pedal / handbrake calibration
+        // (a *-max read landed). Gates CaptureFromCurrent so the pre-read default
+        // isn't persisted, mirroring BaseSettingsRead.
+        public volatile bool PedalsSettingsRead;
+        public volatile bool HandbrakeSettingsRead;
 
         /// <summary>
         /// True when any Moza device is confirmed on the serial bus (base, hub,
@@ -104,6 +109,16 @@ namespace MozaPlugin
         public const int MaxButtons = 128;
         public readonly bool[] ButtonStates = new bool[MaxButtons];
         public volatile int ButtonCount;
+
+        // MOZA Stalks buttons — kept on a separate surface from the wheel's so
+        // the 28-button stalks never collide with wheel button indices. Written
+        // only by the Stalks HID device; consumed by the truck-sim keyboard feature.
+        public const int MaxStalksButtons = 32;
+        public readonly bool[] StalksButtonStates = new bool[MaxStalksButtons];
+        public volatile int StalksButtonCount;
+        // True while a MOZA Stalks HID device is present on the bus (drives the
+        // Stalks settings tab's visibility).
+        public volatile bool IsStalksConnected;
 
         // Handbrake button (separate HID device, only fires in button mode)
         public volatile bool HandbrakeButtonPressed;
@@ -242,11 +257,13 @@ namespace MozaPlugin
         // Wheel RPM colors (10 LEDs, [R, G, B] each)
         public readonly byte[][] WheelRpmColors = InitWheelRpmColorArray();
         public readonly byte[][] WheelRpmBlinkColors = InitRpmColorArray();
-        public readonly byte[][] WheelButtonColors = InitColorArray(14);
+        // Group 1 (button matrix) spec max = 16 addressable LEDs (W11 has 16).
+        public const int WheelButtonMax = 16;
+        public readonly byte[][] WheelButtonColors = InitColorArray(WheelButtonMax);
         // Per-button "default during telemetry" flags. When true, any 'off' (0,0,0) value
         // sent through the live button-color telemetry pipeline is replaced with that
         // button's configured static color (see WheelButtonColors).
-        public readonly bool[] WheelButtonDefaultDuringTelemetry = new bool[14];
+        public readonly bool[] WheelButtonDefaultDuringTelemetry = new bool[WheelButtonMax];
         // Single "default during telemetry" toggle for the knob ring LEDs. When true,
         // an all-off knob frame from the live telemetry pipeline releases telemetry
         // ownership (active_mask=0) so the firmware restores the wheel's stored knob
@@ -289,6 +306,9 @@ namespace MozaPlugin
         public volatile int DashFlagsBrightness;
         public volatile int DashDisplayBrightness = -1;
         public volatile int DashDisplayStandbyMin;
+        // VGS display-rotation mode (0=off, 1=smooth, 2=immediate). Sentinel -1 =
+        // not yet populated; UI mirror only (push-only setting, wheel never reports it).
+        public volatile int DashDisplayRotation = -1;
 
         public readonly byte[][] DashRpmColors = InitRpmColorArray();
         public readonly byte[][] DashRpmBlinkColors = InitRpmColorArray();
@@ -316,6 +336,30 @@ namespace MozaPlugin
         public volatile string BaseHwSubVersion = "";
         public byte[] BaseMcuUid = System.Array.Empty<byte>();
         public byte[] BaseIdentity11 = System.Array.Empty<byte>();
+        // Numeric base firmware version, packed (maj<<24)|(min<<16)|(patch<<8)|build;
+        // 0 = not yet read/unknown. Read via base-fw-version (dev 0x12, group 0x04).
+        // Distinct from BaseSwVersion above (group 0x0F), which is the hardware
+        // model STRING (e.g. "RS21-D05-MC WB"), not a numeric version. Gates the
+        // wheelbase LFE effects — see BaseSupportsLfe.
+        //
+        // STATIC-backed so it survives the game-switch plugin reload (which builds
+        // a fresh MozaData) — the base isn't re-detected over the persistent wire,
+        // so base-fw-version isn't re-read; without persistence BaseSupportsLfe
+        // would drop to false after every game switch. Deliberately NOT cleared by
+        // ClearWheelIdentity: that fires on wheel-rim swaps AND transient reconnects
+        // (e.g. sleep/wake, where the tty drops and re-opens), but the BASE is
+        // unchanged — zeroing it there made the LFE card vanish on wake. It persists
+        // and is overwritten by the next base-fw-version read, which the prober
+        // re-issues on every base re-detection (reconnect re-arms BaseAmbientProbed),
+        // so a physically-swapped base still re-reads the correct value on reconnect.
+        private static volatile int s_baseFwVersion;
+        public int BaseFwVersion { get => s_baseFwVersion; set => s_baseFwVersion = value; }
+
+        // Minimum base firmware for the wheelbase LFE effects (complex gearshift,
+        // engine vibration, ABS). Captured on 1.2.10.10; the prior non-LFE build
+        // was 1.2.9.24.
+        public const int BaseFwLfeMin = (1 << 24) | (2 << 16) | (10 << 8) | 10; // 1.2.10.10
+        public bool BaseSupportsLfe => BaseFwVersion != 0 && BaseFwVersion >= BaseFwLfeMin;
 
         // ===== FFB Equalizer (6 bands: 10/15/25/40/60/100 Hz, 0-400% where 100% = flat) =====
         public volatile int Equalizer1 = 100;
@@ -337,14 +381,14 @@ namespace MozaPlugin
         // ===== Pedals settings =====
         public volatile int PedalsThrottleDir;
         public volatile int PedalsThrottleMin;
-        public volatile int PedalsThrottleMax;
+        public volatile int PedalsThrottleMax = 100; // default full range until device read
         public volatile int PedalsBrakeDir;
         public volatile int PedalsBrakeMin;
-        public volatile int PedalsBrakeMax;
+        public volatile int PedalsBrakeMax = 100;
         public volatile int PedalsBrakeAngleRatio = 50; // 0=angle sensor, 100=load cell
         public volatile int PedalsClutchDir;
         public volatile int PedalsClutchMin;
-        public volatile int PedalsClutchMax;
+        public volatile int PedalsClutchMax = 100;
 
         // Pedal output curves (values 0-100, stored as ints; device uses 4-byte floats)
         public readonly int[] PedalsThrottleCurve = new int[] { 20, 40, 60, 80, 100 };
@@ -354,12 +398,23 @@ namespace MozaPlugin
         // ===== Handbrake settings =====
         public volatile int HandbrakeDirection;      // 0=Normal, 1=Reversed
         public volatile int HandbrakeMin;
-        public volatile int HandbrakeMax;
+        public volatile int HandbrakeMax = 100; // default full range until device read
         public volatile int HandbrakeMode;           // 0=Axis, 1=Button
         public volatile int HandbrakeButtonThreshold; // 0-100 (percent)
 
         // Handbrake output curve (values 0-100, stored as ints; device uses 4-byte floats)
         public readonly int[] HandbrakeCurve = new int[] { 20, 40, 60, 80, 100 };
+
+        // ===== Shifter settings (HGP/SGP, bus dev 0x1A) =====
+        // Live device-value mirror (populated by settings reads). -1 = not read yet.
+        public volatile int ShifterDirection = -1;   // 0=Normal, 1=Reversed
+        public volatile int ShifterPaddleSync = -1;  // 1/2
+        public volatile int ShifterHidMode = -1;     // 0/1 game-compat mode
+        public volatile int ShifterApplyMode = -1;   // 0/1
+        public volatile int ShifterBrightness = -1;  // SGP LED brightness 0-10
+        public volatile int ShifterLed1Index = -1;   // SGP LED S1 palette index 0-7
+        public volatile int ShifterLed2Index = -1;   // SGP LED S2 palette index 0-7
+        public volatile int ShifterTheta = -1;       // read-only raw axis (output-x)
 
         // ===== Hub port power status (-1 = not read yet) =====
         public volatile int HubBasePower = -1;
@@ -537,14 +592,14 @@ namespace MozaPlugin
                 // Pedals settings
                 case "pedals-throttle-dir": PedalsThrottleDir = value; break;
                 case "pedals-throttle-min": PedalsThrottleMin = value; break;
-                case "pedals-throttle-max": PedalsThrottleMax = value; break;
+                case "pedals-throttle-max": PedalsThrottleMax = value; PedalsSettingsRead = true; break;
                 case "pedals-brake-dir":    PedalsBrakeDir    = value; break;
                 case "pedals-brake-min":    PedalsBrakeMin    = value; break;
-                case "pedals-brake-max":    PedalsBrakeMax    = value; break;
+                case "pedals-brake-max":    PedalsBrakeMax    = value; PedalsSettingsRead = true; break;
                 case "pedals-brake-angle-ratio": PedalsBrakeAngleRatio = value; break;
                 case "pedals-clutch-dir":   PedalsClutchDir   = value; break;
                 case "pedals-clutch-min":   PedalsClutchMin   = value; break;
-                case "pedals-clutch-max":   PedalsClutchMax   = value; break;
+                case "pedals-clutch-max":   PedalsClutchMax   = value; PedalsSettingsRead = true; break;
 
                 // Pedal curves (float values cast to int, 0-100 range)
                 case "pedals-throttle-y1": PedalsThrottleCurve[0] = value; break;
@@ -566,7 +621,7 @@ namespace MozaPlugin
                 // Handbrake settings
                 case "handbrake-direction":        HandbrakeDirection        = value; break;
                 case "handbrake-min":              HandbrakeMin              = value; break;
-                case "handbrake-max":              HandbrakeMax              = value; break;
+                case "handbrake-max":              HandbrakeMax              = value; HandbrakeSettingsRead = true; break;
                 case "handbrake-mode":             HandbrakeMode             = value; break;
                 case "handbrake-button-threshold": HandbrakeButtonThreshold  = value; break;
 
@@ -576,6 +631,14 @@ namespace MozaPlugin
                 case "handbrake-y3": HandbrakeCurve[2] = value; break;
                 case "handbrake-y4": HandbrakeCurve[3] = value; break;
                 case "handbrake-y5": HandbrakeCurve[4] = value; break;
+
+                // Shifter settings (HGP/SGP). shifter-colors is an array — see UpdateFromArray.
+                case "shifter-hid-mode":    ShifterHidMode    = value; break;
+                case "shifter-apply-mode":  ShifterApplyMode  = value; break;
+                case "shifter-brightness":  ShifterBrightness = value; break;
+                case "shifter-direction":   ShifterDirection  = value; break;
+                case "shifter-paddle-sync": ShifterPaddleSync = value; break;
+                case "shifter-theta":       ShifterTheta      = value; break;
 
                 // Hub port power status
                 case "hub-base-power":    HubBasePower    = value; IsHubConnected = true; break;
@@ -630,7 +693,7 @@ namespace MozaPlugin
             else if (commandName.StartsWith("wheel-button-color"))
             {
                 int idx = ParseTrailingIndex(commandName, "wheel-button-color");
-                if (idx >= 0 && idx < 14 && data.Length >= 3)
+                if (idx >= 0 && idx < WheelButtonMax && data.Length >= 3)
                     SetColor(WheelButtonColors[idx], data);
             }
             // Wheel flag colors
@@ -674,6 +737,15 @@ namespace MozaPlugin
             {
                 if (data.Length >= 3)
                     SetColor(BaseAmbientShutdownColor, data);
+            }
+            // Shifter (SGP) 2 LEDs: 2-byte payload [S1,S2], each a palette index 0-7.
+            else if (commandName == "shifter-colors")
+            {
+                if (data.Length >= 2)
+                {
+                    ShifterLed1Index = data[0];
+                    ShifterLed2Index = data[1];
+                }
             }
             // Dash RPM colors
             else if (commandName.StartsWith("dash-rpm-color") && !commandName.Contains("blink"))
@@ -814,6 +886,18 @@ namespace MozaPlugin
             {
                 BaseIdentity11 = (byte[])data.Clone();
             }
+            else if (commandName == "base-fw-version")
+            {
+                // Reply payload is 4 version bytes in WIRE order [major, minor,
+                // build, patch] (no cmd echo — group 0x04). MOZA DISPLAYS the last
+                // two swapped: wire 01 02 18 09 is shown "1.2.9.24", wire 01 02 0A
+                // 0A is "1.2.10.10". Pack in display/semver order (maj.min.patch.
+                // build) — swap data[2]/data[3] — so the >= threshold compare in
+                // BaseSupportsLfe orders pre-LFE (1.2.9.24) BELOW LFE (1.2.10.10).
+                // Packing in raw wire order would misgate (0x01021809 > 0x01020A0A).
+                if (data.Length >= 4)
+                    BaseFwVersion = (data[0] << 24) | (data[1] << 16) | (data[3] << 8) | data[2];
+            }
             else if (commandName == "wheel-identity-11")
             {
                 WheelIdentity11 = (byte[])data.Clone();
@@ -896,6 +980,10 @@ namespace MozaPlugin
             BaseHwSubVersion = "";
             BaseMcuUid = System.Array.Empty<byte>();
             BaseIdentity11 = System.Array.Empty<byte>();
+            // NOTE: BaseFwVersion is intentionally NOT cleared here — see its field
+            // comment. It's a BASE property; a wheel-rim/transient identity reset
+            // must not blank it or the LFE card blinks out on sleep/wake. The prober
+            // overwrites it on the next base re-detection.
             Last28x00Byte5 = 0;
             Last28x00ByteValid = false;
             Last28x01Byte4 = 0;

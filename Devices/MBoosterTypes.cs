@@ -1,4 +1,6 @@
 using System;
+using System.Collections.Generic;
+using System.Linq;
 
 namespace MozaPlugin.Devices
 {
@@ -60,6 +62,14 @@ namespace MozaPlugin.Devices
         // force as the device can represent. See MBoosterEffectWorker
         // .UpdateBrakeFadeThreshold.
         public const float BrakeFadeMaxThresholdKg = 200f;
+
+        // Custom (NCalc) effects — user-defined vibration effects driven by
+        // an arbitrary SimHub property/formula rather than a fixed protocol
+        // telemetry mapping. Wire transport reuses the verified Engine
+        // (effect type 4) frame shape/ParamK — see MBoosterEffectWorker
+        // .ProcessCustomEffect — so the frequency range matches Engine's.
+        public const float CustomEffectFreqMinHz = 5f;
+        public const float CustomEffectFreqMaxHz = 200f;
     }
 
     /// <summary>
@@ -157,14 +167,195 @@ namespace MozaPlugin.Devices
     }
 
     /// <summary>
+    /// One user-created, formula-driven vibration effect (Experimental —
+    /// see docs/protocol/devices/mbooster.md "Custom Effects"). Unlike the
+    /// five built-in effects, there is no protocol-verified wire effect
+    /// type for arbitrary user content, so the worker transmits these using
+    /// the already-verified Engine (effect type 4) frame shape — see
+    /// MBoosterEffectWorker.ProcessCustomEffect. <see cref="Formula"/> is
+    /// evaluated once per tick via the same SimHub NCalc engine the
+    /// telemetry channel-mapper uses (Telemetry/NCalcExpressionEvaluator.cs)
+    /// — either a bare SimHub property path (e.g. <c>SpeedKmh</c>) or a full
+    /// <c>[prop]</c> NCalc formula.
+    /// </summary>
+    public sealed class MBoosterCustomEffect
+    {
+        // Stable identity for the worker's per-effect synthesis state and
+        // for matching a UI row back to its model after a list edit —
+        // independent of list order/Name so renaming or reordering never
+        // loses in-progress vibration state.
+        public string Id { get; set; } = Guid.NewGuid().ToString("N");
+
+        public string Name { get; set; } = "Custom Effect";
+        public bool Enabled { get; set; } = false;
+
+        // A SimHub property path or NCalc formula — see
+        // Telemetry/NCalcExpressionEvaluator.LooksLikeExpression.
+        public string Formula { get; set; } = "";
+
+        // Optional trigger gate: when true, the effect vibrates at a fixed
+        // Intensity whenever Formula's value is >= Threshold (a pulse-style
+        // trigger, like the built-in Threshold/Lockup effects). When false,
+        // Formula's value (clamped 0..1) directly scales Intensity every
+        // tick instead (a continuous, proportional effect, like Engine).
+        // The user's formula is responsible for producing a sensible range
+        // for whichever mode they pick.
+        public bool ThresholdEnabled { get; set; } = false;
+        public double Threshold { get; set; } = 50;
+
+        public float FrequencyHz { get; set; } = 50;
+        public int IntensityPct { get; set; } = 50; // 0..100
+
+        public MBoosterCustomEffect Clone() =>
+            new MBoosterCustomEffect
+            {
+                Id = Id,
+                Name = Name,
+                Enabled = Enabled,
+                Formula = Formula,
+                ThresholdEnabled = ThresholdEnabled,
+                Threshold = Threshold,
+                FrequencyHz = FrequencyHz,
+                IntensityPct = IntensityPct,
+            };
+    }
+
+    /// <summary>
+    /// The per-pedal VIBRATION-motor effect settings the effect worker reads.
+    /// Both <see cref="MBoosterDeviceSettings"/> (the master pedal / device 0x12)
+    /// and <see cref="MBoosterPedalSettings"/> (each chained pedal at 0x1d/0x1e)
+    /// implement this, so ONE effect worker per motor device can run the same
+    /// effect code against whichever pedal it drives — configured effects are
+    /// sent to the device id the pedal belongs to. Brake Fade is deliberately
+    /// NOT here: it rewrites the brake's hardware calibration rather than driving
+    /// a motor, so it stays per-lane on the primary worker.
+    /// </summary>
+    public interface IMBoosterEffects
+    {
+        MBoosterEffectSettings Abs { get; set; }
+        MBoosterEffectSettings Lockup { get; set; }
+        MBoosterEffectSettings Threshold { get; set; }
+        MBoosterEffectSettings Engine { get; set; }
+        MBoosterEffectSettings RoadTexture { get; set; }
+        System.Collections.Generic.List<MBoosterCustomEffect> CustomEffects { get; set; }
+    }
+
+    /// <summary>
+    /// ALL per-pedal config the settings UI edits — effects (via
+    /// <see cref="IMBoosterEffects"/>) PLUS Calibration, Sim Input Mapping, and
+    /// Pedal Feel. Both <see cref="MBoosterDeviceSettings"/> (the master pedal /
+    /// device 0x12, using its flat fields) and <see cref="MBoosterPedalSettings"/>
+    /// (each chained pedal) implement this, so the settings tab's one per-pedal
+    /// selector can point every config section at whichever pedal is chosen.
+    /// (Brake Fade stays on the device settings — it's per-lane, master only.)
+    /// </summary>
+    public interface IMBoosterPedalConfig : IMBoosterEffects
+    {
+        // Calibration
+        int Direction { get; set; }
+        int Min { get; set; }
+        int Max { get; set; }
+        float[]? CurveY { get; set; }
+        float[]? CurveX { get; set; }
+        // Sim Input Mapping
+        float SensorOutputRatioPct { get; set; }
+        float MaxThresholdKg { get; set; }
+        // Pedal Feel
+        float[]? InputCurveY { get; set; }
+        float DeadzoneKg { get; set; }
+        float MaxForceKg { get; set; }
+        float TravelStartMm { get; set; }
+        float TravelEndMm { get; set; }
+        float EndstopFrontStiffness { get; set; }
+        float EndstopEndStiffness { get; set; }
+    }
+
+    /// <summary>
+    /// Settings for ONE hosted pedal on a chained mBooster lane: its output
+    /// calibration (Direction / Min / Max / curve, written to that pedal's
+    /// role-specific group-35/36 commands) AND its vibration effects (sent to
+    /// the pedal's own motor device id 0x1d/0x1e — see IMBoosterEffects). Pedal 0
+    /// (the master) keeps both in the flat fields on
+    /// <see cref="MBoosterDeviceSettings"/> for UI backward-compat; the chained
+    /// pedals store theirs here, keyed by axis index in
+    /// <see cref="MBoosterDeviceSettings.Pedals"/>. -1 / null = "not set".
+    /// </summary>
+    public sealed class MBoosterPedalSettings : IMBoosterPedalConfig
+    {
+        // Calibration (same sentinels as the master's flat fields).
+        public int Direction { get; set; } = -1;
+        public int Min { get; set; } = -1;
+        public int Max { get; set; } = -1;
+        public float[]? CurveY { get; set; } = null;   // 5-point output curve
+        public float[]? CurveX { get; set; } = null;   // draggable node X (null = fixed breakpoints)
+
+        // Sim Input Mapping (see MBoosterDeviceSettings for the field semantics).
+        public float SensorOutputRatioPct { get; set; } = -1;
+        public float MaxThresholdKg { get; set; } = -1;
+
+        // Pedal Feel (host-side shaping + brake-only wire calibration).
+        public float[]? InputCurveY { get; set; } = null;
+        public float DeadzoneKg { get; set; } = 0;
+        public float MaxForceKg { get; set; } = 200;
+        public float TravelStartMm { get; set; } = -1;
+        public float TravelEndMm { get; set; } = -1;
+        public float EndstopFrontStiffness { get; set; } = -1;
+        public float EndstopEndStiffness { get; set; } = -1;
+
+        // Per-pedal vibration effects (same defaults as the master's flat fields).
+        public MBoosterEffectSettings Abs { get; set; } = new MBoosterEffectSettings { FrequencyHz = 22 };
+        public MBoosterEffectSettings Lockup { get; set; } = new MBoosterEffectSettings { FrequencyHz = 55 };
+        public MBoosterEffectSettings Threshold { get; set; } = new MBoosterEffectSettings { FrequencyHz = 70, TriggerLevelPct = 60, DecayPct = 20 };
+        public MBoosterEffectSettings Engine { get; set; } = new MBoosterEffectSettings { IntensityPct = 50, FrequencyHz = 100 };
+        public MBoosterEffectSettings RoadTexture { get; set; } = new MBoosterEffectSettings { IntensityPct = 50, SmoothnessPct = 50 };
+        public List<MBoosterCustomEffect> CustomEffects { get; set; } = new List<MBoosterCustomEffect>();
+
+        public MBoosterPedalSettings Clone() =>
+            new MBoosterPedalSettings
+            {
+                Direction = Direction,
+                Min = Min,
+                Max = Max,
+                CurveY = CurveY == null ? null : (float[])CurveY.Clone(),
+                CurveX = CurveX == null ? null : (float[])CurveX.Clone(),
+                SensorOutputRatioPct = SensorOutputRatioPct,
+                MaxThresholdKg = MaxThresholdKg,
+                InputCurveY = InputCurveY == null ? null : (float[])InputCurveY.Clone(),
+                DeadzoneKg = DeadzoneKg,
+                MaxForceKg = MaxForceKg,
+                TravelStartMm = TravelStartMm,
+                TravelEndMm = TravelEndMm,
+                EndstopFrontStiffness = EndstopFrontStiffness,
+                EndstopEndStiffness = EndstopEndStiffness,
+                Abs = Abs?.Clone() ?? new MBoosterEffectSettings(),
+                Lockup = Lockup?.Clone() ?? new MBoosterEffectSettings(),
+                Threshold = Threshold?.Clone() ?? new MBoosterEffectSettings(),
+                Engine = Engine?.Clone() ?? new MBoosterEffectSettings(),
+                RoadTexture = RoadTexture?.Clone() ?? new MBoosterEffectSettings(),
+                CustomEffects = CustomEffects?.Select(c => c.Clone()).ToList() ?? new List<MBoosterCustomEffect>(),
+            };
+    }
+
+    /// <summary>
     /// All settings for ONE mBooster device, keyed by stable identity (USB
     /// instance ID) in the profile's per-device dictionary. Each effect has
     /// its own enable + intensity. Calibration values (group 35/36 — marked
     /// "likely but unverified" in the protocol note) are stored separately.
     /// </summary>
-    public sealed class MBoosterDeviceSettings
+    public sealed class MBoosterDeviceSettings : IMBoosterPedalConfig
     {
         public MBoosterRole Role { get; set; } = MBoosterRole.Disabled;
+
+        // Per-axis role for a multi-pedal chain: the mBooster hosts up to 3
+        // pedals on ONE lane, reported as HID axes in a deterministic order
+        // (axis 0 = the master unit, axis 1 = 2nd chained device, axis 2 =
+        // 3rd). null = use defaults — a single-axis device falls back to the
+        // legacy Role above (exact backward compat); a multi-axis chain
+        // defaults to [Brake, Throttle, Clutch] by axis order (a guess, since
+        // the physical axis→pedal wiring isn't reported — the UI lets the user
+        // remap). When the user edits any axis the UI writes the full array so
+        // every axis becomes explicit. See MozaMBoosterRegistry.ResolveAxisRole.
+        public MBoosterRole[]? AxisRoles { get; set; } = null;
 
         // FrequencyHz defaults to 22 — the exact value from the "known-good"
         // real Pit House capture (docs/protocol/devices/mbooster.md: "ABS on,
@@ -211,6 +402,10 @@ namespace MozaPlugin.Devices
         // hardware calibration, not merely a vibration amplitude.
         public MBoosterEffectSettings BrakeFade { get; set; } = new MBoosterEffectSettings { BrakeFadeOnsetC = 550 };
 
+        // User-created NCalc-driven vibration effects (Experimental). See
+        // MBoosterCustomEffect and MBoosterEffectWorker.ProcessCustomEffect.
+        public List<MBoosterCustomEffect> CustomEffects { get; set; } = new List<MBoosterCustomEffect>();
+
         // Calibration (experimental per protocol note § 6). -1 = "not yet
         // read / no override"; the worker treats -1 as "do not write".
         // The user has been warned in-UI that these commands may not be
@@ -232,6 +427,15 @@ namespace MozaPlugin.Devices
         // exist. See MozaMBoosterRegistry.EvaluateCurveArbitraryX and
         // docs/protocol/devices/mbooster.md "Sim Input Mapping".
         public float[]? CurveX { get; set; } = null;
+
+        // Per-pedal calibration for the ADDITIONAL pedals on a chained mBooster
+        // (axes 1+), keyed by HID axis index. Axis 0 (the master) keeps its
+        // calibration in the flat Direction/Min/Max/CurveY/CurveX fields above
+        // (unchanged for the existing UI). Absent key = that pedal uses no
+        // calibration override. See MozaPlugin.ApplyMBoosterToHardware, which
+        // writes each pedal's calibration to its role-specific command.
+        public Dictionary<int, MBoosterPedalSettings> Pedals { get; set; }
+            = new Dictionary<int, MBoosterPedalSettings>();
 
         // Sim Input Mapping (Pit House-style). -1 = "not yet set / no
         // override" — mirrors the Direction/Min/Max sentinel convention.
@@ -321,12 +525,17 @@ namespace MozaPlugin.Devices
             return new MBoosterDeviceSettings
             {
                 Role = Role,
+                AxisRoles = AxisRoles == null ? null : (MBoosterRole[])AxisRoles.Clone(),
+                Pedals = Pedals == null
+                    ? new Dictionary<int, MBoosterPedalSettings>()
+                    : Pedals.ToDictionary(kv => kv.Key, kv => kv.Value?.Clone() ?? new MBoosterPedalSettings()),
                 Abs = Abs?.Clone() ?? new MBoosterEffectSettings(),
                 Lockup = Lockup?.Clone() ?? new MBoosterEffectSettings(),
                 Threshold = Threshold?.Clone() ?? new MBoosterEffectSettings(),
                 Engine = Engine?.Clone() ?? new MBoosterEffectSettings(),
                 RoadTexture = RoadTexture?.Clone() ?? new MBoosterEffectSettings(),
                 BrakeFade = BrakeFade?.Clone() ?? new MBoosterEffectSettings(),
+                CustomEffects = CustomEffects?.Select(c => c.Clone()).ToList() ?? new List<MBoosterCustomEffect>(),
                 Direction = Direction,
                 Min = Min,
                 Max = Max,

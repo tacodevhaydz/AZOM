@@ -634,4 +634,89 @@ Id: {2}</value></data>
   <data name="Option_Ab9FlightSim" xml:space="preserve"><value>Προσομοίωση πτήσης</value></data>
   <data name="SliderLabel_KeepaliveTimeout" xml:space="preserve"><value>Χρονικό όριο Keepalive</value></data>
   <data name="Hint_KeepaliveTimeout" xml:space="preserve"><value>Πόση ώρα θα ανανεώνονται τα LED μετά τη διακοπή τηλεμετρίας πριν το τιμόνι μπει σε αδράνεια. 0 = άμεση διακοπή.</value></data>
+  <data name="SliderLabel_DisplayRotation" xml:space="preserve"><value>Περιστροφή οθόνης</value></data>
+  <data name="Option_RotationSmooth" xml:space="preserve"><value>Ομαλή</value></data>
+  <data name="Option_RotationImmediate" xml:space="preserve"><value>Άμεση</value></data>
+  <data name="TabHeader_Stalks" xml:space="preserve"><value>Διακόπτες</value></data>
+  <data name="Section_Stalks" xml:space="preserve"><value>Διακόπτες πολλαπλών λειτουργιών</value></data>
+  <data name="Status_SearchingForStalks" xml:space="preserve"><value>Αναζήτηση διακοπτών…</value></data>
+  <data name="Status_StalksConnected" xml:space="preserve"><value>Οι διακόπτες συνδέθηκαν</value></data>
+  <data name="Section_StalkMode" xml:space="preserve"><value>Λειτουργία διακόπτη</value></data>
+  <data name="Option_StalkButtonBox" xml:space="preserve"><value>Κουτί κουμπιών</value></data>
+  <data name="Option_StalkTruckSim" xml:space="preserve"><value>Truck sim (ETS2/ATS)</value></data>
+  <data name="Hint_StalksTruckSim" xml:space="preserve"><value>Στη λειτουργία truck sim το πρόσθετο μετατρέπει τα πατήματα των διακοπτών σε πλήκτρα πληκτρολογίου για το Euro/American Truck Simulator. Στη λειτουργία κουτιού κουμπιών οι διακόπτες λειτουργούν ως απλά κουμπιά.</value></data>
+  <data name="Section_StalksKeyMapping" xml:space="preserve"><value>Αντιστοίχιση κουμπιών</value></data>
+  <data name="Subtitle_StalksInteractiveMap" xml:space="preserve"><value>Πάτησε έναν διακόπτη για να επισημανθεί το κουμπί του και μετά αντιστοίχισε ένα πλήκτρο ή στάδιο υαλοκαθαριστήρων/φώτων.</value></data>
+  <data name="Section_StalksWiperSync" xml:space="preserve"><value>Υαλοκαθαριστήρες &amp; Φώτα</value></data>
+  <data name="Subtitle_StalksWiperSync" xml:space="preserve"><value>Το παιχνίδι αλλάζει υαλοκαθαριστήρες/φώτα με πλήκτρα κύκλου· το πρόσθετο στέλνει τον σωστό αριθμό πατημάτων ώστε να φτάσει στη θέση του διακόπτη.</value></data>
+  <data name="SliderLabel_WiperStageCount" xml:space="preserve"><value>Στάδια υαλοκαθαριστήρων</value></data>
+  <data name="Label_WiperForwardWraps" xml:space="preserve"><value>Το πλήκτρο υαλοκαθαριστήρων κυκλώνει</value></data>
+  <data name="SliderLabel_LightStageCount" xml:space="preserve"><value>Στάδια φώτων</value></data>
+  <data name="Button_ResyncWipers" xml:space="preserve"><value>Επανασυγχρονισμός υαλοκαθαριστήρων</value></data>
+  <data name="Hint_ResyncWipers" xml:space="preserve"><value>Επαναφέρει τους υαλοκαθαριστήρες του παιχνιδιού στο κλειστό για ευθυγράμμιση με το στάδιο που παρακολουθεί το πρόσθετο.</value></data>
+  <data name="Label_StalksLastPressed" xml:space="preserve"><value>Τελευταίο πάτημα: κουμπί {0}</value></data>
+  <data name="Button_LoadEts2Defaults" xml:space="preserve"><value>Φόρτωση προεπιλογών ETS2/ATS</value></data>
+  <data name="Button_ResyncStages" xml:space="preserve"><value>Επανασυγχρονισμός υαλοκαθαριστήρων &amp; φώτων</value></data>
+  <data name="SliderLabel_DisplayName" xml:space="preserve"><value>Όνομα εμφάνισης</value></data>
+  <data name="Hint_MBoosterDisplayName" xml:space="preserve"><value>Προαιρετικό — βοηθά να ξεχωρίσετε δύο mBooster με τον ίδιο ρόλο στη λίστα συσκευών παραπάνω.</value></data>
+  <data name="Section_CustomEffects" xml:space="preserve"><value>Προσαρμοσμένα εφέ (Πειραματικό)</value></data>
+  <data name="Subtitle_CustomEffectsExperimental" xml:space="preserve"><value>// πειραματικό — δόνηση καθορισμένη από τον χρήστη μέσω τύπων SimHub/NCalc</value></data>
+  <data name="Hint_CustomEffectsExperimental" xml:space="preserve"><value>Πειραματικό — κάθε προσαρμοσμένο εφέ δονεί το μοτέρ χρησιμοποιώντας μια ιδιότητα SimHub ή τύπο NCalc που παρέχετε. Όλα τα προσαρμοσμένα εφέ (και το ενσωματωμένο εφέ Engine) μοιράζονται ένα κανάλι, οπότε μόνο ένα μπορεί να οδηγεί το μοτέρ κάθε φορά· κερδίζει το πιο πρόσφατα επεξεργασμένο ενεργό εφέ. Η συχνότητα/ένταση συμπεριφέρονται όπως τα ρυθμιστικά του Engine.</value></data>
+  <data name="Hint_CustomEffectFormula" xml:space="preserve"><value>Μια ιδιότητα SimHub (π.χ. SpeedKmh) ή τύπος NCalc (π.χ. [Rpms] / [CarSettings_MaxRPM]). Με το «Χρήση κατωφλίου» απενεργοποιημένο, η τιμή (περιορισμένη 0..1) κλιμακώνει συνεχώς την ένταση. Ενεργοποιημένο, το εφέ πάλλεται στη ρυθμισμένη ένταση όποτε η τιμή είναι ίση ή μεγαλύτερη από το κατώφλι.</value></data>
+  <data name="Label_UseThreshold" xml:space="preserve"><value>Χρήση κατωφλίου</value></data>
+  <data name="SliderLabel_Name" xml:space="preserve"><value>Όνομα</value></data>
+  <data name="SliderLabel_Formula" xml:space="preserve"><value>Τύπος</value></data>
+  <data name="SliderLabel_Threshold" xml:space="preserve"><value>Κατώφλι</value></data>
+  <data name="Button_AddCustomEffect" xml:space="preserve"><value>+ Προσθήκη προσαρμοσμένου εφέ</value></data>
+  <data name="Button_DeleteCustomEffect" xml:space="preserve"><value>Διαγραφή εφέ</value></data>
+  <data name="DefaultName_CustomEffect" xml:space="preserve"><value>Προσαρμοσμένο εφέ</value></data>
+  <data name="Section_PedalRoles" xml:space="preserve"><value>Ρόλοι πεντάλ</value></data>
+  <data name="Label_PedalAxis" xml:space="preserve"><value>Πεντάλ {0}</value></data>
+  <data name="Hint_MBoosterAxisRoles" xml:space="preserve"><value>Αυτό το mBooster φιλοξενεί περισσότερα από ένα πεντάλ σε μία σύνδεση. Αντιστοιχίστε κάθε ανιχνευμένο άξονα σε μια είσοδο παιχνιδιού. Η προεπιλεγμένη σειρά ακολουθεί τη διάταξη Rx/Ry/Rz της Moza (γκάζι/φρένο/συμπλέκτης) — επαναντιστοιχίστε εδώ αν ένα πεντάλ οδηγεί λάθος είσοδο.</value></data>
+  <data name="Label_EffectsForPedal" xml:space="preserve"><value>Configure pedal:</value></data>
+  <data name="Note_PassivePedalNoEffects" xml:space="preserve"><value>This pedal is passive (no motor) — vibration effects don't apply.</value></data>
+  <data name="TabHeader_Shifter" xml:space="preserve"><value>Λεβιές</value></data>
+  <data name="Section_ShifterSettings" xml:space="preserve"><value>ΡΥΘΜΙΣΕΙΣ ΛΕΒΙΕ</value></data>
+  <data name="Section_ShifterLeds" xml:space="preserve"><value>LED</value></data>
+  <data name="Subtitle_ShifterLeds" xml:space="preserve"><value>// δύο ρυθμιζόμενα LED (SGP)</value></data>
+  <data name="Subtitle_ShifterCalibrate" xml:space="preserve"><value>// βάλε R &gt; 7η &gt; R &gt; Νεκρά</value></data>
+  <data name="SliderLabel_ShifterPaddleSync" xml:space="preserve"><value>Συγχρ. paddle</value></data>
+  <data name="Label_ShifterLed1" xml:space="preserve"><value>LED 1 (S1)</value></data>
+  <data name="Label_ShifterLed2" xml:space="preserve"><value>LED 2 (S2)</value></data>
+  <data name="SliderLabel_ShifterBrightness" xml:space="preserve"><value>Φωτεινότητα LED</value></data>
+  <data name="ShifterColor_Red" xml:space="preserve"><value>Κόκκινο</value></data>
+  <data name="ShifterColor_Orange" xml:space="preserve"><value>Πορτοκαλί</value></data>
+  <data name="ShifterColor_Yellow" xml:space="preserve"><value>Κίτρινο</value></data>
+  <data name="ShifterColor_Green" xml:space="preserve"><value>Πράσινο</value></data>
+  <data name="ShifterColor_Cyan" xml:space="preserve"><value>Κυανό</value></data>
+  <data name="ShifterColor_Blue" xml:space="preserve"><value>Μπλε</value></data>
+  <data name="ShifterColor_Purple" xml:space="preserve"><value>Μωβ</value></data>
+  <data name="ShifterColor_White" xml:space="preserve"><value>Λευκό</value></data>
+  <data name="Section_WheelbaseLfe" xml:space="preserve"><value>ΕΦΕ ΔΟΝΗΣΗΣ ΒΑΣΗΣ</value></data>
+  <data name="SliderLabel_Trigger" xml:space="preserve"><value>Έναυσμα</value></data>
+  <data name="Label_EnginePresets" xml:space="preserve"><value>Προεπιλογές κινητήρα:</value></data>
+  <data name="Preset_AdditiveEngine" xml:space="preserve"><value>Αθροιστικός κινητήρας</value></data>
+  <data name="Preset_BigRig" xml:space="preserve"><value>Νταλίκα</value></data>
+  <data name="Preset_DetunedV8" xml:space="preserve"><value>Απορυθμισμένος V8</value></data>
+  <data name="Label_Defaults" xml:space="preserve"><value>Προεπιλογές</value></data>
+  <data name="TriggerMode_Level" xml:space="preserve"><value>Επίπεδο</value></data>
+  <data name="TriggerMode_OnChange" xml:space="preserve"><value>Σε αλλαγή</value></data>
+  <data name="Label_FormulaLimitsHz" xml:space="preserve"><value>Όρια τύπου (Hz)</value></data>
+  <data name="Label_AlwaysOn" xml:space="preserve"><value>(πάντα ενεργό)</value></data>
+  <data name="TabHeader_WheelbaseLfe" xml:space="preserve"><value>Εφέ LFE</value></data>
+  <data name="Section_EnginePresets" xml:space="preserve"><value>Προεπιλογές κινητήρα</value></data>
+  <data name="Section_EffectsSlot1" xml:space="preserve"><value>Υποδοχή εφέ 1</value></data>
+  <data name="Section_EffectsSlot2" xml:space="preserve"><value>Υποδοχή εφέ 2</value></data>
+  <data name="Section_EffectsSlot3" xml:space="preserve"><value>Υποδοχή εφέ 3</value></data>
+  <data name="Label_Mode" xml:space="preserve"><value>Λειτουργία</value></data>
+  <data name="Mode_Engine" xml:space="preserve"><value>Κινητήρας</value></data>
+  <data name="Mode_Abs" xml:space="preserve"><value>ABS</value></data>
+  <data name="Mode_Gearshift" xml:space="preserve"><value>Αλλαγή ταχύτητας</value></data>
+  <data name="Mode_Custom" xml:space="preserve"><value>Προσαρμ.</value></data>
+  <data name="Label_Load" xml:space="preserve"><value>Φόρτωση</value></data>
+  <data name="Label_Save" xml:space="preserve"><value>Αποθήκευση</value></data>
+  <data name="Label_Delete" xml:space="preserve"><value>Διαγραφή</value></data>
+  <data name="Label_Import" xml:space="preserve"><value>Εισαγωγή</value></data>
+  <data name="Label_Export" xml:space="preserve"><value>Εξαγωγή</value></data>
+  <data name="Preset_RoadRumble" xml:space="preserve"><value>Θόρυβος δρόμου</value></data>
 </root>

@@ -21,6 +21,9 @@ namespace MozaPlugin.Devices
         private MozaDashExtensionSettings _settings = new MozaDashExtensionSettings();
         private MozaDashLedDeviceManager? _ledDriver;
         private bool _driverInjected;
+        // Injection target + SimHub's original driver, restored in End().
+        private LedModuleSettings? _injectedSettings;
+        private object? _originalDriver;
 
         public override string ExtentionTabTitle => "MOZA Dashboard";
 
@@ -56,13 +59,10 @@ namespace MozaPlugin.Devices
                         _ledDriver = new MozaDashLedDeviceManager();
                         _ledDriver.LedModuleSettings = lmd.ledModuleSettings;
 
-                        var prop = typeof(LedModuleSettings).GetProperty(
-                            "DeviceDriver",
-                            BindingFlags.Public | BindingFlags.Instance);
-
-                        if (prop?.GetSetMethod(nonPublic: true) != null)
+                        if (LedDriverInjection.CanInject)
                         {
-                            prop.GetSetMethod(nonPublic: true)!.Invoke(lmd.ledModuleSettings, new object[] { _ledDriver });
+                            _injectedSettings = lmd.ledModuleSettings;
+                            _originalDriver = LedDriverInjection.Swap(lmd.ledModuleSettings, _ledDriver);
                             _driverInjected = true;
                             MozaLog.Debug("[AZOM] Injected virtual LED driver for dashboard");
                         }
@@ -93,6 +93,15 @@ namespace MozaPlugin.Devices
                 plugin.DashDeviceExtensionActive = false;
                 MozaLog.Debug("[AZOM] Dash device extension ended");
             }
+
+            // Restore SimHub's original driver and drop ours (Close clears the
+            // Latest diagnostics static) so neither outlives the extension.
+            LedDriverInjection.Restore(_injectedSettings, _ledDriver, _originalDriver);
+            _injectedSettings = null;
+            _originalDriver = null;
+            try { _ledDriver?.Close(); } catch { }
+            _ledDriver = null;
+            _driverInjected = false;
         }
 
         public override void DataUpdate(PluginManager pluginManager, ref GameData data)

@@ -1,6 +1,7 @@
 using System;
 using System.Linq;
 using Newtonsoft.Json.Linq;
+using MozaPlugin.Devices;
 using MozaPlugin.Resources;
 
 namespace MozaPlugin.UI.Import
@@ -111,6 +112,22 @@ namespace MozaPlugin.UI.Import
             AddSkipped(plan, dp, "gameForceFeedbackFilter", "no profile field");
             AddSkipped(plan, dp, "gearJoltLevel", "no profile field");
             AddSkipped(plan, dp, "maximumGameSteeringAngle", "no profile field");
+
+            // ----- Wheelbase LFE effects (base fw >= 1.2.10.10) -----
+            // Engine / ABS / complex-gearshift vibration — each a switch + freq
+            // (Hz) + amp (%). Maps onto BaseLfeSettings; frequencies are clamped
+            // to the plugin's per-effect slider range on import.
+            AddLfeSwitch(plan, dp, "engineVibrationSwitch", "Engine Vibration", profile, e => e.Engine);
+            AddLfeInt(plan, dp, "engineVibrationFreq", "Engine Vib Frequency", " Hz", 60, 100, profile, e => e.Engine, isFreq: true);
+            AddLfeInt(plan, dp, "engineVibrationAmp",  "Engine Vib Intensity", "%",  0, 100, profile, e => e.Engine, isFreq: false);
+
+            AddLfeSwitch(plan, dp, "absVibrationSwitch", "ABS Vibration", profile, e => e.Abs);
+            AddLfeInt(plan, dp, "absVibrationFreq", "ABS Vib Frequency", " Hz", 5, 30, profile, e => e.Abs, isFreq: true);
+            AddLfeInt(plan, dp, "absVibrationAmp",  "ABS Vib Intensity", "%",  0, 100, profile, e => e.Abs, isFreq: false);
+
+            AddLfeSwitch(plan, dp, "gearShiftVibrationSwitch", "Gearshift Vibration (complex)", profile, e => e.Gearshift);
+            AddLfeInt(plan, dp, "gearShiftVibrationFreq", "Gearshift Vib Frequency", " Hz", 20, 100, profile, e => e.Gearshift, isFreq: true);
+            AddLfeInt(plan, dp, "gearShiftVibrationAmp",  "Gearshift Vib Intensity", "%",  0, 100, profile, e => e.Gearshift, isFreq: false);
 
             // ----- Wheelbase ambient LED ring -----
             // Newer Motor presets bundle the wheelbase ambient-light ring config
@@ -391,6 +408,50 @@ namespace MozaPlugin.UI.Import
             string oldDisplay = oldRaw < 0 ? "(unset)" : (oldRaw != 0 ? "On" : "Off");
             string newDisplay = newVal != 0 ? "On" : "Off";
             plan.Diffs.Add(new FieldDiff(label, oldDisplay, newDisplay, () => setProfile(newVal)));
+        }
+
+        // ----- Wheelbase LFE helpers -----
+        // A get does NOT create BaseLfe (so the "old" display reads "(unset)" when
+        // the profile has never carried LFE settings); only the apply closure
+        // lazily creates it, matching the profile-tier host-rendered convention.
+
+        private static void AddLfeSwitch(
+            ImportPlan plan, JObject dp, string key, string label,
+            MozaProfile profile, Func<BaseLfeSettings, BaseLfeChannel> pick)
+        {
+            plan.ConsideredKeys.Add(key);
+            var b = BoolOrNull(dp, key);
+            if (b == null) return;
+            bool newVal = b.Value;
+            var cur = profile.BaseLfe != null ? pick(profile.BaseLfe) : null;
+            string oldDisplay = cur == null ? "(unset)" : (cur.Enabled ? "On" : "Off");
+            string newDisplay = newVal ? "On" : "Off";
+            plan.Diffs.Add(new FieldDiff(label, oldDisplay, newDisplay,
+                () => pick(profile.BaseLfe ??= new BaseLfeSettings()).Enabled = newVal));
+        }
+
+        // Sets the channel's slider value. (Formulas are left at their defaults,
+        // so on Engine the RPM-tracking frequency formula still wins over the
+        // imported slider — the slider is the constant fallback.)
+        private static void AddLfeInt(
+            ImportPlan plan, JObject dp, string key, string label, string unit,
+            int lo, int hi, MozaProfile profile,
+            Func<BaseLfeSettings, BaseLfeChannel> pick, bool isFreq)
+        {
+            plan.ConsideredKeys.Add(key);
+            var pithouse = IntOrNull(dp, key);
+            if (pithouse == null) return;
+            int clamped = Math.Max(lo, Math.Min(hi, pithouse.Value));
+            var cur = profile.BaseLfe != null ? pick(profile.BaseLfe) : null;
+            string oldDisplay = cur == null ? "(unset)"
+                : ((isFreq ? (int)cur.Frequency : cur.Intensity).ToString() + unit);
+            string newDisplay = clamped.ToString() + unit;
+            plan.Diffs.Add(new FieldDiff(label, oldDisplay, newDisplay,
+                () =>
+                {
+                    var e = pick(profile.BaseLfe ??= new BaseLfeSettings());
+                    if (isFreq) e.Frequency = clamped; else e.Intensity = clamped;
+                }));
         }
 
         private static void AddEqualizer(

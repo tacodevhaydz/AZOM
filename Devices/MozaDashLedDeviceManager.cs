@@ -28,7 +28,8 @@ namespace MozaPlugin.Devices
     ///
     /// 2026-06 indicator firmware (meter_diag.c:88): the ramp registers are gone;
     /// the whole strip is driven live on group 0x32 — colour chunks (13 00) +
-    /// windowed active bitmask (14 00, window = RPM band 0x1FF8). Decoded from
+    /// windowed active bitmask (14 00, window = full 16-LED strip 0xFFFF so the
+    /// flag LEDs, in series with the RPM band, are addressable). Decoded from
     /// cm2(1).pcapng (PitHouse on an updated CM2). See DisplayNewEra.
     ///
     /// Both SimHub LED modes are supported like the wheel manager: combined
@@ -164,7 +165,13 @@ namespace MozaPlugin.Devices
 
         public object GetDriverInstance() => this;
 
-        public void Close() { }
+        // Clear the diagnostics static so a closed driver (and the SimHub
+        // LedModuleSettings it references) isn't pinned for the process
+        // lifetime after the dash extension ends.
+        public void Close()
+        {
+            if (ReferenceEquals(Latest, this)) Latest = null;
+        }
 
         public void ResetDetection() { }
 
@@ -364,18 +371,22 @@ namespace MozaPlugin.Devices
             }
         }
 
-        // New-firmware RPM window: LEDs 3..12 in the 16-LED [flag 1-3][RPM 1-10]
-        // [flag 4-6] strip. PitHouse fixes the 32/14 window at exactly this
-        // (cm2(1).pcapng: window=0x00001FF8 on every frame); the active mask only
-        // sets bits inside it, so flags (0-2, 13-15) are driven by colour alone.
-        private const int NewEraRpmWindow = 0x1FF8;
+        // New-firmware live window = the full 16-LED strip. The CM2 rim is one
+        // series strip [flag 1-3][RPM 1-10][flag 4-6]; on this firmware an LED
+        // lights only when its bit is set in the active mask WITHIN the window, so
+        // the window must span all 16 for the flag LEDs (0-2, 13-15) to be
+        // addressable at all. PitHouse's cm2(1).pcapng fixes the window at the RPM
+        // band 0x1FF8, but that capture never drives a flag LED (its colour chunks
+        // touch only indices 3-12) — it is no evidence that flags light by colour
+        // alone. Confirmed on hardware: colour without an active bit stays dark.
+        private const int NewEraStripWindow = (1 << TotalLedCount) - 1; // 0xFFFF, 16 LEDs
 
         /// <summary>
         /// 2026-06 indicator-firmware live path (decoded from cm2(1).pcapng): the
         /// whole 16-LED strip as group-0x32 live colour chunks (13 00) plus a
-        /// windowed active bitmask (14 00, window fixed = RPM band). Colours before
-        /// the mask, send-on-change + keepalive while game-active / within hold,
-        /// gated on the host-drive latch like every other path.
+        /// windowed active bitmask (14 00, window = full 16-LED strip). Colours
+        /// before the mask, send-on-change + keepalive while game-active / within
+        /// hold, gated on the host-drive latch like every other path.
         /// </summary>
         private void DisplayNewEra(MozaPlugin plugin, Color[] ledColors, bool alwaysResend, bool gameActive, DateTime now)
         {
@@ -393,7 +404,7 @@ namespace MozaPlugin.Devices
                     && (_lastNewColors[i].R != c.R || _lastNewColors[i].G != c.G || _lastNewColors[i].B != c.B))
                     colorsChanged = true;
             }
-            int active = fullMask & NewEraRpmWindow;
+            int active = fullMask & NewEraStripWindow;
 
             bool bitmaskChanged = active != _lastBitmask;
             if (active != 0) _lastLitUtc = now;
@@ -412,15 +423,15 @@ namespace MozaPlugin.Devices
             _lastBitmask = active;
             _lastSendTime = now;
             plugin.WriteCm2LiveLedBitmask(
-                MozaLedDeviceManager.BuildWindowedBitmaskBytes(active, NewEraRpmWindow));
+                MozaLedDeviceManager.BuildWindowedBitmaskBytes(active, NewEraStripWindow));
             _bitmaskSends++;
             Interlocked.Exchange(ref _lastBitmaskSendUtcTicks, now.Ticks);
         }
 
         /// <summary>Variable-length 5-LED colour chunks (idx,R,G,B records, last
         /// chunk short — byte-for-byte as PitHouse in cm2(1).pcapng), one coalescing
-        /// slot per chunk. All 16 LEDs sent so flag colours land even though the
-        /// bitmask window covers only the RPM band.</summary>
+        /// slot per chunk. All 16 LEDs sent; the bitmask window spans the full strip
+        /// so flag colours light alongside their active bits.</summary>
         private void SendNewEraColorChunks(MozaPlugin plugin, Color[] colors, int count)
         {
             const int ledsPerChunk = 5;

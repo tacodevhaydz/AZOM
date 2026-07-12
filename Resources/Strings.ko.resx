@@ -634,4 +634,89 @@ Id: {2}</value></data>
   <data name="Option_Ab9FlightSim" xml:space="preserve"><value>비행 시뮬레이션</value></data>
   <data name="SliderLabel_KeepaliveTimeout" xml:space="preserve"><value>킵얼라이브 시간 제한</value></data>
   <data name="Hint_KeepaliveTimeout" xml:space="preserve"><value>텔레메트리가 멈춘 후 휠이 절전 모드로 들어가기 전까지 LED를 새로 고치는 시간입니다. 0 = 즉시 중지.</value></data>
+  <data name="SliderLabel_DisplayRotation" xml:space="preserve"><value>디스플레이 회전</value></data>
+  <data name="Option_RotationSmooth" xml:space="preserve"><value>부드럽게</value></data>
+  <data name="Option_RotationImmediate" xml:space="preserve"><value>즉시</value></data>
+  <data name="TabHeader_Stalks" xml:space="preserve"><value>스토크</value></data>
+  <data name="Section_Stalks" xml:space="preserve"><value>다기능 스토크</value></data>
+  <data name="Status_SearchingForStalks" xml:space="preserve"><value>스토크 검색 중…</value></data>
+  <data name="Status_StalksConnected" xml:space="preserve"><value>스토크 연결됨</value></data>
+  <data name="Section_StalkMode" xml:space="preserve"><value>스토크 모드</value></data>
+  <data name="Option_StalkButtonBox" xml:space="preserve"><value>버튼 박스</value></data>
+  <data name="Option_StalkTruckSim" xml:space="preserve"><value>트럭 시뮬 (ETS2/ATS)</value></data>
+  <data name="Hint_StalksTruckSim" xml:space="preserve"><value>트럭 시뮬 모드에서는 플러그인이 스토크 입력을 Euro/American Truck Simulator용 키보드 키로 변환합니다. 버튼 박스 모드에서는 스토크가 일반 버튼으로 동작합니다.</value></data>
+  <data name="Section_StalksKeyMapping" xml:space="preserve"><value>버튼 매핑</value></data>
+  <data name="Subtitle_StalksInteractiveMap" xml:space="preserve"><value>스토크 컨트롤을 누르면 해당 버튼이 강조되며, 키 또는 와이퍼/라이트 단계를 지정하세요.</value></data>
+  <data name="Section_StalksWiperSync" xml:space="preserve"><value>와이퍼 및 라이트</value></data>
+  <data name="Subtitle_StalksWiperSync" xml:space="preserve"><value>게임은 순환 키로 와이퍼/라이트를 전환합니다. 플러그인이 스토크 위치에 도달하도록 적절한 횟수만큼 키를 보냅니다.</value></data>
+  <data name="SliderLabel_WiperStageCount" xml:space="preserve"><value>와이퍼 단계</value></data>
+  <data name="Label_WiperForwardWraps" xml:space="preserve"><value>와이퍼 키 순환</value></data>
+  <data name="SliderLabel_LightStageCount" xml:space="preserve"><value>라이트 단계</value></data>
+  <data name="Button_ResyncWipers" xml:space="preserve"><value>와이퍼 재동기화</value></data>
+  <data name="Hint_ResyncWipers" xml:space="preserve"><value>게임 와이퍼를 꺼짐으로 되돌려 플러그인이 추적하는 단계와 다시 맞춥니다.</value></data>
+  <data name="Label_StalksLastPressed" xml:space="preserve"><value>마지막 입력: 버튼 {0}</value></data>
+  <data name="Button_LoadEts2Defaults" xml:space="preserve"><value>ETS2/ATS 기본값 불러오기</value></data>
+  <data name="Button_ResyncStages" xml:space="preserve"><value>와이퍼 및 라이트 재동기화</value></data>
+  <data name="SliderLabel_DisplayName" xml:space="preserve"><value>표시 이름</value></data>
+  <data name="Hint_MBoosterDisplayName" xml:space="preserve"><value>선택 사항 — 위 장치 목록에서 같은 역할을 가진 두 mBooster를 구분하는 데 도움이 됩니다.</value></data>
+  <data name="Section_CustomEffects" xml:space="preserve"><value>사용자 지정 효과 (실험적)</value></data>
+  <data name="Subtitle_CustomEffectsExperimental" xml:space="preserve"><value>// 실험적 — SimHub/NCalc 수식으로 구동되는 사용자 정의 진동</value></data>
+  <data name="Hint_CustomEffectsExperimental" xml:space="preserve"><value>실험적 — 각 사용자 지정 효과는 사용자가 제공한 SimHub 속성 또는 NCalc 수식으로 모터를 진동시킵니다. 모든 사용자 지정 효과(및 기본 Engine 효과)는 하나의 채널을 공유하므로 한 번에 하나만 모터를 구동할 수 있으며, 가장 최근에 처리된 활성 효과가 우선합니다. 주파수/강도는 Engine의 슬라이더와 동일하게 작동합니다.</value></data>
+  <data name="Hint_CustomEffectFormula" xml:space="preserve"><value>SimHub 속성(예: SpeedKmh) 또는 NCalc 수식(예: [Rpms] / [CarSettings_MaxRPM]). "임계값 사용"이 꺼져 있으면 값(0..1로 제한)이 강도를 연속적으로 조절합니다. 켜져 있으면 값이 임계값 이상일 때 설정된 강도로 효과가 맥동합니다.</value></data>
+  <data name="Label_UseThreshold" xml:space="preserve"><value>임계값 사용</value></data>
+  <data name="SliderLabel_Name" xml:space="preserve"><value>이름</value></data>
+  <data name="SliderLabel_Formula" xml:space="preserve"><value>수식</value></data>
+  <data name="SliderLabel_Threshold" xml:space="preserve"><value>임계값</value></data>
+  <data name="Button_AddCustomEffect" xml:space="preserve"><value>+ 사용자 지정 효과 추가</value></data>
+  <data name="Button_DeleteCustomEffect" xml:space="preserve"><value>효과 삭제</value></data>
+  <data name="DefaultName_CustomEffect" xml:space="preserve"><value>사용자 지정 효과</value></data>
+  <data name="Section_PedalRoles" xml:space="preserve"><value>페달 역할</value></data>
+  <data name="Label_PedalAxis" xml:space="preserve"><value>페달 {0}</value></data>
+  <data name="Hint_MBoosterAxisRoles" xml:space="preserve"><value>이 mBooster는 하나의 연결에 여러 페달을 호스팅합니다. 감지된 각 축을 게임 입력에 할당하세요. 기본 순서는 Moza의 Rx/Ry/Rz 레이아웃(가속/브레이크/클러치)을 따릅니다 — 페달이 잘못된 입력을 구동하면 여기서 다시 매핑하세요.</value></data>
+  <data name="Label_EffectsForPedal" xml:space="preserve"><value>Configure pedal:</value></data>
+  <data name="Note_PassivePedalNoEffects" xml:space="preserve"><value>This pedal is passive (no motor) — vibration effects don't apply.</value></data>
+  <data name="TabHeader_Shifter" xml:space="preserve"><value>시프터</value></data>
+  <data name="Section_ShifterSettings" xml:space="preserve"><value>시프터 설정</value></data>
+  <data name="Section_ShifterLeds" xml:space="preserve"><value>LED</value></data>
+  <data name="Subtitle_ShifterLeds" xml:space="preserve"><value>// 구성 가능한 LED 2개 (SGP)</value></data>
+  <data name="Subtitle_ShifterCalibrate" xml:space="preserve"><value>// R &gt; 7단 &gt; R &gt; 중립 순서로 변속</value></data>
+  <data name="SliderLabel_ShifterPaddleSync" xml:space="preserve"><value>패들 동기화</value></data>
+  <data name="Label_ShifterLed1" xml:space="preserve"><value>LED 1 (S1)</value></data>
+  <data name="Label_ShifterLed2" xml:space="preserve"><value>LED 2 (S2)</value></data>
+  <data name="SliderLabel_ShifterBrightness" xml:space="preserve"><value>LED 밝기</value></data>
+  <data name="ShifterColor_Red" xml:space="preserve"><value>빨강</value></data>
+  <data name="ShifterColor_Orange" xml:space="preserve"><value>주황</value></data>
+  <data name="ShifterColor_Yellow" xml:space="preserve"><value>노랑</value></data>
+  <data name="ShifterColor_Green" xml:space="preserve"><value>초록</value></data>
+  <data name="ShifterColor_Cyan" xml:space="preserve"><value>청록</value></data>
+  <data name="ShifterColor_Blue" xml:space="preserve"><value>파랑</value></data>
+  <data name="ShifterColor_Purple" xml:space="preserve"><value>보라</value></data>
+  <data name="ShifterColor_White" xml:space="preserve"><value>흰색</value></data>
+  <data name="Section_WheelbaseLfe" xml:space="preserve"><value>베이스 진동 효과</value></data>
+  <data name="SliderLabel_Trigger" xml:space="preserve"><value>트리거</value></data>
+  <data name="Label_EnginePresets" xml:space="preserve"><value>엔진 프리셋:</value></data>
+  <data name="Preset_AdditiveEngine" xml:space="preserve"><value>가산 엔진</value></data>
+  <data name="Preset_BigRig" xml:space="preserve"><value>대형 트럭</value></data>
+  <data name="Preset_DetunedV8" xml:space="preserve"><value>디튠 V8</value></data>
+  <data name="Label_Defaults" xml:space="preserve"><value>기본값</value></data>
+  <data name="TriggerMode_Level" xml:space="preserve"><value>레벨</value></data>
+  <data name="TriggerMode_OnChange" xml:space="preserve"><value>변경 시</value></data>
+  <data name="Label_FormulaLimitsHz" xml:space="preserve"><value>수식 범위 (Hz)</value></data>
+  <data name="Label_AlwaysOn" xml:space="preserve"><value>(항상 켜짐)</value></data>
+  <data name="TabHeader_WheelbaseLfe" xml:space="preserve"><value>LFE 효과</value></data>
+  <data name="Section_EnginePresets" xml:space="preserve"><value>엔진 프리셋</value></data>
+  <data name="Section_EffectsSlot1" xml:space="preserve"><value>효과 슬롯 1</value></data>
+  <data name="Section_EffectsSlot2" xml:space="preserve"><value>효과 슬롯 2</value></data>
+  <data name="Section_EffectsSlot3" xml:space="preserve"><value>효과 슬롯 3</value></data>
+  <data name="Label_Mode" xml:space="preserve"><value>모드</value></data>
+  <data name="Mode_Engine" xml:space="preserve"><value>엔진</value></data>
+  <data name="Mode_Abs" xml:space="preserve"><value>ABS</value></data>
+  <data name="Mode_Gearshift" xml:space="preserve"><value>기어 변속</value></data>
+  <data name="Mode_Custom" xml:space="preserve"><value>사용자</value></data>
+  <data name="Label_Load" xml:space="preserve"><value>불러오기</value></data>
+  <data name="Label_Save" xml:space="preserve"><value>저장</value></data>
+  <data name="Label_Delete" xml:space="preserve"><value>삭제</value></data>
+  <data name="Label_Import" xml:space="preserve"><value>가져오기</value></data>
+  <data name="Label_Export" xml:space="preserve"><value>내보내기</value></data>
+  <data name="Preset_RoadRumble" xml:space="preserve"><value>노면 진동</value></data>
 </root>

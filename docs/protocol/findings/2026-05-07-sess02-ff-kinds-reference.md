@@ -53,6 +53,7 @@ its own seq + CRC, the wheel reassembles before parsing the inner FF record.
 |-----:|-----------|----------------------------------|------------------:|-------------------------------------------------|
 |    2 | h2b       | `init_nonce`                     | 16 B              | timestamp + magic                               |
 |    4 | h2b → b2h | `DASH_SWITCH` (and its echo)     | 12 B              | slot index                                      |
+|    5 | h2b       | `display_rotation` (VGS)         | 5 B               | 1-byte mode: 0=off, 1=smooth, 2=immediate       |
 |    7 | h2b       | `init_enum`                      | 12 B              | small flags / version                           |
 |    8 | h2b       | `init_payload_a` (channel cat.)  | 1.7 – 2.1 KB      | length-prefixed UTF-16-BE name list, zlib       |
 |    9 | both      | `periodic` (heartbeat-shaped)    | 19 – 29 B         | small struct, fires every ~1.5–2 s              |

@@ -635,4 +635,89 @@ Id: {2}</value></data>
   <data name="Option_Ab9FlightSim" xml:space="preserve"><value>Авиасимулятор</value></data>
   <data name="SliderLabel_KeepaliveTimeout" xml:space="preserve"><value>Тайм-аут keepalive</value></data>
   <data name="Hint_KeepaliveTimeout" xml:space="preserve"><value>Как долго обновлять светодиоды после остановки телеметрии, прежде чем руль перейдёт в спящий режим. 0 = остановить сразу.</value></data>
+  <data name="SliderLabel_DisplayRotation" xml:space="preserve"><value>Поворот дисплея</value></data>
+  <data name="Option_RotationSmooth" xml:space="preserve"><value>Плавный</value></data>
+  <data name="Option_RotationImmediate" xml:space="preserve"><value>Мгновенный</value></data>
+  <data name="TabHeader_Stalks" xml:space="preserve"><value>Подрулевые</value></data>
+  <data name="Section_Stalks" xml:space="preserve"><value>Многофункциональные подрулевые</value></data>
+  <data name="Status_SearchingForStalks" xml:space="preserve"><value>Поиск подрулевых…</value></data>
+  <data name="Status_StalksConnected" xml:space="preserve"><value>Подрулевые подключены</value></data>
+  <data name="Section_StalkMode" xml:space="preserve"><value>Режим подрулевых</value></data>
+  <data name="Option_StalkButtonBox" xml:space="preserve"><value>Кнопочная панель</value></data>
+  <data name="Option_StalkTruckSim" xml:space="preserve"><value>Симулятор грузовика (ETS2/ATS)</value></data>
+  <data name="Hint_StalksTruckSim" xml:space="preserve"><value>В режиме симулятора грузовика плагин преобразует нажатия подрулевых в клавиши клавиатуры для Euro/American Truck Simulator. В режиме кнопочной панели подрулевые работают как обычные кнопки.</value></data>
+  <data name="Section_StalksKeyMapping" xml:space="preserve"><value>Назначение кнопок</value></data>
+  <data name="Subtitle_StalksInteractiveMap" xml:space="preserve"><value>Нажмите орган управления, чтобы подсветить его кнопку, затем назначьте клавишу или ступень стеклоочистителей/света.</value></data>
+  <data name="Section_StalksWiperSync" xml:space="preserve"><value>Стеклоочистители и свет</value></data>
+  <data name="Subtitle_StalksWiperSync" xml:space="preserve"><value>Игра переключает стеклоочистители/свет клавишами цикла; плагин отправляет нужное число нажатий для достижения положения переключателя.</value></data>
+  <data name="SliderLabel_WiperStageCount" xml:space="preserve"><value>Ступени стеклоочистителей</value></data>
+  <data name="Label_WiperForwardWraps" xml:space="preserve"><value>Клавиша стеклоочистителей зациклена</value></data>
+  <data name="SliderLabel_LightStageCount" xml:space="preserve"><value>Ступени света</value></data>
+  <data name="Button_ResyncWipers" xml:space="preserve"><value>Пересинхронизировать стеклоочистители</value></data>
+  <data name="Hint_ResyncWipers" xml:space="preserve"><value>Возвращает стеклоочистители в игре в выключенное состояние для выравнивания со ступенью, отслеживаемой плагином.</value></data>
+  <data name="Label_StalksLastPressed" xml:space="preserve"><value>Последнее нажатие: кнопка {0}</value></data>
+  <data name="Button_LoadEts2Defaults" xml:space="preserve"><value>Загрузить настройки ETS2/ATS по умолчанию</value></data>
+  <data name="Button_ResyncStages" xml:space="preserve"><value>Пересинхронизировать стеклоочистители и свет</value></data>
+  <data name="SliderLabel_DisplayName" xml:space="preserve"><value>Отображаемое имя</value></data>
+  <data name="Hint_MBoosterDisplayName" xml:space="preserve"><value>Необязательно — помогает различать два mBooster с одинаковой ролью в списке устройств выше.</value></data>
+  <data name="Section_CustomEffects" xml:space="preserve"><value>Пользовательские эффекты (экспериментально)</value></data>
+  <data name="Subtitle_CustomEffectsExperimental" xml:space="preserve"><value>// экспериментально — пользовательская вибрация на основе формул SimHub/NCalc</value></data>
+  <data name="Hint_CustomEffectsExperimental" xml:space="preserve"><value>Экспериментально — каждый пользовательский эффект заставляет мотор вибрировать, используя указанное вами свойство SimHub или формулу NCalc. Все пользовательские эффекты (и встроенный эффект Engine) используют один канал, поэтому одновременно мотором может управлять только один; побеждает последний обработанный активный эффект. Частота/интенсивность работают как ползунки Engine.</value></data>
+  <data name="Hint_CustomEffectFormula" xml:space="preserve"><value>Свойство SimHub (например, SpeedKmh) или формула NCalc (например, [Rpms] / [CarSettings_MaxRPM]). Если «Использовать порог» выключен, значение (ограниченное 0..1) непрерывно масштабирует интенсивность. Если включён, эффект пульсирует с заданной интенсивностью, когда значение достигает порога или выше.</value></data>
+  <data name="Label_UseThreshold" xml:space="preserve"><value>Использовать порог</value></data>
+  <data name="SliderLabel_Name" xml:space="preserve"><value>Имя</value></data>
+  <data name="SliderLabel_Formula" xml:space="preserve"><value>Формула</value></data>
+  <data name="SliderLabel_Threshold" xml:space="preserve"><value>Порог</value></data>
+  <data name="Button_AddCustomEffect" xml:space="preserve"><value>+ Добавить пользовательский эффект</value></data>
+  <data name="Button_DeleteCustomEffect" xml:space="preserve"><value>Удалить эффект</value></data>
+  <data name="DefaultName_CustomEffect" xml:space="preserve"><value>Пользовательский эффект</value></data>
+  <data name="Section_PedalRoles" xml:space="preserve"><value>Роли педалей</value></data>
+  <data name="Label_PedalAxis" xml:space="preserve"><value>Педаль {0}</value></data>
+  <data name="Hint_MBoosterAxisRoles" xml:space="preserve"><value>Этот mBooster обслуживает несколько педалей по одному подключению. Назначьте каждую обнаруженную ось на игровой вход. Порядок по умолчанию соответствует раскладке Moza Rx/Ry/Rz (газ/тормоз/сцепление) — переназначьте здесь, если педаль управляет не тем входом.</value></data>
+  <data name="Label_EffectsForPedal" xml:space="preserve"><value>Configure pedal:</value></data>
+  <data name="Note_PassivePedalNoEffects" xml:space="preserve"><value>This pedal is passive (no motor) — vibration effects don't apply.</value></data>
+  <data name="TabHeader_Shifter" xml:space="preserve"><value>Кулиса</value></data>
+  <data name="Section_ShifterSettings" xml:space="preserve"><value>НАСТРОЙКИ КУЛИСЫ</value></data>
+  <data name="Section_ShifterLeds" xml:space="preserve"><value>ПОДСВЕТКА</value></data>
+  <data name="Subtitle_ShifterLeds" xml:space="preserve"><value>// два настраиваемых светодиода (SGP)</value></data>
+  <data name="Subtitle_ShifterCalibrate" xml:space="preserve"><value>// включите R &gt; 7 &gt; R &gt; нейтраль</value></data>
+  <data name="SliderLabel_ShifterPaddleSync" xml:space="preserve"><value>Синхр. лепестков</value></data>
+  <data name="Label_ShifterLed1" xml:space="preserve"><value>LED 1 (S1)</value></data>
+  <data name="Label_ShifterLed2" xml:space="preserve"><value>LED 2 (S2)</value></data>
+  <data name="SliderLabel_ShifterBrightness" xml:space="preserve"><value>Яркость подсветки</value></data>
+  <data name="ShifterColor_Red" xml:space="preserve"><value>Красный</value></data>
+  <data name="ShifterColor_Orange" xml:space="preserve"><value>Оранжевый</value></data>
+  <data name="ShifterColor_Yellow" xml:space="preserve"><value>Жёлтый</value></data>
+  <data name="ShifterColor_Green" xml:space="preserve"><value>Зелёный</value></data>
+  <data name="ShifterColor_Cyan" xml:space="preserve"><value>Голубой</value></data>
+  <data name="ShifterColor_Blue" xml:space="preserve"><value>Синий</value></data>
+  <data name="ShifterColor_Purple" xml:space="preserve"><value>Фиолетовый</value></data>
+  <data name="ShifterColor_White" xml:space="preserve"><value>Белый</value></data>
+  <data name="Section_WheelbaseLfe" xml:space="preserve"><value>ЭФФЕКТЫ ВИБРАЦИИ БАЗЫ</value></data>
+  <data name="SliderLabel_Trigger" xml:space="preserve"><value>Триггер</value></data>
+  <data name="Label_EnginePresets" xml:space="preserve"><value>Пресеты двигателя:</value></data>
+  <data name="Preset_AdditiveEngine" xml:space="preserve"><value>Аддитивный двигатель</value></data>
+  <data name="Preset_BigRig" xml:space="preserve"><value>Фура</value></data>
+  <data name="Preset_DetunedV8" xml:space="preserve"><value>Расстроенный V8</value></data>
+  <data name="Label_Defaults" xml:space="preserve"><value>По умолчанию</value></data>
+  <data name="TriggerMode_Level" xml:space="preserve"><value>Уровень</value></data>
+  <data name="TriggerMode_OnChange" xml:space="preserve"><value>При изменении</value></data>
+  <data name="Label_FormulaLimitsHz" xml:space="preserve"><value>Пределы формулы (Гц)</value></data>
+  <data name="Label_AlwaysOn" xml:space="preserve"><value>(всегда вкл.)</value></data>
+  <data name="TabHeader_WheelbaseLfe" xml:space="preserve"><value>Эффекты LFE</value></data>
+  <data name="Section_EnginePresets" xml:space="preserve"><value>Пресеты двигателя</value></data>
+  <data name="Section_EffectsSlot1" xml:space="preserve"><value>Слот эффектов 1</value></data>
+  <data name="Section_EffectsSlot2" xml:space="preserve"><value>Слот эффектов 2</value></data>
+  <data name="Section_EffectsSlot3" xml:space="preserve"><value>Слот эффектов 3</value></data>
+  <data name="Label_Mode" xml:space="preserve"><value>Режим</value></data>
+  <data name="Mode_Engine" xml:space="preserve"><value>Двигатель</value></data>
+  <data name="Mode_Abs" xml:space="preserve"><value>ABS</value></data>
+  <data name="Mode_Gearshift" xml:space="preserve"><value>Передача</value></data>
+  <data name="Mode_Custom" xml:space="preserve"><value>Свой</value></data>
+  <data name="Label_Load" xml:space="preserve"><value>Загрузить</value></data>
+  <data name="Label_Save" xml:space="preserve"><value>Сохранить</value></data>
+  <data name="Label_Delete" xml:space="preserve"><value>Удалить</value></data>
+  <data name="Label_Import" xml:space="preserve"><value>Импорт</value></data>
+  <data name="Label_Export" xml:space="preserve"><value>Экспорт</value></data>
+  <data name="Preset_RoadRumble" xml:space="preserve"><value>Дорожная вибрация</value></data>
 </root>

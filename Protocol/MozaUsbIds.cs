@@ -118,6 +118,12 @@ namespace MozaPlugin.Protocol
         public static bool IsPedalsPid(ushort pid)     => Categorize(pid) == MozaDeviceCategory.Pedals;
         public static bool IsShifterPid(string? pid)   => Categorize(pid) == MozaDeviceCategory.Shifter;
         public static bool IsShifterPid(ushort pid)    => Categorize(pid) == MozaDeviceCategory.Shifter;
+        // HGP (no LEDs) vs SGP (2 config LEDs) share category Shifter but differ by
+        // PID — the standalone lane selects its descriptor from these.
+        public static bool IsShifterHgpPid(string? pid) => TryParsePid(pid, out var u) && u == 0x001E;
+        public static bool IsShifterHgpPid(ushort pid)  => pid == 0x001E;
+        public static bool IsShifterSgpPid(string? pid) => TryParsePid(pid, out var u) && u == 0x0023;
+        public static bool IsShifterSgpPid(ushort pid)  => pid == 0x0023;
         public static bool IsHandbrakePid(string? pid) => Categorize(pid) == MozaDeviceCategory.Handbrake;
         public static bool IsHandbrakePid(ushort pid)  => Categorize(pid) == MozaDeviceCategory.Handbrake;
         public static bool IsHubPid(string? pid)       => Categorize(pid) == MozaDeviceCategory.Hub;
