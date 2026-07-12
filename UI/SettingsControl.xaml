@@ -48,6 +48,18 @@
                 <Setter Property="TextWrapping" Value="Wrap"/>
                 <Setter Property="Margin" Value="0,0,8,0"/>
             </Style>
+            <!-- Plain text input for the LFE preset name (no general TextBox style exists). -->
+            <Style x:Key="LfeNameBox" TargetType="TextBox">
+                <Setter Property="FontFamily" Value="{StaticResource FontUi}"/>
+                <Setter Property="FontSize" Value="13"/>
+                <Setter Property="Foreground" Value="{StaticResource TextBrush}"/>
+                <Setter Property="Background" Value="{StaticResource BgCard2Brush}"/>
+                <Setter Property="BorderBrush" Value="{StaticResource BorderBrightBrush}"/>
+                <Setter Property="BorderThickness" Value="1"/>
+                <Setter Property="Padding" Value="8,6"/>
+                <Setter Property="CaretBrush" Value="{StaticResource TextBrush}"/>
+                <Setter Property="VerticalContentAlignment" Value="Center"/>
+            </Style>
             <Style x:Key="SliderValue" TargetType="TextBlock">
                 <Setter Property="VerticalAlignment" Value="Center"/>
                 <Setter Property="Width" Value="60"/>
@@ -925,12 +937,19 @@
                             <ctrl:SectionCard.Header>
                                 <Button Content="{x:Static res:Strings.Label_Test}" Padding="10,2" Click="BaseLfePresetsTest_Click"/>
                             </ctrl:SectionCard.Header>
-                            <WrapPanel>
-                                <Button Content="{x:Static res:Strings.Preset_AdditiveEngine}" Margin="0,0,8,4" Padding="14,5" Click="BaseLfeAdditiveEngine_Click"/>
-                                <Button Content="{x:Static res:Strings.Preset_BigRig}" Margin="0,0,8,4" Padding="14,5" Click="BaseLfeBigRig_Click"/>
-                                <Button Content="{x:Static res:Strings.Preset_DetunedV8}" Margin="0,0,8,4" Padding="14,5" Click="BaseLfeDetunedV8_Click"/>
-                                <Button Content="{x:Static res:Strings.Label_Defaults}" Margin="0,0,8,4" Padding="14,5" Click="BaseLfeDefaults_Click"/>
-                            </WrapPanel>
+                            <StackPanel>
+                                <ComboBox x:Name="BaseLfePresetCombo" Style="{StaticResource MozaCombo}" MinWidth="0" DisplayMemberPath="Name" Margin="0,0,0,8" SelectionChanged="BaseLfePresetCombo_SelectionChanged"/>
+                                <Grid Margin="0,0,0,8">
+                                    <Grid.ColumnDefinitions><ColumnDefinition Width="*"/><ColumnDefinition Width="Auto"/><ColumnDefinition Width="Auto"/></Grid.ColumnDefinitions>
+                                    <TextBox Grid.Column="0" x:Name="BaseLfePresetName" Style="{StaticResource LfeNameBox}" MaxLength="40"/>
+                                    <Button Grid.Column="1" Content="{x:Static res:Strings.Label_Save}" Margin="6,0,0,0" Padding="12,5" Click="BaseLfePresetSave_Click"/>
+                                    <Button Grid.Column="2" Content="{x:Static res:Strings.Label_Delete}" Margin="6,0,0,0" Padding="12,5" Click="BaseLfePresetDelete_Click"/>
+                                </Grid>
+                                <WrapPanel>
+                                    <Button Content="{x:Static res:Strings.Label_Import}" Margin="0,0,8,0" Padding="12,5" Click="BaseLfePresetImport_Click"/>
+                                    <Button Content="{x:Static res:Strings.Label_Export}" Padding="12,5" Click="BaseLfePresetExport_Click"/>
+                                </WrapPanel>
+                            </StackPanel>
                         </ctrl:SectionCard>
                         <ctrl:SectionCard Grid.Row="0" Grid.Column="1" VerticalAlignment="Top" Title="{x:Static res:Strings.Section_EffectsSlot1}" Icon="{StaticResource IconShift}" Margin="7,0,0,14">
                             <ctrl:SectionCard.Header>

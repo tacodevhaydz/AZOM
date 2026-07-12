@@ -719,4 +719,10 @@ Id: {2}</value></data>
   <data name="Mode_Abs" xml:space="preserve"><value>ABS</value></data>
   <data name="Mode_Gearshift" xml:space="preserve"><value>Girskift</value></data>
   <data name="Mode_Custom" xml:space="preserve"><value>Egendef.</value></data>
+  <data name="Label_Load" xml:space="preserve"><value>Last inn</value></data>
+  <data name="Label_Save" xml:space="preserve"><value>Lagre</value></data>
+  <data name="Label_Delete" xml:space="preserve"><value>Slett</value></data>
+  <data name="Label_Import" xml:space="preserve"><value>Importer</value></data>
+  <data name="Label_Export" xml:space="preserve"><value>Eksporter</value></data>
+  <data name="Preset_RoadRumble" xml:space="preserve"><value>Veirumling</value></data>
 </root>

@@ -30,8 +30,19 @@ namespace MozaPlugin.Devices
         // chosen by the slot's Mode (Engine sweep / ABS pulse / Gearshift bump /
         // Custom tone), not the slot's fixed wire id — see RenderTest.
         private const long EngineTestMs = 2000;                // engine test = 2 s frequency sweep
+        private const double SweepIdleFraction = 0.12;         // sweeps start ~12% up the band (idle ≈ 600 of ~5000 rpm), not at 0 rpm
+        // A parked test has no live RPM, so the Engine/Custom sweep substitutes a
+        // synthetic RPM (idle→redline) into the real formulas and evaluates them —
+        // so the combined preset is coherent (every slot at the SAME rpm) and matches
+        // in-game exactly. Non-RPM property refs still read live telemetry.
+        private const double SynthRedlineRpm = 8000.0;
+        private const double SynthMaxSpeedKmh = 250.0;       // speed at the top of the sweep (for speed-scaled effects)
+        private const string RpmToken = "[DataCorePlugin.GameData.Rpms]";
+        private const string MaxRpmToken = "[DataCorePlugin.GameData.MaxRpm]";
+        private const string ThrottleToken = "[DataCorePlugin.GameData.Throttle]";
+        private const string BrakeToken = "[DataCorePlugin.GameData.Brake]";
+        private const string SpeedToken = "[DataCorePlugin.GameData.SpeedKmh]";
         private const long AbsTestMs = 1000;                   // abs test = 1 s pulse burst
-        private const long CustomTestMs = 1000;                // custom test = 1 s steady tone at the slot's values
         private const double GsTestBump1EndMs = 70;            // gearshift test = two rapid bumps
         private const double GsTestBump2StartMs = 180;
         private const double GsTestBump2EndMs = 250;
@@ -246,24 +257,41 @@ namespace MozaPlugin.Devices
         private bool RenderTest(BaseLfeMode mode, double ms, BaseLfeChannel ch,
                                 out bool playing, out double freq, out double int01, out double smooth01)
         {
-            freq = Clamp(ch.Frequency, 0, 500);
+            // A parked test has no telemetry to drive a frequency formula, so when a
+            // formula is set we demonstrate the [min,max] limit band directly: the
+            // Engine sweep runs min→max, the steady modes play the band midpoint. A
+            // plain slider value has no band (lo==hi), so it plays that fixed value.
+            bool hasFormula = !string.IsNullOrWhiteSpace(ch.FrequencyFormula);
+            double lo = hasFormula ? Math.Min(ch.FrequencyMin, ch.FrequencyMax) : Clamp(ch.Frequency, 0, 500);
+            double hi = hasFormula ? Math.Max(ch.FrequencyMin, ch.FrequencyMax) : Clamp(ch.Frequency, 0, 500);
+            freq = (lo + hi) / 2.0;
             int01 = ClampPct(ch.Intensity) / 100.0;
             smooth01 = ClampPct(ch.Smoothness) / 100.0;
             playing = true;
             switch (mode)
             {
-                case BaseLfeMode.Engine:                      // 2 s idle→pitch sweep
-                    if (ms > EngineTestMs) return false;
-                    freq = Clamp(ch.Frequency, 0, 500) * (0.12 + 0.88 * Clamp01(ms / EngineTestMs));
-                    return true;
-                case BaseLfeMode.Abs:                         // 1 s pulse (pulse from smoothness envelope)
+                case BaseLfeMode.Abs:                         // fixed-freq amplitude pulse (from smoothness)
                     return ms <= AbsTestMs;
-                case BaseLfeMode.Gearshift:                   // two rapid bumps
+                case BaseLfeMode.Gearshift:                   // two rapid bumps at the configured freq
                     if (ms >= GsTestBump2EndMs) return false;
                     playing = ms < GsTestBump1EndMs || (ms >= GsTestBump2StartMs && ms < GsTestBump2EndMs);
                     return true;
-                default:                                      // Custom — 1 s steady tone at the slot's values
-                    return ms <= CustomTestMs;
+                default:
+                    // Engine + Custom: continuous like in-game. Sweep a synthetic RPM
+                    // idle→redline and run the REAL formulas against it, so every slot in
+                    // a combined preset sees the SAME rpm at each instant (coherent, and
+                    // exactly the frequency/intensity/smoothness the formulas produce in
+                    // game — not just a linear range sweep). Starting at idle also keeps
+                    // the sweep out of the near-0 Hz region where a waveform cycle is so
+                    // long the base ignores mid-sweep updates.
+                    if (ms > EngineTestMs) return false;
+                    double pct = SweepIdleFraction + (1.0 - SweepIdleFraction) * Clamp01(ms / EngineTestMs);
+                    double synthRpm = pct * SynthRedlineRpm;
+                    double synthSpeed = pct * SynthMaxSpeedKmh;
+                    freq = hasFormula ? ch.RescaleFreq(EvalTestFormula(ch.FrequencyFormula!, synthRpm, synthSpeed)) : ch.Frequency;
+                    int01 = Clamp01(EvalTestParam(ch.IntensityFormula, ClampPct(ch.Intensity), synthRpm, synthSpeed) / 100.0);
+                    smooth01 = Clamp01(EvalTestParam(ch.SmoothnessFormula, ClampPct(ch.Smoothness), synthRpm, synthSpeed) / 100.0);
+                    return true;
             }
         }
 
@@ -305,6 +333,27 @@ namespace MozaPlugin.Devices
 
         private double EvalFormulaRaw(string? formula)
             => string.IsNullOrWhiteSpace(formula) ? 0.0 : _evalFormula(formula!);
+
+        // Evaluate a formula against a synthetic "accelerating flat-out" telemetry
+        // snapshot (rpm + speed sweeping, full throttle, no brake) so a parked test
+        // drives the real formulas — including load- and speed-scaled intensity.
+        // A pure-arithmetic result (RPM/throttle/speed-only formula) is parsed
+        // directly; anything still referencing other telemetry evaluates live.
+        private double EvalTestFormula(string formula, double synthRpm, double synthSpeed)
+        {
+            var inv = System.Globalization.CultureInfo.InvariantCulture;
+            string s = formula
+                .Replace(RpmToken, synthRpm.ToString("R", inv))
+                .Replace(MaxRpmToken, SynthRedlineRpm.ToString("R", inv))
+                .Replace(ThrottleToken, "100")      // flat out
+                .Replace(BrakeToken, "0")
+                .Replace(SpeedToken, synthSpeed.ToString("R", inv));
+            if (double.TryParse(s, System.Globalization.NumberStyles.Any, inv, out double lit))
+                return lit;
+            return _evalFormula(s);
+        }
+        private double EvalTestParam(string? formula, double staticVal, double synthRpm, double synthSpeed)
+            => string.IsNullOrWhiteSpace(formula) ? staticVal : EvalTestFormula(formula!, synthRpm, synthSpeed);
 
         /// <summary>Slider value, or the formula's evaluated value when non-empty.</summary>
         private double EvalParam(string? formula, double sliderValue)

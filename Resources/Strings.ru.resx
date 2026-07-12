@@ -714,4 +714,10 @@ Id: {2}</value></data>
   <data name="Mode_Abs" xml:space="preserve"><value>ABS</value></data>
   <data name="Mode_Gearshift" xml:space="preserve"><value>Передача</value></data>
   <data name="Mode_Custom" xml:space="preserve"><value>Свой</value></data>
+  <data name="Label_Load" xml:space="preserve"><value>Загрузить</value></data>
+  <data name="Label_Save" xml:space="preserve"><value>Сохранить</value></data>
+  <data name="Label_Delete" xml:space="preserve"><value>Удалить</value></data>
+  <data name="Label_Import" xml:space="preserve"><value>Импорт</value></data>
+  <data name="Label_Export" xml:space="preserve"><value>Экспорт</value></data>
+  <data name="Preset_RoadRumble" xml:space="preserve"><value>Дорожная вибрация</value></data>
 </root>

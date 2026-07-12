@@ -432,6 +432,67 @@ namespace MozaPlugin
                 Gearshift = Gearshift?.Clone() ?? new BaseLfeChannel(),
             };
         }
+
+        // ── Built-in preset factories (the original preset buttons) ───────────
+        // The base SUMS concurrent channels, so these drive all 3 slots as summed
+        // partials gated on RPM, each scaling by % of RPM so they fit any vehicle.
+        // Frequency formula spans the full 0..200 Hz domain; the partial's actual
+        // range lives in the [0, freqK] limit band. This keeps the live rescale
+        // identical to a bare "× freqK" (RescaleFreq(pct×200) over [0,freqK] = pct×freqK)
+        // while making the band == the real range, so the Test button's band-sweep
+        // matches the in-game frequency instead of overshooting to 200 Hz.
+        private const string PctOfRpm = "[DataCorePlugin.GameData.Rpms] / [DataCorePlugin.GameData.MaxRpm] * 200";
+        private const string Throttle = "[DataCorePlugin.GameData.Throttle]";
+        private const string SpeedKmh = "[DataCorePlugin.GameData.SpeedKmh]";
+
+        // Intensity that scales with engine load: floorPct % at closed throttle
+        // (idle/coasting) up to 100% flat out. SimHub has no universal engine-load
+        // channel, so throttle position is the proxy. baseInt is the full-load peak.
+        private static string LoadIntensity(int baseInt, int floorPct)
+            => baseInt + " * (" + floorPct + " + " + (100 - floorPct) + " * " + Throttle + " / 100.0) / 100.0";
+
+        // Engine partial: pitch tracks % RPM (over the [0, freqK] band); intensity is
+        // baseInt scaled by throttle/load. Base SUMS the 3 slots into one engine.
+        private static BaseLfeChannel Partial(int freqK, int baseInt, int smoothness, int floorPct) => new BaseLfeChannel
+        {
+            Enabled = true,
+            Mode = BaseLfeMode.Custom,
+            TriggerMode = BaseLfeTriggerMode.Level,
+            TriggerFormula = EngineTrigger,
+            FrequencyFormula = PctOfRpm,
+            FrequencyMin = 0,
+            FrequencyMax = freqK,
+            Frequency = freqK,
+            IntensityFormula = LoadIntensity(baseInt, floorPct),
+            Intensity = baseInt,
+            Smoothness = smoothness,
+        };
+        // Road partial: fixed low pitch; intensity grows with speed (tyre/road texture).
+        private static BaseLfeChannel RoadPartial(int freqHz, string speedScale, int smoothness) => new BaseLfeChannel
+        {
+            Enabled = true,
+            Mode = BaseLfeMode.Custom,
+            TriggerMode = BaseLfeTriggerMode.Level,
+            TriggerFormula = SpeedKmh,
+            Frequency = freqHz,
+            IntensityFormula = SpeedKmh + " * " + speedScale,
+            Intensity = 40,
+            Smoothness = smoothness,
+        };
+        public static BaseLfeSettings AdditiveEngine() => new BaseLfeSettings { Engine = Partial(100, 30, 100, 35), Abs = Partial(200, 15, 100, 35), Gearshift = Partial(50, 15, 100, 35) };
+        public static BaseLfeSettings BigRig() => new BaseLfeSettings { Engine = Partial(45, 40, 100, 50), Abs = Partial(20, 26, 55, 50), Gearshift = Partial(48, 18, 100, 50) };
+        public static BaseLfeSettings DetunedV8() => new BaseLfeSettings { Engine = Partial(95, 26, 100, 40), Abs = Partial(102, 22, 100, 40), Gearshift = Partial(28, 18, 40, 40) };
+        public static BaseLfeSettings RoadRumble() => new BaseLfeSettings { Engine = RoadPartial(30, "0.40", 100), Abs = RoadPartial(45, "0.30", 80), Gearshift = RoadPartial(22, "0.35", 60) };
+    }
+
+    /// <summary>A named snapshot of the three LFE slots. Built-ins are code-generated
+    /// (BuiltIn=true, not persisted); user presets live in MozaPluginSettings.BaseLfePresets.</summary>
+    public sealed class BaseLfePreset
+    {
+        public string Name { get; set; } = "";
+        public bool BuiltIn { get; set; } = false;
+        public BaseLfeSettings Settings { get; set; } = new BaseLfeSettings();
+        public BaseLfePreset Clone() => new BaseLfePreset { Name = Name, BuiltIn = BuiltIn, Settings = Settings?.Clone() ?? new BaseLfeSettings() };
     }
 
     /// <summary>
@@ -595,6 +656,10 @@ namespace MozaPlugin
         // leaves older serialized profiles untouched on load. Host-rendered; not
         // captured from device reads.
         public BaseLfeSettings? BaseLfe { get; set; }
+
+        // Name of the LFE preset last selected for this profile (drives the preset
+        // dropdown; "" = none/custom). Persisted so the dropdown remembers its pick.
+        public string BaseLfePresetName { get; set; } = "";
 
         // ===== mBooster Pedals (per-device) =====
         // Per-device settings keyed by USB device instance ID (stable across
@@ -780,6 +845,7 @@ namespace MozaPlugin
 
             Ab9 = p.Ab9?.Clone();
             BaseLfe = p.BaseLfe?.Clone();
+            BaseLfePresetName = p.BaseLfePresetName;
 
             // mBooster — deep-copy each per-device settings entry.
             MBoosterSettings = new Dictionary<string, MBoosterDeviceSettings>(StringComparer.OrdinalIgnoreCase);

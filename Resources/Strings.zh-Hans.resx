@@ -714,4 +714,10 @@ Id: {2}</value></data>
   <data name="Mode_Abs" xml:space="preserve"><value>ABS</value></data>
   <data name="Mode_Gearshift" xml:space="preserve"><value>换挡</value></data>
   <data name="Mode_Custom" xml:space="preserve"><value>自定义</value></data>
+  <data name="Label_Load" xml:space="preserve"><value>加载</value></data>
+  <data name="Label_Save" xml:space="preserve"><value>保存</value></data>
+  <data name="Label_Delete" xml:space="preserve"><value>删除</value></data>
+  <data name="Label_Import" xml:space="preserve"><value>导入</value></data>
+  <data name="Label_Export" xml:space="preserve"><value>导出</value></data>
+  <data name="Preset_RoadRumble" xml:space="preserve"><value>路面震动</value></data>
 </root>

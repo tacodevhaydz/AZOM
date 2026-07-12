@@ -775,5 +775,11 @@ namespace MozaPlugin.Resources
         public static string Mode_Abs => Get("Mode_Abs");
         public static string Mode_Gearshift => Get("Mode_Gearshift");
         public static string Mode_Custom => Get("Mode_Custom");
+        public static string Label_Load => Get("Label_Load");
+        public static string Label_Save => Get("Label_Save");
+        public static string Label_Delete => Get("Label_Delete");
+        public static string Label_Import => Get("Label_Import");
+        public static string Label_Export => Get("Label_Export");
+        public static string Preset_RoadRumble => Get("Preset_RoadRumble");
     }
 }

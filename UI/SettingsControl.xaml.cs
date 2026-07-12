@@ -655,6 +655,12 @@ namespace MozaPlugin
 
         private void SeedBaseLfeControls(BaseLfeSettings? fx)
         {
+            // Populate the preset dropdown once (rebuilding items per tick would
+            // close an open dropdown every 500 ms); then keep its selection synced to
+            // the active profile's saved preset each tick (handles profile switches).
+            if (!_lfePresetsInitialized) { _lfePresetsInitialized = true; SeedBuiltInPresets(); RefreshLfePresetList(); }
+            SelectLfePreset();
+
             fx ??= new BaseLfeSettings();
             var eng = fx.Engine ?? new BaseLfeChannel();
             var ab = fx.Abs ?? new BaseLfeChannel();
@@ -961,62 +967,184 @@ namespace MozaPlugin
                 panel.Visibility = mode == BaseLfeTriggerMode.OnChange ? Visibility.Visible : Visibility.Collapsed;
         }
 
-        // Engine presets exploit the base SUMMING concurrent channels: all three
-        // run as Level partials gated on RPM, each a carrier whose frequency
-        // scales by PERCENT of RPM (rpm/maxrpm) so it fits any vehicle from a
-        // 2500-rpm diesel to an 18000-rpm F1 and never exceeds the 200 Hz wire cap
-        // (rpm/maxrpm <= 1). Nearby carriers beat against each other (independent
-        // hardware phases) for free roughness; a low carrier with reduced
-        // smoothness gives a lopey throb. Each preset overwrites all 3 channels.
-        private const string LfeRpm = "[DataCorePlugin.GameData.Rpms]";
-        private const string LfePct = "[DataCorePlugin.GameData.Rpms] / [DataCorePlugin.GameData.MaxRpm]";
+        // ── Preset library ────────────────────────────────────────────────────
+        // Built-in presets are code-generated (the original preset buttons); user
+        // presets persist in MozaPluginSettings.BaseLfePresets. A user preset shadows
+        // a same-named built-in (so a built-in can be "edited"); deleting it restores
+        // the built-in. The list is rebuilt only on init/load/save/delete — NOT per
+        // RefreshDisplay tick — so the dropdown selection isn't clobbered.
+        private List<BaseLfePreset> _lfePresets = new List<BaseLfePreset>();
+        private bool _lfePresetsInitialized;
 
-        // A summed engine partial: carrier at (rpm% × freqK) Hz, Level-gated on RPM.
-        private static BaseLfeChannel EnginePartial(int freqK, int intensity, int smoothness) => new BaseLfeChannel
+        // Bump when FactoryLfePresets changes so existing libraries get refreshed.
+        private const int CurrentLfeSeedVersion = 2;
+
+        // The factory presets, generated from code. Seeded into the editable list;
+        // thereafter they're ordinary editable/deletable presets.
+        private static List<BaseLfePreset> FactoryLfePresets() => new List<BaseLfePreset>
         {
-            Enabled = true,
-            TriggerMode = BaseLfeTriggerMode.Level,
-            TriggerFormula = LfeRpm,
-            FrequencyFormula = LfePct + " * " + freqK,
-            Frequency = freqK,
-            Intensity = intensity,
-            Smoothness = smoothness,
+            new BaseLfePreset { Name = Strings.Label_Defaults, Settings = new BaseLfeSettings() },
+            new BaseLfePreset { Name = Strings.Preset_AdditiveEngine, Settings = BaseLfeSettings.AdditiveEngine() },
+            new BaseLfePreset { Name = Strings.Preset_BigRig, Settings = BaseLfeSettings.BigRig() },
+            new BaseLfePreset { Name = Strings.Preset_DetunedV8, Settings = BaseLfeSettings.DetunedV8() },
+            new BaseLfePreset { Name = Strings.Preset_RoadRumble, Settings = BaseLfeSettings.RoadRumble() },
         };
 
-        private void ApplyEnginePreset(BaseLfeChannel engine, BaseLfeChannel abs, BaseLfeChannel gearshift)
+        // Seed / refresh the factory presets into the persisted list up to the current
+        // seed version. Adds missing factory presets and refreshes factory-NAMED ones
+        // to the latest definition; user-named presets are never touched. A factory
+        // preset the user renamed survives; one they edited in place is refreshed.
+        private void SeedBuiltInPresets()
         {
-            _plugin.UpdateActiveProfile(p =>
+            var settings = _plugin.Settings;
+            if (settings == null || settings.BaseLfePresetsSeedVersion >= CurrentLfeSeedVersion) return;
+            var list = settings.BaseLfePresets ??= new List<BaseLfePreset>();
+            foreach (var f in FactoryLfePresets())
             {
-                var lfe = p.BaseLfe ??= new BaseLfeSettings();
-                lfe.Engine = engine; lfe.Abs = abs; lfe.Gearshift = gearshift;
-            });
+                var existing = list.Find(u => string.Equals(u.Name, f.Name, StringComparison.OrdinalIgnoreCase));
+                if (existing != null) existing.Settings = f.Settings;
+                else list.Add(f);
+            }
+            settings.BaseLfePresetsSeedVersion = CurrentLfeSeedVersion;
+            _plugin.SaveSettings();
+        }
+
+        // Rebuild the dropdown items from the persisted list (factory + user, all
+        // uniform). Selection is then synced from the profile.
+        private void RefreshLfePresetList()
+        {
+            var list = new List<BaseLfePreset>(_plugin.Settings?.BaseLfePresets ?? new List<BaseLfePreset>());
+            _lfePresets = list;
+            using (_suppressor.Begin())
+            {
+                BaseLfePresetCombo.ItemsSource = null;
+                BaseLfePresetCombo.ItemsSource = list;
+            }
+            SelectLfePreset();
+        }
+
+        // Sync the dropdown (+ name box) to the active profile's saved preset name.
+        // Suppressed, and only when the selection actually changes, so it never fires
+        // an apply and never clobbers what the user is typing in the name box.
+        private void SelectLfePreset()
+        {
+            string? name = _plugin.Settings?.ProfileStore?.CurrentProfile?.BaseLfePresetName;
+            int idx = string.IsNullOrEmpty(name)
+                ? -1 : _lfePresets.FindIndex(p => string.Equals(p.Name, name, StringComparison.OrdinalIgnoreCase));
+            if (BaseLfePresetCombo.SelectedIndex == idx) return;
+            using (_suppressor.Begin())
+            {
+                BaseLfePresetCombo.SelectedIndex = idx;
+                BaseLfePresetName.Text = idx >= 0 ? _lfePresets[idx].Name : "";
+            }
+        }
+
+        // Picking a preset applies it to the current effects, records it on the
+        // profile (so the dropdown remembers it across restarts), and fills the name
+        // box. Programmatic reselects (seed / after save) are suppressed.
+        private void BaseLfePresetCombo_SelectionChanged(object sender, SelectionChangedEventArgs e)
+        {
+            if (_suppressEvents) return;
+            if (BaseLfePresetCombo.SelectedItem is not BaseLfePreset p) return;
+            BaseLfePresetName.Text = p.Name;
+            _plugin.UpdateActiveProfile(prof => { prof.BaseLfe = p.Settings?.Clone() ?? new BaseLfeSettings(); prof.BaseLfePresetName = p.Name; });
             _plugin.SaveSettings();
             RefreshDisplay(this, EventArgs.Empty);
         }
 
-        // Clean, even harmonics: fundamental + octave-up + sub-octave (sum 60%).
-        private void BaseLfeAdditiveEngine_Click(object sender, RoutedEventArgs e)
-            => ApplyEnginePreset(EnginePartial(100, 30, 100), EnginePartial(200, 15, 100), EnginePartial(50, 15, 100));
-
-        // Big rig: heavy low diesel drone + a slow-throbbing sub (smoothness 55)
-        // + a slightly detuned partial (48 vs 45) that beats against the
-        // fundamental (~3 Hz at redline) for a heavy waver.
-        private void BaseLfeBigRig_Click(object sender, RoutedEventArgs e)
-            => ApplyEnginePreset(EnginePartial(45, 40, 100), EnginePartial(20, 26, 55), EnginePartial(48, 18, 100));
-
-        // Detuned V8: fundamental + a detuned twin (102 vs 95) that beats against
-        // it (~7 Hz at redline = the roughness) + a deep low-end pulse
-        // (smoothness 40) that lopes like a big-cam / misfiring idle and tightens
-        // with RPM. No random source is reachable from a formula, so the misfire
-        // is a periodic lope — physically what a steady dead-cylinder misfire is.
-        private void BaseLfeDetunedV8_Click(object sender, RoutedEventArgs e)
-            => ApplyEnginePreset(EnginePartial(95, 26, 100), EnginePartial(102, 22, 100), EnginePartial(28, 18, 40));
-
-        private void BaseLfeDefaults_Click(object sender, RoutedEventArgs e)
+        // Save the current effects under the name box's text. Overwrites a same-named
+        // user preset, else adds one (which shadows a same-named built-in). Marks it
+        // active on the profile so the dropdown reflects it.
+        private void BaseLfePresetSave_Click(object sender, RoutedEventArgs e)
         {
-            _plugin.UpdateActiveProfile(p => p.BaseLfe = new BaseLfeSettings());
+            var settings = _plugin.Settings;
+            if (settings == null) return;
+            string name = BaseLfePresetName.Text?.Trim() ?? "";
+            if (name.Length == 0) return;
+            var snapshot = (settings.ProfileStore?.CurrentProfile?.BaseLfe ?? new BaseLfeSettings()).Clone();
+            var users = settings.BaseLfePresets ??= new List<BaseLfePreset>();
+            var existing = users.Find(u => string.Equals(u.Name, name, StringComparison.OrdinalIgnoreCase));
+            if (existing != null) existing.Settings = snapshot;
+            else users.Add(new BaseLfePreset { Name = name, BuiltIn = false, Settings = snapshot });
+            _plugin.UpdateActiveProfile(prof => prof.BaseLfePresetName = name);
             _plugin.SaveSettings();
-            RefreshDisplay(this, EventArgs.Empty);
+            RefreshLfePresetList();
+        }
+
+        // Delete the selected preset (any preset — factory presets are ordinary now).
+        private void BaseLfePresetDelete_Click(object sender, RoutedEventArgs e)
+        {
+            if (BaseLfePresetCombo.SelectedItem is not BaseLfePreset p) return;
+            _plugin.Settings?.BaseLfePresets?.RemoveAll(u => string.Equals(u.Name, p.Name, StringComparison.OrdinalIgnoreCase));
+            _plugin.UpdateActiveProfile(prof => { if (string.Equals(prof.BaseLfePresetName, p.Name, StringComparison.OrdinalIgnoreCase)) prof.BaseLfePresetName = ""; });
+            _plugin.SaveSettings();
+            BaseLfePresetName.Text = "";
+            RefreshLfePresetList();
+        }
+
+        // Export the selected preset to its own JSON file (share / back up one preset).
+        private void BaseLfePresetExport_Click(object sender, RoutedEventArgs e)
+        {
+            if (BaseLfePresetCombo.SelectedItem is not BaseLfePreset p) return;
+            var dlg = new Microsoft.Win32.SaveFileDialog
+            {
+                Filter = "Moza LFE preset (*.json)|*.json|All files (*.*)|*.*",
+                FileName = SanitizeFileName(p.Name) + ".json",
+                DefaultExt = ".json",
+            };
+            try
+            {
+                if (dlg.ShowDialog() != true) return;
+                string json = Newtonsoft.Json.JsonConvert.SerializeObject(p, Newtonsoft.Json.Formatting.Indented);
+                System.IO.File.WriteAllText(dlg.FileName, json);
+            }
+            catch (Exception ex) { MozaLog.Warn("[AZOM] LFE preset export failed: " + ex.Message); }
+        }
+
+        // Import a preset from a JSON file, merging by name (same name overwrites).
+        // Accepts a single preset object or an array (older all-presets exports).
+        private void BaseLfePresetImport_Click(object sender, RoutedEventArgs e)
+        {
+            var settings = _plugin.Settings;
+            if (settings == null) return;
+            var dlg = new Microsoft.Win32.OpenFileDialog
+            {
+                Filter = "Moza LFE preset (*.json)|*.json|All files (*.*)|*.*",
+                CheckFileExists = true,
+            };
+            try
+            {
+                if (dlg.ShowDialog() != true) return;
+                var incoming = ParsePresetJson(System.IO.File.ReadAllText(dlg.FileName));
+                var list = settings.BaseLfePresets ??= new List<BaseLfePreset>();
+                foreach (var p in incoming)
+                {
+                    if (p == null || string.IsNullOrWhiteSpace(p.Name)) continue;
+                    var settingsClone = p.Settings?.Clone() ?? new BaseLfeSettings();
+                    var existing = list.Find(u => string.Equals(u.Name, p.Name, StringComparison.OrdinalIgnoreCase));
+                    if (existing != null) existing.Settings = settingsClone;
+                    else list.Add(new BaseLfePreset { Name = p.Name.Trim(), Settings = settingsClone });
+                }
+                _plugin.SaveSettings();
+                RefreshLfePresetList();
+            }
+            catch (Exception ex) { MozaLog.Warn("[AZOM] LFE preset import failed: " + ex.Message); }
+        }
+
+        // A preset file is a single object; an array (old all-presets export) also works.
+        private static List<BaseLfePreset> ParsePresetJson(string text)
+        {
+            if (text != null && text.TrimStart().StartsWith("[", StringComparison.Ordinal))
+                return Newtonsoft.Json.JsonConvert.DeserializeObject<List<BaseLfePreset>>(text) ?? new List<BaseLfePreset>();
+            var one = Newtonsoft.Json.JsonConvert.DeserializeObject<BaseLfePreset>(text ?? "");
+            return one != null ? new List<BaseLfePreset> { one } : new List<BaseLfePreset>();
+        }
+
+        private static string SanitizeFileName(string name)
+        {
+            foreach (char c in System.IO.Path.GetInvalidFileNameChars())
+                name = name.Replace(c, '_');
+            return string.IsNullOrWhiteSpace(name) ? "preset" : name;
         }
 
         // ƒₓ — open SimHub's formula editor for the tagged "channel:param" field.

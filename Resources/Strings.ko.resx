@@ -713,4 +713,10 @@ Id: {2}</value></data>
   <data name="Mode_Abs" xml:space="preserve"><value>ABS</value></data>
   <data name="Mode_Gearshift" xml:space="preserve"><value>기어 변속</value></data>
   <data name="Mode_Custom" xml:space="preserve"><value>사용자</value></data>
+  <data name="Label_Load" xml:space="preserve"><value>불러오기</value></data>
+  <data name="Label_Save" xml:space="preserve"><value>저장</value></data>
+  <data name="Label_Delete" xml:space="preserve"><value>삭제</value></data>
+  <data name="Label_Import" xml:space="preserve"><value>가져오기</value></data>
+  <data name="Label_Export" xml:space="preserve"><value>내보내기</value></data>
+  <data name="Preset_RoadRumble" xml:space="preserve"><value>노면 진동</value></data>
 </root>

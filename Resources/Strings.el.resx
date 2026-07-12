@@ -713,4 +713,10 @@ Id: {2}</value></data>
   <data name="Mode_Abs" xml:space="preserve"><value>ABS</value></data>
   <data name="Mode_Gearshift" xml:space="preserve"><value>Αλλαγή ταχύτητας</value></data>
   <data name="Mode_Custom" xml:space="preserve"><value>Προσαρμ.</value></data>
+  <data name="Label_Load" xml:space="preserve"><value>Φόρτωση</value></data>
+  <data name="Label_Save" xml:space="preserve"><value>Αποθήκευση</value></data>
+  <data name="Label_Delete" xml:space="preserve"><value>Διαγραφή</value></data>
+  <data name="Label_Import" xml:space="preserve"><value>Εισαγωγή</value></data>
+  <data name="Label_Export" xml:space="preserve"><value>Εξαγωγή</value></data>
+  <data name="Preset_RoadRumble" xml:space="preserve"><value>Θόρυβος δρόμου</value></data>
 </root>

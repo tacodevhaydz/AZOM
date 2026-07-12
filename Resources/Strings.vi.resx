@@ -714,4 +714,10 @@ Id: {2}</value></data>
   <data name="Mode_Abs" xml:space="preserve"><value>ABS</value></data>
   <data name="Mode_Gearshift" xml:space="preserve"><value>Sang số</value></data>
   <data name="Mode_Custom" xml:space="preserve"><value>Tùy chỉnh</value></data>
+  <data name="Label_Load" xml:space="preserve"><value>Tải</value></data>
+  <data name="Label_Save" xml:space="preserve"><value>Lưu</value></data>
+  <data name="Label_Delete" xml:space="preserve"><value>Xóa</value></data>
+  <data name="Label_Import" xml:space="preserve"><value>Nhập</value></data>
+  <data name="Label_Export" xml:space="preserve"><value>Xuất</value></data>
+  <data name="Preset_RoadRumble" xml:space="preserve"><value>Rung mặt đường</value></data>
 </root>

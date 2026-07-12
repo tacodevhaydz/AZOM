@@ -389,6 +389,16 @@ namespace MozaPlugin
         public Dictionary<Guid, bool> WheelTelemetryEnabledByPageGuid { get; set; }
             = new Dictionary<Guid, bool>();
 
+        // Wheelbase-LFE presets (named snapshots of the 3 slots). Global library,
+        // applied to the active profile's BaseLfe on load. The factory presets are
+        // seeded in here once (BaseLfePresetsSeeded) and are thereafter ordinary
+        // editable/deletable entries; import/export round-trips this list.
+        public List<BaseLfePreset> BaseLfePresets { get; set; } = new List<BaseLfePreset>();
+        // Factory-preset seed version applied to this library (0 = never). Bumped
+        // when the factory presets change so existing users get the updated set
+        // (factory-named presets are refreshed; user-named presets are untouched).
+        public int BaseLfePresetsSeedVersion { get; set; } = 0;
+
         // Default telemetry-enable state for a wheel page that has no explicit entry
         // in WheelTelemetryEnabledByPageGuid yet (dict-missing = "no opinion"). Fresh
         // installs set this true via the ReadCommonSettings create-if-not-found factory

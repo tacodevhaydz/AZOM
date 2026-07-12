@@ -724,4 +724,10 @@ Id: {2}</value></data>
   <data name="Mode_Abs" xml:space="preserve"><value>ABS</value></data>
   <data name="Mode_Gearshift" xml:space="preserve"><value>Gearshift</value></data>
   <data name="Mode_Custom" xml:space="preserve"><value>Custom</value></data>
+  <data name="Label_Load" xml:space="preserve"><value>Load</value></data>
+  <data name="Label_Save" xml:space="preserve"><value>Save</value></data>
+  <data name="Label_Delete" xml:space="preserve"><value>Delete</value></data>
+  <data name="Label_Import" xml:space="preserve"><value>Import</value></data>
+  <data name="Label_Export" xml:space="preserve"><value>Export</value></data>
+  <data name="Preset_RoadRumble" xml:space="preserve"><value>Road Rumble</value></data>
 </root>
