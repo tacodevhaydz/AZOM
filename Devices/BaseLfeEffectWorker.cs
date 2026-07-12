@@ -332,7 +332,7 @@ namespace MozaPlugin.Devices
         private void DisableIf(ref ChannelState st, MozaBaseLfeProtocol.LfeEffect id)
         {
             if (st.Active) { _base.SendBaseLfeDisable(id); st.Active = false; st.Phase = 0; }
-            st.ScopeAmp = 0;   // scope shows a flat line while idle
+            st.ScopeAmp = 0; st.ScopeFreq = 0;   // scope: idle ribbon collapses to the floor
         }
 
         private void SilenceIfActive()
