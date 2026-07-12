@@ -2353,7 +2353,8 @@
                             <ctrl:SectionCard Title="{x:Static res:Strings.Section_Calibration}"
                                               Subtitle="{x:Static res:Strings.Subtitle_CalibrationExperimental}"
                                               Icon="{StaticResource IconCal}"
-                                              AccentBrush="{StaticResource AmberBrush}">
+                                              AccentBrush="{StaticResource AmberBrush}"
+                                              Visibility="Collapsed">
                                 <StackPanel>
                                     <TextBlock TextWrapping="Wrap" Foreground="#FFE082" FontSize="11" Margin="0,0,0,8" Text="{x:Static res:Strings.Hint_MBoosterCalibrationWarning}"/>
                                     <StackPanel Orientation="Horizontal" Margin="0,4">
