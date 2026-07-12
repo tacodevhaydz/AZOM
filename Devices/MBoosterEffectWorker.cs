@@ -527,7 +527,7 @@ namespace MozaPlugin.Devices
             if (_thresholdTestSustained)
             {
                 double brakeT = EffectiveBrake(settings, snap);
-                if (!_thresholdLatched && brakeT > triggerLevel)
+                if (!_thresholdLatched && brakeT >= triggerLevel)
                     _thresholdLatched = true;
                 else if (_thresholdLatched && brakeT < releaseLevel)
                     _thresholdLatched = false;
@@ -552,8 +552,19 @@ namespace MozaPlugin.Devices
                 return;
             }
 
+            // Same GameRunning gate Engine/Lockup use — games commonly report
+            // a stale/nonzero Brake baseline outside an active session (menu,
+            // garage, replay), which would otherwise latch this immediately.
+            if (!snap.GameRunning)
+            {
+                st.IntensityRequest = 0;
+                st.FreqHz = 0;
+                _thresholdLatched = false;
+                return;
+            }
+
             double brake = Clamp01(snap.Brake);
-            if (!_thresholdLatched && brake > triggerLevel)
+            if (!_thresholdLatched && brake >= triggerLevel)
                 _thresholdLatched = true;
             else if (_thresholdLatched && brake < releaseLevel)
                 _thresholdLatched = false;
