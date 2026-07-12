@@ -124,12 +124,6 @@ namespace MozaPlugin.Telemetry
     /// </summary>
     internal static class Fsr1DashboardCatalog
     {
-        /// <summary>Catalog schema version. Bumped when the record field layouts change in a way
-        /// that invalidates stored per-field overrides. On upgrade the coordinator does a one-time
-        /// wipe of a profile's FSR1 mapper settings (see <c>EnsureFsr1Migrated</c>). v2 = the
-        /// ground-truth rebuild from PitHouse (new fieldIds + 10-bit LSB packs; old overrides dead).</summary>
-        internal const int CatalogVersion = 3;
-
         // ── Ground-truth field builders ─────────────────────────────────────────
         // Records are laid out with an auto-advancing cursor (data starts at byte 5), mirroring
         // PitHouse's FormulaSteeringTelemetryDataPackN classes which concatenate each strategy's
@@ -167,7 +161,7 @@ namespace MozaPlugin.Telemetry
                 int b = _bit;
                 // Gear wire value = SimHub gear + 1 (firmware: 0=R, 1=N, 2=1st…); verified from capture.
                 _list.Add(MakeBits(idp + "Gear", "Gear", b, 4, "DataCorePlugin.GameData.Gear", bias: 1.0));
-                _list.Add(MakeBits(idp + "Ers", "ERS mode", b + 4, 2, ""));
+                _list.Add(MakeBits(idp + "Ers", "ERS mode", b + 4, 2, ErsDeployMode));
                 _list.Add(MakeBits(idp + "Drs", "DRS", b + 6, 1, "DataCorePlugin.GameData.DRSEnabled"));
                 _bit += 8;
                 return this;
@@ -218,10 +212,25 @@ namespace MozaPlugin.Telemetry
         // PitHouse tyre/pressure wheel order within a 4×10-bit group: FL, FR, RL, RR
         // (verified by decoding a captured session — tyre0=FL, tyre1=FR, tyre2=RL, tyre3=RR).
         private static readonly string[] Corners = { "FL", "FR", "RL", "RR" };
-        private static readonly string[] TyreTempProps =
+        // The FSR1 firmware's tyre pages want the game's INNER (carcass) temp for the inner group and
+        // the SURFACE temp for the outer group — SimHub's generic TyreTemperature* is only the surface,
+        // so we bind the F1 raw arrays PitHouse itself uses. F1 wheel order is RL,RR,FL,FR (1-based
+        // suffix 01,02,03,04); our group order is FL,FR,RL,RR → suffix 03,04,01,02.
+        private const string F1Raw = "DataCorePlugin.GameRawData.PacketCarTelemetryData.m_carTelemetryData01.";
+        private const string F1RawStatus = "DataCorePlugin.GameRawData.PacketCarStatusData.m_carStatusData01.";
+        // ERS deploy mode 0–3 (3 = overtake) drives the firmware's OVERTAKE highlight; the game value
+        // maps straight into the 2-bit field. Live delta to session best (signed seconds) for gap fields.
+        private const string ErsDeployMode = F1RawStatus + "m_ersDeployMode";
+        private const string LiveDelta = "PersistantTrackerPlugin.SessionBestLiveDeltaSeconds";
+        private static readonly string[] InnerTempProps =
         {
-            G + "TyreTemperatureFrontLeft", G + "TyreTemperatureFrontRight",
-            G + "TyreTemperatureRearLeft", G + "TyreTemperatureRearRight",
+            F1Raw + "m_tyresInnerTemperature03", F1Raw + "m_tyresInnerTemperature04",
+            F1Raw + "m_tyresInnerTemperature01", F1Raw + "m_tyresInnerTemperature02",
+        };
+        private static readonly string[] SurfaceTempProps =
+        {
+            F1Raw + "m_tyresSurfaceTemperature03", F1Raw + "m_tyresSurfaceTemperature04",
+            F1Raw + "m_tyresSurfaceTemperature01", F1Raw + "m_tyresSurfaceTemperature02",
         };
         private static readonly string[] TyrePressProps =
         {
@@ -245,7 +254,7 @@ namespace MozaPlugin.Telemetry
                 RecordType = 0x01, Key = "type-01", Label = "Dashboard 01 — tyre / timing", IsLive = true,
                 PayloadLen = 25, LiveB1 = 0x00, LiveB2 = 0x00,
                 Fields = new Fields()
-                    .Pack10x4("tti", "Tyre inner", Corners, TyreTempProps, TyreTempBias)
+                    .Pack10x4("tti", "Tyre inner", Corners, InnerTempProps, TyreTempBias)
                     .U24("clt", "Current lap time", G + "CurrentLapTime", MsScale)
                     .U16("frl", "Fuel remain laps", "")
                     .U16("fsl", "Fuel surplus laps", "")
@@ -337,7 +346,7 @@ namespace MozaPlugin.Telemetry
                     .U24("clt", "Current lap time", G + "CurrentLapTime", MsScale)
                     .U24("llt", "Last lap time", G + "LastLapTime", MsScale)
                     .U24("blt", "Best lap time", G + "BestLapTime", MsScale)
-                    .U24("gap", "Gap", "", MsScale)
+                    .U24("gap", "Gap", LiveDelta, MsScale)
                     .U16("spd", "Speed", G + "SpeedKmh")
                     .U16("rpm", "RPM", G + "Rpms")
                     .U8("pos", "Position", G + "Position")
@@ -351,8 +360,8 @@ namespace MozaPlugin.Telemetry
                 RecordType = 0x08, Key = "type-08", Label = "Dashboard 08 — tyres / brakes", IsLive = true,
                 PayloadLen = 23, LiveB1 = 0x00, LiveB2 = 0x00,
                 Fields = new Fields()
-                    .Pack10x4("tti", "Tyre inner", Corners, TyreTempProps, TyreTempBias)
-                    .Pack10x4("tto", "Tyre outer", Corners, TyreTempProps, TyreTempBias)
+                    .Pack10x4("tti", "Tyre inner", Corners, InnerTempProps, TyreTempBias)
+                    .Pack10x4("tto", "Tyre outer", Corners, SurfaceTempProps, TyreTempBias)
                     .U16("btFL", "Brake temp FL", G + "BrakeTemperatureFrontLeft")
                     .U16("btFR", "Brake temp FR", G + "BrakeTemperatureFrontRight")
                     .U16("btRL", "Brake temp RL", G + "BrakeTemperatureRearLeft")
@@ -367,7 +376,7 @@ namespace MozaPlugin.Telemetry
                     .U24("clt", "Current lap time", G + "CurrentLapTime", MsScale)
                     .U24("llt", "Last lap time", G + "LastLapTime", MsScale)
                     .U24("blt", "Best lap time", G + "BestLapTime", MsScale)
-                    .U24("gap", "Gap", "", MsScale)
+                    .U24("gap", "Gap", LiveDelta, MsScale)
                     .U16("spd", "Speed", G + "SpeedKmh")
                     .U8("pos", "Position", G + "Position")
                     .U8("ersR", "ERS remaining", G + "ERSPercent")
@@ -393,7 +402,7 @@ namespace MozaPlugin.Telemetry
                 PayloadLen = 18, LiveB1 = 0x00, LiveB2 = 0x02,
                 Fields = new Fields()
                     .U24("clt", "Current lap time", G + "CurrentLapTime", MsScale)
-                    .U24("gap", "Gap", "", MsScale)
+                    .U24("gap", "Gap", LiveDelta, MsScale)
                     .U16("spd", "Speed", G + "SpeedKmh")
                     .U16("rpm", "RPM", G + "Rpms")
                     .U16("maxRpm", "Max RPM", G + "MaxRpm")
@@ -405,8 +414,8 @@ namespace MozaPlugin.Telemetry
                 RecordType = 0x0d, Key = "type-0d", Label = "Dashboard 0D — tyres / pressure", IsLive = true,
                 PayloadLen = 25, LiveB1 = 0x00, LiveB2 = 0x00,
                 Fields = new Fields()
-                    .Pack10x4("tti", "Tyre inner", Corners, TyreTempProps, TyreTempBias)
-                    .Pack10x4("tto", "Tyre outer", Corners, TyreTempProps, TyreTempBias)
+                    .Pack10x4("tti", "Tyre inner", Corners, InnerTempProps, TyreTempBias)
+                    .Pack10x4("tto", "Tyre outer", Corners, SurfaceTempProps, TyreTempBias)
                     .U8("cars", "Car count", G + "OpponentsCount")
                     .U8("lap", "Lap", G + "CurrentLap")
                     .U8("laps", "Lap count", G + "TotalLaps")
@@ -420,7 +429,7 @@ namespace MozaPlugin.Telemetry
                 RecordType = 0x0e, Key = "type-0e", Label = "Dashboard 0E — race info", IsLive = true,
                 PayloadLen = 24, LiveB1 = 0x0e, LiveB2 = 0x01,
                 Fields = new Fields()
-                    .U24("gap", "Gap", "", MsScale)
+                    .U24("gap", "Gap", LiveDelta, MsScale)
                     .U16("frl", "Fuel remain laps", "")
                     .U16("spd", "Speed", G + "SpeedKmh")
                     .U16("rpm", "RPM", G + "Rpms")
@@ -443,7 +452,7 @@ namespace MozaPlugin.Telemetry
                 Fields = new Fields()
                     .U24("stl", "Session time left", "", MsScale)
                     .U24("elt", "Estimated lap time", "", MsScale)
-                    .U24("gap", "Gap", "", MsScale)
+                    .U24("gap", "Gap", LiveDelta, MsScale)
                     .U16("rpm", "RPM", G + "Rpms")
                     .U16("spd", "Speed", G + "SpeedKmh")
                     .U16("frl", "Fuel remain laps", "")

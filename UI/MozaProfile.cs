@@ -721,11 +721,6 @@ namespace MozaPlugin
         public Dictionary<Guid, Dictionary<string, List<Fsr1SyntheticField>>> Fsr1SyntheticFields { get; set; }
             = new Dictionary<Guid, Dictionary<string, List<Fsr1SyntheticField>>>();
 
-        // FSR V1 catalog schema version this profile's overrides were authored against. When it
-        // trails Fsr1DashboardCatalog.CatalogVersion, the coordinator does a one-time wipe of the
-        // two dicts above (fieldIds/geometry changed, so stored overrides are stale). 0 = pre-v2.
-        public int Fsr1CatalogVersion { get; set; } = 0;
-
         // CM1 base-bridged dash (group-0x35) field mappings. Flat — the CM1 streams one
         // keyed field set regardless of selected dashboard, so there is no per-dashboard
         // record-key level:
@@ -887,8 +882,6 @@ namespace MozaPlugin
                     TelemetryChannelMappings[kvp.Key] = middle;
                 }
             }
-
-            Fsr1CatalogVersion = p.Fsr1CatalogVersion;
 
             // FSR V1 dashboard field mappings (deep clone)
             Fsr1DashboardMappings = new Dictionary<Guid, Dictionary<string, Dictionary<string, Fsr1FieldMapping>>>();
