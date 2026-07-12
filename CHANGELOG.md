@@ -2,6 +2,72 @@
 
 All notable changes to the AZOM MOZA SimHub plugin are documented here.
 
+## [1.5.0] - 2026-07-12
+
+mBooster custom-effect and engine-vibration work contributed by
+[@tacodevhaydz](https://github.com/tacodevhaydz).
+
+### Added
+
+- **Wheelbase LFE (Low-Frequency Effects) — host-rendered base haptics.**
+  Requires base firmware **1.2.10.10+**. Three channels — Engine (continuous),
+  ABS, and Gearshift — are computed every frame and streamed to the base at 50 Hz.
+  - Each channel's **Trigger / Frequency / Intensity / Smoothness** can be a static
+    slider *or* a live NCalc / SimHub-property formula evaluated per tick.
+  - **Presets** — four presets (Additive Engine, Big Rig, Detuned V8,
+    Road Rumble) plus save / export / import of your own (JSON). The built-in
+    engine presets scale intensity by throttle position.
+  - Dedicated **LFE panel** with a live oscilloscope drawing each slot's amplitude
+    envelope and calculated-value readouts. LFE settings ride along in profile import.
+- **MOZA Multi-Function Stalks — Truck-sim mode.** The stalks work as a plain button
+  box, or translate stalk positions into keyboard input for ETS2/ATS (only while the
+  truck game is foreground): wiper and light-knob positions step the game's cycling
+  controls to the mapped stage, turn-signal positions tap the indicators, plus a
+  "Re-sync wipers" action.
+- **mBooster custom telemetry effects** (experimental) — user-created, formula-driven
+  vibration effects on the pedal motor. Each has a name, a live SimHub-property / NCalc
+  formula, Frequency and Intensity, threshold-pulse or continuous-proportional modes,
+  and a sustained Test toggle.
+- **Multiple mBoosters in any topology** — one controller per physical unit keyed by a
+  stable USB instance ID (settings survive replug), correct HID + CDC interface pairing,
+  and up to three axes per unit routed independently to Throttle / Brake / Clutch by
+  per-axis role.
+- **Nearly complete FSR1 dashboard support** — every built-in dashboard field ships a
+  best-guess default SimHub binding (all overridable); corrected DRS/ERS bit-packing and
+  gear bias, plus lap-time and tyre-temp scaling fixes (capture-verified).
+- **HGP / SGP shifter support** — reverse-direction toggle and paddle-sync on both;
+  SGP adds two configurable LEDs (8-color palette + brightness), HGP adds an H-pattern
+  calibration routine.
+- **Lamborghini Revuelto (W11) wheel** — a screenless, button-only wheel (16 dimming
+  backlit buttons, no RPM LEDs). Added general **non-RPM-LED wheel support**: no phantom
+  RPM/flag LED run for button-only wheels, and the max addressable button-LED count
+  raised to 16.
+- **VGS rotation-mode selector** — off / smooth / immediate for the VGS wheel's
+  self-leveling display (per-profile).
+- **Mzpreset file import** — Supports importing presets using the new mzprest file format.
+
+### Changed
+
+- **Performance** — hot-path allocations cut (catalog-hash dedup, radar reflection caches,
+  gated wire debug, retransmitter fast path, V0/string-channel throttles); radar/track-map
+  car positions computed once per game frame and shared across dual-display senders;
+  per-worker NCalc engine instances for haptics formulas.
+
+### Fixed
+
+- **Knob mode is correctly applied on profile change** instead of only applying at launch.
+- **Pedal/handbrake max travel zeroed for new users** — fixed a race that could set the
+  calibrated max travel to zero.
+- **CM2 flag LEDs** — the LED bitmask no longer incorrectly blocks flag led activation.
+- **Variable-size color packets** — button color data is sent without the previous fixed
+  padding, caused issues for some wheels.
+- **FSR1 display** now restarts correctly on reload.
+- **mBooster pedals** stay in the correct order.
+- **Concurrency races** — Interlocked 64-bit stamps, copy-on-write settings dictionaries,
+  and timer/thread teardown guards.
+- **Lifecycle leaks** — CM1 handler detach, update-banner rehook, park-retry timer dispose,
+  and LED-driver restore on plugin End.
+
 ## [1.4.0] - 2026-07-05
 
 mBooster pedal feel and effects work contributed by [@tacodevhaydz](https://github.com/tacodevhaydz).
@@ -377,6 +443,7 @@ First release that can drive the wheel's built-in dashboards (requires the match
 - Initial development: wheelbase control and build pipeline, per-wheel profiles, first device
   definitions, RPM range settings, blink colors, and the first telemetry/dashboard init attempts.
 
+[1.5.0]: https://github.com/giantorth/AZOM/compare/v1.4.0...v1.5.0
 [1.4.0]: https://github.com/giantorth/AZOM/compare/v1.3.0...v1.4.0
 [1.3.0]: https://github.com/giantorth/AZOM/compare/v1.2.2...v1.3.0
 [1.2.2]: https://github.com/giantorth/AZOM/compare/v1.2.1...v1.2.2
