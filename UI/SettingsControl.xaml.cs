@@ -674,18 +674,21 @@ namespace MozaPlugin
             BaseLfeAbsTriggerMode.SelectedIndex = (int)ab.TriggerMode;
             BaseLfeGearshiftTriggerMode.SelectedIndex = (int)gs.TriggerMode;
             SeedLfeTrigger(BaseLfeEngineTriggerText, eng.TriggerFormula);
+            SetLfeFreqSliderRange(BaseLfeEngineFrequencySlider, eng.Mode);
             SeedLfeParam(BaseLfeEngineFrequencySlider, BaseLfeEngineFrequencyValue, BaseLfeEngineFrequencyFormulaText, eng.Frequency, eng.FrequencyFormula);
             SeedLfeParam(BaseLfeEngineIntensity, BaseLfeEngineIntensityValue, BaseLfeEngineIntensityFormulaText, eng.Intensity, eng.IntensityFormula);
             SeedLfeParam(BaseLfeEngineSmoothness, BaseLfeEngineSmoothnessValue, BaseLfeEngineSmoothnessFormulaText, eng.Smoothness, eng.SmoothnessFormula);
 
             BaseLfeAbsEnable.IsChecked = ab.Enabled;
             SeedLfeTrigger(BaseLfeAbsTriggerText, ab.TriggerFormula);
+            SetLfeFreqSliderRange(BaseLfeAbsFrequencySlider, ab.Mode);
             SeedLfeParam(BaseLfeAbsFrequencySlider, BaseLfeAbsFrequencyValue, BaseLfeAbsFrequencyFormulaText, ab.Frequency, ab.FrequencyFormula);
             SeedLfeParam(BaseLfeAbsIntensity, BaseLfeAbsIntensityValue, BaseLfeAbsIntensityFormulaText, ab.Intensity, ab.IntensityFormula);
             SeedLfeParam(BaseLfeAbsSmoothness, BaseLfeAbsSmoothnessValue, BaseLfeAbsSmoothnessFormulaText, ab.Smoothness, ab.SmoothnessFormula);
 
             BaseLfeGearshiftEnable.IsChecked = gs.Enabled;
             SeedLfeTrigger(BaseLfeGearshiftTriggerText, gs.TriggerFormula);
+            SetLfeFreqSliderRange(BaseLfeGearshiftFrequencySlider, gs.Mode);
             SeedLfeParam(BaseLfeGearshiftFrequencySlider, BaseLfeGearshiftFrequencyValue, BaseLfeGearshiftFrequencyFormulaText, gs.Frequency, gs.FrequencyFormula);
             SeedLfeParam(BaseLfeGearshiftIntensity, BaseLfeGearshiftIntensityValue, BaseLfeGearshiftIntensityFormulaText, gs.Intensity, gs.IntensityFormula);
             SeedLfeParam(BaseLfeGearshiftSmoothness, BaseLfeGearshiftSmoothnessValue, BaseLfeGearshiftSmoothnessFormulaText, gs.Smoothness, gs.SmoothnessFormula);
@@ -755,6 +758,22 @@ namespace MozaPlugin
             debBox.Text = $"{db} ms";
         }
 
+        // The frequency slider's range follows the slot's mode (Custom = full wire
+        // range); the formula-limits band uses the same per-mode ranges via ApplyMode.
+        private static (double min, double max) LfeFreqRange(BaseLfeMode mode) => mode switch
+        {
+            BaseLfeMode.Engine => (30, 130),
+            BaseLfeMode.Abs => (5, 30),
+            BaseLfeMode.Gearshift => (20, 100),
+            _ => (0, 200),   // Custom → full 0..200 Hz
+        };
+        private static void SetLfeFreqSliderRange(Slider slider, BaseLfeMode mode)
+        {
+            var (min, max) = LfeFreqRange(mode);
+            slider.Minimum = min;   // Min first: new min <= old max in every mode transition
+            slider.Maximum = max;
+        }
+
         // A formula overrides the slider: hide the slider + value box and show the
         // formula string in their place (full text in the tooltip). No formula →
         // slider + editable value box, formula line hidden.
@@ -794,7 +813,7 @@ namespace MozaPlugin
         private void BaseLfeEngineFrequencySlider_ValueChanged(object sender, RoutedPropertyChangedEventArgs<double> e)
         {
             if (_suppressEvents) return;
-            int v = Math.Max(60, Math.Min(100, (int)Math.Round(e.NewValue)));
+            int v = (int)Math.Round(Math.Max(BaseLfeEngineFrequencySlider.Minimum, Math.Min(BaseLfeEngineFrequencySlider.Maximum, e.NewValue)));
             BaseLfeEngineFrequencyValue.Text = v.ToString();
             _plugin.UpdateActiveProfile(p => { (p.BaseLfe ??= new BaseLfeSettings()).Engine.Frequency = v; });
             _plugin.SaveSettings();
@@ -829,7 +848,7 @@ namespace MozaPlugin
         private void BaseLfeAbsFrequencySlider_ValueChanged(object sender, RoutedPropertyChangedEventArgs<double> e)
         {
             if (_suppressEvents) return;
-            int v = Math.Max(5, Math.Min(30, (int)Math.Round(e.NewValue)));
+            int v = (int)Math.Round(Math.Max(BaseLfeAbsFrequencySlider.Minimum, Math.Min(BaseLfeAbsFrequencySlider.Maximum, e.NewValue)));
             BaseLfeAbsFrequencyValue.Text = v.ToString();
             _plugin.UpdateActiveProfile(p => { (p.BaseLfe ??= new BaseLfeSettings()).Abs.Frequency = v; });
             _plugin.SaveSettings();
@@ -864,7 +883,7 @@ namespace MozaPlugin
         private void BaseLfeGearshiftFrequencySlider_ValueChanged(object sender, RoutedPropertyChangedEventArgs<double> e)
         {
             if (_suppressEvents) return;
-            int v = Math.Max(20, Math.Min(100, (int)Math.Round(e.NewValue)));
+            int v = (int)Math.Round(Math.Max(BaseLfeGearshiftFrequencySlider.Minimum, Math.Min(BaseLfeGearshiftFrequencySlider.Maximum, e.NewValue)));
             BaseLfeGearshiftFrequencyValue.Text = v.ToString();
             _plugin.UpdateActiveProfile(p => { (p.BaseLfe ??= new BaseLfeSettings()).Gearshift.Frequency = v; });
             _plugin.SaveSettings();

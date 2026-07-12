@@ -419,7 +419,10 @@ namespace MozaPlugin
                     ch.VibrateOnNeutral = false; ch.DebounceMs = 50;
                     break;
                 case BaseLfeMode.Custom:
-                    break;   // leave every value untouched
+                    // Unrestricted: full frequency range (slider + formula band).
+                    // Trigger / formulas / intensity / smoothness are left untouched.
+                    ch.FrequencyMin = 0; ch.FrequencyMax = 200;
+                    break;
             }
         }
 
