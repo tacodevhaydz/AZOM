@@ -1659,6 +1659,14 @@ namespace MozaPlugin
         public void TriggerBaseLfeAbsTest() { if (_data.BaseSupportsLfe) _baseLfeWorker?.PostAbsTest(); }
         public void TriggerBaseLfeGearshiftTest() { if (_data.BaseSupportsLfe) _baseLfeWorker?.PostGearshiftTest(); }
 
+        /// <summary>Latest (carrier freq Hz, amplitude 0..1) for the 3 LFE slots — drives the settings scope.</summary>
+        public (double freq, double amp)[] GetLfeScopeSamples()
+        {
+            var w = _baseLfeWorker;
+            if (w == null) return new[] { (0.0, 0.0), (0.0, 0.0), (0.0, 0.0) };
+            return new[] { (w.ScopeEngineFreq, w.ScopeEngineAmp), (w.ScopeAbsFreq, w.ScopeAbsAmp), (w.ScopeGearFreq, w.ScopeGearAmp) };
+        }
+
         // Fire a one-shot base-gearshift-event on gear change. Gated by
         // GearshiftVibration > 0 and a debounce. By default, transitions
         // *into* neutral don't fire (H-pattern produces two transitions

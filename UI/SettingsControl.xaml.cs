@@ -658,7 +658,13 @@ namespace MozaPlugin
             // Populate the preset dropdown once (rebuilding items per tick would
             // close an open dropdown every 500 ms); then keep its selection synced to
             // the active profile's saved preset each tick (handles profile switches).
-            if (!_lfePresetsInitialized) { _lfePresetsInitialized = true; SeedBuiltInPresets(); RefreshLfePresetList(); }
+            if (!_lfePresetsInitialized)
+            {
+                _lfePresetsInitialized = true;
+                BaseLfeScope.Poll = () => _plugin.GetLfeScopeSamples();
+                SeedBuiltInPresets();
+                RefreshLfePresetList();
+            }
             SelectLfePreset();
 
             fx ??= new BaseLfeSettings();

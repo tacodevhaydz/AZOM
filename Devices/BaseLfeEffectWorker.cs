@@ -80,8 +80,16 @@ namespace MozaPlugin.Devices
             public bool Warm;
             public long BurstUntil;
             public long LastFireTicks;
+            public double ScopeFreq;     // last carrier freq (Hz) sent — for the UI scope
+            public double ScopeAmp;      // last amplitude (0..1) sent (0 = idle)
         }
         private ChannelState _engineSt, _absSt, _gearSt;
+
+        // Latest sent (carrier freq, amplitude) per slot for the settings scope.
+        // Plain reads (viz only — a torn double read is a single invisible frame).
+        public double ScopeEngineFreq => _engineSt.ScopeFreq; public double ScopeEngineAmp => _engineSt.ScopeAmp;
+        public double ScopeAbsFreq => _absSt.ScopeFreq;       public double ScopeAbsAmp => _absSt.ScopeAmp;
+        public double ScopeGearFreq => _gearSt.ScopeFreq;     public double ScopeGearAmp => _gearSt.ScopeAmp;
 
         private long _burstTicks, _feedStaleTicks;
 
@@ -203,8 +211,10 @@ namespace MozaPlugin.Devices
                          (f, a) => _base.SendBaseLfeEngineStream(playing: true, f, a))) return;
             if (!ActiveByGame(ch, feedLive, ref _engineSt)) { DisableIf(ref _engineSt, MozaBaseLfeProtocol.LfeEffect.Engine); return; }
             EvalRender(ch, out double freq, out double int01, out double smooth01);
-            _base.SendBaseLfeEngineStream(playing: true, freq, Envelope(int01, ref _engineSt.Phase, freq, smooth01));
+            double amp = Envelope(int01, ref _engineSt.Phase, freq, smooth01);
+            _base.SendBaseLfeEngineStream(playing: true, freq, amp);
             _engineSt.Active = true;
+            _engineSt.ScopeFreq = freq; _engineSt.ScopeAmp = amp;
         }
 
         // ── ABS slot (wire id 2, continuous stream) ───────────────────────────
@@ -215,8 +225,10 @@ namespace MozaPlugin.Devices
                          (f, a) => _base.SendBaseLfeAbsStream(playing: true, f, a))) return;
             if (!ActiveByGame(ch, feedLive, ref _absSt)) { DisableIf(ref _absSt, MozaBaseLfeProtocol.LfeEffect.Abs); return; }
             EvalRender(ch, out double freq, out double int01, out double smooth01);
-            _base.SendBaseLfeAbsStream(playing: true, freq, Envelope(int01, ref _absSt.Phase, freq, smooth01));
+            double amp = Envelope(int01, ref _absSt.Phase, freq, smooth01);
+            _base.SendBaseLfeAbsStream(playing: true, freq, amp);
             _absSt.Active = true;
+            _absSt.ScopeFreq = freq; _absSt.ScopeAmp = amp;
         }
 
         // ── Gearshift slot (wire id 0, one-shot burst) ────────────────────────
@@ -227,8 +239,10 @@ namespace MozaPlugin.Devices
                          (f, a) => _base.SendBaseLfeGearshiftBurst(f, a))) return;
             if (!ActiveByGame(ch, feedLive, ref _gearSt)) { DisableIf(ref _gearSt, MozaBaseLfeProtocol.LfeEffect.Gearshift); return; }
             EvalRender(ch, out double freq, out double int01, out double smooth01);
-            _base.SendBaseLfeGearshiftBurst(freq, Envelope(int01, ref _gearSt.Phase, freq, smooth01));
+            double amp = Envelope(int01, ref _gearSt.Phase, freq, smooth01);
+            _base.SendBaseLfeGearshiftBurst(freq, amp);
             _gearSt.Active = true;
+            _gearSt.ScopeFreq = freq; _gearSt.ScopeAmp = amp;
         }
 
         // Test playback for one slot. Returns true while the test owns the slot
@@ -245,7 +259,12 @@ namespace MozaPlugin.Devices
                 Interlocked.Exchange(ref testStart, 0);     // window elapsed → hand back to the game path
                 return false;
             }
-            if (playing) { send(freq, Envelope(int01, ref st.Phase, freq, smooth01)); st.Active = true; }
+            if (playing)
+            {
+                double amp = Envelope(int01, ref st.Phase, freq, smooth01);
+                send(freq, amp); st.Active = true;
+                st.ScopeFreq = freq; st.ScopeAmp = amp;
+            }
             else DisableIf(ref st, id);                      // silent gap (gearshift between bumps)
             return true;
         }
@@ -313,6 +332,7 @@ namespace MozaPlugin.Devices
         private void DisableIf(ref ChannelState st, MozaBaseLfeProtocol.LfeEffect id)
         {
             if (st.Active) { _base.SendBaseLfeDisable(id); st.Active = false; st.Phase = 0; }
+            st.ScopeAmp = 0;   // scope shows a flat line while idle
         }
 
         private void SilenceIfActive()

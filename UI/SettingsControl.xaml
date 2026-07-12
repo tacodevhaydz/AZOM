@@ -949,6 +949,15 @@
                                     <Button Content="{x:Static res:Strings.Label_Import}" Margin="0,0,8,0" Padding="12,5" Click="BaseLfePresetImport_Click"/>
                                     <Button Content="{x:Static res:Strings.Label_Export}" Padding="12,5" Click="BaseLfePresetExport_Click"/>
                                 </WrapPanel>
+                                <ctrl:LfeScope x:Name="BaseLfeScope" Height="168" Margin="0,10,0,0"/>
+                                <StackPanel Orientation="Horizontal" Margin="0,5,0,0">
+                                    <Rectangle Width="10" Height="10" Fill="#FF3CE0E0" VerticalAlignment="Center"/>
+                                    <TextBlock Text="1" Foreground="{StaticResource TextDimBrush}" FontSize="11" Margin="4,0,12,0" VerticalAlignment="Center"/>
+                                    <Rectangle Width="10" Height="10" Fill="#FFFFB84D" VerticalAlignment="Center"/>
+                                    <TextBlock Text="2" Foreground="{StaticResource TextDimBrush}" FontSize="11" Margin="4,0,12,0" VerticalAlignment="Center"/>
+                                    <Rectangle Width="10" Height="10" Fill="#FF8BD866" VerticalAlignment="Center"/>
+                                    <TextBlock Text="3" Foreground="{StaticResource TextDimBrush}" FontSize="11" Margin="4,0,0,0" VerticalAlignment="Center"/>
+                                </StackPanel>
                             </StackPanel>
                         </ctrl:SectionCard>
                         <ctrl:SectionCard Grid.Row="0" Grid.Column="1" VerticalAlignment="Top" Title="{x:Static res:Strings.Section_EffectsSlot1}" Icon="{StaticResource IconShift}" Margin="7,0,0,14">
