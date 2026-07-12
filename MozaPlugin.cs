@@ -3764,6 +3764,14 @@ namespace MozaPlugin
             _dashboardBindingCoordinator?.TickPendingDashboardRetry();
             _dualDisplay?.TickCm2DashboardReassert();
             _dualDisplay?.TickCm1Discriminator();
+            // FSR1 self-heal: _fsr1Driver is per-instance (unlike the persistent
+            // tier-def sender) and is only started via the event-driven
+            // StartTelemetryIfReady, which a persistent-wire reload skips for an
+            // already-known wheel (LastKnownWheelModel still set → DeviceProber
+            // first-sight block gated out) — orphaning the group-0x42 push into a
+            // dark screen with nothing to restart it. Reconcile it here like the
+            // CM2/CM1 drivers above. Idempotent: no-op unless a stopped FSR1.
+            _dualDisplay?.StartFsr1DriverIfNeeded();
 
             if (!_connection.IsConnected) return;
 
