@@ -275,6 +275,9 @@ namespace MozaPlugin.Devices
         MBoosterEffectSettings Threshold { get; set; }
         MBoosterEffectSettings Engine { get; set; }
         MBoosterEffectSettings RoadTexture { get; set; }
+        MBoosterEffectSettings TractionControl { get; set; }
+        MBoosterEffectSettings WheelSpin { get; set; }
+        MBoosterEffectSettings GearShift { get; set; }
         System.Collections.Generic.List<MBoosterCustomEffect> CustomEffects { get; set; }
     }
 
@@ -346,6 +349,9 @@ namespace MozaPlugin.Devices
         public MBoosterEffectSettings Threshold { get; set; } = new MBoosterEffectSettings { FrequencyHz = 70, TriggerLevelPct = 60, DecayPct = 20 };
         public MBoosterEffectSettings Engine { get; set; } = new MBoosterEffectSettings { IntensityPct = 50, FrequencyHz = 100 };
         public MBoosterEffectSettings RoadTexture { get; set; } = new MBoosterEffectSettings { IntensityPct = 50, SmoothnessPct = 50 };
+        public MBoosterEffectSettings TractionControl { get; set; } = new MBoosterEffectSettings { FrequencyHz = 22 };
+        public MBoosterEffectSettings WheelSpin { get; set; } = new MBoosterEffectSettings { FrequencyHz = 22 };
+        public MBoosterEffectSettings GearShift { get; set; } = new MBoosterEffectSettings { FrequencyHz = 22 };
         public List<MBoosterCustomEffect> CustomEffects { get; set; } = new List<MBoosterCustomEffect>();
 
         public MBoosterPedalSettings Clone() =>
@@ -370,6 +376,9 @@ namespace MozaPlugin.Devices
                 Threshold = Threshold?.Clone() ?? new MBoosterEffectSettings(),
                 Engine = Engine?.Clone() ?? new MBoosterEffectSettings(),
                 RoadTexture = RoadTexture?.Clone() ?? new MBoosterEffectSettings(),
+                TractionControl = TractionControl?.Clone() ?? new MBoosterEffectSettings(),
+                WheelSpin = WheelSpin?.Clone() ?? new MBoosterEffectSettings(),
+                GearShift = GearShift?.Clone() ?? new MBoosterEffectSettings(),
                 CustomEffects = CustomEffects?.Select(c => c.Clone()).ToList() ?? new List<MBoosterCustomEffect>(),
             };
     }

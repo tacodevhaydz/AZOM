@@ -346,18 +346,20 @@ namespace MozaPlugin.Devices
             MBoosterTelemetrySnapshot snap;
             lock (_telemetryLock) snap = _latest;
 
-            // Brake signal for THIS pedal: the game's brake, rising to this
-            // pedal's own HID position when it's the one assigned Brake (so its
-            // brake-modulated test pulses feel right with no game running).
-            double brakeSignal = EffectiveBrake(PedalRole(lane), snap);
+            // Brake/throttle signal for THIS pedal: the game's value, rising to
+            // this pedal's own HID position when it's the one assigned that role
+            // (so its modulated test pulses feel right with no game running).
+            var role = PedalRole(lane);
+            double brakeSignal = EffectiveBrake(role, snap);
+            double throttleSignal = EffectiveThrottle(role, snap);
 
             // --- Compute per-effect requests from telemetry per doc § 4 -----
 
             UpdateEngineRequest(effects, snap, ref _engine);
             UpdateAbsRequest(effects, brakeSignal, snap, ref _abs);
-            UpdateTractionControlRequest(lane, snap, ref _tc);
-            UpdateWheelSpinRequest(lane, snap, ref _wheelSpin);
-            UpdateGearShiftRequest(lane, snap, ref _gearShift);
+            UpdateTractionControlRequest(effects, throttleSignal, snap, ref _tc);
+            UpdateWheelSpinRequest(effects, throttleSignal, snap, ref _wheelSpin);
+            UpdateGearShiftRequest(effects, snap, ref _gearShift);
             UpdateLockupRequest(effects, brakeSignal, snap, ref _lockup);
             UpdateThresholdRequest(effects, brakeSignal, snap, ref _threshold);
             UpdateRoadTextureRequest(effects, snap, ref _roadTexture);
@@ -560,29 +562,29 @@ namespace MozaPlugin.Devices
         // unlike ABS) — gated at 80% throttle, not any nonzero press, so
         // the test only fires once you're pressing hard enough to
         // plausibly trigger real wheelspin, not on a light tap.
-        private void UpdateTractionControlRequest(MBoosterDeviceSettings? settings, in MBoosterTelemetrySnapshot snap, ref EffectState st)
+        private void UpdateTractionControlRequest(IMBoosterEffects? effects, double throttleSignal, in MBoosterTelemetrySnapshot snap, ref EffectState st)
         {
-            double freqHz = ClampTractionControlFreq(settings?.TractionControl?.FrequencyHz ?? MBoosterUiConstants.TractionControlFreqMinHz);
+            double freqHz = ClampTractionControlFreq(effects?.TractionControl?.FrequencyHz ?? MBoosterUiConstants.TractionControlFreqMinHz);
             // No Smoothness slider for Traction Control (unlike ABS) — fixed
             // at the "verified" ABS default ripple depth (smoothness01 = 1).
             st.SmoothnessRequest01 = 1.0;
 
             if (_tcTestSustained)
             {
-                double throttleT = EffectiveThrottle(settings, snap);
+                double throttleT = throttleSignal;
                 if (throttleT < 0.8)
                 {
                     st.IntensityRequest = 0;
                     st.FreqHz = 0;
                     return;
                 }
-                double testScale = ((settings?.TractionControl?.IntensityPct ?? 0) / 100.0) * TractionControlScaleMax;
+                double testScale = ((effects?.TractionControl?.IntensityPct ?? 0) / 100.0) * TractionControlScaleMax;
                 st.IntensityRequest = Clamp01(throttleT * testScale);
                 st.FreqHz = freqHz;
                 return;
             }
 
-            if (settings?.TractionControl == null || !settings.TractionControl.Enabled)
+            if (effects?.TractionControl == null || !effects.TractionControl.Enabled)
             {
                 st.IntensityRequest = 0;
                 st.FreqHz = 0;
@@ -597,7 +599,7 @@ namespace MozaPlugin.Devices
                 return;
             }
             st.FreqHz = freqHz;
-            double tcScale = (settings.TractionControl.IntensityPct / 100.0) * TractionControlScaleMax;
+            double tcScale = (effects.TractionControl.IntensityPct / 100.0) * TractionControlScaleMax;
             st.IntensityRequest = Clamp01(tc01 * tcScale);
         }
 
@@ -618,9 +620,9 @@ namespace MozaPlugin.Devices
         // tall gear is normal driving, not spin. Same Frequency (10-100Hz)/
         // Intensity slider config as Traction Control, no Smoothness slider,
         // fixed at smoothness01 = 1 like Traction Control.
-        private void UpdateWheelSpinRequest(MBoosterDeviceSettings? settings, in MBoosterTelemetrySnapshot snap, ref EffectState st)
+        private void UpdateWheelSpinRequest(IMBoosterEffects? effects, double throttleSignal, in MBoosterTelemetrySnapshot snap, ref EffectState st)
         {
-            double freqHz = ClampWheelSpinFreq(settings?.WheelSpin?.FrequencyHz ?? MBoosterUiConstants.WheelSpinFreqMinHz);
+            double freqHz = ClampWheelSpinFreq(effects?.WheelSpin?.FrequencyHz ?? MBoosterUiConstants.WheelSpinFreqMinHz);
             st.SmoothnessRequest01 = 1.0;
 
             // Sustained test toggle substitutes live throttle position for
@@ -629,20 +631,20 @@ namespace MozaPlugin.Devices
             // Traction Control's test makes, gated at the same 80% throttle.
             if (_wheelSpinTestSustained)
             {
-                double throttleT = EffectiveThrottle(settings, snap);
+                double throttleT = throttleSignal;
                 if (throttleT < 0.8)
                 {
                     st.IntensityRequest = 0;
                     st.FreqHz = 0;
                     return;
                 }
-                double testScale = ((settings?.WheelSpin?.IntensityPct ?? 0) / 100.0) * WheelSpinScaleMax;
+                double testScale = ((effects?.WheelSpin?.IntensityPct ?? 0) / 100.0) * WheelSpinScaleMax;
                 st.IntensityRequest = Clamp01(throttleT * testScale);
                 st.FreqHz = freqHz;
                 return;
             }
 
-            if (settings?.WheelSpin == null || !settings.WheelSpin.Enabled)
+            if (effects?.WheelSpin == null || !effects.WheelSpin.Enabled)
             {
                 st.IntensityRequest = 0;
                 st.FreqHz = 0;
@@ -672,7 +674,7 @@ namespace MozaPlugin.Devices
                 return;
             }
             st.FreqHz = freqHz;
-            double wheelSpinScale = (settings.WheelSpin.IntensityPct / 100.0) * WheelSpinScaleMax;
+            double wheelSpinScale = (effects.WheelSpin.IntensityPct / 100.0) * WheelSpinScaleMax;
             st.IntensityRequest = Clamp01(wheelSpinScale);
         }
 
@@ -697,9 +699,9 @@ namespace MozaPlugin.Devices
         // independent of EffectState so it survives across the pulse's own
         // on/off cycle) absorbs an H-pattern's double transition
         // (gear->N->gear).
-        private void UpdateGearShiftRequest(MBoosterDeviceSettings? settings, in MBoosterTelemetrySnapshot snap, ref EffectState st)
+        private void UpdateGearShiftRequest(IMBoosterEffects? effects, in MBoosterTelemetrySnapshot snap, ref EffectState st)
         {
-            double freqHz = ClampGearShiftFreq(settings?.GearShift?.FrequencyHz ?? MBoosterUiConstants.GearShiftFreqMinHz);
+            double freqHz = ClampGearShiftFreq(effects?.GearShift?.FrequencyHz ?? MBoosterUiConstants.GearShiftFreqMinHz);
 
             // Sustained test toggle ignores the pulse/debounce machinery
             // entirely and just holds the effect on continuously at the
@@ -709,13 +711,13 @@ namespace MozaPlugin.Devices
             // shift).
             if (_gearShiftTestSustained)
             {
-                double testScale = ((settings?.GearShift?.IntensityPct ?? 0) / 100.0) * GearShiftScaleMax;
+                double testScale = ((effects?.GearShift?.IntensityPct ?? 0) / 100.0) * GearShiftScaleMax;
                 st.IntensityRequest = Clamp01(testScale);
                 st.FreqHz = freqHz;
                 return;
             }
 
-            if (settings?.GearShift == null || !settings.GearShift.Enabled)
+            if (effects?.GearShift == null || !effects.GearShift.Enabled)
             {
                 st.IntensityRequest = 0;
                 st.FreqHz = 0;
@@ -725,7 +727,7 @@ namespace MozaPlugin.Devices
             if (_gearShiftDebounceRemainingSec > 0)
                 _gearShiftDebounceRemainingSec = Math.Max(0, _gearShiftDebounceRemainingSec - TickPeriodSec);
 
-            double gearShiftScale = (settings.GearShift.IntensityPct / 100.0) * GearShiftScaleMax;
+            double gearShiftScale = (effects.GearShift.IntensityPct / 100.0) * GearShiftScaleMax;
 
             // Already mid-pulse from an earlier tick — keep it running
             // until the fixed pulse duration elapses, regardless of
@@ -739,7 +741,7 @@ namespace MozaPlugin.Devices
             }
 
             // Not currently pulsing — check for a fresh trigger this tick.
-            bool suppressedNeutral = snap.GearIsNeutral && !settings.GearShift.VibrateOnNeutral;
+            bool suppressedNeutral = snap.GearIsNeutral && !effects.GearShift.VibrateOnNeutral;
             if (!snap.GearChanged || suppressedNeutral || _gearShiftDebounceRemainingSec > 0)
             {
                 st.IntensityRequest = 0;
@@ -747,7 +749,7 @@ namespace MozaPlugin.Devices
                 return;
             }
 
-            _gearShiftDebounceRemainingSec = Math.Max(0, settings.GearShift.DebounceMs) / 1000.0;
+            _gearShiftDebounceRemainingSec = Math.Max(0, effects.GearShift.DebounceMs) / 1000.0;
             st.FreqHz = freqHz;
             st.IntensityRequest = Clamp01(gearShiftScale);
         }
@@ -1531,12 +1533,12 @@ namespace MozaPlugin.Devices
         /// for ABS/Lockup/Threshold, so the user can feel throttle-modulated
         /// test pulses even with no game running.
         /// </summary>
-        private double EffectiveThrottle(MBoosterDeviceSettings? settings, in MBoosterTelemetrySnapshot snap)
+        private double EffectiveThrottle(MBoosterRole role, in MBoosterTelemetrySnapshot snap)
         {
             double t = Clamp01(snap.Throttle);
-            if (settings?.Role == MBoosterRole.Throttle)
+            if (role == MBoosterRole.Throttle)
             {
-                double hid = Clamp01(_device.LastHidPosition);
+                double hid = Clamp01(PedalHid());
                 if (hid > t) t = hid;
             }
             return t;

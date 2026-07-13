@@ -581,10 +581,10 @@ namespace MozaPlugin.Devices
         /// <see cref="SetAbsTestActive"/> for the analogous ABS toggle; same
         /// live-tracking and always-allow-off semantics apply here.
         /// </summary>
-        public void SetTcTestActive(bool on)
+        public void SetTcTestActive(bool on, int pedalIndex = 0)
         {
             if (on && !_connection.IsConnected) return;
-            WorkerFor(0)?.SetTcTestSustained(on);
+            WorkerFor(pedalIndex)?.SetTcTestSustained(on);
         }
 
         /// <summary>
@@ -596,10 +596,10 @@ namespace MozaPlugin.Devices
         /// toggle; same live-tracking and always-allow-off semantics apply
         /// here.
         /// </summary>
-        public void SetWheelSpinTestActive(bool on)
+        public void SetWheelSpinTestActive(bool on, int pedalIndex = 0)
         {
             if (on && !_connection.IsConnected) return;
-            WorkerFor(0)?.SetWheelSpinTestSustained(on);
+            WorkerFor(pedalIndex)?.SetWheelSpinTestSustained(on);
         }
 
         /// <summary>
@@ -611,10 +611,10 @@ namespace MozaPlugin.Devices
         /// for the analogous Traction Control toggle; same live-tracking and
         /// always-allow-off semantics apply here.
         /// </summary>
-        public void SetGearShiftTestActive(bool on)
+        public void SetGearShiftTestActive(bool on, int pedalIndex = 0)
         {
             if (on && !_connection.IsConnected) return;
-            WorkerFor(0)?.SetGearShiftTestSustained(on);
+            WorkerFor(pedalIndex)?.SetGearShiftTestSustained(on);
         }
 
         /// <summary>

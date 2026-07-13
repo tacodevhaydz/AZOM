@@ -184,11 +184,11 @@ namespace MozaPlugin
             if (MBoosterAbsTestToggle?.IsChecked == true)
                 CurrentMBoosterController()?.SetAbsTestActive(false, _mboosterEffectPedalIndex);
             if (MBoosterTcTestToggle?.IsChecked == true)
-                CurrentMBoosterController()?.SetTcTestActive(false);
+                CurrentMBoosterController()?.SetTcTestActive(false, _mboosterEffectPedalIndex);
             if (MBoosterWheelSpinTestToggle?.IsChecked == true)
-                CurrentMBoosterController()?.SetWheelSpinTestActive(false);
+                CurrentMBoosterController()?.SetWheelSpinTestActive(false, _mboosterEffectPedalIndex);
             if (MBoosterGearShiftTestToggle?.IsChecked == true)
-                CurrentMBoosterController()?.SetGearShiftTestActive(false);
+                CurrentMBoosterController()?.SetGearShiftTestActive(false, _mboosterEffectPedalIndex);
             if (MBoosterRoadTextureTestToggle?.IsChecked == true)
                 CurrentMBoosterController()?.SetRoadTextureTestActive(false, _mboosterEffectPedalIndex);
             if (MBoosterLockupTestToggle?.IsChecked == true)
@@ -3247,39 +3247,12 @@ namespace MozaPlugin
             {
                 SetMBoosterRoleCombo(s.Role);
                 MBoosterDisplayNameBox.Text = s.DisplayName ?? "";
-                MBoosterTcEnable.IsChecked       = s.TractionControl?.Enabled          ?? false;
-                MBoosterTcFrequencySlider.Value  = s.TractionControl?.FrequencyHz      ?? MBoosterUiConstants.TractionControlFreqMinHz;
-                SetValueText(MBoosterTcFrequencyValue, MBoosterTcFrequencySlider.Value.ToString("F0"));
-                MBoosterTcIntensity.Value        = s.TractionControl?.IntensityPct     ?? 50;
-                SetValueText(MBoosterTcIntensityValue, (s.TractionControl?.IntensityPct ?? 50).ToString());
-                // Never persisted — always starts off for a freshly-shown tab.
-                MBoosterTcTestToggle.IsChecked = false;
-                MBoosterWheelSpinEnable.IsChecked       = s.WheelSpin?.Enabled          ?? false;
-                MBoosterWheelSpinFrequencySlider.Value  = s.WheelSpin?.FrequencyHz      ?? MBoosterUiConstants.WheelSpinFreqMinHz;
-                SetValueText(MBoosterWheelSpinFrequencyValue, MBoosterWheelSpinFrequencySlider.Value.ToString("F0"));
-                MBoosterWheelSpinIntensity.Value        = s.WheelSpin?.IntensityPct     ?? 50;
-                SetValueText(MBoosterWheelSpinIntensityValue, (s.WheelSpin?.IntensityPct ?? 50).ToString());
-                // Never persisted — always starts off for a freshly-shown tab.
-                MBoosterWheelSpinTestToggle.IsChecked = false;
-                MBoosterGearShiftEnable.IsChecked       = s.GearShift?.Enabled          ?? false;
-                MBoosterGearShiftFrequencySlider.Value  = s.GearShift?.FrequencyHz      ?? MBoosterUiConstants.GearShiftFreqMinHz;
-                SetValueText(MBoosterGearShiftFrequencyValue, MBoosterGearShiftFrequencySlider.Value.ToString("F0"));
-                MBoosterGearShiftIntensity.Value        = s.GearShift?.IntensityPct     ?? 50;
-                SetValueText(MBoosterGearShiftIntensityValue, (s.GearShift?.IntensityPct ?? 50).ToString());
-                MBoosterGearShiftVibrateOnNeutralCheck.IsChecked = s.GearShift?.VibrateOnNeutral ?? false;
-                int gearShiftDebounceMs = s.GearShift?.DebounceMs ?? 500;
-                MBoosterGearShiftDebounceSlider.Value = gearShiftDebounceMs;
-                MBoosterGearShiftDebounceValue.Text = $"{gearShiftDebounceMs} ms";
-                // Never persisted — always starts off for a freshly-shown tab.
-                MBoosterGearShiftTestToggle.IsChecked = false;
                 // The "Configure pedal" combo + _mboosterEffectPedalIndex are
                 // maintained by PopulateMBoosterEffectPedalCombo (called every
                 // refresh above), which resets to the master pedal on a device
                 // change — so here we just seed whichever pedal it settled on.
                 // (Test toggles are never persisted; SeedMBoosterEffectControls
-                // always clears them. Traction Control/Wheel Spin/Gear Shift
-                // above are master-pedal-only for now, so they seed from `s`
-                // directly rather than the per-pedal target.)
+                // always clears them.)
                 SeedMBoosterEffectControls(PeekMBoosterEffectTarget());
                 UpdateMBoosterEffectPassiveState();
                 UpdateMBoosterConfigVisibilityForRole();
@@ -3357,12 +3330,34 @@ namespace MozaPlugin
             return s.Pedals.TryGetValue(_mboosterEffectPedalIndex, out var p) ? p : null;
         }
 
-        /// <summary>Seed the five vibration-effect cards' controls from one
+        /// <summary>Seed the eight vibration-effect cards' controls from one
         /// pedal's effect settings. Assumes the event suppressor is active. Brake
         /// Fade is seeded separately by <see cref="RefreshMBoosterTab"/> since it's
         /// per-lane (master pedal only).</summary>
         private void SeedMBoosterEffectControls(IMBoosterEffects? fx)
         {
+            MBoosterTcEnable.IsChecked       = fx?.TractionControl?.Enabled          ?? false;
+            MBoosterTcFrequencySlider.Value  = fx?.TractionControl?.FrequencyHz      ?? MBoosterUiConstants.TractionControlFreqMinHz;
+            SetValueText(MBoosterTcFrequencyValue, MBoosterTcFrequencySlider.Value.ToString("F0"));
+            MBoosterTcIntensity.Value        = fx?.TractionControl?.IntensityPct     ?? 50;
+            SetValueText(MBoosterTcIntensityValue, (fx?.TractionControl?.IntensityPct ?? 50).ToString());
+            MBoosterTcTestToggle.IsChecked = false;
+            MBoosterWheelSpinEnable.IsChecked       = fx?.WheelSpin?.Enabled          ?? false;
+            MBoosterWheelSpinFrequencySlider.Value  = fx?.WheelSpin?.FrequencyHz      ?? MBoosterUiConstants.WheelSpinFreqMinHz;
+            SetValueText(MBoosterWheelSpinFrequencyValue, MBoosterWheelSpinFrequencySlider.Value.ToString("F0"));
+            MBoosterWheelSpinIntensity.Value        = fx?.WheelSpin?.IntensityPct     ?? 50;
+            SetValueText(MBoosterWheelSpinIntensityValue, (fx?.WheelSpin?.IntensityPct ?? 50).ToString());
+            MBoosterWheelSpinTestToggle.IsChecked = false;
+            MBoosterGearShiftEnable.IsChecked       = fx?.GearShift?.Enabled          ?? false;
+            MBoosterGearShiftFrequencySlider.Value  = fx?.GearShift?.FrequencyHz      ?? MBoosterUiConstants.GearShiftFreqMinHz;
+            SetValueText(MBoosterGearShiftFrequencyValue, MBoosterGearShiftFrequencySlider.Value.ToString("F0"));
+            MBoosterGearShiftIntensity.Value        = fx?.GearShift?.IntensityPct     ?? 50;
+            SetValueText(MBoosterGearShiftIntensityValue, (fx?.GearShift?.IntensityPct ?? 50).ToString());
+            MBoosterGearShiftVibrateOnNeutralCheck.IsChecked = fx?.GearShift?.VibrateOnNeutral ?? false;
+            int gearShiftDebounceMs = fx?.GearShift?.DebounceMs ?? 500;
+            MBoosterGearShiftDebounceSlider.Value = gearShiftDebounceMs;
+            MBoosterGearShiftDebounceValue.Text = $"{gearShiftDebounceMs} ms";
+            MBoosterGearShiftTestToggle.IsChecked = false;
             MBoosterAbsEnable.IsChecked       = fx?.Abs?.Enabled          ?? false;
             MBoosterAbsFrequencySlider.Value  = fx?.Abs?.FrequencyHz      ?? MBoosterUiConstants.AbsFreqMinHz;
             SetValueText(MBoosterAbsFrequencyValue, MBoosterAbsFrequencySlider.Value.ToString("F0"));
@@ -3498,7 +3493,7 @@ namespace MozaPlugin
         }
 
         // ===== Custom Effects (Experimental) =====
-        // Dynamic per-device list — unlike the five built-in effects (static
+        // Dynamic per-device list — unlike the eight built-in effects (static
         // named XAML controls wired one-by-one), the count here is
         // user-defined, so the ItemsControl is bound to an ObservableCollection
         // of row view-models (MBoosterCustomEffectRow) instead. Rebuilt wholesale
@@ -3539,7 +3534,7 @@ namespace MozaPlugin
         /// <summary>
         /// Turn off every custom effect's sustained Test toggle for the
         /// currently-selected device — mirrors the explicit stop calls for
-        /// the five built-in effects' Test toggles in
+        /// the eight built-in effects' Test toggles in
         /// <see cref="MBoosterDeviceCombo_Changed"/> and
         /// <see cref="OnUnloadedStopTimers"/>, so a forgotten toggle doesn't
         /// leave the pedal buzzing with no UI left to turn it off.
@@ -3671,11 +3666,11 @@ namespace MozaPlugin
             if (MBoosterAbsTestToggle.IsChecked == true)
                 CurrentMBoosterController()?.SetAbsTestActive(false, _mboosterEffectPedalIndex);
             if (MBoosterTcTestToggle.IsChecked == true)
-                CurrentMBoosterController()?.SetTcTestActive(false);
+                CurrentMBoosterController()?.SetTcTestActive(false, _mboosterEffectPedalIndex);
             if (MBoosterWheelSpinTestToggle.IsChecked == true)
-                CurrentMBoosterController()?.SetWheelSpinTestActive(false);
+                CurrentMBoosterController()?.SetWheelSpinTestActive(false, _mboosterEffectPedalIndex);
             if (MBoosterGearShiftTestToggle.IsChecked == true)
-                CurrentMBoosterController()?.SetGearShiftTestActive(false);
+                CurrentMBoosterController()?.SetGearShiftTestActive(false, _mboosterEffectPedalIndex);
             if (MBoosterRoadTextureTestToggle.IsChecked == true)
                 CurrentMBoosterController()?.SetRoadTextureTestActive(false, _mboosterEffectPedalIndex);
             if (MBoosterLockupTestToggle.IsChecked == true)
@@ -3991,7 +3986,7 @@ namespace MozaPlugin
         private void MBoosterTcEnable_Changed(object sender, RoutedEventArgs e)
         {
             if (_suppressEvents) return;
-            var s = CurrentMBoosterSettings();
+            var s = CurrentMBoosterEffectTarget();
             if (s == null) return;
             (s.TractionControl ??= new MBoosterEffectSettings()).Enabled = MBoosterTcEnable.IsChecked == true;
             _plugin.SaveSettings();
@@ -4001,7 +3996,7 @@ namespace MozaPlugin
             if (_suppressEvents) return;
             int v = Math.Max(0, Math.Min(100, (int)Math.Round(e.NewValue)));
             MBoosterTcIntensityValue.Text = v.ToString();
-            var s = CurrentMBoosterSettings();
+            var s = CurrentMBoosterEffectTarget();
             if (s == null) return;
             (s.TractionControl ??= new MBoosterEffectSettings()).IntensityPct = v;
             _plugin.SaveSettings();
@@ -4013,7 +4008,7 @@ namespace MozaPlugin
             if (_suppressEvents) return;
             int v = Math.Max((int)MBoosterUiConstants.TractionControlFreqMinHz, Math.Min((int)MBoosterUiConstants.TractionControlFreqMaxHz, (int)Math.Round(e.NewValue)));
             MBoosterTcFrequencyValue.Text = v.ToString();
-            var s = CurrentMBoosterSettings();
+            var s = CurrentMBoosterEffectTarget();
             if (s == null) return;
             (s.TractionControl ??= new MBoosterEffectSettings()).FrequencyHz = v;
             _plugin.SaveSettings();
@@ -4027,13 +4022,13 @@ namespace MozaPlugin
         private void MBoosterTcTestToggle_Changed(object sender, RoutedEventArgs e)
         {
             if (_suppressEvents) return;
-            CurrentMBoosterController()?.SetTcTestActive(MBoosterTcTestToggle.IsChecked == true);
+            CurrentMBoosterController()?.SetTcTestActive(MBoosterTcTestToggle.IsChecked == true, _mboosterEffectPedalIndex);
         }
 
         private void MBoosterWheelSpinEnable_Changed(object sender, RoutedEventArgs e)
         {
             if (_suppressEvents) return;
-            var s = CurrentMBoosterSettings();
+            var s = CurrentMBoosterEffectTarget();
             if (s == null) return;
             (s.WheelSpin ??= new MBoosterEffectSettings()).Enabled = MBoosterWheelSpinEnable.IsChecked == true;
             _plugin.SaveSettings();
@@ -4043,7 +4038,7 @@ namespace MozaPlugin
             if (_suppressEvents) return;
             int v = Math.Max(0, Math.Min(100, (int)Math.Round(e.NewValue)));
             MBoosterWheelSpinIntensityValue.Text = v.ToString();
-            var s = CurrentMBoosterSettings();
+            var s = CurrentMBoosterEffectTarget();
             if (s == null) return;
             (s.WheelSpin ??= new MBoosterEffectSettings()).IntensityPct = v;
             _plugin.SaveSettings();
@@ -4056,7 +4051,7 @@ namespace MozaPlugin
             if (_suppressEvents) return;
             int v = Math.Max((int)MBoosterUiConstants.WheelSpinFreqMinHz, Math.Min((int)MBoosterUiConstants.WheelSpinFreqMaxHz, (int)Math.Round(e.NewValue)));
             MBoosterWheelSpinFrequencyValue.Text = v.ToString();
-            var s = CurrentMBoosterSettings();
+            var s = CurrentMBoosterEffectTarget();
             if (s == null) return;
             (s.WheelSpin ??= new MBoosterEffectSettings()).FrequencyHz = v;
             _plugin.SaveSettings();
@@ -4070,13 +4065,13 @@ namespace MozaPlugin
         private void MBoosterWheelSpinTestToggle_Changed(object sender, RoutedEventArgs e)
         {
             if (_suppressEvents) return;
-            CurrentMBoosterController()?.SetWheelSpinTestActive(MBoosterWheelSpinTestToggle.IsChecked == true);
+            CurrentMBoosterController()?.SetWheelSpinTestActive(MBoosterWheelSpinTestToggle.IsChecked == true, _mboosterEffectPedalIndex);
         }
 
         private void MBoosterGearShiftEnable_Changed(object sender, RoutedEventArgs e)
         {
             if (_suppressEvents) return;
-            var s = CurrentMBoosterSettings();
+            var s = CurrentMBoosterEffectTarget();
             if (s == null) return;
             (s.GearShift ??= new MBoosterEffectSettings()).Enabled = MBoosterGearShiftEnable.IsChecked == true;
             _plugin.SaveSettings();
@@ -4086,7 +4081,7 @@ namespace MozaPlugin
             if (_suppressEvents) return;
             int v = Math.Max(0, Math.Min(100, (int)Math.Round(e.NewValue)));
             MBoosterGearShiftIntensityValue.Text = v.ToString();
-            var s = CurrentMBoosterSettings();
+            var s = CurrentMBoosterEffectTarget();
             if (s == null) return;
             (s.GearShift ??= new MBoosterEffectSettings()).IntensityPct = v;
             _plugin.SaveSettings();
@@ -4099,7 +4094,7 @@ namespace MozaPlugin
             if (_suppressEvents) return;
             int v = Math.Max((int)MBoosterUiConstants.GearShiftFreqMinHz, Math.Min((int)MBoosterUiConstants.GearShiftFreqMaxHz, (int)Math.Round(e.NewValue)));
             MBoosterGearShiftFrequencyValue.Text = v.ToString();
-            var s = CurrentMBoosterSettings();
+            var s = CurrentMBoosterEffectTarget();
             if (s == null) return;
             (s.GearShift ??= new MBoosterEffectSettings()).FrequencyHz = v;
             _plugin.SaveSettings();
@@ -4112,7 +4107,7 @@ namespace MozaPlugin
         private void MBoosterGearShiftVibrateOnNeutralCheck_Changed(object sender, RoutedEventArgs e)
         {
             if (_suppressEvents) return;
-            var s = CurrentMBoosterSettings();
+            var s = CurrentMBoosterEffectTarget();
             if (s == null) return;
             (s.GearShift ??= new MBoosterEffectSettings()).VibrateOnNeutral = MBoosterGearShiftVibrateOnNeutralCheck.IsChecked == true;
             _plugin.SaveSettings();
@@ -4131,7 +4126,7 @@ namespace MozaPlugin
             v = ((v + 25) / 50) * 50;
             v = Math.Max((int)MBoosterUiConstants.GearShiftDebounceMinMs, Math.Min((int)MBoosterUiConstants.GearShiftDebounceMaxMs, v));
             MBoosterGearShiftDebounceValue.Text = $"{v} ms";
-            var s = CurrentMBoosterSettings();
+            var s = CurrentMBoosterEffectTarget();
             if (s == null) return;
             (s.GearShift ??= new MBoosterEffectSettings()).DebounceMs = v;
             _plugin.SaveSettings();
@@ -4145,7 +4140,7 @@ namespace MozaPlugin
         private void MBoosterGearShiftTestToggle_Changed(object sender, RoutedEventArgs e)
         {
             if (_suppressEvents) return;
-            CurrentMBoosterController()?.SetGearShiftTestActive(MBoosterGearShiftTestToggle.IsChecked == true);
+            CurrentMBoosterController()?.SetGearShiftTestActive(MBoosterGearShiftTestToggle.IsChecked == true, _mboosterEffectPedalIndex);
         }
 
         private void MBoosterLockupEnable_Changed(object sender, RoutedEventArgs e)
