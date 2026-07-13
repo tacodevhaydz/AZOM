@@ -225,17 +225,21 @@ namespace MozaPlugin.Devices
 
             // Telemetry LEDs: single contiguous sequence. When the wheel has flag LEDs
             // they are 3-on-each-side of the RPM strip, so SimHub sees (rpmCount + 6)
-            // LEDs as one logical run: [flag 1..3][rpm 1..N][flag 4..6].
+            // LEDs as one logical run: [flag 1..3][rpm 1..N][flag 4..6]. Skipped
+            // for a button-only wheel (0 RPM LEDs) — no phantom RepeatCount=0 item.
             int telemetryCount = rpmCount + (hasFlagLeds ? 6 : 0);
-            physItems.Add(new JObject
+            if (telemetryCount > 0)
             {
-                ["SourceRole"] = 1,
-                ["SourceIndex"] = 0,
-                ["RepeatCount"] = telemetryCount,
-                ["RepeatMode"] = 1
-            });
-            for (int i = 1; i < telemetryCount; i++)
-                physItems.Add(new JObject());
+                physItems.Add(new JObject
+                {
+                    ["SourceRole"] = 1,
+                    ["SourceIndex"] = 0,
+                    ["RepeatCount"] = telemetryCount,
+                    ["RepeatMode"] = 1
+                });
+                for (int i = 1; i < telemetryCount; i++)
+                    physItems.Add(new JObject());
+            }
 
             // Button LEDs: buttonCount slots. Gated on buttonCount > 0 — an
             // RPM-only wheel (ES, bare CS) must NOT emit a button header item, or
@@ -301,7 +305,8 @@ namespace MozaPlugin.Devices
                     {
                         ["LedCount"] = telemetryCount,
                         ["Segments"] = BuildTelemetrySegments(hasFlagLeds, browSegmentSize),
-                        ["IsEnabled"] = true
+                        // Off for button-only wheels (no RPM/flag LEDs).
+                        ["IsEnabled"] = telemetryCount > 0
                     },
                     ["LogicalButtonsSection"] = new JObject
                     {

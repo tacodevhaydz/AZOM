@@ -271,22 +271,22 @@ namespace MozaPlugin.Telemetry
             }
         }
 
-        // Pack a sub-byte / bit-packed value into [bitOffset, bitOffset+bitWidth) via read-
-        // modify-write, so a shared byte's OTHER fields and any spare bits survive. bitOffset/
-        // bitWidth are absolute over the payload; payload bit b sits at frame[4 + (b>>3)],
-        // mask 0x80 >> (b & 7) (MSB-first). msbFirst=false emits the value LSB-first instead.
-        private static void WriteBits(byte[] frame, int bitOffset, int bitWidth, long value, bool msbFirst)
+        // Pack a sub-byte / bit-packed value into [bitOffset, bitOffset+bitWidth) via read-modify-
+        // write, so a shared byte's OTHER fields and any spare bits survive. LSB-FIRST — the FSR1
+        // firmware wire order proven from PitHouse: the value's bit 0 (LSB) sits at the lowest bit
+        // of the lowest byte. Payload bit b → frame[4 + (b>>3)], mask 1 << (b & 7). Value bit i →
+        // bit (bitOffset + i). (msbFirst is accepted for signature compat but FSR1 is always LSB.)
+        private static void WriteBits(byte[] frame, int bitOffset, int bitWidth, long value, bool msbFirst = false)
         {
             long max = Fsr1DashboardCatalog.BitOutputMax(bitWidth, 0);
             if (value < 0) value = 0; else if (value > max) value = max;
             for (int i = 0; i < bitWidth; i++)
             {
-                int src = msbFirst ? (bitWidth - 1 - i) : i;   // i=0 → the field's bit at bitOffset
-                int abs = bitOffset + i;
+                int abs = bitOffset + i;                       // value LSB (i=0) at bitOffset
                 int fi = 4 + (abs >> 3);
                 if (fi < 0 || fi >= frame.Length) continue;    // defensive: clamp to frame
-                int mask = 0x80 >> (abs & 7);
-                if (((value >> src) & 1) != 0) frame[fi] |= (byte)mask;
+                int mask = 1 << (abs & 7);                     // LSB-first within the byte
+                if (((value >> i) & 1) != 0) frame[fi] |= (byte)mask;
                 else frame[fi] &= (byte)~mask;                 // clear-then-set: correct even if pre-set
             }
         }

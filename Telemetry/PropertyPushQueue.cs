@@ -46,6 +46,14 @@ namespace MozaPlugin.Telemetry
             SendBody(body);
         }
 
+        /// <summary>Push a single-byte-valued property (e.g. VGS display-rotation mode 0/1/2).</summary>
+        public void SendU8(uint kind, byte value)
+        {
+            if (!_sender.ConnectionIsConnected) return;
+            byte[] body = SessionPropertyPushBuilder.BuildU8Body(kind, value);
+            SendBody(body);
+        }
+
         /// <summary>
         /// Send a pre-built FF property body (init kind=2/7 handshake, dashboard
         /// switches kind=4, brightness/standby kind=1/10) on the FF session —

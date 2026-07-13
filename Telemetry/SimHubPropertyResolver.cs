@@ -37,7 +37,18 @@ namespace MozaPlugin.Telemetry
         public SimHub.Plugins.OutputPlugins.Dash.TemplatingCommon.NCalcEngineBase? FormulaEngine
             => _formula.Engine;
 
-        public double ResolveAsDouble(string path)
+        public double ResolveAsDouble(string path) => ResolveAsDouble(path, _formula);
+
+        /// <summary>
+        /// Same resolve, evaluating formulas on a caller-owned engine instance.
+        /// A <c>NCalcEngineBase</c> is NOT safe for concurrent evaluation (every
+        /// [property] resolution mutates its plain <c>VariableStack</c> HashSet,
+        /// and blink()/changed()/inertia() state rides plain Dictionaries —
+        /// verified by decompile), so each evaluator serializes internally. The
+        /// 50 Hz haptics workers pass their own instance so their ticks never
+        /// queue behind the 30 Hz telemetry/UI evaluations on the shared engine.
+        /// </summary>
+        public double ResolveAsDouble(string path, NCalcExpressionEvaluator formula)
         {
             if (!string.IsNullOrEmpty(path) && path.StartsWith("@internal/", StringComparison.Ordinal))
                 return ResolveInternalChannel(path);
@@ -45,7 +56,7 @@ namespace MozaPlugin.Telemetry
             // A mapping may be a SimHub formula ([property] NCalc / js:) rather than
             // a plain property path; evaluate it via the reused SimHub engine.
             if (NCalcExpressionEvaluator.LooksLikeExpression(path))
-                return _formula.EvalDouble(path);
+                return formula.EvalDouble(path);
 
             // A throwing property must not abort the whole frame tick (mirrors
             // the guard in ResolveAsString); an unresolvable channel reads 0.

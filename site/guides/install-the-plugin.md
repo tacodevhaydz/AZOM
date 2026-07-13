@@ -17,7 +17,7 @@ has it. Either way the whole thing takes about two minutes.
 ## 1 · Download the release
 
 Grab the latest `MozaPlugin_<version>.zip` from the
-[Releases page](https://github.com/giantorth/moza-simhub-plugin/releases/latest) and
+[Releases page](https://github.com/giantorth/AZOM/releases/latest) and
 unzip it. Inside is a single file: `MozaPlugin.dll`.
 
 ## 2 · Find your SimHub folder

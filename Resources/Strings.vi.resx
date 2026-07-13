@@ -638,4 +638,89 @@ Id: {2}</value></data>
   <data name="Option_Ab9FlightSim" xml:space="preserve"><value>Mô phỏng bay</value></data>
   <data name="SliderLabel_KeepaliveTimeout" xml:space="preserve"><value>Thời gian chờ keepalive</value></data>
   <data name="Hint_KeepaliveTimeout" xml:space="preserve"><value>Thời gian tiếp tục làm mới đèn LED sau khi telemetry dừng trước khi vô-lăng có thể ngủ. 0 = dừng ngay.</value></data>
+  <data name="SliderLabel_DisplayRotation" xml:space="preserve"><value>Xoay màn hình</value></data>
+  <data name="Option_RotationSmooth" xml:space="preserve"><value>Mượt</value></data>
+  <data name="Option_RotationImmediate" xml:space="preserve"><value>Tức thì</value></data>
+  <data name="TabHeader_Stalks" xml:space="preserve"><value>Cần gạt</value></data>
+  <data name="Section_Stalks" xml:space="preserve"><value>Cần gạt đa chức năng</value></data>
+  <data name="Status_SearchingForStalks" xml:space="preserve"><value>Đang tìm cần gạt…</value></data>
+  <data name="Status_StalksConnected" xml:space="preserve"><value>Đã kết nối cần gạt</value></data>
+  <data name="Section_StalkMode" xml:space="preserve"><value>Chế độ cần gạt</value></data>
+  <data name="Option_StalkButtonBox" xml:space="preserve"><value>Hộp nút</value></data>
+  <data name="Option_StalkTruckSim" xml:space="preserve"><value>Mô phỏng xe tải (ETS2/ATS)</value></data>
+  <data name="Hint_StalksTruckSim" xml:space="preserve"><value>Ở chế độ mô phỏng xe tải, plugin chuyển thao tác cần gạt thành phím bàn phím cho Euro/American Truck Simulator. Ở chế độ hộp nút, cần gạt hoạt động như các nút thường.</value></data>
+  <data name="Section_StalksKeyMapping" xml:space="preserve"><value>Gán nút</value></data>
+  <data name="Subtitle_StalksInteractiveMap" xml:space="preserve"><value>Nhấn một điều khiển cần gạt để làm nổi bật nút của nó, rồi gán một phím hoặc cấp gạt mưa/đèn.</value></data>
+  <data name="Section_StalksWiperSync" xml:space="preserve"><value>Gạt mưa &amp; đèn</value></data>
+  <data name="Subtitle_StalksWiperSync" xml:space="preserve"><value>Trò chơi chuyển gạt mưa/đèn bằng phím xoay vòng; plugin gửi đúng số lần nhấn để đạt vị trí cần gạt.</value></data>
+  <data name="SliderLabel_WiperStageCount" xml:space="preserve"><value>Cấp gạt mưa</value></data>
+  <data name="Label_WiperForwardWraps" xml:space="preserve"><value>Phím gạt mưa xoay vòng</value></data>
+  <data name="SliderLabel_LightStageCount" xml:space="preserve"><value>Cấp đèn</value></data>
+  <data name="Button_ResyncWipers" xml:space="preserve"><value>Đồng bộ lại gạt mưa</value></data>
+  <data name="Hint_ResyncWipers" xml:space="preserve"><value>Đưa gạt mưa trong trò chơi về tắt để khớp lại với cấp mà plugin đang theo dõi.</value></data>
+  <data name="Label_StalksLastPressed" xml:space="preserve"><value>Lần nhấn cuối: nút {0}</value></data>
+  <data name="Button_LoadEts2Defaults" xml:space="preserve"><value>Tải mặc định ETS2/ATS</value></data>
+  <data name="Button_ResyncStages" xml:space="preserve"><value>Đồng bộ lại gạt mưa và đèn</value></data>
+  <data name="SliderLabel_DisplayName" xml:space="preserve"><value>Tên hiển thị</value></data>
+  <data name="Hint_MBoosterDisplayName" xml:space="preserve"><value>Tùy chọn — giúp phân biệt hai mBooster có cùng vai trò trong danh sách thiết bị ở trên.</value></data>
+  <data name="Section_CustomEffects" xml:space="preserve"><value>Hiệu ứng tùy chỉnh (Thử nghiệm)</value></data>
+  <data name="Subtitle_CustomEffectsExperimental" xml:space="preserve"><value>// thử nghiệm — rung do người dùng định nghĩa bằng công thức SimHub/NCalc</value></data>
+  <data name="Hint_CustomEffectsExperimental" xml:space="preserve"><value>Thử nghiệm — mỗi hiệu ứng tùy chỉnh làm rung động cơ bằng thuộc tính SimHub hoặc công thức NCalc mà bạn cung cấp. Tất cả hiệu ứng tùy chỉnh (và hiệu ứng Engine tích hợp) dùng chung một kênh, nên tại một thời điểm chỉ một hiệu ứng có thể điều khiển động cơ; hiệu ứng đang hoạt động được xử lý gần nhất sẽ thắng. Tần số/Cường độ hoạt động như thanh trượt của Engine.</value></data>
+  <data name="Hint_CustomEffectFormula" xml:space="preserve"><value>Một thuộc tính SimHub (ví dụ SpeedKmh) hoặc công thức NCalc (ví dụ [Rpms] / [CarSettings_MaxRPM]). Khi tắt "Dùng ngưỡng", giá trị (giới hạn 0..1) điều chỉnh Cường độ liên tục. Khi bật, hiệu ứng rung theo Cường độ đã đặt mỗi khi giá trị đạt hoặc vượt ngưỡng.</value></data>
+  <data name="Label_UseThreshold" xml:space="preserve"><value>Dùng ngưỡng</value></data>
+  <data name="SliderLabel_Name" xml:space="preserve"><value>Tên</value></data>
+  <data name="SliderLabel_Formula" xml:space="preserve"><value>Công thức</value></data>
+  <data name="SliderLabel_Threshold" xml:space="preserve"><value>Ngưỡng</value></data>
+  <data name="Button_AddCustomEffect" xml:space="preserve"><value>+ Thêm hiệu ứng tùy chỉnh</value></data>
+  <data name="Button_DeleteCustomEffect" xml:space="preserve"><value>Xóa hiệu ứng</value></data>
+  <data name="DefaultName_CustomEffect" xml:space="preserve"><value>Hiệu ứng tùy chỉnh</value></data>
+  <data name="Section_PedalRoles" xml:space="preserve"><value>Vai trò bàn đạp</value></data>
+  <data name="Label_PedalAxis" xml:space="preserve"><value>Bàn đạp {0}</value></data>
+  <data name="Hint_MBoosterAxisRoles" xml:space="preserve"><value>mBooster này lưu trữ nhiều bàn đạp trên một kết nối. Gán mỗi trục được phát hiện cho một đầu vào trò chơi. Thứ tự mặc định theo bố cục Rx/Ry/Rz của Moza (ga/phanh/côn) — gán lại tại đây nếu một bàn đạp điều khiển sai đầu vào.</value></data>
+  <data name="Label_EffectsForPedal" xml:space="preserve"><value>Configure pedal:</value></data>
+  <data name="Note_PassivePedalNoEffects" xml:space="preserve"><value>This pedal is passive (no motor) — vibration effects don't apply.</value></data>
+  <data name="TabHeader_Shifter" xml:space="preserve"><value>Cần số</value></data>
+  <data name="Section_ShifterSettings" xml:space="preserve"><value>CÀI ĐẶT CẦN SỐ</value></data>
+  <data name="Section_ShifterLeds" xml:space="preserve"><value>ĐÈN LED</value></data>
+  <data name="Subtitle_ShifterLeds" xml:space="preserve"><value>// hai đèn LED tùy chỉnh (SGP)</value></data>
+  <data name="Subtitle_ShifterCalibrate" xml:space="preserve"><value>// vào số R &gt; 7 &gt; R &gt; Mo</value></data>
+  <data name="SliderLabel_ShifterPaddleSync" xml:space="preserve"><value>Đồng bộ lẫy</value></data>
+  <data name="Label_ShifterLed1" xml:space="preserve"><value>LED 1 (S1)</value></data>
+  <data name="Label_ShifterLed2" xml:space="preserve"><value>LED 2 (S2)</value></data>
+  <data name="SliderLabel_ShifterBrightness" xml:space="preserve"><value>Độ sáng LED</value></data>
+  <data name="ShifterColor_Red" xml:space="preserve"><value>Đỏ</value></data>
+  <data name="ShifterColor_Orange" xml:space="preserve"><value>Cam</value></data>
+  <data name="ShifterColor_Yellow" xml:space="preserve"><value>Vàng</value></data>
+  <data name="ShifterColor_Green" xml:space="preserve"><value>Xanh lá</value></data>
+  <data name="ShifterColor_Cyan" xml:space="preserve"><value>Lục lam</value></data>
+  <data name="ShifterColor_Blue" xml:space="preserve"><value>Xanh dương</value></data>
+  <data name="ShifterColor_Purple" xml:space="preserve"><value>Tím</value></data>
+  <data name="ShifterColor_White" xml:space="preserve"><value>Trắng</value></data>
+  <data name="Section_WheelbaseLfe" xml:space="preserve"><value>HIỆU ỨNG RUNG ĐẾ</value></data>
+  <data name="SliderLabel_Trigger" xml:space="preserve"><value>Kích hoạt</value></data>
+  <data name="Label_EnginePresets" xml:space="preserve"><value>Cài đặt sẵn động cơ:</value></data>
+  <data name="Preset_AdditiveEngine" xml:space="preserve"><value>Động cơ cộng tính</value></data>
+  <data name="Preset_BigRig" xml:space="preserve"><value>Xe tải lớn</value></data>
+  <data name="Preset_DetunedV8" xml:space="preserve"><value>V8 lệch nhịp</value></data>
+  <data name="Label_Defaults" xml:space="preserve"><value>Mặc định</value></data>
+  <data name="TriggerMode_Level" xml:space="preserve"><value>Mức</value></data>
+  <data name="TriggerMode_OnChange" xml:space="preserve"><value>Khi thay đổi</value></data>
+  <data name="Label_FormulaLimitsHz" xml:space="preserve"><value>Giới hạn công thức (Hz)</value></data>
+  <data name="Label_AlwaysOn" xml:space="preserve"><value>(luôn bật)</value></data>
+  <data name="TabHeader_WheelbaseLfe" xml:space="preserve"><value>Hiệu ứng LFE</value></data>
+  <data name="Section_EnginePresets" xml:space="preserve"><value>Cài đặt sẵn động cơ</value></data>
+  <data name="Section_EffectsSlot1" xml:space="preserve"><value>Khe hiệu ứng 1</value></data>
+  <data name="Section_EffectsSlot2" xml:space="preserve"><value>Khe hiệu ứng 2</value></data>
+  <data name="Section_EffectsSlot3" xml:space="preserve"><value>Khe hiệu ứng 3</value></data>
+  <data name="Label_Mode" xml:space="preserve"><value>Chế độ</value></data>
+  <data name="Mode_Engine" xml:space="preserve"><value>Động cơ</value></data>
+  <data name="Mode_Abs" xml:space="preserve"><value>ABS</value></data>
+  <data name="Mode_Gearshift" xml:space="preserve"><value>Sang số</value></data>
+  <data name="Mode_Custom" xml:space="preserve"><value>Tùy chỉnh</value></data>
+  <data name="Label_Load" xml:space="preserve"><value>Tải</value></data>
+  <data name="Label_Save" xml:space="preserve"><value>Lưu</value></data>
+  <data name="Label_Delete" xml:space="preserve"><value>Xóa</value></data>
+  <data name="Label_Import" xml:space="preserve"><value>Nhập</value></data>
+  <data name="Label_Export" xml:space="preserve"><value>Xuất</value></data>
+  <data name="Preset_RoadRumble" xml:space="preserve"><value>Rung mặt đường</value></data>
 </root>

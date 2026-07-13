@@ -37,6 +37,8 @@ namespace MozaPlugin.Telemetry
         private volatile bool _running;
         private bool _lastConnected;
         private int _tickCounter;
+        private readonly List<Cm1DisplayEmitter.Record> _chunkScratch
+            = new List<Cm1DisplayEmitter.Record>(Cm1DisplayEmitter.RecordsPerFrame);
 
         private volatile StatusDataBase? _latestGameData;
         private volatile bool _gameRunning;
@@ -148,7 +150,10 @@ namespace MozaPlugin.Telemetry
             var fields = Cm1DashboardCatalog.Fields;
             int per = Cm1DisplayEmitter.RecordsPerFrame;
             int chunk = 0;
-            var recs = new List<Cm1DisplayEmitter.Record>(per);
+            // BuildValueFrame consumes the records synchronously — one reused
+            // list instead of a fresh allocation per chunk per tick.
+            var recs = _chunkScratch;
+            recs.Clear();
             for (int i = 0; i < fields.Length; i++)
             {
                 recs.Add(new Cm1DisplayEmitter.Record(fields[i].Key, ValueFor(fields[i])));
@@ -158,7 +163,7 @@ namespace MozaPlugin.Telemetry
                     if (slot < PingSlot)
                         _connection.SendStream((StreamKind)slot,
                             Cm1DisplayEmitter.BuildValueFrame(Cm1DisplayEmitter.GroupPrimary, recs));
-                    recs = new List<Cm1DisplayEmitter.Record>(per);
+                    recs.Clear();
                     chunk++;
                 }
             }

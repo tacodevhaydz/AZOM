@@ -576,22 +576,31 @@
                                             </LinearGradientBrush>
                                         </Rectangle.Fill>
                                     </Rectangle>
-                                    <!-- Collapse/expand chevron — hidden unless IsCollapsible is
-                                         set; clicking anywhere in the header (PART_Header, see
-                                         SectionCard.OnApplyTemplate) toggles IsExpanded. -->
-                                    <Path x:Name="PART_Chevron" Grid.Column="4" Margin="14,0,0,0"
-                                          Width="10" Height="6" Stretch="Uniform"
-                                          Data="M0,0 L5,6 L10,0"
-                                          Stroke="{StaticResource TextDimBrush}" StrokeThickness="1.6"
-                                          StrokeLineJoin="Round" StrokeStartLineCap="Round" StrokeEndLineCap="Round"
-                                          Fill="{x:Null}"
-                                          VerticalAlignment="Center"
-                                          RenderTransformOrigin="0.5,0.5"
-                                          Visibility="Collapsed">
-                                        <Path.RenderTransform>
-                                            <RotateTransform Angle="0"/>
-                                        </Path.RenderTransform>
-                                    </Path>
+                                    <!-- Optional header-right content (HeaderedContentControl.Header;
+                                         null on most cards → renders nothing) plus the collapse/
+                                         expand chevron — hidden unless IsCollapsible is set; clicking
+                                         anywhere in the header (PART_Header, see
+                                         SectionCard.OnApplyTemplate) toggles IsExpanded. Both share
+                                         this one trailing Auto column. -->
+                                    <StackPanel Grid.Column="4" Orientation="Horizontal"
+                                                VerticalAlignment="Center">
+                                        <ContentPresenter Content="{TemplateBinding Header}"
+                                                          VerticalAlignment="Center"
+                                                          Margin="12,0,0,0"/>
+                                        <Path x:Name="PART_Chevron" Margin="14,0,0,0"
+                                              Width="10" Height="6" Stretch="Uniform"
+                                              Data="M0,0 L5,6 L10,0"
+                                              Stroke="{StaticResource TextDimBrush}" StrokeThickness="1.6"
+                                              StrokeLineJoin="Round" StrokeStartLineCap="Round" StrokeEndLineCap="Round"
+                                              Fill="{x:Null}"
+                                              VerticalAlignment="Center"
+                                              RenderTransformOrigin="0.5,0.5"
+                                              Visibility="Collapsed">
+                                            <Path.RenderTransform>
+                                                <RotateTransform Angle="0"/>
+                                            </Path.RenderTransform>
+                                        </Path>
+                                    </StackPanel>
                                 </Grid>
                             </Border>
                             <!-- Body -->

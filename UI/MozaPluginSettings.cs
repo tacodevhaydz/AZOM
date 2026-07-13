@@ -1,5 +1,6 @@
 using System;
 using System.Collections.Generic;
+using MozaPlugin.Devices.StalksTruckSim;
 using MozaPlugin.Telemetry;
 using MozaPlugin.Telemetry.Era;
 using MozaPlugin.UI.UpdateCheck;
@@ -81,6 +82,9 @@ namespace MozaPlugin
         // see docs/protocol/findings/2026-04-29-session-01-property-push.md.
         public int DashDisplayBrightness { get; set; } = 100;
         public int DashDisplayStandbyMin { get; set; } = 5;
+        // VGS wheel display-rotation mode baseline (0=off, 1=smooth, 2=immediate).
+        // Pushed via session-0x02 ff-record kind=5; VGS-only. Default off.
+        public int DashDisplayRotation { get; set; } = 0;
 
         // CM2 dash (dual-screen): the dashboard the user selected for the CM2's
         // own pipeline, independent of the wheel's selection. Empty = catalog default.
@@ -217,16 +221,18 @@ namespace MozaPlugin
         // Bridge-format JSONL wire trace at SimHub/Logs/moza-wire-*.jsonl.
         // Code-only toggle — not serialized so changing the default here
         // is the only way to flip it. Avoids stale persisted values.
-        // Currently ON while string-channel (sess=0x01 type=0x05) wiring is
-        // being verified; flip back to false once that work is signed off.
         [Newtonsoft.Json.JsonIgnore]
         public bool EnableWireTraceFileSink { get; set; } = false;
 
+        // Per-frame wire/firmware-debug log lines (MozaLog.WireDebugEnabled).
+        // No UI — flip to false in MozaPluginSettings.json to silence
+        // frame-rate debug logging on the serial read thread.
+        public bool VerboseWireDebugLog { get; set; } = true;
+
         // Radar (patch/ri*, OpponentCount, PlayerIndex) + track-map
         // (patch/Location*) channels. Code-only toggle — not serialized, no UI.
-        // TEMPORARILY true to test opponent-position + heading data on the wheel
-        // (no tier-def enable-handshake change — that broke binding); set back to
-        // false before shipping until the feature is verified.
+        // Shipping enabled: the radar/track-map feature is staying on (no
+        // tier-def enable-handshake change — that broke binding).
         [Newtonsoft.Json.JsonIgnore]
         public bool EnableRadarTrackMapChannels { get; set; } = true;
 
@@ -383,6 +389,16 @@ namespace MozaPlugin
         public Dictionary<Guid, bool> WheelTelemetryEnabledByPageGuid { get; set; }
             = new Dictionary<Guid, bool>();
 
+        // Wheelbase-LFE presets (named snapshots of the 3 slots). Global library,
+        // applied to the active profile's BaseLfe on load. The factory presets are
+        // seeded in here once (BaseLfePresetsSeeded) and are thereafter ordinary
+        // editable/deletable entries; import/export round-trips this list.
+        public List<BaseLfePreset> BaseLfePresets { get; set; } = new List<BaseLfePreset>();
+        // Factory-preset seed version applied to this library (0 = never). Bumped
+        // when the factory presets change so existing users get the updated set
+        // (factory-named presets are refreshed; user-named presets are untouched).
+        public int BaseLfePresetsSeedVersion { get; set; } = 0;
+
         // Default telemetry-enable state for a wheel page that has no explicit entry
         // in WheelTelemetryEnabledByPageGuid yet (dict-missing = "no opinion"). Fresh
         // installs set this true via the ReadCommonSettings create-if-not-found factory
@@ -474,6 +490,17 @@ namespace MozaPlugin
         public Dictionary<Guid, int> Cm1ActiveDashboardByGuid { get; set; }
             = new Dictionary<Guid, int>();
 
+        // --- MOZA Multi-Function Stalks: truck-sim keyboard emulation ---
+
+        /// <summary>Stalks operating mode. Default <see cref="StalkMode.ButtonBox"/>
+        /// = the plugin does nothing (raw HID buttons). <see cref="StalkMode.TruckSim"/>
+        /// enables ETS2/ATS keyboard emulation from the button map below.</summary>
+        public StalkMode StalksMode { get; set; } = StalkMode.ButtonBox;
+
+        /// <summary>Per-button map + wiper/light stage config used when
+        /// <see cref="StalksMode"/> is <see cref="StalkMode.TruckSim"/>.</summary>
+        public StalkTruckSimSettings StalksTruckSim { get; set; } = new StalkTruckSimSettings();
+
     }
 
     /// <summary>
@@ -530,6 +557,93 @@ namespace MozaPlugin
                 TelemetrySpeedMs = TelemetrySpeedMs,
                 ButtonsSpeedMs = ButtonsSpeedMs,
                 KnobSpeedMs = KnobSpeedMs,
+            };
+        }
+    }
+
+    /// <summary>
+    /// Truck-sim keyboard-mapping config for the MOZA Multi-Function Stalks. Stored
+    /// on <see cref="MozaPluginSettings.StalksTruckSim"/>. The per-button map is
+    /// assigned interactively in the Stalks settings tab — there is no default map.
+    /// Cycle keys / stage counts start at ETS2 defaults and are user-adjustable.
+    /// </summary>
+    public sealed class StalkTruckSimSettings
+    {
+        /// <summary>0-based stalk button index → action. Absent = unmapped.</summary>
+        public Dictionary<int, StalkAction> ButtonActions { get; set; }
+            = new Dictionary<int, StalkAction>();
+
+        // Cycle keys for the stage-cycle controls (game keybinds; ETS2 defaults).
+        public string WiperForwardKey { get; set; } = "P";     // ETS2 wipers forward
+        public string WiperBackKey { get; set; } = "Minus";    // ETS2 "wipers back"
+        public string LightCycleKey { get; set; } = "L";       // ETS2 light-mode cycle
+
+        // Turn-signal keys (toggle in-game). The neutral position re-taps whichever
+        // side is active to cancel it.
+        public string IndicatorLeftKey { get; set; } = "[";
+        public string IndicatorRightKey { get; set; } = "]";
+
+        // Stage models.
+        public int WiperStageCount { get; set; } = 4;
+        public bool WiperForwardWraps { get; set; } = false;   // ETS2 wiper key does not wrap
+        public int LightStageCount { get; set; } = 3;          // lights: forward-only wrap (L)
+
+        // Key output timing (ms).
+        public int KeyHoldMs { get; set; } = 30;
+        public int KeyGapMs { get; set; } = 40;
+
+        public StalkTruckSimSettings Clone()
+        {
+            var c = new StalkTruckSimSettings
+            {
+                WiperForwardKey = WiperForwardKey,
+                WiperBackKey = WiperBackKey,
+                LightCycleKey = LightCycleKey,
+                IndicatorLeftKey = IndicatorLeftKey,
+                IndicatorRightKey = IndicatorRightKey,
+                WiperStageCount = WiperStageCount,
+                WiperForwardWraps = WiperForwardWraps,
+                LightStageCount = LightStageCount,
+                KeyHoldMs = KeyHoldMs,
+                KeyGapMs = KeyGapMs,
+                ButtonActions = new Dictionary<int, StalkAction>(),
+            };
+            if (ButtonActions != null)
+                foreach (var kv in ButtonActions)
+                    c.ButtonActions[kv.Key] = kv.Value?.Clone() ?? new StalkAction();
+            return c;
+        }
+
+        /// <summary>Populate the ETS2/ATS default button map (0-based button indices,
+        /// i.e. HID button number − 1): light knob 1–3, high beam 4/5, turn signals
+        /// 8/9/10, wipers single-swipe 20 and stages 21–24.</summary>
+        public void ApplyEts2Defaults()
+        {
+            WiperForwardKey = "P";
+            WiperBackKey = "Minus";
+            LightCycleKey = "L";
+            IndicatorLeftKey = "[";
+            IndicatorRightKey = "]";
+            WiperStageCount = 4;
+            WiperForwardWraps = false;
+            LightStageCount = 3;
+
+            ButtonActions = new Dictionary<int, StalkAction>
+            {
+                { 0, new StalkAction { Kind = StalkActionKind.LightStage, Stage = 0 } }, // btn1 lights off
+                { 1, new StalkAction { Kind = StalkActionKind.LightStage, Stage = 1 } }, // btn2 accessory
+                { 2, new StalkAction { Kind = StalkActionKind.LightStage, Stage = 2 } }, // btn3 headlights
+                { 3, new StalkAction { Kind = StalkActionKind.Momentary, Key = "K" } },  // btn4 high beam toggle
+                { 4, new StalkAction { Kind = StalkActionKind.ReleaseHeld } },           // btn5 neutral: releases the flash
+                { 5, new StalkAction { Kind = StalkActionKind.LatchKey, Key = "J" } },   // btn6 flash: latch J until neutral (btn5)
+                { 7, new StalkAction { Kind = StalkActionKind.IndicatorRight } },        // btn8 right
+                { 8, new StalkAction { Kind = StalkActionKind.IndicatorCancel } },       // btn9 neutral/cancel
+                { 9, new StalkAction { Kind = StalkActionKind.IndicatorLeft } },         // btn10 left
+                { 19, new StalkAction { Kind = StalkActionKind.WiperSingleSwipe } },     // btn20 single swipe
+                { 20, new StalkAction { Kind = StalkActionKind.WiperStage, Stage = 0 } },// btn21 off
+                { 21, new StalkAction { Kind = StalkActionKind.WiperStage, Stage = 1 } },// btn22 intermittent
+                { 22, new StalkAction { Kind = StalkActionKind.WiperStage, Stage = 2 } },// btn23 low
+                { 23, new StalkAction { Kind = StalkActionKind.WiperStage, Stage = 3 } },// btn24 hi
             };
         }
     }

@@ -569,6 +569,9 @@ namespace MozaPlugin.Devices
                 dm.SendPresenceProbe(MozaProtocol.DevicePedals);
             if (!_detectionState.HandbrakeDetected)
                 dm.SendPresenceProbe(MozaProtocol.DeviceHandbrake);
+            // HGP/SGP shifter behind the hub (dev 0x1A).
+            if (!_detectionState.ShifterDetected)
+                dm.SendPresenceProbe(MozaProtocol.DeviceHPattern);
             // Positive-evidence probe for the broken-base case: while NO wheel has
             // been detected on the primary (base), also probe the wheel over the
             // hub pipe. A reply (recognized in OnHubMessageReceived) stamps
@@ -640,6 +643,8 @@ namespace MozaPlugin.Devices
                     _hubDeviceProber.MarkPedalsDetected();
                 else if (deviceId == MozaProtocol.DeviceHandbrake)
                     _hubDeviceProber.MarkHandbrakeDetected();
+                else if (deviceId == MozaProtocol.DeviceHPattern) // == DeviceSequential (0x1A)
+                    _hubDeviceProber.MarkShifterDetected();
                 return;
             }
 
@@ -665,6 +670,7 @@ namespace MozaPlugin.Devices
             // belongs to the primary pipe and is ignored here.
             if (!(r.Name.StartsWith("pedals-", StringComparison.Ordinal)
                   || r.Name.StartsWith("handbrake-", StringComparison.Ordinal)
+                  || r.Name.StartsWith("shifter-", StringComparison.Ordinal)
                   || r.Name.StartsWith("hub-", StringComparison.Ordinal)))
                 return;
 

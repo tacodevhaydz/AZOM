@@ -643,4 +643,89 @@ Id: {2}</value></data>
   <data name="Option_Ab9FlightSim" xml:space="preserve"><value>Flysimulering</value></data>
   <data name="SliderLabel_KeepaliveTimeout" xml:space="preserve"><value>Keepalive-tidsavbrudd</value></data>
   <data name="Hint_KeepaliveTimeout" xml:space="preserve"><value>Hvor lenge LED-ene oppdateres etter at telemetrien stopper før rattet kan gå i hvilemodus. 0 = stopp umiddelbart.</value></data>
+  <data name="SliderLabel_DisplayRotation" xml:space="preserve"><value>Skjermrotasjon</value></data>
+  <data name="Option_RotationSmooth" xml:space="preserve"><value>Jevn</value></data>
+  <data name="Option_RotationImmediate" xml:space="preserve"><value>Umiddelbar</value></data>
+  <data name="TabHeader_Stalks" xml:space="preserve"><value>Spaker</value></data>
+  <data name="Section_Stalks" xml:space="preserve"><value>Multifunksjonsspaker</value></data>
+  <data name="Status_SearchingForStalks" xml:space="preserve"><value>Søker etter spaker…</value></data>
+  <data name="Status_StalksConnected" xml:space="preserve"><value>Spaker tilkoblet</value></data>
+  <data name="Section_StalkMode" xml:space="preserve"><value>Spakmodus</value></data>
+  <data name="Option_StalkButtonBox" xml:space="preserve"><value>Knappeboks</value></data>
+  <data name="Option_StalkTruckSim" xml:space="preserve"><value>Truck sim (ETS2/ATS)</value></data>
+  <data name="Hint_StalksTruckSim" xml:space="preserve"><value>I truck sim-modus gjør programtillegget spakbevegelser om til tastaturtaster for Euro/American Truck Simulator. I knappeboks-modus fungerer spakene som vanlige knapper.</value></data>
+  <data name="Section_StalksKeyMapping" xml:space="preserve"><value>Knappetilordning</value></data>
+  <data name="Subtitle_StalksInteractiveMap" xml:space="preserve"><value>Trykk på en spakkontroll for å utheve knappen, og tildel deretter en tast eller vindusvisker-/lystrinn.</value></data>
+  <data name="Section_StalksWiperSync" xml:space="preserve"><value>Vindusviskere og lys</value></data>
+  <data name="Subtitle_StalksWiperSync" xml:space="preserve"><value>Spillet bytter viskere/lys med syklustaster; programtillegget sender riktig antall trykk for å nå spakposisjonen.</value></data>
+  <data name="SliderLabel_WiperStageCount" xml:space="preserve"><value>Viskertrinn</value></data>
+  <data name="Label_WiperForwardWraps" xml:space="preserve"><value>Viskertast går rundt</value></data>
+  <data name="SliderLabel_LightStageCount" xml:space="preserve"><value>Lystrinn</value></data>
+  <data name="Button_ResyncWipers" xml:space="preserve"><value>Synkroniser viskere på nytt</value></data>
+  <data name="Hint_ResyncWipers" xml:space="preserve"><value>Setter spillets viskere til av for å samstemme med trinnet programtillegget sporer.</value></data>
+  <data name="Label_StalksLastPressed" xml:space="preserve"><value>Sist trykket: knapp {0}</value></data>
+  <data name="Button_LoadEts2Defaults" xml:space="preserve"><value>Last inn ETS2/ATS-standard</value></data>
+  <data name="Button_ResyncStages" xml:space="preserve"><value>Synkroniser viskere og lys på nytt</value></data>
+  <data name="SliderLabel_DisplayName" xml:space="preserve"><value>Visningsnavn</value></data>
+  <data name="Hint_MBoosterDisplayName" xml:space="preserve"><value>Valgfritt – hjelper med å skille to mBooster med samme rolle i enhetslisten over.</value></data>
+  <data name="Section_CustomEffects" xml:space="preserve"><value>Egendefinerte effekter (eksperimentell)</value></data>
+  <data name="Subtitle_CustomEffectsExperimental" xml:space="preserve"><value>// eksperimentell – brukerdefinert vibrasjon drevet av SimHub/NCalc-formler</value></data>
+  <data name="Hint_CustomEffectsExperimental" xml:space="preserve"><value>Eksperimentell – hver egendefinert effekt vibrerer motoren ved hjelp av en SimHub-egenskap eller NCalc-formel du oppgir. Alle egendefinerte effekter (og den innebygde Engine-effekten) deler én kanal, så bare én kan drive motoren om gangen; den sist behandlede aktive effekten vinner. Frekvens/intensitet oppfører seg som Engine-glidebryterne.</value></data>
+  <data name="Hint_CustomEffectFormula" xml:space="preserve"><value>En SimHub-egenskap (f.eks. SpeedKmh) eller NCalc-formel (f.eks. [Rpms] / [CarSettings_MaxRPM]). Med «Bruk terskel» av skalerer verdien (begrenset 0..1) intensiteten kontinuerlig. På pulserer effekten med konfigurert intensitet når verdien er lik eller over terskelen.</value></data>
+  <data name="Label_UseThreshold" xml:space="preserve"><value>Bruk terskel</value></data>
+  <data name="SliderLabel_Name" xml:space="preserve"><value>Navn</value></data>
+  <data name="SliderLabel_Formula" xml:space="preserve"><value>Formel</value></data>
+  <data name="SliderLabel_Threshold" xml:space="preserve"><value>Terskel</value></data>
+  <data name="Button_AddCustomEffect" xml:space="preserve"><value>+ Legg til egendefinert effekt</value></data>
+  <data name="Button_DeleteCustomEffect" xml:space="preserve"><value>Slett effekt</value></data>
+  <data name="DefaultName_CustomEffect" xml:space="preserve"><value>Egendefinert effekt</value></data>
+  <data name="Section_PedalRoles" xml:space="preserve"><value>Pedalroller</value></data>
+  <data name="Label_PedalAxis" xml:space="preserve"><value>Pedal {0}</value></data>
+  <data name="Hint_MBoosterAxisRoles" xml:space="preserve"><value>Denne mBooster er vert for mer enn ett pedal på én tilkobling. Tildel hver oppdaget akse til en spillinngang. Standardrekkefølgen følger Mozas Rx/Ry/Rz-oppsett (gass/brems/clutch) — tilordne på nytt her hvis et pedal styrer feil inngang.</value></data>
+  <data name="Label_EffectsForPedal" xml:space="preserve"><value>Configure pedal:</value></data>
+  <data name="Note_PassivePedalNoEffects" xml:space="preserve"><value>This pedal is passive (no motor) — vibration effects don't apply.</value></data>
+  <data name="TabHeader_Shifter" xml:space="preserve"><value>Girspak</value></data>
+  <data name="Section_ShifterSettings" xml:space="preserve"><value>GIRSPAK-INNSTILLINGER</value></data>
+  <data name="Section_ShifterLeds" xml:space="preserve"><value>LED</value></data>
+  <data name="Subtitle_ShifterLeds" xml:space="preserve"><value>// to konfigurerbare LED-er (SGP)</value></data>
+  <data name="Subtitle_ShifterCalibrate" xml:space="preserve"><value>// gir R &gt; 7. &gt; R &gt; Nøytral</value></data>
+  <data name="SliderLabel_ShifterPaddleSync" xml:space="preserve"><value>Padle-synk</value></data>
+  <data name="Label_ShifterLed1" xml:space="preserve"><value>LED 1 (S1)</value></data>
+  <data name="Label_ShifterLed2" xml:space="preserve"><value>LED 2 (S2)</value></data>
+  <data name="SliderLabel_ShifterBrightness" xml:space="preserve"><value>LED-lysstyrke</value></data>
+  <data name="ShifterColor_Red" xml:space="preserve"><value>Rød</value></data>
+  <data name="ShifterColor_Orange" xml:space="preserve"><value>Oransje</value></data>
+  <data name="ShifterColor_Yellow" xml:space="preserve"><value>Gul</value></data>
+  <data name="ShifterColor_Green" xml:space="preserve"><value>Grønn</value></data>
+  <data name="ShifterColor_Cyan" xml:space="preserve"><value>Cyan</value></data>
+  <data name="ShifterColor_Blue" xml:space="preserve"><value>Blå</value></data>
+  <data name="ShifterColor_Purple" xml:space="preserve"><value>Lilla</value></data>
+  <data name="ShifterColor_White" xml:space="preserve"><value>Hvit</value></data>
+  <data name="Section_WheelbaseLfe" xml:space="preserve"><value>VIBRASJONSEFFEKTER FOR BASE</value></data>
+  <data name="SliderLabel_Trigger" xml:space="preserve"><value>Utløser</value></data>
+  <data name="Label_EnginePresets" xml:space="preserve"><value>Motorforhåndsinnstillinger:</value></data>
+  <data name="Preset_AdditiveEngine" xml:space="preserve"><value>Additiv motor</value></data>
+  <data name="Preset_BigRig" xml:space="preserve"><value>Vogntog</value></data>
+  <data name="Preset_DetunedV8" xml:space="preserve"><value>Ustemt V8</value></data>
+  <data name="Label_Defaults" xml:space="preserve"><value>Standard</value></data>
+  <data name="TriggerMode_Level" xml:space="preserve"><value>Nivå</value></data>
+  <data name="TriggerMode_OnChange" xml:space="preserve"><value>Ved endring</value></data>
+  <data name="Label_FormulaLimitsHz" xml:space="preserve"><value>Formelgrenser (Hz)</value></data>
+  <data name="Label_AlwaysOn" xml:space="preserve"><value>(alltid på)</value></data>
+  <data name="TabHeader_WheelbaseLfe" xml:space="preserve"><value>LFE-effekter</value></data>
+  <data name="Section_EnginePresets" xml:space="preserve"><value>Motorforhåndsinnstillinger</value></data>
+  <data name="Section_EffectsSlot1" xml:space="preserve"><value>Effektspor 1</value></data>
+  <data name="Section_EffectsSlot2" xml:space="preserve"><value>Effektspor 2</value></data>
+  <data name="Section_EffectsSlot3" xml:space="preserve"><value>Effektspor 3</value></data>
+  <data name="Label_Mode" xml:space="preserve"><value>Modus</value></data>
+  <data name="Mode_Engine" xml:space="preserve"><value>Motor</value></data>
+  <data name="Mode_Abs" xml:space="preserve"><value>ABS</value></data>
+  <data name="Mode_Gearshift" xml:space="preserve"><value>Girskift</value></data>
+  <data name="Mode_Custom" xml:space="preserve"><value>Egendef.</value></data>
+  <data name="Label_Load" xml:space="preserve"><value>Last inn</value></data>
+  <data name="Label_Save" xml:space="preserve"><value>Lagre</value></data>
+  <data name="Label_Delete" xml:space="preserve"><value>Slett</value></data>
+  <data name="Label_Import" xml:space="preserve"><value>Importer</value></data>
+  <data name="Label_Export" xml:space="preserve"><value>Eksporter</value></data>
+  <data name="Preset_RoadRumble" xml:space="preserve"><value>Veirumling</value></data>
 </root>

@@ -42,9 +42,9 @@ namespace MozaPlugin.Devices
 
         // Color swatch references
         private readonly Border[] _wheelFlagColorSwatches = new Border[6];
-        private readonly Border[] _wheelButtonColorSwatches = new Border[14];
-        private readonly CheckBox[] _wheelButtonDefaultTelemetryChecks = new CheckBox[14];
-        private readonly FrameworkElement[] _wheelButtonSlotContainers = new FrameworkElement[14];
+        private readonly Border[] _wheelButtonColorSwatches = new Border[MozaData.WheelButtonMax];
+        private readonly CheckBox[] _wheelButtonDefaultTelemetryChecks = new CheckBox[MozaData.WheelButtonMax];
+        private readonly FrameworkElement[] _wheelButtonSlotContainers = new FrameworkElement[MozaData.WheelButtonMax];
         private const int WheelRpmSwatchMax = 25;
         private readonly Border[] _wheelRpmColorSwatches = new Border[WheelRpmSwatchMax];
         private readonly TextBlock[] _wheelRpmIndexLabels = new TextBlock[WheelRpmSwatchMax];
@@ -292,7 +292,7 @@ skipReadByMode:
         private void BuildButtonSwatchRow()
         {
             if (_data == null) return;
-            const int count = 14;
+            const int count = MozaData.WheelButtonMax;
             for (int i = 0; i < count; i++)
             {
                 var col = new StackPanel
@@ -909,7 +909,7 @@ skipReadByMode:
                     WheelFlagSection.Visibility = (modelInfo?.HasFlagLeds ?? false)
                         ? Visibility.Visible : Visibility.Collapsed;
 
-                    for (int i = 0; i < 14; i++)
+                    for (int i = 0; i < MozaData.WheelButtonMax; i++)
                     {
                         var vis = (modelInfo?.IsButtonActive(i) ?? true) ? Visibility.Visible : Visibility.Collapsed;
                         if (_wheelButtonSlotContainers[i] != null)
@@ -938,8 +938,8 @@ skipReadByMode:
                     var flagOverlay = MergeOverlayIntoData(wheelOv?.WheelFlagColors, _data.WheelFlagColors);
                     var buttonOverlay = MergeOverlayIntoData(wheelOv?.WheelButtonColors, _data.WheelButtonColors);
                     UpdateSwatches(_wheelFlagColorSwatches, flagOverlay, 6);
-                    UpdateSwatches(_wheelButtonColorSwatches, buttonOverlay, 14);
-                    for (int i = 0; i < 14; i++)
+                    UpdateSwatches(_wheelButtonColorSwatches, buttonOverlay, MozaData.WheelButtonMax);
+                    for (int i = 0; i < MozaData.WheelButtonMax; i++)
                     {
                         var cb = _wheelButtonDefaultTelemetryChecks[i];
                         if (cb == null) continue;

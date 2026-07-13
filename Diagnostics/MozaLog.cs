@@ -15,6 +15,14 @@ namespace MozaPlugin
     /// </summary>
     public static class MozaLog
     {
+        // Gates the per-frame Debug lines on the serial read thread (the WIRE
+        // session-chunk diag and the firmware-debug echo) — each pays caller
+        // string interpolation + a ring insert under the global lock at frame
+        // rate. Everything else logs unconditionally. Default on (the ring is
+        // the diagnostics export's source); MozaPluginSettings.VerboseWireDebugLog
+        // turns it off for users who don't need wire-level logs.
+        public static volatile bool WireDebugEnabled = true;
+
         // Cap covers many sessions of dense [AZOM] traffic. Older lines drop
         // silently; the export pulls a chronological snapshot on demand.
         private const int MaxLines = 5000;

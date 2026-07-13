@@ -643,4 +643,89 @@ Id: {2}</value></data>
   <data name="Option_Ab9FlightSim" xml:space="preserve"><value>Simulación de vuelo</value></data>
   <data name="SliderLabel_KeepaliveTimeout" xml:space="preserve"><value>Tiempo de keepalive</value></data>
   <data name="Hint_KeepaliveTimeout" xml:space="preserve"><value>Cuánto tiempo seguir actualizando los LED tras detenerse la telemetría antes de que el volante pueda dormir. 0 = detener de inmediato.</value></data>
+  <data name="SliderLabel_DisplayRotation" xml:space="preserve"><value>Rotación de pantalla</value></data>
+  <data name="Option_RotationSmooth" xml:space="preserve"><value>Suave</value></data>
+  <data name="Option_RotationImmediate" xml:space="preserve"><value>Inmediata</value></data>
+  <data name="TabHeader_Stalks" xml:space="preserve"><value>Palancas</value></data>
+  <data name="Section_Stalks" xml:space="preserve"><value>Palancas multifunción</value></data>
+  <data name="Status_SearchingForStalks" xml:space="preserve"><value>Buscando palancas…</value></data>
+  <data name="Status_StalksConnected" xml:space="preserve"><value>Palancas conectadas</value></data>
+  <data name="Section_StalkMode" xml:space="preserve"><value>Modo de palanca</value></data>
+  <data name="Option_StalkButtonBox" xml:space="preserve"><value>Caja de botones</value></data>
+  <data name="Option_StalkTruckSim" xml:space="preserve"><value>Truck sim (ETS2/ATS)</value></data>
+  <data name="Hint_StalksTruckSim" xml:space="preserve"><value>En modo truck sim, el complemento convierte las pulsaciones de las palancas en teclas para Euro/American Truck Simulator. En modo caja de botones, las palancas funcionan como botones normales.</value></data>
+  <data name="Section_StalksKeyMapping" xml:space="preserve"><value>Asignación de botones</value></data>
+  <data name="Subtitle_StalksInteractiveMap" xml:space="preserve"><value>Pulsa un control de la palanca para resaltar su botón y luego asigna una tecla o una posición de limpiaparabrisas/luces.</value></data>
+  <data name="Section_StalksWiperSync" xml:space="preserve"><value>Limpiaparabrisas y luces</value></data>
+  <data name="Subtitle_StalksWiperSync" xml:space="preserve"><value>El juego cambia limpiaparabrisas/luces con teclas de ciclo; el complemento envía el número correcto de pulsaciones para alcanzar la posición de la palanca.</value></data>
+  <data name="SliderLabel_WiperStageCount" xml:space="preserve"><value>Etapas de limpiaparabrisas</value></data>
+  <data name="Label_WiperForwardWraps" xml:space="preserve"><value>La tecla de limpiaparabrisas da la vuelta</value></data>
+  <data name="SliderLabel_LightStageCount" xml:space="preserve"><value>Etapas de luces</value></data>
+  <data name="Button_ResyncWipers" xml:space="preserve"><value>Resincronizar limpiaparabrisas</value></data>
+  <data name="Hint_ResyncWipers" xml:space="preserve"><value>Lleva los limpiaparabrisas del juego a apagado para realinearlos con la etapa que sigue el complemento.</value></data>
+  <data name="Label_StalksLastPressed" xml:space="preserve"><value>Último pulsado: botón {0}</value></data>
+  <data name="Button_LoadEts2Defaults" xml:space="preserve"><value>Cargar valores por defecto ETS2/ATS</value></data>
+  <data name="Button_ResyncStages" xml:space="preserve"><value>Resincronizar limpiaparabrisas y luces</value></data>
+  <data name="SliderLabel_DisplayName" xml:space="preserve"><value>Nombre para mostrar</value></data>
+  <data name="Hint_MBoosterDisplayName" xml:space="preserve"><value>Opcional: ayuda a distinguir dos mBooster con el mismo rol en la lista de dispositivos de arriba.</value></data>
+  <data name="Section_CustomEffects" xml:space="preserve"><value>Efectos personalizados (experimental)</value></data>
+  <data name="Subtitle_CustomEffectsExperimental" xml:space="preserve"><value>// experimental: vibración definida por el usuario mediante fórmulas de SimHub/NCalc</value></data>
+  <data name="Hint_CustomEffectsExperimental" xml:space="preserve"><value>Experimental: cada efecto personalizado hace vibrar el motor usando una propiedad de SimHub o una fórmula de NCalc que proporciones. Todos los efectos personalizados (y el efecto Engine integrado) comparten un mismo canal, por lo que solo uno puede accionar el motor a la vez; gana el último efecto activo procesado. Frecuencia/Intensidad se comportan como los controles del Engine.</value></data>
+  <data name="Hint_CustomEffectFormula" xml:space="preserve"><value>Una propiedad de SimHub (p. ej. SpeedKmh) o una fórmula de NCalc (p. ej. [Rpms] / [CarSettings_MaxRPM]). Con «Usar umbral» desactivado, el valor (limitado a 0..1) escala la intensidad de forma continua. Activado, el efecto pulsa a la intensidad configurada cuando el valor alcanza o supera el umbral.</value></data>
+  <data name="Label_UseThreshold" xml:space="preserve"><value>Usar umbral</value></data>
+  <data name="SliderLabel_Name" xml:space="preserve"><value>Nombre</value></data>
+  <data name="SliderLabel_Formula" xml:space="preserve"><value>Fórmula</value></data>
+  <data name="SliderLabel_Threshold" xml:space="preserve"><value>Umbral</value></data>
+  <data name="Button_AddCustomEffect" xml:space="preserve"><value>+ Añadir efecto personalizado</value></data>
+  <data name="Button_DeleteCustomEffect" xml:space="preserve"><value>Eliminar efecto</value></data>
+  <data name="DefaultName_CustomEffect" xml:space="preserve"><value>Efecto personalizado</value></data>
+  <data name="Section_PedalRoles" xml:space="preserve"><value>Roles de pedales</value></data>
+  <data name="Label_PedalAxis" xml:space="preserve"><value>Pedal {0}</value></data>
+  <data name="Hint_MBoosterAxisRoles" xml:space="preserve"><value>Este mBooster aloja más de un pedal en una sola conexión. Asigna cada eje detectado a una entrada del juego. El orden predeterminado sigue la disposición Rx/Ry/Rz de Moza (acelerador/freno/embrague); reasígnalo aquí si un pedal controla la entrada equivocada.</value></data>
+  <data name="Label_EffectsForPedal" xml:space="preserve"><value>Configure pedal:</value></data>
+  <data name="Note_PassivePedalNoEffects" xml:space="preserve"><value>This pedal is passive (no motor) — vibration effects don't apply.</value></data>
+  <data name="TabHeader_Shifter" xml:space="preserve"><value>Cambio</value></data>
+  <data name="Section_ShifterSettings" xml:space="preserve"><value>AJUSTES DEL CAMBIO</value></data>
+  <data name="Section_ShifterLeds" xml:space="preserve"><value>LEDS</value></data>
+  <data name="Subtitle_ShifterLeds" xml:space="preserve"><value>// dos LED configurables (SGP)</value></data>
+  <data name="Subtitle_ShifterCalibrate" xml:space="preserve"><value>// mete R &gt; 7ª &gt; R &gt; Punto muerto</value></data>
+  <data name="SliderLabel_ShifterPaddleSync" xml:space="preserve"><value>Sinc. de levas</value></data>
+  <data name="Label_ShifterLed1" xml:space="preserve"><value>LED 1 (S1)</value></data>
+  <data name="Label_ShifterLed2" xml:space="preserve"><value>LED 2 (S2)</value></data>
+  <data name="SliderLabel_ShifterBrightness" xml:space="preserve"><value>Brillo del LED</value></data>
+  <data name="ShifterColor_Red" xml:space="preserve"><value>Rojo</value></data>
+  <data name="ShifterColor_Orange" xml:space="preserve"><value>Naranja</value></data>
+  <data name="ShifterColor_Yellow" xml:space="preserve"><value>Amarillo</value></data>
+  <data name="ShifterColor_Green" xml:space="preserve"><value>Verde</value></data>
+  <data name="ShifterColor_Cyan" xml:space="preserve"><value>Cian</value></data>
+  <data name="ShifterColor_Blue" xml:space="preserve"><value>Azul</value></data>
+  <data name="ShifterColor_Purple" xml:space="preserve"><value>Morado</value></data>
+  <data name="ShifterColor_White" xml:space="preserve"><value>Blanco</value></data>
+  <data name="Section_WheelbaseLfe" xml:space="preserve"><value>EFECTOS DE VIBRACIÓN DE LA BASE</value></data>
+  <data name="SliderLabel_Trigger" xml:space="preserve"><value>Disparador</value></data>
+  <data name="Label_EnginePresets" xml:space="preserve"><value>Preajustes de motor:</value></data>
+  <data name="Preset_AdditiveEngine" xml:space="preserve"><value>Motor aditivo</value></data>
+  <data name="Preset_BigRig" xml:space="preserve"><value>Camión pesado</value></data>
+  <data name="Preset_DetunedV8" xml:space="preserve"><value>V8 desafinado</value></data>
+  <data name="Label_Defaults" xml:space="preserve"><value>Predeterminados</value></data>
+  <data name="TriggerMode_Level" xml:space="preserve"><value>Nivel</value></data>
+  <data name="TriggerMode_OnChange" xml:space="preserve"><value>Al cambiar</value></data>
+  <data name="Label_FormulaLimitsHz" xml:space="preserve"><value>Límites de fórmula (Hz)</value></data>
+  <data name="Label_AlwaysOn" xml:space="preserve"><value>(siempre activo)</value></data>
+  <data name="TabHeader_WheelbaseLfe" xml:space="preserve"><value>Efectos LFE</value></data>
+  <data name="Section_EnginePresets" xml:space="preserve"><value>Preajustes de motor</value></data>
+  <data name="Section_EffectsSlot1" xml:space="preserve"><value>Ranura de efectos 1</value></data>
+  <data name="Section_EffectsSlot2" xml:space="preserve"><value>Ranura de efectos 2</value></data>
+  <data name="Section_EffectsSlot3" xml:space="preserve"><value>Ranura de efectos 3</value></data>
+  <data name="Label_Mode" xml:space="preserve"><value>Modo</value></data>
+  <data name="Mode_Engine" xml:space="preserve"><value>Motor</value></data>
+  <data name="Mode_Abs" xml:space="preserve"><value>ABS</value></data>
+  <data name="Mode_Gearshift" xml:space="preserve"><value>Cambio</value></data>
+  <data name="Mode_Custom" xml:space="preserve"><value>Personal.</value></data>
+  <data name="Label_Load" xml:space="preserve"><value>Cargar</value></data>
+  <data name="Label_Save" xml:space="preserve"><value>Guardar</value></data>
+  <data name="Label_Delete" xml:space="preserve"><value>Eliminar</value></data>
+  <data name="Label_Import" xml:space="preserve"><value>Importar</value></data>
+  <data name="Label_Export" xml:space="preserve"><value>Exportar</value></data>
+  <data name="Preset_RoadRumble" xml:space="preserve"><value>Vibración de carretera</value></data>
 </root>

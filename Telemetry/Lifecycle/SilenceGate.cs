@@ -46,6 +46,8 @@ namespace MozaPlugin.Telemetry.Lifecycle
         // one sender's Stop never stalls the other's reopen on a shared bus.
         // Cross-reload survival rides the reused persistent main-sender instance
         // (see the class summary), not a process-static.
+        // 64-bit stamps: written on read-thread/recovery workers, read on
+        // StartInner/UI — Interlocked on every access (x86, torn reads).
         private long _lastStopUtcTicks;
         private long _lastSwitchEmittedUtcTicks;
 
@@ -66,13 +68,15 @@ namespace MozaPlugin.Telemetry.Lifecycle
         /// <summary>Stamp the Stop→Start gate. Called from
         /// <c>TelemetrySender.Stop</c>. Every Stop must precede the next
         /// reopen by <see cref="StopReopenSilenceMs"/>.</summary>
-        public void MarkStopped(long nowUtcTicks) => _lastStopUtcTicks = nowUtcTicks;
+        public void MarkStopped(long nowUtcTicks)
+            => System.Threading.Interlocked.Exchange(ref _lastStopUtcTicks, nowUtcTicks);
 
         /// <summary>Read the prior Stop timestamp. Returns 0 if no Stop has
         /// happened in this SimHub process — the caller treats that as
         /// "first start, skip the silence wait" because any stale wheel
         /// session has long since timed out from a previous process.</summary>
-        public long LastStopUtcTicks => _lastStopUtcTicks;
+        public long LastStopUtcTicks
+            => System.Threading.Interlocked.Read(ref _lastStopUtcTicks);
 
         /// <summary>Compute how many milliseconds we still need to wait
         /// before reopening. Caller passes the pre-Stop timestamp (captured
@@ -89,7 +93,8 @@ namespace MozaPlugin.Telemetry.Lifecycle
 
         /// <summary>Arm the UI cooldown after a kind=4 dashboard-switch
         /// frame has gone out on the wire.</summary>
-        public void MarkSwitchEmitted(long nowUtcTicks) => _lastSwitchEmittedUtcTicks = nowUtcTicks;
+        public void MarkSwitchEmitted(long nowUtcTicks)
+            => System.Threading.Interlocked.Exchange(ref _lastSwitchEmittedUtcTicks, nowUtcTicks);
 
         /// <summary>True while the post-emit silence gate is active. UI
         /// consumers reflect this in dashboard-switch affordances (disable
@@ -99,8 +104,9 @@ namespace MozaPlugin.Telemetry.Lifecycle
         {
             get
             {
-                if (_lastSwitchEmittedUtcTicks == 0) return false;
-                long elapsedMs = (DateTime.UtcNow.Ticks - _lastSwitchEmittedUtcTicks)
+                long emitted = System.Threading.Interlocked.Read(ref _lastSwitchEmittedUtcTicks);
+                if (emitted == 0) return false;
+                long elapsedMs = (DateTime.UtcNow.Ticks - emitted)
                     / TimeSpan.TicksPerMillisecond;
                 int gateMs = _isHotRenegotiationEnabled()
                     ? HotSwitchCooldownMs

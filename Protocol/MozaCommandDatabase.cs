@@ -211,6 +211,15 @@ namespace MozaPlugin.Protocol
             AddCommand("base-hw-sub",        "base",  8, 0xFF, new byte[] { 2 }, 0, "array");
             AddCommand("base-mcu-uid",       "base",  6, 0xFF, new byte[] { },   0, "array");
             AddCommand("base-identity-11",   "base", 17, 0xFF, new byte[] { 4 }, 0, "array");
+            // Numeric base firmware version — dev 0x12 (main), read group 0x04,
+            // empty cmd. Reply `84 21 <maj min patch build>` e.g. 84 21 01 02 0A 0A
+            // = 1.2.10.10 (same shape as wheel-device-type, no cmd echo). DeviceType
+            // MUST be "main": MozaResponseParser hints dev-0x12 replies as "main"
+            // and drops any command whose DeviceType != hint, so a "base" (0x13)
+            // command would never match. Gates the wheelbase LFE effects. This is
+            // the NUMERIC version — distinct from base-sw-version (group 0x0F),
+            // which returns the hardware model string.
+            AddCommand("base-fw-version",    "main",  4, 0xFF, new byte[] { },   4, "array");
 
             // ===== ES WHEEL IDENTITY (device 0x18) =====
             // The ES (old-protocol) steering wheel answers identity probes at its
@@ -444,6 +453,27 @@ namespace MozaPlugin.Protocol
             AddCommand("handbrake-cal-start", "handbrake", 0xFF, 94, new byte[] { 3 }, 2, "int");
             AddCommand("handbrake-cal-stop",  "handbrake", 0xFF, 94, new byte[] { 4 }, 2, "int");
 
+            // ===== H-PATTERN / SEQUENTIAL SHIFTER (HGP/SGP, bus dev 0x1A) =====
+            // On its own USB-CDC pipe the shifter answers as root main (0x12);
+            // MozaDeviceManager's deviceIdOverride routes writes there. Settings
+            // read grp 0x51 / write grp 0x52, output read grp 0x53, calibration
+            // write grp 0x54. Verified against usb-capture/rs21_parameter.db
+            // (ShifterGetCfg_*/ShifterSetCfg_*) and docs/protocol/devices/shifter-0x1A.md.
+            AddCommand("shifter-hid-mode",    "shifter", 0x51, 0x52, new byte[] { 1 }, 2, "int");
+            AddCommand("shifter-apply-mode",  "shifter", 0x51, 0x52, new byte[] { 2 }, 2, "int");
+            AddCommand("shifter-brightness",  "shifter", 0x51, 0x52, new byte[] { 3 }, 2, "int");   // SGP LED brightness 0-10
+            // SGP 2 LEDs: 2-byte payload [S1,S2], each a palette index 0-7 (not RGB).
+            AddCommand("shifter-colors",      "shifter", 0x51, 0x52, new byte[] { 4 }, 2, "array");
+            AddCommand("shifter-direction",   "shifter", 0x51, 0x52, new byte[] { 5 }, 2, "int");
+            AddCommand("shifter-paddle-sync", "shifter", 0x51, 0x52, new byte[] { 6 }, 2, "int");   // {1,2}
+            // Read-only raw axis (output-x / ShifterTheta).
+            AddCommand("shifter-theta",       "shifter", 0x53, 0xFF, new byte[] { 1 }, 2, "int");
+            // Calibration (write-only, grp 0x54). Best-effort: present in foxblat
+            // serial.yml + SDK ShifterCalibrateStart/Finish, absent from the local
+            // parameter DB; gated on detection like handbrake calibration.
+            AddCommand("shifter-cal-start",   "shifter", 0xFF, 0x54, new byte[] { 3 }, 2, "int");
+            AddCommand("shifter-cal-stop",    "shifter", 0xFF, 0x54, new byte[] { 4 }, 2, "int");
+
             // ===== AB9 ACTIVE SHIFTER (dev id 0x12) =====
             // Reads (grp 0x1E) and writes (grp 0x1F) use different shapes:
             //   WRITE 7E 03 1F 12 <cmd> 00 <val>  →  echo on 0x9F
@@ -568,6 +598,25 @@ namespace MozaPlugin.Protocol
             AddCommand("mbooster-throttle-output", "mbooster", 37, 0xFF, new byte[] { 1 }, 2, "int");
             AddCommand("mbooster-brake-output",    "mbooster", 37, 0xFF, new byte[] { 2 }, 2, "int");
             AddCommand("mbooster-clutch-output",   "mbooster", 37, 0xFF, new byte[] { 3 }, 2, "int");
+
+            // ===== mBooster IDENTITY (read-only) — the mBooster is a chain host,
+            // addressed like the wheelbase: same identity/serial/presence probe
+            // surface, just re-tagged under the "mbooster" bus so replies (all on
+            // device 0x12, group|0x80) don't cross-match wheel-*/base-*/ab9-*.
+            // CAPTURE-VERIFIED against a real Pit House startup (dev 0x12):
+            //   7e 01 10 12 00 -> reply 7e 11 90 21 00 <16 ASCII> (serial part A)
+            //   7e 01 10 12 01 -> reply 7e 11 90 21 01 <16 ASCII> (serial part B)
+            //   full serial = A + B (32 ASCII chars), identical shape to wheel-serial-a/b.
+            //   7e 00 09 12    -> reply 7e 02 89 21 00 NN         (presence: NN sub-devices)
+            //   7e 01 07 12 01 -> reply model-name "mBooster".
+            // Names MUST start with "mbooster-" (MBoosterDeviceController drops any
+            // other reply) and groups 7/9/16 are otherwise unused by mBooster so
+            // they never collide in the group-indexed parser scan.
+            AddCommand("mbooster-model-name", "mbooster",  7, 0xFF, new byte[] { 1 }, 0, "array");
+            AddCommand("mbooster-serial-a",   "mbooster", 16, 0xFF, new byte[] { 0 }, 0, "array");
+            AddCommand("mbooster-serial-b",   "mbooster", 16, 0xFF, new byte[] { 1 }, 0, "array");
+            AddCommand("mbooster-presence",   "mbooster",  9, 0xFF, new byte[] { },  0, "array");
+            AddCommand("mbooster-device-type","mbooster",  4, 0xFF, new byte[] { },  0, "array");
 
             // ===== BASE AMBIENT LEDS (dev 0x12, write grp 0x20, read grp 0x22) =====
             // Two 9-LED strips on R21/R25/R27 bodies; R9/R12 silently drop the read.

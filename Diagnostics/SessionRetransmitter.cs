@@ -50,6 +50,12 @@ namespace MozaPlugin.Diagnostics
         private readonly Dictionary<(byte session, int seq), Pending> _queue
             = new Dictionary<(byte, int), Pending>();
         private readonly object _lock = new object();
+        // Lock-free mirror of _queue.Count so the per-tick DueRetransmits and
+        // per-ack Ack calls skip the lock + allocations entirely while idle
+        // (same pattern as PendingResponseTracker._pendingCount). Updated
+        // inside the lock after every mutation.
+        private volatile int _count;
+        private static readonly List<byte[]> s_noneDue = new List<byte[]>();
 
         // Wraparound watch — fired once per minute when seq approaches the u16
         // limit. Saved monotonically so warning rate is bounded regardless of
@@ -135,6 +141,7 @@ namespace MozaPlugin.Diagnostics
                         }
                     }
                 }
+                _count = _queue.Count;
             }
             if (warn)
             {
@@ -156,15 +163,20 @@ namespace MozaPlugin.Diagnostics
         /// </summary>
         public void Ack(byte session, int ackSeq)
         {
+            if (_count == 0) return;   // idle fast path — read-thread caller
             lock (_lock)
             {
-                var doomed = new List<(byte, int)>();
+                List<(byte, int)>? doomed = null;
                 foreach (var kv in _queue)
                 {
                     if (kv.Key.session == session && kv.Key.seq <= ackSeq)
-                        doomed.Add(kv.Key);
+                        (doomed ??= new List<(byte, int)>()).Add(kv.Key);
                 }
-                foreach (var k in doomed) _queue.Remove(k);
+                if (doomed != null)
+                {
+                    foreach (var k in doomed) _queue.Remove(k);
+                    _count = _queue.Count;
+                }
             }
         }
 
@@ -177,7 +189,11 @@ namespace MozaPlugin.Diagnostics
         /// </summary>
         public void Drop(byte session, int seq)
         {
-            lock (_lock) _queue.Remove((session, seq));
+            lock (_lock)
+            {
+                if (_queue.Remove((session, seq)))
+                    _count = _queue.Count;
+            }
         }
 
         /// <summary>True iff the given <c>(session, seq)</c> is still pending
@@ -187,6 +203,7 @@ namespace MozaPlugin.Diagnostics
         /// the tracked blind chunks so we can stop blasting.</summary>
         public bool Contains(byte session, int seq)
         {
+            if (_count == 0) return false;
             lock (_lock) return _queue.ContainsKey((session, seq));
         }
 
@@ -199,33 +216,42 @@ namespace MozaPlugin.Diagnostics
         /// </summary>
         public List<byte[]> DueRetransmits(int maxRetries)
         {
+            if (_count == 0) return s_noneDue;   // idle fast path — 2×/tick caller
             int now = Environment.TickCount;
-            var output = new List<byte[]>();
+            List<byte[]>? output = null;
             lock (_lock)
             {
-                var doomed = new List<(byte, int)>();
+                List<(byte, int)>? doomed = null;
                 foreach (var kv in _queue)
                 {
                     if (now - kv.Value.LastSentTicks < kv.Value.NextDelayMs) continue;
                     if (kv.Value.SendCount >= maxRetries)
                     {
-                        doomed.Add(kv.Key);
+                        (doomed ??= new List<(byte, int)>()).Add(kv.Key);
                         continue;
                     }
-                    output.Add(kv.Value.Frame);
+                    (output ??= new List<byte[]>()).Add(kv.Value.Frame);
                     kv.Value.LastSentTicks = now;
                     kv.Value.SendCount++;
                     int next = kv.Value.NextDelayMs * 2;
                     kv.Value.NextDelayMs = next > MaxBackoffMs ? MaxBackoffMs : next;
                 }
-                foreach (var k in doomed) _queue.Remove(k);
+                if (doomed != null)
+                {
+                    foreach (var k in doomed) _queue.Remove(k);
+                    _count = _queue.Count;
+                }
             }
-            return output;
+            return output ?? s_noneDue;
         }
 
         public void Clear()
         {
-            lock (_lock) _queue.Clear();
+            lock (_lock)
+            {
+                _queue.Clear();
+                _count = 0;
+            }
         }
     }
 }

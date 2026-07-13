@@ -662,4 +662,76 @@ Id: {2}</value></data>
   <data name="Option_Ab9FlightSim" xml:space="preserve"><value>Flight Simulation</value></data>
   <data name="SliderLabel_KeepaliveTimeout" xml:space="preserve"><value>Keepalive timeout</value></data>
   <data name="Hint_KeepaliveTimeout" xml:space="preserve"><value>How long to keep refreshing the LEDs after telemetry stops before the wheel can sleep. 0 = stop immediately.</value></data>
+  <data name="SliderLabel_DisplayRotation" xml:space="preserve"><value>Display Rotation</value></data>
+  <data name="Option_RotationSmooth" xml:space="preserve"><value>Smooth</value></data>
+  <data name="Option_RotationImmediate" xml:space="preserve"><value>Immediate</value></data>
+  <data name="TabHeader_Stalks" xml:space="preserve"><value>Stalks</value></data>
+  <data name="Section_Stalks" xml:space="preserve"><value>Multi-Function Stalks</value></data>
+  <data name="Status_SearchingForStalks" xml:space="preserve"><value>Searching for stalks…</value></data>
+  <data name="Status_StalksConnected" xml:space="preserve"><value>Stalks connected</value></data>
+  <data name="Section_StalkMode" xml:space="preserve"><value>Stalk Mode</value></data>
+  <data name="Option_StalkButtonBox" xml:space="preserve"><value>Button box</value></data>
+  <data name="Option_StalkTruckSim" xml:space="preserve"><value>Truck sim (ETS2/ATS)</value></data>
+  <data name="Hint_StalksTruckSim" xml:space="preserve"><value>In truck-sim mode the plugin turns stalk presses into keyboard keys for Euro/American Truck Simulator. In button-box mode the stalks act as plain buttons.</value></data>
+  <data name="Section_StalksKeyMapping" xml:space="preserve"><value>Button Mapping</value></data>
+  <data name="Subtitle_StalksInteractiveMap" xml:space="preserve"><value>Press a stalk control to highlight its button, then assign a key or wiper/light stage.</value></data>
+  <data name="Section_StalksWiperSync" xml:space="preserve"><value>Wipers &amp; Lights</value></data>
+  <data name="Subtitle_StalksWiperSync" xml:space="preserve"><value>The game steps wipers/lights with cycle keys; the plugin sends the right number of presses to reach the stalk position.</value></data>
+  <data name="SliderLabel_WiperStageCount" xml:space="preserve"><value>Wiper stages</value></data>
+  <data name="Label_WiperForwardWraps" xml:space="preserve"><value>Wiper key wraps around</value></data>
+  <data name="SliderLabel_LightStageCount" xml:space="preserve"><value>Light stages</value></data>
+  <data name="Button_ResyncWipers" xml:space="preserve"><value>Re-sync wipers</value></data>
+  <data name="Hint_ResyncWipers" xml:space="preserve"><value>Drives the game wipers back to off to re-align with the plugin's tracked stage.</value></data>
+  <data name="Label_StalksLastPressed" xml:space="preserve"><value>Last pressed: button {0}</value></data>
+  <data name="Button_LoadEts2Defaults" xml:space="preserve"><value>Load ETS2/ATS defaults</value></data>
+  <data name="Button_ResyncStages" xml:space="preserve"><value>Re-sync wipers &amp; lights</value></data>
+  <data name="Section_PedalRoles" xml:space="preserve"><value>Pedal Roles</value></data>
+  <data name="Label_PedalAxis" xml:space="preserve"><value>Pedal {0}</value></data>
+  <data name="Hint_MBoosterAxisRoles" xml:space="preserve"><value>This mBooster hosts more than one pedal on one connection. Assign each detected axis to a game input. The default order follows Moza's Rx/Ry/Rz layout (throttle/brake/clutch) — remap here if a pedal drives the wrong input.</value></data>
+  <data name="Label_EffectsForPedal" xml:space="preserve"><value>Configure pedal:</value></data>
+  <data name="Note_PassivePedalNoEffects" xml:space="preserve"><value>This pedal is passive (no motor) — vibration effects don't apply.</value></data>
+  <data name="TabHeader_Shifter" xml:space="preserve"><value>Shifter</value></data>
+  <data name="Section_ShifterSettings" xml:space="preserve"><value>SHIFTER SETTINGS</value></data>
+  <data name="Section_ShifterLeds" xml:space="preserve"><value>LEDS</value></data>
+  <data name="Subtitle_ShifterLeds" xml:space="preserve"><value>// two configurable LEDs (SGP)</value></data>
+  <data name="Subtitle_ShifterCalibrate" xml:space="preserve"><value>// shift R &gt; 7th &gt; R &gt; Neutral</value></data>
+  <data name="SliderLabel_ShifterPaddleSync" xml:space="preserve"><value>Paddle Shift Sync</value></data>
+  <data name="Label_ShifterLed1" xml:space="preserve"><value>LED 1 (S1)</value></data>
+  <data name="Label_ShifterLed2" xml:space="preserve"><value>LED 2 (S2)</value></data>
+  <data name="SliderLabel_ShifterBrightness" xml:space="preserve"><value>LED Brightness</value></data>
+  <data name="ShifterColor_Red" xml:space="preserve"><value>Red</value></data>
+  <data name="ShifterColor_Orange" xml:space="preserve"><value>Orange</value></data>
+  <data name="ShifterColor_Yellow" xml:space="preserve"><value>Yellow</value></data>
+  <data name="ShifterColor_Green" xml:space="preserve"><value>Green</value></data>
+  <data name="ShifterColor_Cyan" xml:space="preserve"><value>Cyan</value></data>
+  <data name="ShifterColor_Blue" xml:space="preserve"><value>Blue</value></data>
+  <data name="ShifterColor_Purple" xml:space="preserve"><value>Purple</value></data>
+  <data name="ShifterColor_White" xml:space="preserve"><value>White</value></data>
+  <data name="Section_WheelbaseLfe" xml:space="preserve"><value>BASE VIBRATION EFFECTS</value></data>
+  <data name="SliderLabel_Trigger" xml:space="preserve"><value>Trigger</value></data>
+  <data name="Label_EnginePresets" xml:space="preserve"><value>Engine presets:</value></data>
+  <data name="Preset_AdditiveEngine" xml:space="preserve"><value>Additive Engine</value></data>
+  <data name="Preset_BigRig" xml:space="preserve"><value>Big Rig</value></data>
+  <data name="Preset_DetunedV8" xml:space="preserve"><value>Detuned V8</value></data>
+  <data name="Label_Defaults" xml:space="preserve"><value>Defaults</value></data>
+  <data name="TriggerMode_Level" xml:space="preserve"><value>Level</value></data>
+  <data name="TriggerMode_OnChange" xml:space="preserve"><value>On change</value></data>
+  <data name="Label_FormulaLimitsHz" xml:space="preserve"><value>Formula limits (Hz)</value></data>
+  <data name="Label_AlwaysOn" xml:space="preserve"><value>(always on)</value></data>
+  <data name="TabHeader_WheelbaseLfe" xml:space="preserve"><value>LFE Effects</value></data>
+  <data name="Section_EnginePresets" xml:space="preserve"><value>Engine Presets</value></data>
+  <data name="Section_EffectsSlot1" xml:space="preserve"><value>Effects Slot 1</value></data>
+  <data name="Section_EffectsSlot2" xml:space="preserve"><value>Effects Slot 2</value></data>
+  <data name="Section_EffectsSlot3" xml:space="preserve"><value>Effects Slot 3</value></data>
+  <data name="Label_Mode" xml:space="preserve"><value>Mode</value></data>
+  <data name="Mode_Engine" xml:space="preserve"><value>Engine</value></data>
+  <data name="Mode_Abs" xml:space="preserve"><value>ABS</value></data>
+  <data name="Mode_Gearshift" xml:space="preserve"><value>Gearshift</value></data>
+  <data name="Mode_Custom" xml:space="preserve"><value>Custom</value></data>
+  <data name="Label_Load" xml:space="preserve"><value>Load</value></data>
+  <data name="Label_Save" xml:space="preserve"><value>Save</value></data>
+  <data name="Label_Delete" xml:space="preserve"><value>Delete</value></data>
+  <data name="Label_Import" xml:space="preserve"><value>Import</value></data>
+  <data name="Label_Export" xml:space="preserve"><value>Export</value></data>
+  <data name="Preset_RoadRumble" xml:space="preserve"><value>Road Rumble</value></data>
 </root>

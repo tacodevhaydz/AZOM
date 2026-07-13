@@ -86,6 +86,8 @@ namespace MozaPlugin.Devices.WheelUi
                 catch { }
                 try { _dashEventSubscribedPlugin.Fsr1ActiveIndexChanged -= OnFsr1ActiveIndexChanged; }
                 catch { }
+                try { _dashEventSubscribedPlugin.Cm1ActiveIndexChanged -= OnCm1ActiveIndexChanged; }
+                catch { }
                 _dashEventSubscribedPlugin = null;
             }
 
@@ -253,6 +255,23 @@ namespace MozaPlugin.Devices.WheelUi
                 WheelDisplayBrightnessSlider.Value = b;
                 WheelDisplayBrightnessValue.Text = $"{b}";
                 SelectWheelDisplayStandbyByMinutes(_data.DashDisplayStandbyMin);
+
+                // VGS-only: the display-rotation row is shown only for wheels whose
+                // model carries the rotation IMU. Non-VGS display wheels never see it.
+                bool supportsRotation = _plugin.WheelModelInfo?.SupportsDisplayRotation == true;
+                WheelDisplayRotationPanel.Visibility =
+                    supportsRotation ? Visibility.Visible : Visibility.Collapsed;
+                if (supportsRotation)
+                {
+                    int r = _data.DashDisplayRotation;
+                    if (r < 0)
+                    {
+                        var profile = _plugin.Settings?.ProfileStore?.CurrentProfile;
+                        r = profile?.DashDisplayRotation ?? -1;
+                        if (r < 0) r = _plugin.Settings?.DashDisplayRotation ?? 0;
+                    }
+                    SelectWheelDisplayRotationByMode(r);
+                }
             }
         }
 
@@ -653,6 +672,37 @@ namespace MozaPlugin.Devices.WheelUi
                 }
             }
             WheelDisplayStandbyCombo.SelectedIndex = -1;
+        }
+
+        // VGS display-rotation mode (0=off, 1=smooth, 2=immediate). Wheel-only
+        // feature: always routes to the main TelemetrySender (never the CM2 sender)
+        // and the row is only visible for VGS wheels on the wheel page.
+        private void WheelDisplayRotationCombo_Changed(object sender, SelectionChangedEventArgs e)
+        {
+            if (_suppressEvents || _plugin == null) return;
+            var item = WheelDisplayRotationCombo.SelectedItem as ComboBoxItem;
+            if (item?.Tag is not string tagStr) return;
+            if (!int.TryParse(tagStr, out int mode)) return;
+            _data!.DashDisplayRotation = mode;
+            _plugin.UpdateActiveProfile(p => p.DashDisplayRotation = mode);
+            _plugin.TelemetrySender?.SendDashDisplayRotation(mode);
+            _plugin.SaveSettings();
+        }
+
+        private void SelectWheelDisplayRotationByMode(int mode)
+        {
+            for (int i = 0; i < WheelDisplayRotationCombo.Items.Count; i++)
+            {
+                if (WheelDisplayRotationCombo.Items[i] is ComboBoxItem cbi
+                    && cbi.Tag is string tag
+                    && int.TryParse(tag, out int m)
+                    && m == mode)
+                {
+                    WheelDisplayRotationCombo.SelectedIndex = i;
+                    return;
+                }
+            }
+            WheelDisplayRotationCombo.SelectedIndex = -1;
         }
 
         private void TelemetryProfileCombo_SelectionChanged(object sender, SelectionChangedEventArgs e)

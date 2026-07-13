@@ -33,23 +33,25 @@ namespace MozaPlugin.Protocol
 
             byte responseGroup = data[0];
             byte responseDeviceId = data[1];
+
+            // Rejection filters run BEFORE the payload copy — these are the
+            // highest-rate inbound classes on unfiltered pipes.
+            // Firmware debug output: raw wire group 0x0E (bit7 clear, so this is
+            // NOT a normal toggled response) — unsolicited status/log messages.
+            if (responseGroup == 0x0E)
+                return null;
+
+            // SerialStream control frames (0xC3 + 7C/FC + 00) — session-mgmt
+            // chunks handled by TelemetrySender, not command responses.
+            if (responseGroup == 0xC3 && data.Length >= 4 &&
+                (data[2] == 0x7C || data[2] == 0xFC) && data[3] == 0x00)
+                return null;
+
             var payload = new byte[data.Length - 2];
             Array.Copy(data, 2, payload, 0, payload.Length);
 
             byte group = MozaProtocol.ToggleBit7(responseGroup);
             byte deviceId = MozaProtocol.SwapNibbles(responseDeviceId);
-
-            // Filter firmware debug output. Firmware sends debug frames with raw wire
-            // group 0x0E (bit7 clear, so this is NOT a normal toggled response).
-            // These are unsolicited status/log messages, not protocol responses.
-            if (responseGroup == 0x0E)
-                return null;
-
-            // Filter SerialStream control frames (0xC3 + 7C/FC + 00) — session-mgmt
-            // chunks handled by TelemetrySender, not command responses.
-            if (responseGroup == 0xC3 && payload.Length >= 2 &&
-                (payload[0] == 0x7C || payload[0] == 0xFC) && payload[1] == 0x00)
-                return null;
 
             // Wrapped Display sub-device identity (0xC3/0x71 + inner response group).
             // Unwrap + tag with "display-" prefix so it doesn't overwrite wheel identity.

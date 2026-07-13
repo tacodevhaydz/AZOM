@@ -638,4 +638,89 @@ Id: {2}</value></data>
   <data name="Option_Ab9FlightSim" xml:space="preserve"><value>飞行模拟</value></data>
   <data name="SliderLabel_KeepaliveTimeout" xml:space="preserve"><value>保活超时</value></data>
   <data name="Hint_KeepaliveTimeout" xml:space="preserve"><value>遥测停止后继续刷新 LED 多久，方向盘才能进入休眠。0 = 立即停止。</value></data>
+  <data name="SliderLabel_DisplayRotation" xml:space="preserve"><value>屏幕旋转</value></data>
+  <data name="Option_RotationSmooth" xml:space="preserve"><value>平滑</value></data>
+  <data name="Option_RotationImmediate" xml:space="preserve"><value>立即</value></data>
+  <data name="TabHeader_Stalks" xml:space="preserve"><value>拨杆</value></data>
+  <data name="Section_Stalks" xml:space="preserve"><value>多功能拨杆</value></data>
+  <data name="Status_SearchingForStalks" xml:space="preserve"><value>正在搜索拨杆…</value></data>
+  <data name="Status_StalksConnected" xml:space="preserve"><value>拨杆已连接</value></data>
+  <data name="Section_StalkMode" xml:space="preserve"><value>拨杆模式</value></data>
+  <data name="Option_StalkButtonBox" xml:space="preserve"><value>按键盒</value></data>
+  <data name="Option_StalkTruckSim" xml:space="preserve"><value>卡车模拟 (ETS2/ATS)</value></data>
+  <data name="Hint_StalksTruckSim" xml:space="preserve"><value>在卡车模拟模式下，插件会将拨杆操作转换为 Euro/American Truck Simulator 的键盘按键。在按键盒模式下，拨杆作为普通按键使用。</value></data>
+  <data name="Section_StalksKeyMapping" xml:space="preserve"><value>按键映射</value></data>
+  <data name="Subtitle_StalksInteractiveMap" xml:space="preserve"><value>按下某个拨杆控制以高亮其按键，然后分配按键或雨刮/灯光挡位。</value></data>
+  <data name="Section_StalksWiperSync" xml:space="preserve"><value>雨刮与灯光</value></data>
+  <data name="Subtitle_StalksWiperSync" xml:space="preserve"><value>游戏用循环键切换雨刮/灯光；插件会发送相应次数的按键以到达拨杆位置。</value></data>
+  <data name="SliderLabel_WiperStageCount" xml:space="preserve"><value>雨刮挡位数</value></data>
+  <data name="Label_WiperForwardWraps" xml:space="preserve"><value>雨刮键循环</value></data>
+  <data name="SliderLabel_LightStageCount" xml:space="preserve"><value>灯光挡位数</value></data>
+  <data name="Button_ResyncWipers" xml:space="preserve"><value>重新同步雨刮</value></data>
+  <data name="Hint_ResyncWipers" xml:space="preserve"><value>将游戏雨刮调回关闭，以与插件跟踪的挡位重新对齐。</value></data>
+  <data name="Label_StalksLastPressed" xml:space="preserve"><value>上次按下：按键 {0}</value></data>
+  <data name="Button_LoadEts2Defaults" xml:space="preserve"><value>加载 ETS2/ATS 默认值</value></data>
+  <data name="Button_ResyncStages" xml:space="preserve"><value>重新同步雨刮与灯光</value></data>
+  <data name="SliderLabel_DisplayName" xml:space="preserve"><value>显示名称</value></data>
+  <data name="Hint_MBoosterDisplayName" xml:space="preserve"><value>可选 — 帮助在上面的设备列表中区分两个角色相同的 mBooster。</value></data>
+  <data name="Section_CustomEffects" xml:space="preserve"><value>自定义效果（实验性）</value></data>
+  <data name="Subtitle_CustomEffectsExperimental" xml:space="preserve"><value>// 实验性 — 由 SimHub/NCalc 公式驱动的自定义振动</value></data>
+  <data name="Hint_CustomEffectsExperimental" xml:space="preserve"><value>实验性 — 每个自定义效果使用你提供的 SimHub 属性或 NCalc 公式来驱动马达振动。所有自定义效果（以及内置的 Engine 效果）共用一个通道，因此同一时刻只有一个能驱动马达；最近处理的活动效果优先。频率/强度的行为与 Engine 的滑块相同。</value></data>
+  <data name="Hint_CustomEffectFormula" xml:space="preserve"><value>一个 SimHub 属性（如 SpeedKmh）或 NCalc 公式（如 [Rpms] / [CarSettings_MaxRPM]）。关闭“使用阈值”时，该值（限制在 0..1）会连续调节强度。开启时，当值达到或超过阈值时，效果以设定的强度脉冲。</value></data>
+  <data name="Label_UseThreshold" xml:space="preserve"><value>使用阈值</value></data>
+  <data name="SliderLabel_Name" xml:space="preserve"><value>名称</value></data>
+  <data name="SliderLabel_Formula" xml:space="preserve"><value>公式</value></data>
+  <data name="SliderLabel_Threshold" xml:space="preserve"><value>阈值</value></data>
+  <data name="Button_AddCustomEffect" xml:space="preserve"><value>+ 添加自定义效果</value></data>
+  <data name="Button_DeleteCustomEffect" xml:space="preserve"><value>删除效果</value></data>
+  <data name="DefaultName_CustomEffect" xml:space="preserve"><value>自定义效果</value></data>
+  <data name="Section_PedalRoles" xml:space="preserve"><value>踏板角色</value></data>
+  <data name="Label_PedalAxis" xml:space="preserve"><value>踏板 {0}</value></data>
+  <data name="Hint_MBoosterAxisRoles" xml:space="preserve"><value>此 mBooster 通过一个连接承载多个踏板。将每个检测到的轴分配给游戏输入。默认顺序遵循 Moza 的 Rx/Ry/Rz 布局（油门/刹车/离合）——如果某个踏板驱动了错误的输入，请在此重新映射。</value></data>
+  <data name="Label_EffectsForPedal" xml:space="preserve"><value>Configure pedal:</value></data>
+  <data name="Note_PassivePedalNoEffects" xml:space="preserve"><value>This pedal is passive (no motor) — vibration effects don't apply.</value></data>
+  <data name="TabHeader_Shifter" xml:space="preserve"><value>换挡器</value></data>
+  <data name="Section_ShifterSettings" xml:space="preserve"><value>换挡器设置</value></data>
+  <data name="Section_ShifterLeds" xml:space="preserve"><value>LED 灯</value></data>
+  <data name="Subtitle_ShifterLeds" xml:space="preserve"><value>// 两个可配置 LED（SGP）</value></data>
+  <data name="Subtitle_ShifterCalibrate" xml:space="preserve"><value>// 依次挂 R &gt; 7 挡 &gt; R &gt; 空挡</value></data>
+  <data name="SliderLabel_ShifterPaddleSync" xml:space="preserve"><value>换挡拨片同步</value></data>
+  <data name="Label_ShifterLed1" xml:space="preserve"><value>LED 1 (S1)</value></data>
+  <data name="Label_ShifterLed2" xml:space="preserve"><value>LED 2 (S2)</value></data>
+  <data name="SliderLabel_ShifterBrightness" xml:space="preserve"><value>LED 亮度</value></data>
+  <data name="ShifterColor_Red" xml:space="preserve"><value>红色</value></data>
+  <data name="ShifterColor_Orange" xml:space="preserve"><value>橙色</value></data>
+  <data name="ShifterColor_Yellow" xml:space="preserve"><value>黄色</value></data>
+  <data name="ShifterColor_Green" xml:space="preserve"><value>绿色</value></data>
+  <data name="ShifterColor_Cyan" xml:space="preserve"><value>青色</value></data>
+  <data name="ShifterColor_Blue" xml:space="preserve"><value>蓝色</value></data>
+  <data name="ShifterColor_Purple" xml:space="preserve"><value>紫色</value></data>
+  <data name="ShifterColor_White" xml:space="preserve"><value>白色</value></data>
+  <data name="Section_WheelbaseLfe" xml:space="preserve"><value>基座震动效果</value></data>
+  <data name="SliderLabel_Trigger" xml:space="preserve"><value>触发</value></data>
+  <data name="Label_EnginePresets" xml:space="preserve"><value>引擎预设：</value></data>
+  <data name="Preset_AdditiveEngine" xml:space="preserve"><value>叠加引擎</value></data>
+  <data name="Preset_BigRig" xml:space="preserve"><value>大卡车</value></data>
+  <data name="Preset_DetunedV8" xml:space="preserve"><value>失谐 V8</value></data>
+  <data name="Label_Defaults" xml:space="preserve"><value>默认值</value></data>
+  <data name="TriggerMode_Level" xml:space="preserve"><value>电平</value></data>
+  <data name="TriggerMode_OnChange" xml:space="preserve"><value>变化时</value></data>
+  <data name="Label_FormulaLimitsHz" xml:space="preserve"><value>公式范围 (Hz)</value></data>
+  <data name="Label_AlwaysOn" xml:space="preserve"><value>(始终开启)</value></data>
+  <data name="TabHeader_WheelbaseLfe" xml:space="preserve"><value>LFE 效果</value></data>
+  <data name="Section_EnginePresets" xml:space="preserve"><value>引擎预设</value></data>
+  <data name="Section_EffectsSlot1" xml:space="preserve"><value>效果槽 1</value></data>
+  <data name="Section_EffectsSlot2" xml:space="preserve"><value>效果槽 2</value></data>
+  <data name="Section_EffectsSlot3" xml:space="preserve"><value>效果槽 3</value></data>
+  <data name="Label_Mode" xml:space="preserve"><value>模式</value></data>
+  <data name="Mode_Engine" xml:space="preserve"><value>引擎</value></data>
+  <data name="Mode_Abs" xml:space="preserve"><value>ABS</value></data>
+  <data name="Mode_Gearshift" xml:space="preserve"><value>换挡</value></data>
+  <data name="Mode_Custom" xml:space="preserve"><value>自定义</value></data>
+  <data name="Label_Load" xml:space="preserve"><value>加载</value></data>
+  <data name="Label_Save" xml:space="preserve"><value>保存</value></data>
+  <data name="Label_Delete" xml:space="preserve"><value>删除</value></data>
+  <data name="Label_Import" xml:space="preserve"><value>导入</value></data>
+  <data name="Label_Export" xml:space="preserve"><value>导出</value></data>
+  <data name="Preset_RoadRumble" xml:space="preserve"><value>路面震动</value></data>
 </root>

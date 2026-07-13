@@ -158,6 +158,7 @@ namespace MozaPlugin.Hardware
         // for base-attached peripherals).
         private MozaDeviceManager PedalsManager => _detectionState.PedalsOwner ?? _deviceManager;
         private MozaDeviceManager HandbrakeManager => _detectionState.HandbrakeOwner ?? _deviceManager;
+        private MozaDeviceManager ShifterManager => _detectionState.ShifterOwner ?? _deviceManager;
         // Base FFB/motor/ambient writes must target whichever pipe detected the
         // base. Normally that's the primary; after a base→hub primary migration
         // (broken base, wheel on hub) the base lives on a dedicated base-aux pipe,
@@ -259,8 +260,10 @@ namespace MozaPlugin.Hardware
             if (knobMode  >= 0) _data.WheelKnobMode          = knobMode;
             if (stickMode >= 0) _data.WheelStickMode         = stickMode;
             // Per-knob signal modes — overlay-only (no profile baseline), mirrored
-            // for UI display like the other input modes. Not re-pushed to hardware
-            // here; the wheel firmware persists them (newer FW drops readback).
+            // for UI display here; re-pushed to the wheel (change-gated) in the
+            // NewWheelDetected block below so a per-game BUTTON/KNOB choice reaches
+            // the wheel on profile switch (firmware persists a single value, so a
+            // readback alone can't re-assert a different profile's saved mode).
             if (ov?.WheelKnobSignalModes != null)
                 for (int i = 0; i < Math.Min(_data.WheelKnobSignalModes.Length, ov.WheelKnobSignalModes.Length); i++)
                     if (ov.WheelKnobSignalModes[i] >= 0) _data.WheelKnobSignalModes[i] = ov.WheelKnobSignalModes[i];
@@ -364,6 +367,30 @@ namespace MozaPlugin.Hardware
                 if (knobIdleEffect >= 0 && hasKnob && hasIdleLed && WheelCfgChanged("wheel-knob-idle-effect", knobIdleEffect))  _deviceManager.WriteSetting("wheel-knob-idle-effect", knobIdleEffect);
                 if (knobLedMode    >= 0 && hasKnob && WheelCfgChanged("wheel-knob-led-mode", knobLedMode))        _deviceManager.WriteSetting("wheel-knob-led-mode", knobLedMode);
                 if (btnLedMode     >= 0 && hasBtn  && WheelCfgChanged("wheel-buttons-led-mode", btnLedMode))      _deviceManager.WriteSetting("wheel-buttons-led-mode", btnLedMode);
+
+                // Knob input signal mode (encoder = BUTTON vs KNOB) — overlay-only,
+                // per-(profile x wheel-page). Re-push on connect/profile-switch,
+                // change-gated like the LED/brightness settings above: the wheel
+                // firmware persists a single value, so a per-game mode only reaches
+                // the wheel if we re-assert it here. Legacy single mode on wheels
+                // without per-knob support; per-knob wheel-knob-signal-mode{fw}
+                // (logical->firmware index remapped) on those that report it. The UI
+                // only edits one family per wheel, so the overlay only carries the
+                // family this wheel supports — writing whatever is set is safe.
+                if (knobMode >= 0 && hasKnob && WheelCfgChanged("wheel-knob-mode", knobMode))
+                    _deviceManager.WriteSetting("wheel-knob-mode", knobMode);
+                if (hasKnob && ov?.WheelKnobSignalModes != null)
+                {
+                    int nSig = Math.Min(model.KnobCount, ov.WheelKnobSignalModes.Length);
+                    for (int i = 0; i < nSig && i < 5; i++)
+                    {
+                        int sm = ov.WheelKnobSignalModes[i];
+                        if (sm < 0) continue;
+                        int fwIdx = model.SignalModeFirmwareIndex(i);
+                        if (WheelCfgChanged($"wheel-knob-signal-mode{fwIdx}", sm))
+                            _deviceManager.WriteSetting($"wheel-knob-signal-mode{fwIdx}", sm);
+                    }
+                }
                 if (idleEffect >= 0 && idleSpeed >= 0 && hasRpm && hasIdleLed
                         && WheelCfgChanged("wheel-telemetry-idle-interval", ((long)idleEffect << 32) | (uint)idleSpeed))
                     _deviceManager.WriteArray("wheel-telemetry-idle-interval",
@@ -442,6 +469,18 @@ namespace MozaPlugin.Hardware
                 if (WheelCfgChangedArr("wheel-old-rpm-color", esRpmColors))
                     WriteColorArray(esRpmColors, "wheel-old-rpm-color", 10);
             }
+
+            // VGS display-rotation mode (0=off, 1=smooth, 2=immediate). Session-0x02
+            // FF property push (kind=5), so it goes through the wheel's main sender,
+            // NOT the group-0x3F device-manager write path. Gated on the model's
+            // rotation-IMU capability so it's never pushed to a non-VGS display wheel.
+            // Fires on every wheel (re)detection and profile switch; the valuable
+            // case is a per-game profile change while connected. On a cold-start
+            // detection the session may not be Active yet and the push is a harmless
+            // no-op — the wheel firmware persists its last rotation mode across
+            // reconnects, so the display is correct regardless.
+            if (model?.SupportsDisplayRotation == true && profile.DashDisplayRotation >= 0)
+                _plugin.TelemetrySender?.SendDashDisplayRotation(profile.DashDisplayRotation);
         }
 
         /// <summary>
@@ -629,7 +668,7 @@ namespace MozaPlugin.Hardware
             if (profile.HandbrakeButtonThreshold >= 0) _data.HandbrakeButtonThreshold = profile.HandbrakeButtonThreshold;
             if (profile.HandbrakeDirection       >= 0) _data.HandbrakeDirection       = profile.HandbrakeDirection;
             if (profile.HandbrakeMin             >= 0) _data.HandbrakeMin             = profile.HandbrakeMin;
-            if (profile.HandbrakeMax             >= 0) _data.HandbrakeMax             = profile.HandbrakeMax;
+            if (profile.HandbrakeMax             >  0) _data.HandbrakeMax             = profile.HandbrakeMax;
             if (profile.HandbrakeCurve != null)
             {
                 for (int i = 0; i < Math.Min(5, profile.HandbrakeCurve.Length); i++)
@@ -642,7 +681,7 @@ namespace MozaPlugin.Hardware
             if (profile.HandbrakeButtonThreshold >= 0) dm.WriteSetting("handbrake-button-threshold", profile.HandbrakeButtonThreshold);
             if (profile.HandbrakeDirection       >= 0) dm.WriteSetting("handbrake-direction", profile.HandbrakeDirection);
             if (profile.HandbrakeMin             >= 0) dm.WriteSetting("handbrake-min", profile.HandbrakeMin);
-            if (profile.HandbrakeMax             >= 0) dm.WriteSetting("handbrake-max", profile.HandbrakeMax);
+            if (profile.HandbrakeMax             >  0) dm.WriteSetting("handbrake-max", profile.HandbrakeMax);
             if (profile.HandbrakeCurve != null)
             {
                 for (int i = 0; i < Math.Min(5, profile.HandbrakeCurve.Length); i++)
@@ -657,13 +696,13 @@ namespace MozaPlugin.Hardware
 
             if (profile.PedalsThrottleDir      >= 0) _data.PedalsThrottleDir      = profile.PedalsThrottleDir;
             if (profile.PedalsThrottleMin      >= 0) _data.PedalsThrottleMin      = profile.PedalsThrottleMin;
-            if (profile.PedalsThrottleMax      >= 0) _data.PedalsThrottleMax      = profile.PedalsThrottleMax;
+            if (profile.PedalsThrottleMax      >  0) _data.PedalsThrottleMax      = profile.PedalsThrottleMax;
             if (profile.PedalsBrakeDir         >= 0) _data.PedalsBrakeDir         = profile.PedalsBrakeDir;
             if (profile.PedalsBrakeMin         >= 0) _data.PedalsBrakeMin         = profile.PedalsBrakeMin;
-            if (profile.PedalsBrakeMax         >= 0) _data.PedalsBrakeMax         = profile.PedalsBrakeMax;
+            if (profile.PedalsBrakeMax         >  0) _data.PedalsBrakeMax         = profile.PedalsBrakeMax;
             if (profile.PedalsClutchDir        >= 0) _data.PedalsClutchDir        = profile.PedalsClutchDir;
             if (profile.PedalsClutchMin        >= 0) _data.PedalsClutchMin        = profile.PedalsClutchMin;
-            if (profile.PedalsClutchMax        >= 0) _data.PedalsClutchMax        = profile.PedalsClutchMax;
+            if (profile.PedalsClutchMax        >  0) _data.PedalsClutchMax        = profile.PedalsClutchMax;
             if (profile.PedalsBrakeAngleRatio  >= 0) _data.PedalsBrakeAngleRatio  = profile.PedalsBrakeAngleRatio;
             if (profile.PedalsThrottleCurve != null)
                 for (int i = 0; i < Math.Min(5, profile.PedalsThrottleCurve.Length); i++)
@@ -679,13 +718,13 @@ namespace MozaPlugin.Hardware
             var dm = PedalsManager;
             if (profile.PedalsThrottleDir      >= 0) dm.WriteSetting("pedals-throttle-dir", profile.PedalsThrottleDir);
             if (profile.PedalsThrottleMin      >= 0) dm.WriteSetting("pedals-throttle-min", profile.PedalsThrottleMin);
-            if (profile.PedalsThrottleMax      >= 0) dm.WriteSetting("pedals-throttle-max", profile.PedalsThrottleMax);
+            if (profile.PedalsThrottleMax      >  0) dm.WriteSetting("pedals-throttle-max", profile.PedalsThrottleMax);
             if (profile.PedalsBrakeDir         >= 0) dm.WriteSetting("pedals-brake-dir", profile.PedalsBrakeDir);
             if (profile.PedalsBrakeMin         >= 0) dm.WriteSetting("pedals-brake-min", profile.PedalsBrakeMin);
-            if (profile.PedalsBrakeMax         >= 0) dm.WriteSetting("pedals-brake-max", profile.PedalsBrakeMax);
+            if (profile.PedalsBrakeMax         >  0) dm.WriteSetting("pedals-brake-max", profile.PedalsBrakeMax);
             if (profile.PedalsClutchDir        >= 0) dm.WriteSetting("pedals-clutch-dir", profile.PedalsClutchDir);
             if (profile.PedalsClutchMin        >= 0) dm.WriteSetting("pedals-clutch-min", profile.PedalsClutchMin);
-            if (profile.PedalsClutchMax        >= 0) dm.WriteSetting("pedals-clutch-max", profile.PedalsClutchMax);
+            if (profile.PedalsClutchMax        >  0) dm.WriteSetting("pedals-clutch-max", profile.PedalsClutchMax);
             if (profile.PedalsBrakeAngleRatio  >= 0) dm.WriteFloat("pedals-brake-angle-ratio", profile.PedalsBrakeAngleRatio);
             if (profile.PedalsThrottleCurve != null)
                 for (int i = 0; i < Math.Min(5, profile.PedalsThrottleCurve.Length); i++)
@@ -696,6 +735,41 @@ namespace MozaPlugin.Hardware
             if (profile.PedalsClutchCurve != null)
                 for (int i = 0; i < Math.Min(5, profile.PedalsClutchCurve.Length); i++)
                     dm.WriteFloat($"pedals-clutch-y{i + 1}", profile.PedalsClutchCurve[i]);
+        }
+
+        /// <summary>Push HGP/SGP shifter settings. _data is mirrored always; writes
+        /// gated on detection. LED settings (SGP only) are gated on ShifterHasLeds.
+        /// The 2 SGP LEDs ride one 2-byte command [S1,S2] of palette indices 0-7.</summary>
+        public void ApplyShifterToHardware(MozaProfile? profile)
+        {
+            if (profile == null) return;
+
+            if (profile.ShifterDirection  >= 0) _data.ShifterDirection  = profile.ShifterDirection;
+            if (profile.ShifterPaddleSync >= 0) _data.ShifterPaddleSync = profile.ShifterPaddleSync;
+            if (profile.ShifterHidMode    >= 0) _data.ShifterHidMode    = profile.ShifterHidMode;
+            if (profile.ShifterApplyMode  >= 0) _data.ShifterApplyMode  = profile.ShifterApplyMode;
+            if (profile.ShifterBrightness >= 0) _data.ShifterBrightness = profile.ShifterBrightness;
+            if (profile.ShifterLed1Index  >= 0) _data.ShifterLed1Index  = profile.ShifterLed1Index;
+            if (profile.ShifterLed2Index  >= 0) _data.ShifterLed2Index  = profile.ShifterLed2Index;
+
+            if (!_detectionState.ShifterDetected) return;
+            var dm = ShifterManager;
+            if (profile.ShifterDirection  >= 0) dm.WriteSetting("shifter-direction", profile.ShifterDirection);
+            if (profile.ShifterPaddleSync >= 0) dm.WriteSetting("shifter-paddle-sync", profile.ShifterPaddleSync);
+            if (profile.ShifterHidMode    >= 0) dm.WriteSetting("shifter-hid-mode", profile.ShifterHidMode);
+            if (profile.ShifterApplyMode  >= 0) dm.WriteSetting("shifter-apply-mode", profile.ShifterApplyMode);
+            if (_detectionState.ShifterHasLeds)
+            {
+                if (profile.ShifterBrightness >= 0) dm.WriteSetting("shifter-brightness", profile.ShifterBrightness);
+                // Both LEDs ride one 2-byte command, so only push when BOTH indices
+                // are known — otherwise we'd coerce the unknown LED to index 0 (red)
+                // and clobber it. In the normal flow the pair always travels together
+                // (both set by a read/UI edit, or both -1 on a fresh profile).
+                int s1 = _data.ShifterLed1Index, s2 = _data.ShifterLed2Index;
+                if (s1 >= 0 && s2 >= 0)
+                    dm.WriteArray("shifter-colors",
+                        new byte[] { (byte)Math.Min(7, s1), (byte)Math.Min(7, s2) });
+            }
         }
 
         /// <summary>
@@ -942,6 +1016,7 @@ namespace MozaPlugin.Hardware
             ApplyBaseAmbientToHardware(profile);
             ApplyHandbrakeToHardware(profile);
             ApplyPedalsToHardware(profile);
+            ApplyShifterToHardware(profile);
             ApplyAb9ToHardware(profile);
         }
 
@@ -1061,6 +1136,17 @@ namespace MozaPlugin.Hardware
         {
             if (value < 0) return;
             if (_detectionState.PedalsDetected) PedalsManager.WriteFloat(command, value);
+        }
+        public void WriteIfShifterDetected(string command, int value)
+        {
+            if (value < 0) return;
+            if (_detectionState.ShifterDetected) ShifterManager.WriteSetting(command, value);
+        }
+        // The 2 SGP LEDs ride one 2-byte command [S1,S2] (palette indices 0-7); the
+        // UI re-sends both whenever either changes.
+        public void WriteArrayIfShifterDetected(string command, byte[] payload)
+        {
+            if (_detectionState.ShifterDetected) ShifterManager.WriteArray(command, payload);
         }
         public void WriteIfBaseAmbientSupported(string command, int value)
         {
