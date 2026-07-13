@@ -179,6 +179,9 @@
   <data name="Section_Effects" xml:space="preserve"><value>EFFETS</value></data>
   <data name="Subtitle_EffectsTriggers" xml:space="preserve"><value>// déclencheurs : ABS sur signal du jeu · Blocage au frein&gt;0,8 · Seuil sur front · Moteur continu</value></data>
   <data name="Section_Abs" xml:space="preserve"><value>ABS</value></data>
+  <data name="Section_TractionControl" xml:space="preserve"><value>Contrôle de traction</value></data>
+  <data name="Section_WheelSpin" xml:space="preserve"><value>Patinage des roues</value></data>
+  <data name="Section_MBoosterGearShift" xml:space="preserve"><value>Changement de vitesse</value></data>
   <data name="Section_RoadTexture" xml:space="preserve"><value>Texture de la route</value></data>
   <data name="Label_Enable" xml:space="preserve"><value>Activer</value></data>
   <data name="Button_Test1s" xml:space="preserve"><value>Tester 1 s</value></data>

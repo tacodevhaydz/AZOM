@@ -160,7 +160,7 @@
   <data name="Section_GearShift" xml:space="preserve"><value>GEAR SHIFT</value></data>
   <data name="SliderLabel_VibrationIntensity" xml:space="preserve"><value>Vibration Intensity</value></data>
   <data name="Section_MBoosterPedals" xml:space="preserve"><value>MBOOSTER PEDALS</value></data>
-  <data name="Subtitle_MBoosterPedals" xml:space="preserve"><value>// host-rendered effects · per-device role + position</value></data>
+  <data name="Subtitle_MBoosterPedals" xml:space="preserve"><value>// select role per connected mBooster pedal</value></data>
   <data name="SliderLabel_Device" xml:space="preserve"><value>Device</value></data>
   <data name="SliderLabel_Role" xml:space="preserve"><value>Role</value></data>
   <data name="SliderLabel_DisplayName" xml:space="preserve"><value>Display Name</value></data>
@@ -169,6 +169,7 @@
   <data name="Option_Throttle" xml:space="preserve"><value>Throttle</value></data>
   <data name="Option_Brake" xml:space="preserve"><value>Brake</value></data>
   <data name="Option_Clutch" xml:space="preserve"><value>Clutch</value></data>
+  <data name="Section_PedalFeelSimInput" xml:space="preserve"><value>PEDAL FEEL &amp; SIM INPUT MAPPING</value></data>
   <data name="Section_PedalFeel" xml:space="preserve"><value>PEDAL FEEL</value></data>
   <data name="Subtitle_PedalFeel" xml:space="preserve"><value>// shape how the pedal feels, independent of the output curve below</value></data>
   <data name="SliderLabel_DeadzoneKg" xml:space="preserve"><value>Deadzone (kg)</value></data>
@@ -184,10 +185,13 @@
   <data name="Subtitle_SimInputMapping" xml:space="preserve"><value></value></data>
   <data name="SliderLabel_MaxThresholdKg" xml:space="preserve"><value>Max Threshold (kg)</value></data>
   <data name="Hint_MaxThresholdReverseEngineered" xml:space="preserve"><value></value></data>
-  <data name="Hint_OutputCurveDragX" xml:space="preserve"><value>Drag a node left/right to move where it sits on the input axis — e.g. drag the last node left so 100% output is reached before 100% input.</value></data>
+  <data name="Hint_OutputCurveDragX" xml:space="preserve"><value>Drag a node to move where it sits on the input axis</value></data>
   <data name="Section_Effects" xml:space="preserve"><value>EFFECTS</value></data>
   <data name="Subtitle_EffectsTriggers" xml:space="preserve"><value></value></data>
   <data name="Section_Abs" xml:space="preserve"><value>ABS</value></data>
+  <data name="Section_TractionControl" xml:space="preserve"><value>Traction Control</value></data>
+  <data name="Section_WheelSpin" xml:space="preserve"><value>Wheel Spin</value></data>
+  <data name="Section_MBoosterGearShift" xml:space="preserve"><value>Gear Shift</value></data>
   <data name="Section_RoadTexture" xml:space="preserve"><value>Road Texture</value></data>
   <data name="Section_BrakeFade" xml:space="preserve"><value>Brake Fade (Experimental)</value></data>
   <data name="Label_Enable" xml:space="preserve"><value>Enable</value></data>

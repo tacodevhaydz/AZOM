@@ -179,6 +179,9 @@
   <data name="Section_Effects" xml:space="preserve"><value>HIỆU ỨNG</value></data>
   <data name="Subtitle_EffectsTriggers" xml:space="preserve"><value>// kích hoạt: ABS theo tín hiệu game · Khóa bánh khi phanh&gt;0.8 · Ngưỡng theo sườn xung · Động cơ liên tục</value></data>
   <data name="Section_Abs" xml:space="preserve"><value>ABS</value></data>
+  <data name="Section_TractionControl" xml:space="preserve"><value>Kiểm soát lực kéo</value></data>
+  <data name="Section_WheelSpin" xml:space="preserve"><value>Trượt bánh xe</value></data>
+  <data name="Section_MBoosterGearShift" xml:space="preserve"><value>Sang số</value></data>
   <data name="Section_RoadTexture" xml:space="preserve"><value>Kết cấu mặt đường</value></data>
   <data name="Label_Enable" xml:space="preserve"><value>Bật</value></data>
   <data name="Button_Test1s" xml:space="preserve"><value>Thử 1 giây</value></data>

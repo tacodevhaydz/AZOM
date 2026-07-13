@@ -227,6 +227,7 @@ namespace MozaPlugin.Resources
         public static string Option_Throttle => Get("Option_Throttle");
         public static string Option_Brake => Get("Option_Brake");
         public static string Option_Clutch => Get("Option_Clutch");
+        public static string Section_PedalFeelSimInput => Get("Section_PedalFeelSimInput");
         public static string Section_PedalFeel => Get("Section_PedalFeel");
         public static string Subtitle_PedalFeel => Get("Subtitle_PedalFeel");
         public static string SliderLabel_DeadzoneKg => Get("SliderLabel_DeadzoneKg");
@@ -246,6 +247,9 @@ namespace MozaPlugin.Resources
         public static string Section_Effects => Get("Section_Effects");
         public static string Subtitle_EffectsTriggers => Get("Subtitle_EffectsTriggers");
         public static string Section_Abs => Get("Section_Abs");
+        public static string Section_TractionControl => Get("Section_TractionControl");
+        public static string Section_WheelSpin => Get("Section_WheelSpin");
+        public static string Section_MBoosterGearShift => Get("Section_MBoosterGearShift");
         public static string Section_RoadTexture => Get("Section_RoadTexture");
         public static string Section_BrakeFade => Get("Section_BrakeFade");
         public static string Label_Enable => Get("Label_Enable");

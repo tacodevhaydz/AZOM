@@ -182,6 +182,9 @@
   <data name="Section_Effects" xml:space="preserve"><value>EFFETTI</value></data>
   <data name="Subtitle_EffectsTriggers" xml:space="preserve"><value>// attivatori: ABS su segnale di gioco · Bloccaggio con freno&gt;0.8 · Soglia sul limite · Motore continuo</value></data>
   <data name="Section_Abs" xml:space="preserve"><value>ABS</value></data>
+  <data name="Section_TractionControl" xml:space="preserve"><value>Controllo di trazione</value></data>
+  <data name="Section_WheelSpin" xml:space="preserve"><value>Pattinamento ruote</value></data>
+  <data name="Section_MBoosterGearShift" xml:space="preserve"><value>Cambio Marcia</value></data>
   <data name="Section_RoadTexture" xml:space="preserve"><value>Texture stradale</value></data>
   <data name="Label_Enable" xml:space="preserve"><value>Abilita</value></data>
   <data name="Button_Test1s" xml:space="preserve"><value>Test 1s</value></data>

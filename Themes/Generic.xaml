@@ -364,10 +364,22 @@
             <Setter.Value>
                 <ControlTemplate TargetType="{x:Type controls:BandwidthSparkline}">
                     <Grid>
-                        <!-- Outbound drawn first (behind) so the typically-louder
-                             inbound line lays on top. Fill brushes default null
-                             (line-only) but the caller can supply gradient brushes
-                             for the under-glow effect. -->
+                        <!-- Third drawn furthest back, then outbound, then inbound
+                             on top — so for the two-series bandwidth chart the
+                             typically-louder inbound line still lays on top, and
+                             the mBooster pedal-trace graph's Clutch line (Third)
+                             sits behind Throttle (Out) and Brake (In). Fill
+                             brushes default null (line-only) but the caller can
+                             supply gradient brushes for the under-glow effect. -->
+                        <Path Data="{Binding ThirdFillGeometry, RelativeSource={RelativeSource TemplatedParent}}"
+                              Fill="{TemplateBinding ThirdFillBrush}"
+                              StrokeThickness="0"/>
+                        <Path Data="{Binding ThirdLineGeometry, RelativeSource={RelativeSource TemplatedParent}}"
+                              Stroke="{TemplateBinding ThirdBrush}"
+                              StrokeThickness="1.5"
+                              StrokeStartLineCap="Round"
+                              StrokeEndLineCap="Round"
+                              Fill="{x:Null}"/>
                         <Path Data="{Binding OutFillGeometry, RelativeSource={RelativeSource TemplatedParent}}"
                               Fill="{TemplateBinding OutFillBrush}"
                               StrokeThickness="0"/>
@@ -387,6 +399,10 @@
                               StrokeEndLineCap="Round"
                               Fill="{x:Null}"/>
                         <Canvas IsHitTestVisible="False">
+                            <Ellipse Width="6" Height="6"
+                                     Fill="{TemplateBinding ThirdBrush}"
+                                     Canvas.Left="{Binding ThirdTipX, RelativeSource={RelativeSource TemplatedParent}}"
+                                     Canvas.Top="{Binding ThirdTipY, RelativeSource={RelativeSource TemplatedParent}}"/>
                             <Ellipse Width="6" Height="6"
                                      Fill="{TemplateBinding OutBrush}"
                                      Canvas.Left="{Binding OutTipX, RelativeSource={RelativeSource TemplatedParent}}"
@@ -500,16 +516,18 @@
                             SnapsToDevicePixels="True">
                         <DockPanel LastChildFill="True">
                             <!-- Header -->
-                            <Border DockPanel.Dock="Top"
+                            <Border x:Name="PART_Header" DockPanel.Dock="Top"
                                     BorderBrush="{StaticResource BorderBrush}"
                                     BorderThickness="0,0,0,1"
-                                    Padding="18,12">
+                                    Padding="18,12"
+                                    Background="Transparent">
                                 <Grid>
                                     <Grid.ColumnDefinitions>
                                         <ColumnDefinition Width="Auto"/>
                                         <ColumnDefinition Width="Auto"/>
                                         <ColumnDefinition Width="Auto"/>
                                         <ColumnDefinition Width="*"/>
+                                        <ColumnDefinition Width="Auto"/>
                                     </Grid.ColumnDefinitions>
                                     <!-- Accent bar -->
                                     <Rectangle Grid.Column="0"
@@ -558,12 +576,42 @@
                                             </LinearGradientBrush>
                                         </Rectangle.Fill>
                                     </Rectangle>
+                                    <!-- Collapse/expand chevron — hidden unless IsCollapsible is
+                                         set; clicking anywhere in the header (PART_Header, see
+                                         SectionCard.OnApplyTemplate) toggles IsExpanded. -->
+                                    <Path x:Name="PART_Chevron" Grid.Column="4" Margin="14,0,0,0"
+                                          Width="10" Height="6" Stretch="Uniform"
+                                          Data="M0,0 L5,6 L10,0"
+                                          Stroke="{StaticResource TextDimBrush}" StrokeThickness="1.6"
+                                          StrokeLineJoin="Round" StrokeStartLineCap="Round" StrokeEndLineCap="Round"
+                                          Fill="{x:Null}"
+                                          VerticalAlignment="Center"
+                                          RenderTransformOrigin="0.5,0.5"
+                                          Visibility="Collapsed">
+                                        <Path.RenderTransform>
+                                            <RotateTransform Angle="0"/>
+                                        </Path.RenderTransform>
+                                    </Path>
                                 </Grid>
                             </Border>
                             <!-- Body -->
-                            <ContentPresenter Margin="18,14,18,18"/>
+                            <ContentPresenter x:Name="PART_Body" Margin="18,14,18,18"/>
                         </DockPanel>
                     </Border>
+                    <ControlTemplate.Triggers>
+                        <Trigger Property="IsCollapsible" Value="True">
+                            <Setter TargetName="PART_Chevron" Property="Visibility" Value="Visible"/>
+                            <Setter TargetName="PART_Header" Property="Cursor" Value="Hand"/>
+                        </Trigger>
+                        <Trigger Property="IsExpanded" Value="False">
+                            <Setter TargetName="PART_Body" Property="Visibility" Value="Collapsed"/>
+                            <Setter TargetName="PART_Chevron" Property="RenderTransform">
+                                <Setter.Value>
+                                    <RotateTransform Angle="-90"/>
+                                </Setter.Value>
+                            </Setter>
+                        </Trigger>
+                    </ControlTemplate.Triggers>
                 </ControlTemplate>
             </Setter.Value>
         </Setter>

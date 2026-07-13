@@ -179,6 +179,9 @@
   <data name="Section_Effects" xml:space="preserve"><value>效果</value></data>
   <data name="Subtitle_EffectsTriggers" xml:space="preserve"><value>// 触发条件:ABS 由游戏信号 · Lockup 在刹车 &gt; 0.8 · Threshold 在边沿 · Engine 连续</value></data>
   <data name="Section_Abs" xml:space="preserve"><value>ABS</value></data>
+  <data name="Section_TractionControl" xml:space="preserve"><value>牵引力控制</value></data>
+  <data name="Section_WheelSpin" xml:space="preserve"><value>车轮打滑</value></data>
+  <data name="Section_MBoosterGearShift" xml:space="preserve"><value>换挡</value></data>
   <data name="Section_RoadTexture" xml:space="preserve"><value>路面质感</value></data>
   <data name="Label_Enable" xml:space="preserve"><value>启用</value></data>
   <data name="Button_Test1s" xml:space="preserve"><value>测试 1 秒</value></data>

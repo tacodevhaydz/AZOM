@@ -179,6 +179,9 @@
   <data name="Section_Effects" xml:space="preserve"><value>효과</value></data>
   <data name="Subtitle_EffectsTriggers" xml:space="preserve"><value>// 트리거: ABS는 게임 신호 · 락업은 브레이크&gt;0.8 · 임계값은 에지 · 엔진은 연속</value></data>
   <data name="Section_Abs" xml:space="preserve"><value>ABS</value></data>
+  <data name="Section_TractionControl" xml:space="preserve"><value>트랙션 컨트롤</value></data>
+  <data name="Section_WheelSpin" xml:space="preserve"><value>휠 스핀</value></data>
+  <data name="Section_MBoosterGearShift" xml:space="preserve"><value>기어 변속</value></data>
   <data name="Section_RoadTexture" xml:space="preserve"><value>노면 질감</value></data>
   <data name="Label_Enable" xml:space="preserve"><value>사용</value></data>
   <data name="Button_Test1s" xml:space="preserve"><value>1초 테스트</value></data>
