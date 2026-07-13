@@ -1674,6 +1674,15 @@ namespace MozaPlugin
         private string? _lastAb9GearString;
         private DateTime _lastAb9GearShiftSendUtc = DateTime.MinValue;
 
+        // mBooster per-shift edge state. Separate gear-string latch from the
+        // wheelbase's/AB9's own — only the raw "did the gear string change
+        // this tick" edge + whether the new gear is neutral are computed
+        // here (once, globally); each mBooster device's own Gear Shift
+        // effect applies its own VibrateOnNeutral/DebounceMs on top of that
+        // raw edge in MBoosterEffectWorker.UpdateGearShiftRequest, so no
+        // debounce timestamp is needed at this layer.
+        private string? _lastMBoosterGearString;
+
         // Fire a one-shot base-gearshift-event on gear change. Gated by
         // GearshiftVibration > 0 and a debounce. By default, transitions
         // *into* neutral don't fire (H-pattern produces two transitions
@@ -1864,15 +1873,29 @@ namespace MozaPlugin
                 var nd = data.NewData;
                 double brake01 = (nd?.Brake ?? 0.0) / 100.0;
                 if (brake01 < 0) brake01 = 0; if (brake01 > 1) brake01 = 1;
-                // ABSActive is SimHub's loosely-typed property — games supply
-                // bool / int / sbyte / byte / short / long depending on backend.
-                // Pattern-match the common shapes to skip Convert.ToInt32's
-                // InvariantCulture lookup and the try/catch on the hot path
-                // (DataUpdate runs at SimHub's data rate, ~60Hz+). Unknown
-                // types fall through to false — same observable behaviour as
-                // the catch-and-default that lived here previously.
+                double throttle01 = (nd?.Throttle ?? 0.0) / 100.0;
+                if (throttle01 < 0) throttle01 = 0; if (throttle01 > 1) throttle01 = 1;
+                // ABSActive/TCActive are SimHub's loosely-typed properties —
+                // games supply bool / int / sbyte / byte / short / long
+                // depending on backend. Pattern-match the common shapes to
+                // skip Convert.ToInt32's InvariantCulture lookup and the
+                // try/catch on the hot path (DataUpdate runs at SimHub's
+                // data rate, ~60Hz+). Unknown types fall through to false —
+                // same observable behaviour as the catch-and-default that
+                // lived here previously.
                 object? rawAbs = nd?.ABSActive;
                 bool absActive = rawAbs switch
+                {
+                    bool b   => b,
+                    int i    => i != 0,
+                    byte by  => by != 0,
+                    sbyte sb => sb != 0,
+                    short sh => sh != 0,
+                    long lo  => lo != 0,
+                    _ => false,
+                };
+                object? rawTc = nd?.TCActive;
+                bool tcActive = rawTc switch
                 {
                     bool b   => b,
                     int i    => i != 0,
@@ -1905,16 +1928,42 @@ namespace MozaPlugin
                 double brakeTempC = tempUnit.IndexOf("F", StringComparison.OrdinalIgnoreCase) >= 0
                     ? (brakeTempRaw - 32.0) * 5.0 / 9.0
                     : brakeTempRaw;
+                // Gear-change edge for the mBooster's Gear Shift effect —
+                // same string-latch + warm-up-guard pattern as
+                // CheckGearshiftEvent (wheelbase) / CheckAb9GearshiftEvent,
+                // but with its own independent latch and no debounce here
+                // (each mBooster device applies its own debounce/neutral
+                // settings in MBoosterEffectWorker.UpdateGearShiftRequest).
+                bool gearChanged = false;
+                bool gearIsNeutral = false;
+                string? gearForMBooster = nd?.Gear;
+                if (!string.IsNullOrEmpty(gearForMBooster))
+                {
+                    if (_lastMBoosterGearString == null)
+                    {
+                        _lastMBoosterGearString = gearForMBooster; // warm-up: don't fire on the first observed value
+                    }
+                    else if (gearForMBooster != _lastMBoosterGearString)
+                    {
+                        _lastMBoosterGearString = gearForMBooster;
+                        gearChanged = true;
+                        gearIsNeutral = gearForMBooster == "N" || gearForMBooster == "0";
+                    }
+                }
                 var snap = new MBoosterTelemetrySnapshot(
                     gameRunning: data.GameRunning,
                     rpm: rpm,
                     idleRpm: idleRpm,
                     brake: brake01,
+                    throttle: throttle01,
                     absActive: absActive,
+                    tcActive: tcActive,
                     vehicleSpeedMs: vehicleMs,
                     avgWheelSpeedMs: avgWheelMs,
                     suspensionHeaveG: suspensionHeaveG,
-                    brakeTempC: brakeTempC);
+                    brakeTempC: brakeTempC,
+                    gearChanged: gearChanged,
+                    gearIsNeutral: gearIsNeutral);
                 _mboosterRegistry.OnDataUpdate(snap);
             }
 

@@ -27,6 +27,26 @@ namespace MozaPlugin.Devices
         public const float AbsFreqMinHz = 5f;
         public const float AbsFreqMaxHz = 30f;
 
+        // Traction Control's fixed frequency slider bounds — same field as
+        // ABS's, wider range.
+        public const float TractionControlFreqMinHz = 10f;
+        public const float TractionControlFreqMaxHz = 100f;
+
+        // Wheel Spin's fixed frequency slider bounds — same range as
+        // Traction Control's.
+        public const float WheelSpinFreqMinHz = 10f;
+        public const float WheelSpinFreqMaxHz = 100f;
+
+        // Gear Shift's fixed frequency slider bounds — same range as
+        // Traction Control's/Wheel Spin's.
+        public const float GearShiftFreqMinHz = 10f;
+        public const float GearShiftFreqMaxHz = 100f;
+
+        // Gear Shift's Debounce (ms) slider bounds — same range/step as the
+        // wheelbase's own GearshiftDebounceSlider (UI\SettingsControl.xaml).
+        public const float GearShiftDebounceMinMs = 0f;
+        public const float GearShiftDebounceMaxMs = 1000f;
+
         // Lockup's fixed frequency slider bounds — same field, different range.
         public const float LockupFreqMinHz = 10f;
         public const float LockupFreqMaxHz = 100f;
@@ -153,6 +173,22 @@ namespace MozaPlugin.Devices
         // compound and game.
         public float BrakeFadeOnsetC { get; set; } = 550f;
 
+        // Gear Shift-only — whether a shift landing in Neutral still fires
+        // the pulse. Off by default: an H-pattern shift produces two
+        // transitions (e.g. "1"->"N"->"2"), and the engagement bump into
+        // the new gear is normally what's wanted, not a buzz on the
+        // intermediate neutral pass-through. Same default/rationale as the
+        // wheelbase's own GearshiftVibrateOnNeutral profile setting. See
+        // MBoosterEffectWorker.UpdateGearShiftRequest.
+        public bool VibrateOnNeutral { get; set; } = false;
+
+        // Gear Shift-only, milliseconds (MBoosterUiConstants
+        // .GearShiftDebounceMinMs/MaxMs) — minimum time between fired
+        // pulses, absorbing an H-pattern's double transition (gear->N->gear)
+        // so that one physical shift doesn't fire twice. Default 500
+        // matches the wheelbase's own GearshiftDebounceMs default.
+        public int DebounceMs { get; set; } = 500;
+
         public MBoosterEffectSettings Clone() =>
             new MBoosterEffectSettings
             {
@@ -163,6 +199,8 @@ namespace MozaPlugin.Devices
                 TriggerLevelPct = TriggerLevelPct,
                 DecayPct = DecayPct,
                 BrakeFadeOnsetC = BrakeFadeOnsetC,
+                VibrateOnNeutral = VibrateOnNeutral,
+                DebounceMs = DebounceMs,
             };
     }
 
@@ -234,6 +272,42 @@ namespace MozaPlugin.Devices
         // real Pit House capture (docs/protocol/devices/mbooster.md: "ABS on,
         // 22Hz, amp=0x08e8").
         public MBoosterEffectSettings Abs       { get; set; } = new MBoosterEffectSettings { FrequencyHz = 22 };
+        // Traction Control — same oscillating-pulse implementation as ABS
+        // (see MBoosterEffectWorker.UpdateTractionControlRequest and
+        // MBoosterEffectSynthesizer.SynthesizeTractionControl), but there is
+        // no real Pit House capture for it (unlike ABS's verified effect
+        // type 1), so it rides on Engine's already-verified wire frame shape
+        // (effect type 4 — see MBoosterEffectWorker.ProcessTractionControlEffect,
+        // same reuse Custom Effects make). FrequencyHz defaults to 22 to
+        // match ABS's feel, not because it's a verified reference value —
+        // its slider's own range is wider than ABS's (10-100Hz, see
+        // MBoosterUiConstants.TractionControlFreqMinHz/MaxHz), and unlike
+        // ABS it has no Smoothness slider (SmoothnessPct goes unused).
+        public MBoosterEffectSettings TractionControl { get; set; } = new MBoosterEffectSettings { FrequencyHz = 22 };
+        // Wheel Spin — the acceleration-side counterpart to Lockup: a raw
+        // wheel-slip physics heuristic (driven wheel speed vs vehicle speed
+        // while accelerating, see MBoosterEffectWorker
+        // .UpdateWheelSpinRequest) rather than a game-provided activation
+        // flag like ABS/TC. Same slider config as Traction Control (no
+        // Smoothness), same 10-100Hz range
+        // (MBoosterUiConstants.WheelSpinFreqMinHz/MaxHz), and same
+        // Engine-wire-slot reuse (no verified wire effect type of its own —
+        // see MBoosterEffectWorker.ProcessWheelSpinEffect).
+        public MBoosterEffectSettings WheelSpin { get; set; } = new MBoosterEffectSettings { FrequencyHz = 22 };
+        // Gear Shift — a one-shot pulse fired on every detected gear change
+        // (any->any, same pulse regardless of up/down), mirroring the
+        // wheelbase's own gear-shift-vibration feature (MozaPlugin
+        // .CheckGearshiftEvent): string-latch edge detection on SimHub's
+        // Gear telemetry, warm-up guard, neutral-transition suppression
+        // (VibrateOnNeutral) and a debounce window (DebounceMs) to absorb
+        // an H-pattern's double transition (gear->N->gear). Unlike every
+        // other mBooster effect, this one is a genuine self-terminating
+        // pulse rather than a level-triggered continuous effect — see
+        // MBoosterEffectWorker.UpdateGearShiftRequest/
+        // GearShiftPulseDurationSec. Same Engine-wire-slot reuse as
+        // Traction Control/Wheel Spin (no verified wire effect type of its
+        // own — see MBoosterEffectWorker.ProcessGearShiftEffect).
+        public MBoosterEffectSettings GearShift { get; set; } = new MBoosterEffectSettings { FrequencyHz = 22 };
         // FrequencyHz defaults to 55 — the exact value from the "known-good"
         // real Pit House capture (docs/protocol/devices/mbooster.md:
         // "Lockup on, 55 Hz, start of ramp").
@@ -390,6 +464,9 @@ namespace MozaPlugin.Devices
             {
                 Role = Role,
                 Abs = Abs?.Clone() ?? new MBoosterEffectSettings(),
+                TractionControl = TractionControl?.Clone() ?? new MBoosterEffectSettings(),
+                WheelSpin = WheelSpin?.Clone() ?? new MBoosterEffectSettings(),
+                GearShift = GearShift?.Clone() ?? new MBoosterEffectSettings(),
                 Lockup = Lockup?.Clone() ?? new MBoosterEffectSettings(),
                 Threshold = Threshold?.Clone() ?? new MBoosterEffectSettings(),
                 Engine = Engine?.Clone() ?? new MBoosterEffectSettings(),
@@ -428,7 +505,9 @@ namespace MozaPlugin.Devices
         public readonly double Rpm;
         public readonly double IdleRpm;
         public readonly double Brake;        // 0..1
+        public readonly double Throttle;     // 0..1 — used by Traction Control's sustained test toggle
         public readonly bool   AbsActive;
+        public readonly bool   TcActive;
         public readonly double VehicleSpeedMs;
         public readonly double AvgWheelSpeedMs;
         // Vertical chassis acceleration, in G — SimHub's StatusDataBase.
@@ -449,24 +528,40 @@ namespace MozaPlugin.Devices
         // possibility for some titles. See docs/protocol/devices/
         // mbooster.md "Brake Fade".
         public readonly double BrakeTempC;
+        // True for exactly the one tick SimHub's Gear string differs from
+        // the previous tick (an edge, not a level) — computed once globally
+        // in MozaPlugin.DataUpdate with its own string latch, independent of
+        // the wheelbase's/AB9's own gear-shift latches. Each mBooster
+        // device's Gear Shift effect applies its own VibrateOnNeutral/
+        // DebounceMs settings on top of this raw edge — see
+        // MBoosterEffectWorker.UpdateGearShiftRequest.
+        public readonly bool GearChanged;
+        // Whether the gear landed in after a GearChanged edge is Neutral
+        // ("N"/"0"). Only meaningful when GearChanged is true this tick.
+        public readonly bool GearIsNeutral;
 
         public MBoosterTelemetrySnapshot(
-            bool gameRunning, double rpm, double idleRpm, double brake, bool absActive,
+            bool gameRunning, double rpm, double idleRpm, double brake, double throttle,
+            bool absActive, bool tcActive,
             double vehicleSpeedMs, double avgWheelSpeedMs, double suspensionHeaveG,
-            double brakeTempC)
+            double brakeTempC, bool gearChanged, bool gearIsNeutral)
         {
             GameRunning = gameRunning;
             Rpm = rpm;
             IdleRpm = idleRpm;
             Brake = brake;
+            Throttle = throttle;
             AbsActive = absActive;
+            TcActive = tcActive;
             VehicleSpeedMs = vehicleSpeedMs;
             AvgWheelSpeedMs = avgWheelSpeedMs;
             SuspensionHeaveG = suspensionHeaveG;
             BrakeTempC = brakeTempC;
+            GearChanged = gearChanged;
+            GearIsNeutral = gearIsNeutral;
         }
 
         public static readonly MBoosterTelemetrySnapshot Empty =
-            new MBoosterTelemetrySnapshot(false, 0, 800, 0, false, 0, 0, 0, 0);
+            new MBoosterTelemetrySnapshot(false, 0, 800, 0, 0, false, false, 0, 0, 0, 0, false, false);
     }
 }

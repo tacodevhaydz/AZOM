@@ -42,6 +42,21 @@ namespace MozaPlugin.Devices
         // continuous-mode custom effect (no Threshold gate) can run
         // indefinitely just like Engine does, and would otherwise dominate.
         private const double CustomEffectScaleMax = 0.10;
+        // Traction Control shares Engine's wire shape too (see
+        // ProcessTractionControlEffect) — same cap as ABS since it's the
+        // same oscillating-pulse implementation, just a different trigger.
+        private const double TractionControlScaleMax = 0.10;
+        // Wheel Spin shares Engine's wire shape too (see
+        // ProcessWheelSpinEffect) — same cap as ABS/Traction Control.
+        private const double WheelSpinScaleMax = 0.10;
+        // Gear Shift shares Engine's wire shape too (see
+        // ProcessGearShiftEffect) — same cap as the other Engine-slot
+        // reusers.
+        private const double GearShiftScaleMax = 0.10;
+        // Fixed one-shot pulse duration for Gear Shift — the only mBooster
+        // effect that's a genuine self-terminating pulse rather than a
+        // level-triggered continuous effect. See UpdateGearShiftRequest.
+        private const double GearShiftPulseDurationSec = 0.15;
 
         private readonly MBoosterDeviceController _device;
         private readonly Func<MBoosterDeviceSettings?> _settingsLookup;
@@ -62,11 +77,20 @@ namespace MozaPlugin.Devices
 
         // Per-effect synthesis state.
         private EffectState _abs;
+        private EffectState _tc;
+        private EffectState _wheelSpin;
+        private EffectState _gearShift;
         private EffectState _lockup;
         private EffectState _threshold;
         private EffectState _engine;
         private EffectState _roadTexture;
         private bool _thresholdLatched; // hysteresis flag for the Threshold effect (doc § 4)
+        // Debounce countdown for the Gear Shift effect, decremented each
+        // tick by TickPeriodSec — separate from EffectState.ElapsedSec
+        // (which resets every time the pulse (re)activates) since the
+        // debounce window must survive across the pulse's own on/off
+        // cycle. See UpdateGearShiftRequest.
+        private double _gearShiftDebounceRemainingSec;
 
         // Custom (NCalc) effects — one EffectState per user-created effect,
         // keyed by MBoosterCustomEffect.Id (stable across list edits/reorders,
@@ -97,6 +121,9 @@ namespace MozaPlugin.Devices
         // entirely — nothing constructs one anymore.)
         private volatile bool _engineTestSustained;
         private volatile bool _absTestSustained;
+        private volatile bool _tcTestSustained;
+        private volatile bool _wheelSpinTestSustained;
+        private volatile bool _gearShiftTestSustained;
         private volatile bool _roadTextureTestSustained;
         private volatile bool _lockupTestSustained;
         private volatile bool _thresholdTestSustained;
@@ -121,7 +148,7 @@ namespace MozaPlugin.Devices
             public double ElapsedSec;
             public double IntensityRequest;  // 0..1
             public double FreqHz;            // user/telemetry-mapped frequency
-            public double SmoothnessRequest01; // 0..1, ABS-only for now
+            public double SmoothnessRequest01; // 0..1, ABS (user-set); Traction Control/Wheel Spin fix this at 1
             public double RoadTextureRoughness01; // 0..1, Road-Texture-only: live suspension-derived intensity scale
             public double ThresholdDecayRequest01; // 0..1, Threshold-only: sustain-decay depth
         }
@@ -196,6 +223,12 @@ namespace MozaPlugin.Devices
 
         /// <summary>Turn ABS's sustained test toggle on/off. See <see cref="_absTestSustained"/>.</summary>
         public void SetAbsTestSustained(bool on) => _absTestSustained = on;
+        /// <summary>Turn Traction Control's sustained test toggle on/off. See <see cref="_tcTestSustained"/>.</summary>
+        public void SetTcTestSustained(bool on) => _tcTestSustained = on;
+        /// <summary>Turn Wheel Spin's sustained test toggle on/off. See <see cref="_wheelSpinTestSustained"/>.</summary>
+        public void SetWheelSpinTestSustained(bool on) => _wheelSpinTestSustained = on;
+        /// <summary>Turn Gear Shift's sustained test toggle on/off. See <see cref="_gearShiftTestSustained"/>.</summary>
+        public void SetGearShiftTestSustained(bool on) => _gearShiftTestSustained = on;
 
         /// <summary>Turn Road Texture's sustained test toggle on/off. See <see cref="_roadTextureTestSustained"/>.</summary>
         public void SetRoadTextureTestSustained(bool on) => _roadTextureTestSustained = on;
@@ -258,22 +291,26 @@ namespace MozaPlugin.Devices
 
             UpdateEngineRequest(settings, snap, ref _engine);
             UpdateAbsRequest(settings, snap, ref _abs);
+            UpdateTractionControlRequest(settings, snap, ref _tc);
+            UpdateWheelSpinRequest(settings, snap, ref _wheelSpin);
+            UpdateGearShiftRequest(settings, snap, ref _gearShift);
             UpdateLockupRequest(settings, snap, ref _lockup);
             UpdateThresholdRequest(settings, snap, ref _threshold);
             UpdateRoadTextureRequest(settings, snap, ref _roadTexture);
 
             // --- Apply per-effect activation edges + emit motor frame ------
             //
-            // All five vibration effects share ONE latest-wins motor stream
-            // slot (MozaSerialConnection StreamKind.MBoosterEffect —
-            // SendStream overwrites the pending value), so when more than
-            // one effect is active in the same tick only the LAST frame
-            // emitted here reaches the motor. Emission order is therefore a
-            // priority ladder, lowest first: the two continuous "ambient"
-            // effects (Engine, Road Texture) are emitted BEFORE the
-            // transient braking cues (ABS, Lockup, Threshold) so a
-            // lockup/ABS/threshold pulse always overrides the ambient
-            // vibration instead of being masked by it.
+            // All vibration effects share ONE latest-wins motor stream slot
+            // (MozaSerialConnection StreamKind.MBoosterEffect — SendStream
+            // overwrites the pending value), so when more than one effect is
+            // active in the same tick only the LAST frame emitted here
+            // reaches the motor. Emission order is therefore a priority
+            // ladder, lowest first: the two continuous "ambient" effects
+            // (Engine, Road Texture) are emitted BEFORE the transient
+            // wheel-slip cues (ABS, Traction Control, Wheel Spin, Lockup,
+            // Threshold) and the Gear Shift pulse, so a lockup/ABS/TC/
+            // wheel-spin/threshold/gear-shift pulse always overrides the
+            // ambient vibration instead of being masked by it.
             ProcessEffect(MBoosterEffectId.Engine,    ref _engine);
             // Road Texture has a materially different wire payload (see
             // MozaMBoosterProtocol.BuildRoadTextureFrame) so it doesn't go
@@ -286,10 +323,10 @@ namespace MozaPlugin.Devices
             // wins instead of being masked by it.
             ProcessRoadTextureEffect(settings, ref _roadTexture);
             // Custom (NCalc) effects — Experimental. Placed in the ambient
-            // tier (after Engine/Road Texture, before the braking cues) so a
-            // user-authored effect can override built-in ambient vibration
-            // but never masks a real ABS/Lockup/Threshold safety pulse. They
-            // also share Engine's wire slot (effect type 4 — see
+            // tier (after Engine/Road Texture, before the wheel-slip cues) so
+            // a user-authored effect can override built-in ambient vibration
+            // but never masks a real ABS/TC/Wheel Spin/Gear Shift/Lockup/
+            // Threshold safety pulse. They also share Engine's wire slot (effect type 4 — see
             // ProcessCustomEffect), so a custom effect active in the same
             // tick as the real Engine effect wins on the wire, same
             // last-write-wins masking rule as every other pair on this ladder.
@@ -297,6 +334,17 @@ namespace MozaPlugin.Devices
             ProcessEffect(MBoosterEffectId.Abs,       ref _abs);
             ProcessEffect(MBoosterEffectId.Lockup,    ref _lockup);
             ProcessEffect(MBoosterEffectId.Threshold, ref _threshold);
+            // Traction Control, Wheel Spin, and Gear Shift — same wheel-slip
+            // -adjacent cue tier as ABS/Lockup/Threshold, emitted last so
+            // they always win over ambient vibration. None has a verified
+            // wire effect-type of its own (unlike ABS's confirmed type 1),
+            // so — like Custom Effects — all three reuse Engine's
+            // already-verified frame shape (effect type 4) rather than an
+            // invented, unconfirmed protocol ID (see each one's Process*
+            // method for details).
+            ProcessTractionControlEffect(ref _tc);
+            ProcessWheelSpinEffect(ref _wheelSpin);
+            ProcessGearShiftEffect(ref _gearShift);
 
             // Brake Fade is NOT a vibration effect — it doesn't touch the
             // motor stream slot at all, so it's entirely independent of the
@@ -425,6 +473,216 @@ namespace MozaPlugin.Devices
         {
             if (hz < MBoosterUiConstants.AbsFreqMinHz) return MBoosterUiConstants.AbsFreqMinHz;
             if (hz > MBoosterUiConstants.AbsFreqMaxHz) return MBoosterUiConstants.AbsFreqMaxHz;
+            return hz;
+        }
+
+        // Traction Control — same oscillating-pulse implementation as ABS
+        // (see UpdateAbsRequest above), just triggered by snap.TcActive
+        // instead of snap.AbsActive, and its own Frequency (10-100Hz) and
+        // Intensity sliders — no Smoothness slider (unlike ABS), fixed at
+        // smoothness01 = 1 instead. The sustained test toggle substitutes
+        // live throttle position for tcActive (there's no live
+        // TC-activation signal to press against outside a real TC event,
+        // and TC engages under acceleration/wheelspin rather than braking,
+        // unlike ABS) — gated at 80% throttle, not any nonzero press, so
+        // the test only fires once you're pressing hard enough to
+        // plausibly trigger real wheelspin, not on a light tap.
+        private void UpdateTractionControlRequest(MBoosterDeviceSettings? settings, in MBoosterTelemetrySnapshot snap, ref EffectState st)
+        {
+            double freqHz = ClampTractionControlFreq(settings?.TractionControl?.FrequencyHz ?? MBoosterUiConstants.TractionControlFreqMinHz);
+            // No Smoothness slider for Traction Control (unlike ABS) — fixed
+            // at the "verified" ABS default ripple depth (smoothness01 = 1).
+            st.SmoothnessRequest01 = 1.0;
+
+            if (_tcTestSustained)
+            {
+                double throttleT = EffectiveThrottle(settings, snap);
+                if (throttleT < 0.8)
+                {
+                    st.IntensityRequest = 0;
+                    st.FreqHz = 0;
+                    return;
+                }
+                double testScale = ((settings?.TractionControl?.IntensityPct ?? 0) / 100.0) * TractionControlScaleMax;
+                st.IntensityRequest = Clamp01(throttleT * testScale);
+                st.FreqHz = freqHz;
+                return;
+            }
+
+            if (settings?.TractionControl == null || !settings.TractionControl.Enabled)
+            {
+                st.IntensityRequest = 0;
+                st.FreqHz = 0;
+                return;
+            }
+
+            double tc01 = snap.TcActive ? 1.0 : 0.0;
+            if (tc01 <= 0.1)
+            {
+                st.IntensityRequest = 0;
+                st.FreqHz = 0;
+                return;
+            }
+            st.FreqHz = freqHz;
+            double tcScale = (settings.TractionControl.IntensityPct / 100.0) * TractionControlScaleMax;
+            st.IntensityRequest = Clamp01(tc01 * tcScale);
+        }
+
+        private static double ClampTractionControlFreq(double hz)
+        {
+            if (hz < MBoosterUiConstants.TractionControlFreqMinHz) return MBoosterUiConstants.TractionControlFreqMinHz;
+            if (hz > MBoosterUiConstants.TractionControlFreqMaxHz) return MBoosterUiConstants.TractionControlFreqMaxHz;
+            return hz;
+        }
+
+        // Wheel Spin — the acceleration-side counterpart to Lockup's own
+        // wheel-slip heuristic (see UpdateLockupRequest above): driven wheel
+        // speed meaningfully exceeding vehicle speed while the throttle is
+        // heavily applied, rather than a game-provided activation flag like
+        // ABS/Traction Control. Deliberately gated to vehicleSpeed < 40 m/s
+        // (~144 km/h) since wheelspin is a low/mid-speed launch or
+        // corner-exit phenomenon — flooring the throttle at high speed in a
+        // tall gear is normal driving, not spin. Same Frequency (10-100Hz)/
+        // Intensity slider config as Traction Control, no Smoothness slider,
+        // fixed at smoothness01 = 1 like Traction Control.
+        private void UpdateWheelSpinRequest(MBoosterDeviceSettings? settings, in MBoosterTelemetrySnapshot snap, ref EffectState st)
+        {
+            double freqHz = ClampWheelSpinFreq(settings?.WheelSpin?.FrequencyHz ?? MBoosterUiConstants.WheelSpinFreqMinHz);
+            st.SmoothnessRequest01 = 1.0;
+
+            // Sustained test toggle substitutes live throttle position for
+            // the wheelspin heuristic (there's no live wheelspin signal to
+            // press against outside a real spin event) — same substitution
+            // Traction Control's test makes, gated at the same 80% throttle.
+            if (_wheelSpinTestSustained)
+            {
+                double throttleT = EffectiveThrottle(settings, snap);
+                if (throttleT < 0.8)
+                {
+                    st.IntensityRequest = 0;
+                    st.FreqHz = 0;
+                    return;
+                }
+                double testScale = ((settings?.WheelSpin?.IntensityPct ?? 0) / 100.0) * WheelSpinScaleMax;
+                st.IntensityRequest = Clamp01(throttleT * testScale);
+                st.FreqHz = freqHz;
+                return;
+            }
+
+            if (settings?.WheelSpin == null || !settings.WheelSpin.Enabled)
+            {
+                st.IntensityRequest = 0;
+                st.FreqHz = 0;
+                return;
+            }
+
+            double throttle = Clamp01(snap.Throttle);
+            double vehicleSpeed = Math.Abs(snap.VehicleSpeedMs);
+            double avgWheelSpeed = Math.Abs(snap.AvgWheelSpeedMs);
+
+            bool isSpinning = throttle > 0.8
+                           && vehicleSpeed < 40
+                           && avgWheelSpeed > vehicleSpeed * 1.3;
+
+            // Fallback path: many games don't expose per-wheel speeds (see
+            // UpdateLockupRequest's identical fallback rationale). If
+            // avgWheelSpeedMs is zero AND the driver is flooring the
+            // throttle at low/mid speed, treat as probable wheelspin so the
+            // effect still fires meaningfully.
+            if (!isSpinning && avgWheelSpeed <= 0 && throttle > 0.9 && vehicleSpeed < 40)
+                isSpinning = true;
+
+            if (!isSpinning)
+            {
+                st.IntensityRequest = 0;
+                st.FreqHz = 0;
+                return;
+            }
+            st.FreqHz = freqHz;
+            double wheelSpinScale = (settings.WheelSpin.IntensityPct / 100.0) * WheelSpinScaleMax;
+            st.IntensityRequest = Clamp01(wheelSpinScale);
+        }
+
+        private static double ClampWheelSpinFreq(double hz)
+        {
+            if (hz < MBoosterUiConstants.WheelSpinFreqMinHz) return MBoosterUiConstants.WheelSpinFreqMinHz;
+            if (hz > MBoosterUiConstants.WheelSpinFreqMaxHz) return MBoosterUiConstants.WheelSpinFreqMaxHz;
+            return hz;
+        }
+
+        // Gear Shift — unlike every other mBooster effect, this one is a
+        // genuine self-terminating one-shot pulse rather than a
+        // level-triggered continuous effect: snap.GearChanged is only true
+        // for the single tick the gear string actually changed (see
+        // MozaPlugin.DataUpdate), so firing has to be latched here across
+        // ticks for GearShiftPulseDurationSec, using EffectState's own
+        // Active/ElapsedSec (already tracked by ProcessEffect-style
+        // dispatch) rather than reacting to the raw edge alone. Mirrors the
+        // wheelbase's own MozaPlugin.CheckGearshiftEvent: neutral-landing
+        // transitions are suppressed unless VibrateOnNeutral opts in, and a
+        // DebounceMs window (tracked in _gearShiftDebounceRemainingSec,
+        // independent of EffectState so it survives across the pulse's own
+        // on/off cycle) absorbs an H-pattern's double transition
+        // (gear->N->gear).
+        private void UpdateGearShiftRequest(MBoosterDeviceSettings? settings, in MBoosterTelemetrySnapshot snap, ref EffectState st)
+        {
+            double freqHz = ClampGearShiftFreq(settings?.GearShift?.FrequencyHz ?? MBoosterUiConstants.GearShiftFreqMinHz);
+
+            // Sustained test toggle ignores the pulse/debounce machinery
+            // entirely and just holds the effect on continuously at the
+            // live Frequency/Intensity slider values — same substitution
+            // every other effect's test toggle makes (there's no live
+            // "gear just changed" signal to press against outside a real
+            // shift).
+            if (_gearShiftTestSustained)
+            {
+                double testScale = ((settings?.GearShift?.IntensityPct ?? 0) / 100.0) * GearShiftScaleMax;
+                st.IntensityRequest = Clamp01(testScale);
+                st.FreqHz = freqHz;
+                return;
+            }
+
+            if (settings?.GearShift == null || !settings.GearShift.Enabled)
+            {
+                st.IntensityRequest = 0;
+                st.FreqHz = 0;
+                return;
+            }
+
+            if (_gearShiftDebounceRemainingSec > 0)
+                _gearShiftDebounceRemainingSec = Math.Max(0, _gearShiftDebounceRemainingSec - TickPeriodSec);
+
+            double gearShiftScale = (settings.GearShift.IntensityPct / 100.0) * GearShiftScaleMax;
+
+            // Already mid-pulse from an earlier tick — keep it running
+            // until the fixed pulse duration elapses, regardless of
+            // whether snap.GearChanged is still true this tick (it won't
+            // be; it's a one-tick edge).
+            if (st.Active && st.ElapsedSec < GearShiftPulseDurationSec)
+            {
+                st.FreqHz = freqHz;
+                st.IntensityRequest = Clamp01(gearShiftScale);
+                return;
+            }
+
+            // Not currently pulsing — check for a fresh trigger this tick.
+            bool suppressedNeutral = snap.GearIsNeutral && !settings.GearShift.VibrateOnNeutral;
+            if (!snap.GearChanged || suppressedNeutral || _gearShiftDebounceRemainingSec > 0)
+            {
+                st.IntensityRequest = 0;
+                st.FreqHz = 0;
+                return;
+            }
+
+            _gearShiftDebounceRemainingSec = Math.Max(0, settings.GearShift.DebounceMs) / 1000.0;
+            st.FreqHz = freqHz;
+            st.IntensityRequest = Clamp01(gearShiftScale);
+        }
+
+        private static double ClampGearShiftFreq(double hz)
+        {
+            if (hz < MBoosterUiConstants.GearShiftFreqMinHz) return MBoosterUiConstants.GearShiftFreqMinHz;
+            if (hz > MBoosterUiConstants.GearShiftFreqMaxHz) return MBoosterUiConstants.GearShiftFreqMaxHz;
             return hz;
         }
 
@@ -1025,6 +1283,154 @@ namespace MozaPlugin.Devices
             _device.SendMotorStream(frame);
         }
 
+        /// <summary>
+        /// Activation-edge + frame-emission path for Traction Control —
+        /// mirrors <see cref="ProcessEffect"/>'s ABS handling (same
+        /// oscillating-pulse waveform via
+        /// <see cref="MBoosterEffectSynthesizer.SynthesizeTractionControl"/>),
+        /// but since there is no protocol-verified wire effect type for it
+        /// (unlike ABS's confirmed type 1), it's transmitted using the
+        /// already-verified Engine (effect type 4) frame shape/ParamK —
+        /// same reuse <see cref="ProcessCustomEffect"/> makes. This means
+        /// Traction Control competes with the real Engine effect and any
+        /// active custom effects for that one wire slot — see the ordering
+        /// note at this method's call site in <see cref="Tick"/>.
+        /// </summary>
+        private void ProcessTractionControlEffect(ref EffectState st)
+        {
+            const MBoosterEffectId id = MBoosterEffectId.Engine;
+            bool wantActive = st.IntensityRequest > 0 && st.FreqHz > 0;
+
+            if (!wantActive && st.Active)
+            {
+                _device.SendOneShot(MozaMBoosterProtocol.BuildDisableFrame(id));
+                st.Active = false;
+                st.PhaseRad = 0;
+                st.ElapsedSec = 0;
+                return;
+            }
+            if (!wantActive) return;
+
+            if (!st.Active)
+            {
+                st.Active = true;
+                st.PhaseRad = 0;
+                st.ElapsedSec = 0;
+            }
+
+            st.ElapsedSec += TickPeriodSec;
+            st.PhaseRad += 2.0 * Math.PI * st.FreqHz * TickPeriodSec;
+            if (st.PhaseRad >= 2.0 * Math.PI)
+                st.PhaseRad -= 2.0 * Math.PI * Math.Floor(st.PhaseRad / (2.0 * Math.PI));
+
+            double amp01 = MBoosterEffectSynthesizer.SynthesizeTractionControl(st.IntensityRequest, st.PhaseRad, st.SmoothnessRequest01);
+
+            byte param1 = MozaMBoosterProtocol.ComputeParam1(MozaMBoosterProtocol.ParamKFor(id), st.FreqHz);
+            ushort freqU16 = MozaMBoosterProtocol.EncodeFreq(st.FreqHz);
+            ushort ampU16 = MozaMBoosterProtocol.EncodeAmp(amp01);
+
+            var frame = MozaMBoosterProtocol.BuildMotorFrame(id, enable: true, param1, freqU16, ampU16);
+            _device.SendMotorStream(frame);
+        }
+
+        /// <summary>
+        /// Activation-edge + frame-emission path for Wheel Spin — identical
+        /// structure to <see cref="ProcessTractionControlEffect"/> (same
+        /// Engine-wire-slot reuse rationale; no verified wire effect type of
+        /// its own), just using
+        /// <see cref="MBoosterEffectSynthesizer.SynthesizeWheelSpin"/> for
+        /// the waveform. Competes with the real Engine effect and any
+        /// active Custom Effects/Traction Control for that one wire slot —
+        /// see the ordering note at this method's call site in
+        /// <see cref="Tick"/>.
+        /// </summary>
+        private void ProcessWheelSpinEffect(ref EffectState st)
+        {
+            const MBoosterEffectId id = MBoosterEffectId.Engine;
+            bool wantActive = st.IntensityRequest > 0 && st.FreqHz > 0;
+
+            if (!wantActive && st.Active)
+            {
+                _device.SendOneShot(MozaMBoosterProtocol.BuildDisableFrame(id));
+                st.Active = false;
+                st.PhaseRad = 0;
+                st.ElapsedSec = 0;
+                return;
+            }
+            if (!wantActive) return;
+
+            if (!st.Active)
+            {
+                st.Active = true;
+                st.PhaseRad = 0;
+                st.ElapsedSec = 0;
+            }
+
+            st.ElapsedSec += TickPeriodSec;
+            st.PhaseRad += 2.0 * Math.PI * st.FreqHz * TickPeriodSec;
+            if (st.PhaseRad >= 2.0 * Math.PI)
+                st.PhaseRad -= 2.0 * Math.PI * Math.Floor(st.PhaseRad / (2.0 * Math.PI));
+
+            double amp01 = MBoosterEffectSynthesizer.SynthesizeWheelSpin(st.IntensityRequest, st.PhaseRad, st.SmoothnessRequest01);
+
+            byte param1 = MozaMBoosterProtocol.ComputeParam1(MozaMBoosterProtocol.ParamKFor(id), st.FreqHz);
+            ushort freqU16 = MozaMBoosterProtocol.EncodeFreq(st.FreqHz);
+            ushort ampU16 = MozaMBoosterProtocol.EncodeAmp(amp01);
+
+            var frame = MozaMBoosterProtocol.BuildMotorFrame(id, enable: true, param1, freqU16, ampU16);
+            _device.SendMotorStream(frame);
+        }
+
+        /// <summary>
+        /// Activation-edge + frame-emission path for Gear Shift — same
+        /// Engine-wire-slot reuse rationale as
+        /// <see cref="ProcessTractionControlEffect"/>/
+        /// <see cref="ProcessWheelSpinEffect"/>, but the deactivation edge
+        /// here is reached by <see cref="UpdateGearShiftRequest"/>'s own
+        /// pulse-duration timeout rather than a telemetry gate going false
+        /// (the raw snap.GearChanged edge is already gone by the very next
+        /// tick either way). Uses
+        /// <see cref="MBoosterEffectSynthesizer.SynthesizeGearShift"/> for
+        /// the waveform — a short oscillating burst that decays to silence
+        /// over <see cref="GearShiftPulseDurationSec"/>.
+        /// </summary>
+        private void ProcessGearShiftEffect(ref EffectState st)
+        {
+            const MBoosterEffectId id = MBoosterEffectId.Engine;
+            bool wantActive = st.IntensityRequest > 0 && st.FreqHz > 0;
+
+            if (!wantActive && st.Active)
+            {
+                _device.SendOneShot(MozaMBoosterProtocol.BuildDisableFrame(id));
+                st.Active = false;
+                st.PhaseRad = 0;
+                st.ElapsedSec = 0;
+                return;
+            }
+            if (!wantActive) return;
+
+            if (!st.Active)
+            {
+                st.Active = true;
+                st.PhaseRad = 0;
+                st.ElapsedSec = 0;
+            }
+
+            st.ElapsedSec += TickPeriodSec;
+            st.PhaseRad += 2.0 * Math.PI * st.FreqHz * TickPeriodSec;
+            if (st.PhaseRad >= 2.0 * Math.PI)
+                st.PhaseRad -= 2.0 * Math.PI * Math.Floor(st.PhaseRad / (2.0 * Math.PI));
+
+            double amp01 = MBoosterEffectSynthesizer.SynthesizeGearShift(st.IntensityRequest, st.PhaseRad, st.ElapsedSec, GearShiftPulseDurationSec);
+
+            byte param1 = MozaMBoosterProtocol.ComputeParam1(MozaMBoosterProtocol.ParamKFor(id), st.FreqHz);
+            ushort freqU16 = MozaMBoosterProtocol.EncodeFreq(st.FreqHz);
+            ushort ampU16 = MozaMBoosterProtocol.EncodeAmp(amp01);
+
+            var frame = MozaMBoosterProtocol.BuildMotorFrame(id, enable: true, param1, freqU16, ampU16);
+            _device.SendMotorStream(frame);
+        }
+
         // ===== Helpers ====================================================
 
         /// <summary>
@@ -1042,6 +1448,25 @@ namespace MozaPlugin.Devices
                 if (hid > b) b = hid;
             }
             return b;
+        }
+
+        /// <summary>
+        /// Live throttle reading for Traction Control's test pulse. Prefers
+        /// <c>snap.Throttle</c> (the game-telemetry source SimHub publishes)
+        /// and rises to the mBooster's own HID pedal position when its role
+        /// is Throttle — same substitution <see cref="EffectiveBrake"/> makes
+        /// for ABS/Lockup/Threshold, so the user can feel throttle-modulated
+        /// test pulses even with no game running.
+        /// </summary>
+        private double EffectiveThrottle(MBoosterDeviceSettings? settings, in MBoosterTelemetrySnapshot snap)
+        {
+            double t = Clamp01(snap.Throttle);
+            if (settings?.Role == MBoosterRole.Throttle)
+            {
+                double hid = Clamp01(_device.LastHidPosition);
+                if (hid > t) t = hid;
+            }
+            return t;
         }
 
         private static double Clamp01(double v)

@@ -303,7 +303,10 @@ namespace MozaPlugin.Devices
             }
         }
 
-        /// <summary>Fire all five disable frames; called on disconnect / shutdown.</summary>
+        /// <summary>Fire all five disable frames; called on disconnect / shutdown.
+        /// Traction Control and Custom Effects share Engine's wire ID (no
+        /// verified ID of their own), so the Engine disable frame below
+        /// already covers them too.</summary>
         public void SendAllDisableFrames()
         {
             if (!_connection.IsConnected) return;
@@ -341,6 +344,50 @@ namespace MozaPlugin.Devices
         {
             if (on && !_connection.IsConnected) return;
             _worker.SetAbsTestSustained(on);
+        }
+
+        /// <summary>
+        /// Continuously runs Traction Control — substituting live throttle
+        /// position for tcActive, same substitution ABS makes with brake
+        /// position — at its currently configured Frequency/Intensity/
+        /// Smoothness while <paramref name="on"/> is true. See
+        /// <see cref="SetAbsTestActive"/> for the analogous ABS toggle; same
+        /// live-tracking and always-allow-off semantics apply here.
+        /// </summary>
+        public void SetTcTestActive(bool on)
+        {
+            if (on && !_connection.IsConnected) return;
+            _worker.SetTcTestSustained(on);
+        }
+
+        /// <summary>
+        /// Continuously runs Wheel Spin — substituting live throttle
+        /// position for the wheelspin heuristic, same substitution Traction
+        /// Control makes — at its currently configured Frequency/Intensity
+        /// while <paramref name="on"/> is true. See
+        /// <see cref="SetTcTestActive"/> for the analogous Traction Control
+        /// toggle; same live-tracking and always-allow-off semantics apply
+        /// here.
+        /// </summary>
+        public void SetWheelSpinTestActive(bool on)
+        {
+            if (on && !_connection.IsConnected) return;
+            _worker.SetWheelSpinTestSustained(on);
+        }
+
+        /// <summary>
+        /// Continuously runs Gear Shift at its currently configured
+        /// Frequency/Intensity while <paramref name="on"/> is true, bypassing
+        /// the real one-shot pulse/debounce/neutral-suppression machinery
+        /// entirely — there's no live "gear just changed" signal to press
+        /// against outside a real shift. See <see cref="SetTcTestActive"/>
+        /// for the analogous Traction Control toggle; same live-tracking and
+        /// always-allow-off semantics apply here.
+        /// </summary>
+        public void SetGearShiftTestActive(bool on)
+        {
+            if (on && !_connection.IsConnected) return;
+            _worker.SetGearShiftTestSustained(on);
         }
 
         /// <summary>
