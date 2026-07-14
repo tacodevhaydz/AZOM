@@ -2155,38 +2155,40 @@
                                         <ComboBoxItem Content="{x:Static res:Strings.Option_Brake}"     Tag="2"/>
                                         <ComboBoxItem Content="{x:Static res:Strings.Option_Clutch}"    Tag="3"/>
                                     </ComboBox>
-                                    <TextBlock Grid.Column="4" Text="{x:Static res:Strings.SliderLabel_DisplayName}" Style="{StaticResource LabelText}" Margin="0,0,10,0"/>
-                                    <TextBox Grid.Column="5" x:Name="MBoosterDisplayNameBox" Width="220"
-                                             ToolTip="{x:Static res:Strings.Hint_MBoosterDisplayName}"
-                                             KeyDown="MBoosterDisplayNameBox_KeyDown" LostFocus="MBoosterDisplayNameBox_LostFocus"/>
-                                </Grid>
-
-                                <!-- Per-axis pedal roles — shown only when a lane hosts more than one
-                                     pedal (a chained mBooster). One role selector per detected HID axis. -->
-                                <StackPanel x:Name="MBoosterAxisRolesPanel" Visibility="Collapsed" Margin="0,10,0,0">
-                                    <TextBlock Text="{x:Static res:Strings.Section_PedalRoles}" Style="{StaticResource LabelText}" Margin="0,0,0,4"/>
-                                    <TextBlock TextWrapping="Wrap" Style="{StaticResource MutedHintText}" Margin="0,0,0,8"
-                                               Text="{x:Static res:Strings.Hint_MBoosterAxisRoles}"/>
-                                    <ItemsControl x:Name="MBoosterAxisRolesList">
+                                    <!-- Per-axis pedal roles — shown INSTEAD of MBoosterRoleCombo/Label
+                                         above (same row, same columns, mutually-exclusive Visibility in
+                                         PopulateMBoosterAxisRoles) when a lane hosts more than one pedal
+                                         (a chained mBooster). One compact role selector per detected HID
+                                         axis, laid out horizontally alongside the Device combo instead of
+                                         the previous separate block below. Hint_MBoosterAxisRoles moved to
+                                         a ToolTip (same pattern as MBoosterDisplayNameBox below) since
+                                         there's no room for a title + paragraph inline. -->
+                                    <ItemsControl Grid.Column="2" Grid.ColumnSpan="2" x:Name="MBoosterAxisRolesList"
+                                                  ToolTip="{x:Static res:Strings.Hint_MBoosterAxisRoles}">
+                                        <ItemsControl.ItemsPanel>
+                                            <ItemsPanelTemplate>
+                                                <StackPanel Orientation="Horizontal"/>
+                                            </ItemsPanelTemplate>
+                                        </ItemsControl.ItemsPanel>
                                         <ItemsControl.ItemTemplate>
                                             <DataTemplate>
-                                                <Grid Margin="0,3">
-                                                    <Grid.ColumnDefinitions>
-                                                        <ColumnDefinition Width="140"/>
-                                                        <ColumnDefinition Width="Auto"/>
-                                                    </Grid.ColumnDefinitions>
-                                                    <TextBlock Grid.Column="0" Text="{Binding Label}" Style="{StaticResource LabelText}" VerticalAlignment="Center"/>
-                                                    <ComboBox Grid.Column="1" Width="160" SelectedIndex="{Binding SelectedRoleIndex, Mode=TwoWay}">
+                                                <StackPanel Orientation="Horizontal" Margin="0,0,16,0">
+                                                    <TextBlock Text="{Binding Label}" Style="{StaticResource LabelText}" VerticalAlignment="Center" Margin="0,0,8,0"/>
+                                                    <ComboBox Width="140" SelectedIndex="{Binding SelectedRoleIndex, Mode=TwoWay}">
                                                         <ComboBoxItem Content="{x:Static res:Strings.Option_Disabled}"/>
                                                         <ComboBoxItem Content="{x:Static res:Strings.Option_Throttle}"/>
                                                         <ComboBoxItem Content="{x:Static res:Strings.Option_Brake}"/>
                                                         <ComboBoxItem Content="{x:Static res:Strings.Option_Clutch}"/>
                                                     </ComboBox>
-                                                </Grid>
+                                                </StackPanel>
                                             </DataTemplate>
                                         </ItemsControl.ItemTemplate>
                                     </ItemsControl>
-                                </StackPanel>
+                                    <TextBlock Grid.Column="4" Text="{x:Static res:Strings.SliderLabel_DisplayName}" Style="{StaticResource LabelText}" Margin="0,0,10,0"/>
+                                    <TextBox Grid.Column="5" x:Name="MBoosterDisplayNameBox" Width="220"
+                                             ToolTip="{x:Static res:Strings.Hint_MBoosterDisplayName}"
+                                             KeyDown="MBoosterDisplayNameBox_KeyDown" LostFocus="MBoosterDisplayNameBox_LostFocus"/>
+                                </Grid>
                             </StackPanel>
                         </ctrl:SectionCard>
 
@@ -2196,11 +2198,19 @@
                             <!-- One per-pedal selector scoping ALL config below (Pedal Feel,
                                  Sim Input Mapping, Effects, Calibration). Hidden for a single-
                                  pedal lane; on a chain, each pedal keeps its own config and
-                                 effects are sent to that pedal's own motor device id. -->
-                            <StackPanel x:Name="MBoosterEffectPedalPanel" Orientation="Horizontal" Margin="0,0,0,14" Visibility="Collapsed">
-                                <TextBlock Text="{x:Static res:Strings.Label_EffectsForPedal}" Style="{StaticResource LabelText}" VerticalAlignment="Center" Margin="0,0,8,0"/>
-                                <ComboBox x:Name="MBoosterEffectPedalCombo" MinWidth="140" SelectionChanged="MBoosterEffectPedalCombo_SelectionChanged"/>
-                            </StackPanel>
+                                 effects are sent to that pedal's own motor device id. Called out
+                                 with the accent (cyan) treatment rather than a plain row — easy
+                                 to miss otherwise, and every card below silently depends on it. -->
+                            <Border x:Name="MBoosterEffectPedalPanel" Visibility="Collapsed"
+                                    Background="{StaticResource CyanSoftBrush}"
+                                    BorderBrush="{StaticResource CyanBrush}" BorderThickness="1"
+                                    CornerRadius="6" Padding="14,10" Margin="0,0,0,14">
+                                <StackPanel Orientation="Horizontal">
+                                    <TextBlock Text="{x:Static res:Strings.Label_EffectsForPedal}" Style="{StaticResource LabelText}"
+                                               FontWeight="Bold" Foreground="{StaticResource CyanBrush}" VerticalAlignment="Center" Margin="0,0,10,0"/>
+                                    <ComboBox x:Name="MBoosterEffectPedalCombo" MinWidth="160" SelectionChanged="MBoosterEffectPedalCombo_SelectionChanged"/>
+                                </StackPanel>
+                            </Border>
 
                             <ctrl:SectionCard Title="{x:Static res:Strings.Section_PedalFeelSimInput}"
                                               Icon="{StaticResource IconCurve}"
@@ -2495,7 +2505,7 @@
                                             <ColumnDefinition Width="Auto"/>
                                         </Grid.ColumnDefinitions>
                                         <TextBlock Grid.Column="0" Text="{x:Static res:Strings.SliderLabel_FrequencyHz}" Style="{StaticResource SliderLabel}"/>
-                                        <Slider Grid.Column="1" x:Name="MBoosterWheelSpinFrequencySlider" Style="{StaticResource SettingSlider}" Minimum="10" Maximum="100" TickFrequency="1" ValueChanged="MBoosterWheelSpinFrequencySlider_ValueChanged"/>
+                                        <Slider Grid.Column="1" x:Name="MBoosterWheelSpinFrequencySlider" Style="{StaticResource SettingSlider}" Minimum="30" Maximum="80" TickFrequency="1" ValueChanged="MBoosterWheelSpinFrequencySlider_ValueChanged"/>
                                         <TextBox Grid.Column="2" x:Name="MBoosterWheelSpinFrequencyValue" Style="{StaticResource SliderValueEditBox}"
                                                  Tag="{Binding ElementName=MBoosterWheelSpinFrequencySlider}"
                                                  KeyDown="SliderValueBox_KeyDown" LostFocus="SliderValueBox_LostFocus"
@@ -2529,7 +2539,7 @@
                                             <ColumnDefinition Width="Auto"/>
                                         </Grid.ColumnDefinitions>
                                         <TextBlock Grid.Column="0" Text="{x:Static res:Strings.SliderLabel_FrequencyHz}" Style="{StaticResource SliderLabel}"/>
-                                        <Slider Grid.Column="1" x:Name="MBoosterGearShiftFrequencySlider" Style="{StaticResource SettingSlider}" Minimum="10" Maximum="100" TickFrequency="1" ValueChanged="MBoosterGearShiftFrequencySlider_ValueChanged"/>
+                                        <Slider Grid.Column="1" x:Name="MBoosterGearShiftFrequencySlider" Style="{StaticResource SettingSlider}" Minimum="20" Maximum="100" TickFrequency="1" ValueChanged="MBoosterGearShiftFrequencySlider_ValueChanged"/>
                                         <TextBox Grid.Column="2" x:Name="MBoosterGearShiftFrequencyValue" Style="{StaticResource SliderValueEditBox}"
                                                  Tag="{Binding ElementName=MBoosterGearShiftFrequencySlider}"
                                                  KeyDown="SliderValueBox_KeyDown" LostFocus="SliderValueBox_LostFocus"

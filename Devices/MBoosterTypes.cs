@@ -32,14 +32,13 @@ namespace MozaPlugin.Devices
         public const float TractionControlFreqMinHz = 10f;
         public const float TractionControlFreqMaxHz = 100f;
 
-        // Wheel Spin's fixed frequency slider bounds — same range as
-        // Traction Control's.
-        public const float WheelSpinFreqMinHz = 10f;
-        public const float WheelSpinFreqMaxHz = 100f;
+        // Wheel Spin's fixed frequency slider bounds — confirmed range,
+        // narrower than Traction Control's/Gear Shift's.
+        public const float WheelSpinFreqMinHz = 30f;
+        public const float WheelSpinFreqMaxHz = 80f;
 
-        // Gear Shift's fixed frequency slider bounds — same range as
-        // Traction Control's/Wheel Spin's.
-        public const float GearShiftFreqMinHz = 10f;
+        // Gear Shift's fixed frequency slider bounds — confirmed range.
+        public const float GearShiftFreqMinHz = 20f;
         public const float GearShiftFreqMaxHz = 100f;
 
         // Gear Shift's Debounce (ms) slider bounds — same range/step as the
@@ -350,7 +349,7 @@ namespace MozaPlugin.Devices
         public MBoosterEffectSettings Engine { get; set; } = new MBoosterEffectSettings { IntensityPct = 50, FrequencyHz = 100 };
         public MBoosterEffectSettings RoadTexture { get; set; } = new MBoosterEffectSettings { IntensityPct = 50, SmoothnessPct = 50 };
         public MBoosterEffectSettings TractionControl { get; set; } = new MBoosterEffectSettings { FrequencyHz = 22 };
-        public MBoosterEffectSettings WheelSpin { get; set; } = new MBoosterEffectSettings { FrequencyHz = 22 };
+        public MBoosterEffectSettings WheelSpin { get; set; } = new MBoosterEffectSettings { FrequencyHz = 30 };
         public MBoosterEffectSettings GearShift { get; set; } = new MBoosterEffectSettings { FrequencyHz = 22 };
         public List<MBoosterCustomEffect> CustomEffects { get; set; } = new List<MBoosterCustomEffect>();
 
@@ -429,7 +428,7 @@ namespace MozaPlugin.Devices
         // (MBoosterUiConstants.WheelSpinFreqMinHz/MaxHz), and same
         // Engine-wire-slot reuse (no verified wire effect type of its own —
         // see MBoosterEffectWorker.ProcessWheelSpinEffect).
-        public MBoosterEffectSettings WheelSpin { get; set; } = new MBoosterEffectSettings { FrequencyHz = 22 };
+        public MBoosterEffectSettings WheelSpin { get; set; } = new MBoosterEffectSettings { FrequencyHz = 30 };
         // Gear Shift — a one-shot pulse fired on every detected gear change
         // (any->any, same pulse regardless of up/down), mirroring the
         // wheelbase's own gear-shift-vibration feature (MozaPlugin

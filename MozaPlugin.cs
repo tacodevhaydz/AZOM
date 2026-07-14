@@ -2265,11 +2265,13 @@ namespace MozaPlugin
                 else if (s.Pedals != null && s.Pedals.TryGetValue(axis, out var p) && p != null) cfg = p;
                 else continue;
 
-                if (cfg.Direction >= 0) controller.SendIntWrite($"mbooster-{prefix}-dir", cfg.Direction);
-                if (cfg.Min >= 0) controller.SendIntWrite($"mbooster-{prefix}-min", cfg.Min);
-                if (cfg.Max >= 0) controller.SendIntWrite($"mbooster-{prefix}-max", cfg.Max);
+                bool wroteAnyCalibration = false;
+                if (cfg.Direction >= 0) { controller.SendIntWrite($"mbooster-{prefix}-dir", cfg.Direction); wroteAnyCalibration = true; }
+                if (cfg.Min >= 0) { controller.SendIntWrite($"mbooster-{prefix}-min", cfg.Min); wroteAnyCalibration = true; }
+                if (cfg.Max >= 0) { controller.SendIntWrite($"mbooster-{prefix}-max", cfg.Max); wroteAnyCalibration = true; }
                 if (cfg.CurveY != null && cfg.CurveY.Length == 5)
                 {
+                    wroteAnyCalibration = true;
                     // Resample at the fixed 20/40/60/80/100 breakpoints in case
                     // CurveX has been horizontally dragged (see
                     // MozaMBoosterRegistry.ResampleCurveAtFixedBreakpoints) —
@@ -2288,25 +2290,54 @@ namespace MozaPlugin
                 // on 0x12 — the host aggregates the output mapping (capture-verified).
                 byte dev = global::MozaPlugin.Devices.MBoosterDeviceController.MotorDeviceForAxis(axis);
                 if (cfg.TravelStartMm >= 0)
+                {
                     controller.SendIntWrite("mbooster-brake-travel-start",
                         global::MozaPlugin.Protocol.MozaMBoosterProtocol.EncodeTravelMm(cfg.TravelStartMm), dev);
+                    wroteAnyCalibration = true;
+                }
                 if (cfg.TravelEndMm >= 0)
+                {
                     controller.SendIntWrite("mbooster-brake-travel-end",
                         global::MozaPlugin.Protocol.MozaMBoosterProtocol.EncodeTravelMm(cfg.TravelEndMm), dev);
+                    wroteAnyCalibration = true;
+                }
                 if (cfg.EndstopFrontStiffness >= 0)
+                {
                     controller.SendIntWrite("mbooster-brake-endstop-front",
                         global::MozaPlugin.Protocol.MozaMBoosterProtocol.EncodeEndstopStiffness(cfg.EndstopFrontStiffness), dev);
+                    wroteAnyCalibration = true;
+                }
                 if (cfg.EndstopEndStiffness >= 0)
+                {
                     controller.SendIntWrite("mbooster-brake-endstop-end",
                         global::MozaPlugin.Protocol.MozaMBoosterProtocol.EncodeEndstopStiffness(cfg.EndstopEndStiffness), dev);
+                    wroteAnyCalibration = true;
+                }
                 if (role == global::MozaPlugin.Devices.MBoosterRole.Brake)
                 {
                     if (cfg.SensorOutputRatioPct >= 0)
+                    {
                         controller.SendFloatWrite("mbooster-brake-angle-ratio", cfg.SensorOutputRatioPct, dev);
+                        wroteAnyCalibration = true;
+                    }
                     if (cfg.MaxThresholdKg >= 0)
+                    {
                         controller.SendIntWrite("mbooster-brake-threshold",
                             global::MozaPlugin.Protocol.MozaMBoosterProtocol.EncodeThresholdKg(cfg.MaxThresholdKg), dev);
+                        wroteAnyCalibration = true;
+                    }
                 }
+
+                // EXPERIMENTAL / unverified — confirmed on hardware to be
+                // required for a Travel edit to actually take effect; applied
+                // here too on the theory the same firmware requirement covers
+                // every write above, not just Travel. See
+                // MBoosterDeviceController.PushCurve7Resync. Guarded like the
+                // writes above (not unconditional) to preserve this method's
+                // "fresh profile with no overrides produces zero hardware
+                // writes" guarantee.
+                if (wroteAnyCalibration)
+                    controller.PushCurve7Resync(cfg.CurveX, cfg.CurveY, dev);
             }
         }
 

@@ -476,6 +476,25 @@ namespace MozaPlugin.Devices
         }
 
         /// <summary>
+        /// EXPERIMENTAL / unverified — resend the output curve at 7
+        /// breakpoints (<c>mbooster-brake-curve7-*</c>, cmdId 0xAB) after a
+        /// real hardware calibration write. pedal_travel.pcapng showed Pit
+        /// House doing exactly this alongside a Travel Start write, and
+        /// omitting it is what made Travel Start/End silently no-op on
+        /// hardware despite the raw register write reading back fine — see
+        /// MozaCommandDatabase.cs's mbooster-brake-curve7-* comment. Callers
+        /// use this after any of Travel/Endstop/Ratio/Threshold's own writes
+        /// on the theory that the same firmware requirement applies to all of
+        /// them, not just Travel — unconfirmed for the others.
+        /// </summary>
+        public void PushCurve7Resync(float[]? curveX, float[]? curveY, byte device)
+        {
+            var curve7 = MozaMBoosterRegistry.ResampleCurveAtSevenths(curveX, curveY);
+            for (int i = 0; i < curve7.Length; i++)
+                SendIntWrite($"mbooster-brake-curve7-{i + 1}", MozaMBoosterProtocol.EncodeCurve7Point(curve7[i]), device);
+        }
+
+        /// <summary>
         /// Build + send a read for a registered <c>mbooster-*</c> command. Read
         /// responses (group 35 + 0x80 = 0xA3) land on <see cref="MessageReceived"/>
         /// and the caller must <see cref="MozaResponseParser.Parse"/> them with
