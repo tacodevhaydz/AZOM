@@ -99,6 +99,17 @@ namespace MozaControls
                     (d, e) => ((BandwidthSparkline)d).Recompute()));
         public double MaxValue { get => (double)GetValue(MaxValueProperty); set => SetValue(MaxValueProperty, value); }
 
+        /// <summary>Opt-in dashed horizontal reference lines at 100/75/50/25 %
+        /// of the plot height (see <see cref="GridGeometry"/>) — off by
+        /// default so the original bandwidth chart (auto-scaled, no fixed
+        /// percent semantics) is unaffected; the mBooster pedal-trace graph
+        /// turns this on since its MaxValue is a fixed 100 (%).</summary>
+        public static readonly DependencyProperty ShowGridlinesProperty =
+            DependencyProperty.Register(nameof(ShowGridlines), typeof(bool), typeof(BandwidthSparkline),
+                new FrameworkPropertyMetadata(false, FrameworkPropertyMetadataOptions.AffectsRender,
+                    (d, e) => ((BandwidthSparkline)d).Recompute()));
+        public bool ShowGridlines { get => (bool)GetValue(ShowGridlinesProperty); set => SetValue(ShowGridlinesProperty, value); }
+
         // -------- Read-only geometries + tip points --------
 
         private static DependencyPropertyKey RoG(string name) =>
@@ -114,6 +125,7 @@ namespace MozaControls
         private static readonly DependencyPropertyKey OutFillGeometryKey = RoG("OutFillGeometry");
         private static readonly DependencyPropertyKey ThirdLineGeometryKey = RoG("ThirdLineGeometry");
         private static readonly DependencyPropertyKey ThirdFillGeometryKey = RoG("ThirdFillGeometry");
+        private static readonly DependencyPropertyKey GridGeometryKey = RoG("GridGeometry");
         private static readonly DependencyPropertyKey InTipXKey =  RoD("InTipX");
         private static readonly DependencyPropertyKey InTipYKey =  RoD("InTipY");
         private static readonly DependencyPropertyKey OutTipXKey = RoD("OutTipX");
@@ -127,6 +139,7 @@ namespace MozaControls
         public static readonly DependencyProperty OutFillGeometryProperty = OutFillGeometryKey.DependencyProperty;
         public static readonly DependencyProperty ThirdLineGeometryProperty = ThirdLineGeometryKey.DependencyProperty;
         public static readonly DependencyProperty ThirdFillGeometryProperty = ThirdFillGeometryKey.DependencyProperty;
+        public static readonly DependencyProperty GridGeometryProperty = GridGeometryKey.DependencyProperty;
         public static readonly DependencyProperty InTipXProperty =  InTipXKey.DependencyProperty;
         public static readonly DependencyProperty InTipYProperty =  InTipYKey.DependencyProperty;
         public static readonly DependencyProperty OutTipXProperty = OutTipXKey.DependencyProperty;
@@ -140,6 +153,7 @@ namespace MozaControls
         public Geometry? OutFillGeometry => (Geometry?)GetValue(OutFillGeometryProperty);
         public Geometry? ThirdLineGeometry => (Geometry?)GetValue(ThirdLineGeometryProperty);
         public Geometry? ThirdFillGeometry => (Geometry?)GetValue(ThirdFillGeometryProperty);
+        public Geometry? GridGeometry => (Geometry?)GetValue(GridGeometryProperty);
         public double InTipX  => (double)GetValue(InTipXProperty);
         public double InTipY  => (double)GetValue(InTipYProperty);
         public double OutTipX => (double)GetValue(OutTipXProperty);
@@ -179,6 +193,12 @@ namespace MozaControls
             return list;
         }
 
+        // Gridlines sit at these fractions of the plot height (i.e. 100/75/50/25
+        // when MaxValue is a fixed 100) regardless of the data's own scale —
+        // they're a fixed visual reference, not tied to the rolling window's
+        // auto-scaled peak.
+        private static readonly double[] GridlineFractions = { 1.0, 0.75, 0.5, 0.25 };
+
         private void Recompute()
         {
             double w = ActualWidth;
@@ -189,12 +209,32 @@ namespace MozaControls
                 return;
             }
 
+            double pad = 2;
+            double plotW = w - pad * 2;
+            double plotH = h - pad * 2;
+
+            if (ShowGridlines)
+            {
+                var grid = new GeometryGroup();
+                foreach (double frac in GridlineFractions)
+                {
+                    double y = h - pad - frac * plotH;
+                    grid.Children.Add(new LineGeometry(new Point(pad, y), new Point(pad + plotW, y)));
+                }
+                grid.Freeze();
+                SetValue(GridGeometryKey, grid);
+            }
+            else
+            {
+                SetValue(GridGeometryKey, null);
+            }
+
             var inVals    = Collect(InSamples);
             var outVals   = Collect(OutSamples);
             var thirdVals = Collect(ThirdSamples);
             if (inVals.Count == 0 && outVals.Count == 0 && thirdVals.Count == 0)
             {
-                Clear();
+                ClearSeries();
                 return;
             }
 
@@ -208,10 +248,6 @@ namespace MozaControls
             double scaleRef = MaxValue > 0 ? MaxValue : peak;
             double max = Math.Max(1, scaleRef);
             double clip = max;
-
-            double pad = 2;
-            double plotW = w - pad * 2;
-            double plotH = h - pad * 2;
 
             (Geometry? line, Geometry? fill, double tipX, double tipY)
                 Build(List<double> values)
@@ -250,7 +286,7 @@ namespace MozaControls
             SetValue(ThirdTipXKey, thirdTipX); SetValue(ThirdTipYKey, thirdTipY);
         }
 
-        private void Clear()
+        private void ClearSeries()
         {
             SetValue(InLineGeometryKey,  null);
             SetValue(InFillGeometryKey,  null);
@@ -258,6 +294,12 @@ namespace MozaControls
             SetValue(OutFillGeometryKey, null);
             SetValue(ThirdLineGeometryKey, null);
             SetValue(ThirdFillGeometryKey, null);
+        }
+
+        private void Clear()
+        {
+            ClearSeries();
+            SetValue(GridGeometryKey, null);
         }
     }
 }

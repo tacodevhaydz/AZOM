@@ -3275,7 +3275,8 @@ namespace MozaPlugin
                             var role = global::MozaPlugin.Devices.MozaMBoosterRegistry.ResolveAxisRole(rowSettings, axis, axisCount);
                             bool isSelected = string.Equals(c.Identity, _mboosterSelectedIdentity, StringComparison.OrdinalIgnoreCase)
                                 && axis == _mboosterEffectPedalIndex;
-                            _mboosterDeviceRows.Add(new MBoosterDeviceRow(c.Identity, axis, label, isSelected, role, OnMBoosterDeviceRowRoleChanged));
+                            _mboosterDeviceRows.Add(new MBoosterDeviceRow(c.Identity, axis, label, isSelected, role,
+                                rowSettings.DisplayName, OnMBoosterDeviceRowRoleChanged, OnMBoosterDeviceRowDisplayNameChanged));
                         }
                     }
                     MBoosterDeviceRowsList.ItemsSource = _mboosterDeviceRows;
@@ -3290,6 +3291,13 @@ namespace MozaPlugin
                         row.RoleIndex = (int)global::MozaPlugin.Devices.MozaMBoosterRegistry.ResolveAxisRole(rowSettings, row.AxisIndex, axisCount);
                         row.IsSelected = string.Equals(row.Identity, _mboosterSelectedIdentity, StringComparison.OrdinalIgnoreCase)
                             && row.AxisIndex == _mboosterEffectPedalIndex;
+                        // DisplayName is per-profile like every other mBooster
+                        // setting, so a profile switch can change it without
+                        // changing rowsSignature (which only tracks physical
+                        // connectivity). The setter no-ops unless the value
+                        // actually differs, and OnMBoosterDeviceRowDisplayNameChanged
+                        // recomputes Label when it fires.
+                        row.DisplayName = rowSettings.DisplayName;
                     }
                 }
             }
@@ -3458,6 +3466,42 @@ namespace MozaPlugin
                     continue;
                 if (row.RoleIndex == (int)role)
                     row.RoleIndex = (int)MBoosterRole.Disabled;
+            }
+        }
+
+        /// <summary>DisplayName edit callback — fires from MBoosterDeviceRow
+        /// .DisplayName's setter (only when the value actually changes), both
+        /// for a genuine user edit (the TwoWay-bound TextBox shown for the
+        /// selected row) and RefreshMBoosterTab's per-tick resync (e.g. after
+        /// a profile switch changes the saved name). Persists the value and
+        /// recomputes every row sharing this identity's Label immediately —
+        /// Label isn't part of rowsSignature, so RefreshMBoosterTab wouldn't
+        /// otherwise notice a DisplayName change until some other signature
+        /// field happened to change too.</summary>
+        private void OnMBoosterDeviceRowDisplayNameChanged(string identity, string newDisplayName)
+        {
+            if (_plugin == null) return;
+            var s = _plugin.GetOrCreateMBoosterSettings(identity);
+            s.DisplayName = newDisplayName ?? "";
+            _plugin.SaveSettings();
+
+            var controller = _plugin.MBoosterRegistry?.FindByIdentity(identity);
+            if (controller == null) return;
+            string deviceLabel = BuildMBoosterComboLabel(controller);
+
+            int matchCount = 0;
+            foreach (var row in _mboosterDeviceRows)
+                if (string.Equals(row.Identity, identity, StringComparison.OrdinalIgnoreCase)) matchCount++;
+            bool multiplePedals = matchCount > 1;
+
+            int shown = 0;
+            foreach (var row in _mboosterDeviceRows)
+            {
+                if (!string.Equals(row.Identity, identity, StringComparison.OrdinalIgnoreCase)) continue;
+                ++shown;
+                row.Label = multiplePedals
+                    ? $"{deviceLabel} — {string.Format(Strings.Label_PedalAxis, shown)}"
+                    : deviceLabel;
             }
         }
 

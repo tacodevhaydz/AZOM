@@ -364,6 +364,12 @@
             <Setter.Value>
                 <ControlTemplate TargetType="{x:Type controls:BandwidthSparkline}">
                     <Grid>
+                        <!-- Opt-in dashed horizontal gridlines (ShowGridlines) at
+                             100/75/50/25 % of the plot — stays at the very back. -->
+                        <Path Data="{Binding GridGeometry, RelativeSource={RelativeSource TemplatedParent}}"
+                              Stroke="{StaticResource BorderBrush}" StrokeThickness="1"
+                              StrokeDashArray="2 3" Opacity="0.6"/>
+
                         <!-- Third drawn furthest back, then outbound, then inbound
                              on top — so for the two-series bandwidth chart the
                              typically-louder inbound line still lays on top, and
