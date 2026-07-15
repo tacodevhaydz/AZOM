@@ -129,7 +129,6 @@
   <data name="Section_BrakeCalibration" xml:space="preserve"><value>FREIN · CALIBRATION</value></data>
   <data name="Section_ClutchCalibration" xml:space="preserve"><value>EMBRAYAGE · CALIBRATION</value></data>
   <data name="SliderLabel_SensorRatio" xml:space="preserve"><value>Ratio des capteurs</value></data>
-  <data name="Hint_AngleSensorVsLoadCell" xml:space="preserve"><value>0 % = capteur d'angle · 100 % = capteur de charge</value></data>
   <data name="Section_Ab9ActiveShifter" xml:space="preserve"><value>LEVIER ACTIF AB9</value></data>
   <data name="Status_SearchingForAb9" xml:space="preserve"><value>Recherche de l'AB9…</value></data>
   <data name="Section_MechanicalLayout" xml:space="preserve"><value>DISPOSITION MÉCANIQUE</value></data>
@@ -161,21 +160,14 @@
   <data name="Option_Brake" xml:space="preserve"><value>Frein</value></data>
   <data name="Option_Clutch" xml:space="preserve"><value>Embrayage</value></data>
   <data name="Section_PedalFeel" xml:space="preserve"><value>RESSENTI DE LA PÉDALE</value></data>
-  <data name="Subtitle_PedalFeel" xml:space="preserve"><value>// détermine le ressenti de la pédale, indépendamment de la courbe de sortie ci-dessous</value></data>
   <data name="SliderLabel_DeadzoneKg" xml:space="preserve"><value>Zone morte (kg)</value></data>
   <data name="SliderLabel_MaxForceKg" xml:space="preserve"><value>Force maximale (kg)</value></data>
-  <data name="Hint_DeadzoneScaleAssumption" xml:space="preserve"><value>Uniquement côté logiciel. La Zone morte et la Force maximale supposent toutes deux une échelle fixe de 0 à 200 kg pour 0-100 % de la course de la pédale, car le signal brut de la pédale n'a pas d'étalonnage de force propre. Force maximale définit où la courbe d'entrée ci-dessous atteint 100 %.</value></data>
   <data name="SliderLabel_TravelRangeMm" xml:space="preserve"><value>Début / Fin de Course (mm)</value></data>
-  <data name="Hint_TravelRangeMm" xml:space="preserve"><value>Écrit une calibration matérielle réelle (cmdId 0x84/0x85) — rétro-ingénierie à partir de captures Pit House, non confirmé par Moza. Faites glisser les deux nœuds pour définir le début/la fin physique de la course de la pédale, puis vérifiez que cela fonctionne correctement sur votre matériel.</value></data>
   <data name="SliderLabel_EndstopFrontStiffness" xml:space="preserve"><value>Rigidité de butée avant</value></data>
   <data name="SliderLabel_EndstopEndStiffness" xml:space="preserve"><value>Rigidité de butée de fin</value></data>
-  <data name="Hint_EndstopStiffness" xml:space="preserve"><value>Écrit une calibration matérielle réelle (cmdId 0xB2) — rétro-ingénierie à partir de captures Pit House, non confirmé par Moza. Définit la dureté ressentie lorsque la pédale atteint le début/la fin de sa course physique.</value></data>
-  <data name="Hint_InputCurveHostOnly" xml:space="preserve"><value>Uniquement côté logiciel : remodèle la position de pédale signalée avant qu'elle n'atteigne le jeu (et la courbe de sortie de Mappage d'entrée Sim ci-dessous). Rien n'est envoyé à l'appareil.</value></data>
   <data name="Section_SimInputMapping" xml:space="preserve"><value>MAPPAGE D'ENTRÉE SIM</value></data>
   <data name="Subtitle_SimInputMapping" xml:space="preserve"><value>// mappe le signal de la cellule de charge/pédale vers le jeu, à la manière de Pit House</value></data>
   <data name="SliderLabel_MaxThresholdKg" xml:space="preserve"><value>Seuil maximal (kg)</value></data>
-  <data name="Hint_MaxThresholdReverseEngineered" xml:space="preserve"><value>Rétro-ingénierie à partir d'une capture Pit House (cmdId 0xB3) — non confirmé par Moza. Merci de vérifier que cela fonctionne correctement sur votre matériel.</value></data>
-  <data name="Hint_OutputCurveDragX" xml:space="preserve"><value>Faites glisser un nœud latéralement pour déplacer sa position sur l'axe d'entrée — par exemple, faites glisser le dernier nœud vers la gauche pour atteindre 100 % de sortie avant 100 % d'entrée.</value></data>
   <data name="Section_Effects" xml:space="preserve"><value>EFFETS</value></data>
   <data name="Subtitle_EffectsTriggers" xml:space="preserve"><value>// déclencheurs : ABS sur signal du jeu · Blocage au frein&gt;0,8 · Seuil sur front · Moteur continu</value></data>
   <data name="Section_Abs" xml:space="preserve"><value>ABS</value></data>

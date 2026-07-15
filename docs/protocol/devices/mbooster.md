@@ -885,8 +885,11 @@ to populate `MaxThresholdKg`, so this remains a best-effort guess until
 that's implemented). Force below the deadzone clamps to 0, and
 everything between the deadzone and Max Force rescales linearly to
 0–100%, same as before — just against the real reference scale instead
-of a hardcoded one. This is stated in the UI hint
-(`Hint_DeadzoneScaleAssumption`). Practical implication for users: Max
+of a hardcoded one. (This used to be spelled out in a UI hint,
+`Hint_DeadzoneScaleAssumption`, but that string was never actually
+filled in for English — only other locales had it translated — so the
+English UI showed a blank line; the hint has since been removed
+entirely rather than backfilled.) Practical implication for users: Max
 Force can only ever *lower* the effort needed to reach 100% below the
 device's real Max Threshold — it can't demand *more* force than the
 device's own calibration already saturates at, so getting a genuine

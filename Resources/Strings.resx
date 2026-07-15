@@ -138,7 +138,6 @@
   <data name="SliderLabel_SensorRatio" xml:space="preserve"><value>Sensor Ratio</value></data>
   <data name="Label_AngleSensor" xml:space="preserve"><value>Angle</value></data>
   <data name="Label_LoadCell" xml:space="preserve"><value>Load Cell</value></data>
-  <data name="Hint_AngleSensorVsLoadCell" xml:space="preserve"><value></value></data>
   <data name="Section_Ab9ActiveShifter" xml:space="preserve"><value>AB9 ACTIVE SHIFTER</value></data>
   <data name="Status_SearchingForAb9" xml:space="preserve"><value>Searching for AB9...</value></data>
   <data name="Section_MechanicalLayout" xml:space="preserve"><value>MECHANICAL LAYOUT</value></data>
@@ -173,21 +172,14 @@
   <data name="Option_Clutch" xml:space="preserve"><value>Clutch</value></data>
   <data name="Section_PedalFeelSimInput" xml:space="preserve"><value>PEDAL FEEL &amp; SIM INPUT MAPPING</value></data>
   <data name="Section_PedalFeel" xml:space="preserve"><value>PEDAL FEEL</value></data>
-  <data name="Subtitle_PedalFeel" xml:space="preserve"><value></value></data>
   <data name="SliderLabel_DeadzoneKg" xml:space="preserve"><value>Deadzone (kg)</value></data>
   <data name="SliderLabel_MaxForceKg" xml:space="preserve"><value>Max Force (kg)</value></data>
-  <data name="Hint_DeadzoneScaleAssumption" xml:space="preserve"><value></value></data>
   <data name="SliderLabel_TravelRangeMm" xml:space="preserve"><value>Start / End of Travel (mm)</value></data>
-  <data name="Hint_TravelRangeMm" xml:space="preserve"><value></value></data>
   <data name="SliderLabel_EndstopFrontStiffness" xml:space="preserve"><value>Front Limit Stiffness</value></data>
   <data name="SliderLabel_EndstopEndStiffness" xml:space="preserve"><value>End Limit Stiffness</value></data>
-  <data name="Hint_EndstopStiffness" xml:space="preserve"><value></value></data>
-  <data name="Hint_InputCurveHostOnly" xml:space="preserve"><value></value></data>
   <data name="Section_SimInputMapping" xml:space="preserve"><value>SIM INPUT MAPPING</value></data>
   <data name="Subtitle_SimInputMapping" xml:space="preserve"><value></value></data>
   <data name="SliderLabel_MaxThresholdKg" xml:space="preserve"><value>Max Threshold (kg)</value></data>
-  <data name="Hint_MaxThresholdReverseEngineered" xml:space="preserve"><value></value></data>
-  <data name="Hint_OutputCurveDragX" xml:space="preserve"><value></value></data>
   <data name="Section_Effects" xml:space="preserve"><value>EFFECTS</value></data>
   <data name="Subtitle_EffectsTriggers" xml:space="preserve"><value></value></data>
   <data name="Section_Abs" xml:space="preserve"><value>ABS</value></data>

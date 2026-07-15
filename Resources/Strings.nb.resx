@@ -134,7 +134,6 @@
   <data name="Section_BrakeCalibration" xml:space="preserve"><value>BREMS · KALIBRERING</value></data>
   <data name="Section_ClutchCalibration" xml:space="preserve"><value>CLUTCH · KALIBRERING</value></data>
   <data name="SliderLabel_SensorRatio" xml:space="preserve"><value>Sensorforhold</value></data>
-  <data name="Hint_AngleSensorVsLoadCell" xml:space="preserve"><value>0 % = vinkelsensor · 100 % = lastcelle</value></data>
   <data name="Section_Ab9ActiveShifter" xml:space="preserve"><value>AB9 ACTIVE SHIFTER</value></data>
   <data name="Status_SearchingForAb9" xml:space="preserve"><value>Søker etter AB9...</value></data>
   <data name="Section_MechanicalLayout" xml:space="preserve"><value>MEKANISK OPPSETT</value></data>
@@ -166,21 +165,14 @@
   <data name="Option_Brake" xml:space="preserve"><value>Brems</value></data>
   <data name="Option_Clutch" xml:space="preserve"><value>Clutch</value></data>
   <data name="Section_PedalFeel" xml:space="preserve"><value>PEDALFØLELSE</value></data>
-  <data name="Subtitle_PedalFeel" xml:space="preserve"><value>// bestemmer hvordan pedalen føles, uavhengig av utgangskurven under</value></data>
   <data name="SliderLabel_DeadzoneKg" xml:space="preserve"><value>Dødsone (kg)</value></data>
   <data name="SliderLabel_MaxForceKg" xml:space="preserve"><value>Maks kraft (kg)</value></data>
-  <data name="Hint_DeadzoneScaleAssumption" xml:space="preserve"><value>Bare programvareside. Dødsone og Maks kraft forutsetter begge en fast 0-200kg fullskala for 0-100% pedalbevegelse, siden det rå pedalsignalet ikke har egen kraftkalibrering. Maks kraft angir hvor inngangskurven under når 100%.</value></data>
   <data name="SliderLabel_TravelRangeMm" xml:space="preserve"><value>Start / Slutt på Bevegelse (mm)</value></data>
-  <data name="Hint_TravelRangeMm" xml:space="preserve"><value>Skriver ekte maskinvarekalibrering (cmdId 0x84/0x85) — reverse-engineert fra Pit House-opptak, ikke bekreftet av Moza. Dra de to nodene for å angi det fysiske start-/sluttpunktet for pedalbevegelsen, og bekreft deretter at dette fungerer korrekt på din maskinvare.</value></data>
   <data name="SliderLabel_EndstopFrontStiffness" xml:space="preserve"><value>Frontgrense-stivhet</value></data>
   <data name="SliderLabel_EndstopEndStiffness" xml:space="preserve"><value>Sluttgrense-stivhet</value></data>
-  <data name="Hint_EndstopStiffness" xml:space="preserve"><value>Skriver ekte maskinvarekalibrering (cmdId 0xB2) — reverse-engineert fra Pit House-opptak, ikke bekreftet av Moza. Angir hvor hardt pedalen føles når den når start-/sluttpunktet for den fysiske bevegelsen.</value></data>
-  <data name="Hint_InputCurveHostOnly" xml:space="preserve"><value>Bare programvareside: omformer den rapporterte pedalposisjonen før den når spillet (og utgangskurven i Sim-inngangskartlegging under). Ingenting skrives til enheten.</value></data>
   <data name="Section_SimInputMapping" xml:space="preserve"><value>SIM-INNGANGSKARTLEGGING</value></data>
   <data name="Subtitle_SimInputMapping" xml:space="preserve"><value>// kartlegger lastcelle-/pedalsignalet til spillet, Pit House-stil</value></data>
   <data name="SliderLabel_MaxThresholdKg" xml:space="preserve"><value>Maks terskel (kg)</value></data>
-  <data name="Hint_MaxThresholdReverseEngineered" xml:space="preserve"><value>Reverse-engineert fra en Pit House-opptak (cmdId 0xB3) — ikke bekreftet av Moza. Vennligst bekreft at dette fungerer korrekt på din maskinvare.</value></data>
-  <data name="Hint_OutputCurveDragX" xml:space="preserve"><value>Dra en node sidelengs for å flytte posisjonen på inngangsaksen — dra f.eks. den siste noden til venstre slik at 100 % utgang nås før 100 % inngang.</value></data>
   <data name="Section_Effects" xml:space="preserve"><value>EFFEKTER</value></data>
   <data name="Subtitle_EffectsTriggers" xml:space="preserve"><value>// utløsere: ABS på spillsignal · lockup på brems&gt;0,8 · terskel på flanke · motor kontinuerlig</value></data>
   <data name="Section_Abs" xml:space="preserve"><value>ABS</value></data>

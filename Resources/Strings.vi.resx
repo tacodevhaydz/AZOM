@@ -129,7 +129,6 @@
   <data name="Section_BrakeCalibration" xml:space="preserve"><value>PHANH · HIỆU CHUẨN</value></data>
   <data name="Section_ClutchCalibration" xml:space="preserve"><value>CÔN · HIỆU CHUẨN</value></data>
   <data name="SliderLabel_SensorRatio" xml:space="preserve"><value>Tỷ lệ cảm biến</value></data>
-  <data name="Hint_AngleSensorVsLoadCell" xml:space="preserve"><value>0% = Cảm biến góc · 100% = Load Cell</value></data>
   <data name="Section_Ab9ActiveShifter" xml:space="preserve"><value>CẦN SỐ CHỦ ĐỘNG AB9</value></data>
   <data name="Status_SearchingForAb9" xml:space="preserve"><value>Đang tìm AB9...</value></data>
   <data name="Section_MechanicalLayout" xml:space="preserve"><value>BỐ CỤC CƠ HỌC</value></data>
@@ -161,21 +160,14 @@
   <data name="Option_Brake" xml:space="preserve"><value>Phanh</value></data>
   <data name="Option_Clutch" xml:space="preserve"><value>Côn</value></data>
   <data name="Section_PedalFeel" xml:space="preserve"><value>CẢM GIÁC BÀN ĐẠP</value></data>
-  <data name="Subtitle_PedalFeel" xml:space="preserve"><value>// quyết định cảm giác của bàn đạp, độc lập với đường cong đầu ra bên dưới</value></data>
   <data name="SliderLabel_DeadzoneKg" xml:space="preserve"><value>Vùng chết (kg)</value></data>
   <data name="SliderLabel_MaxForceKg" xml:space="preserve"><value>Lực tối đa (kg)</value></data>
-  <data name="Hint_DeadzoneScaleAssumption" xml:space="preserve"><value>Chỉ xử lý ở phía phần mềm. Cả Vùng chết và Lực tối đa đều giả định thang đo cố định 0-200kg cho 0-100% hành trình bàn đạp, vì tín hiệu bàn đạp thô không có hiệu chỉnh lực riêng. Lực tối đa xác định vị trí đường cong đầu vào bên dưới đạt 100%.</value></data>
   <data name="SliderLabel_TravelRangeMm" xml:space="preserve"><value>Bắt đầu / Kết thúc Hành trình (mm)</value></data>
-  <data name="Hint_TravelRangeMm" xml:space="preserve"><value>Ghi giá trị hiệu chỉnh phần cứng thực tế (cmdId 0x84/0x85) — được dịch ngược từ các bản ghi Pit House, chưa được Moza xác nhận. Kéo hai nút để đặt điểm bắt đầu/kết thúc vật lý của hành trình bàn đạp, sau đó kiểm tra xem nó hoạt động đúng trên phần cứng của bạn hay không.</value></data>
   <data name="SliderLabel_EndstopFrontStiffness" xml:space="preserve"><value>Độ cứng giới hạn đầu</value></data>
   <data name="SliderLabel_EndstopEndStiffness" xml:space="preserve"><value>Độ cứng giới hạn cuối</value></data>
-  <data name="Hint_EndstopStiffness" xml:space="preserve"><value>Ghi giá trị hiệu chỉnh phần cứng thực tế (cmdId 0xB2) — được dịch ngược từ các bản ghi Pit House, chưa được Moza xác nhận. Đặt độ cứng cảm nhận được khi bàn đạp chạm điểm bắt đầu/kết thúc hành trình vật lý.</value></data>
-  <data name="Hint_InputCurveHostOnly" xml:space="preserve"><value>Chỉ xử lý ở phía phần mềm: định hình lại vị trí bàn đạp được báo cáo trước khi nó đến game (và đường cong đầu ra trong Ánh xạ đầu vào Sim bên dưới). Không có gì được ghi vào thiết bị.</value></data>
   <data name="Section_SimInputMapping" xml:space="preserve"><value>ÁNH XẠ ĐẦU VÀO SIM</value></data>
   <data name="Subtitle_SimInputMapping" xml:space="preserve"><value>// ánh xạ tín hiệu loadcell/bàn đạp vào game, theo kiểu Pit House</value></data>
   <data name="SliderLabel_MaxThresholdKg" xml:space="preserve"><value>Ngưỡng tối đa (kg)</value></data>
-  <data name="Hint_MaxThresholdReverseEngineered" xml:space="preserve"><value>Được dịch ngược từ một bản ghi Pit House (cmdId 0xB3) — chưa được Moza xác nhận. Vui lòng kiểm tra xem nó hoạt động đúng trên phần cứng của bạn hay không.</value></data>
-  <data name="Hint_OutputCurveDragX" xml:space="preserve"><value>Kéo một nút sang ngang để di chuyển vị trí của nó trên trục đầu vào — ví dụ kéo nút cuối sang trái để đạt 100% đầu ra trước khi đạt 100% đầu vào.</value></data>
   <data name="Section_Effects" xml:space="preserve"><value>HIỆU ỨNG</value></data>
   <data name="Subtitle_EffectsTriggers" xml:space="preserve"><value>// kích hoạt: ABS theo tín hiệu game · Khóa bánh khi phanh&gt;0.8 · Ngưỡng theo sườn xung · Động cơ liên tục</value></data>
   <data name="Section_Abs" xml:space="preserve"><value>ABS</value></data>
