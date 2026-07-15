@@ -3188,21 +3188,47 @@ namespace MozaPlugin
                 // valid (device still connected, axis still in range and
                 // connected); otherwise fall back to axis 0 of the first device.
                 bool selectionValid = false;
+                bool selectedDeviceStillPresent = false;
+                int sameDeviceRetargetAxis = 0;
                 foreach (var c in devices)
                 {
                     if (!string.Equals(c.Identity, _mboosterSelectedIdentity, StringComparison.OrdinalIgnoreCase)) continue;
+                    selectedDeviceStillPresent = true;
                     int axisCount = c.AxisCount > 0 ? c.AxisCount : 1;
                     var connected = c.ConnectedAxes;
                     bool selAxisKnownConnected = connected != null && _mboosterEffectPedalIndex < connected.Length
                         ? connected[_mboosterEffectPedalIndex]
                         : _mboosterEffectPedalIndex == 0;
                     selectionValid = _mboosterEffectPedalIndex >= 0 && _mboosterEffectPedalIndex < axisCount && selAxisKnownConnected;
+                    if (!selectionValid && connected != null)
+                    {
+                        // The device's real wired axis just became known (the
+                        // "PD Linked" diagnostic landed) and it isn't the axis-0
+                        // placeholder we'd optimistically selected before that —
+                        // a standalone unit's sole pedal commonly reports on a
+                        // non-zero axis regardless of chain status (see
+                        // MBoosterDeviceController's ConnectedAxes doc comment).
+                        // Follow the SAME physical device onto whichever axis is
+                        // now known-connected instead of falling through to
+                        // devices[0] below, which would silently reassign the
+                        // user's selection to a different device a couple
+                        // seconds after they picked one at startup.
+                        for (int axis = 0; axis < connected.Length; axis++)
+                        {
+                            if (connected[axis]) { sameDeviceRetargetAxis = axis; break; }
+                        }
+                    }
                     break;
                 }
                 if (!selectionValid)
                 {
-                    _mboosterSelectedIdentity = devices[0].Identity;
-                    _mboosterEffectPedalIndex = 0;
+                    if (selectedDeviceStillPresent)
+                        _mboosterEffectPedalIndex = sameDeviceRetargetAxis;
+                    else
+                    {
+                        _mboosterSelectedIdentity = devices[0].Identity;
+                        _mboosterEffectPedalIndex = 0;
+                    }
                 }
 
                 if (rowsStale)
