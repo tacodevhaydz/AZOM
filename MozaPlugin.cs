@@ -2288,7 +2288,7 @@ namespace MozaPlugin
                 // are load-cell-only and the UI only lets you set them for a
                 // brake (unset = -1 = skipped). Calibration above stays per-role
                 // on 0x12 — the host aggregates the output mapping (capture-verified).
-                byte dev = global::MozaPlugin.Devices.MBoosterDeviceController.MotorDeviceForAxis(axis);
+                byte dev = controller.MotorDeviceForCurrentAxis(axis);
                 if (cfg.TravelStartMm >= 0)
                 {
                     controller.SendIntWrite("mbooster-brake-travel-start",

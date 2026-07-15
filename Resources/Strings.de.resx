@@ -723,4 +723,10 @@ Id: {2}</value></data>
   <data name="Label_Import" xml:space="preserve"><value>Importieren</value></data>
   <data name="Label_Export" xml:space="preserve"><value>Exportieren</value></data>
   <data name="Preset_RoadRumble" xml:space="preserve"><value>Straßenrumpeln</value></data>
+  <data name="Label_AngleSensor" xml:space="preserve"><value>Winkel</value></data>
+  <data name="Label_LoadCell" xml:space="preserve"><value>Wägezelle</value></data>
+  <data name="Section_PedalFeelSimInput" xml:space="preserve"><value>PEDALGEFÜHL &amp; SIM-EINGABEZUORDNUNG</value></data>
+  <data name="Section_BrakeFade" xml:space="preserve"><value>Bremsfading (Experimentell)</value></data>
+  <data name="SliderLabel_OnsetTempC" xml:space="preserve"><value>Einsatztemperatur (°C)</value></data>
+  <data name="Hint_BrakeFadeExperimental" xml:space="preserve"><value>Experimentell — schreibt während der Aktivierung die echten Hardware-Kalibrierungen für Wegende und Max. Schwellenwert (mehr Pedalweg und mehr Kraft erforderlich) und stellt Ihre konfigurierten Werte wieder her, sobald die Bremsen abkühlen. Setzt voraus, dass diese bereits unter Pedalgefühl / Sim-Eingabezuordnung eingestellt sind — sonst ohne Wirkung.</value></data>
 </root>

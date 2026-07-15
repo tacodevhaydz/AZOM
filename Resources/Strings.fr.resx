@@ -723,4 +723,10 @@ Id : {2}</value></data>
   <data name="Label_Import" xml:space="preserve"><value>Importer</value></data>
   <data name="Label_Export" xml:space="preserve"><value>Exporter</value></data>
   <data name="Preset_RoadRumble" xml:space="preserve"><value>Grondement route</value></data>
+  <data name="Label_AngleSensor" xml:space="preserve"><value>Angle</value></data>
+  <data name="Label_LoadCell" xml:space="preserve"><value>Cellule de Charge</value></data>
+  <data name="Section_PedalFeelSimInput" xml:space="preserve"><value>RESSENTI DE LA PÉDALE &amp; MAPPAGE D'ENTRÉE SIM</value></data>
+  <data name="Section_BrakeFade" xml:space="preserve"><value>Fading des Freins (Expérimental)</value></data>
+  <data name="SliderLabel_OnsetTempC" xml:space="preserve"><value>Température de Déclenchement (°C)</value></data>
+  <data name="Hint_BrakeFadeExperimental" xml:space="preserve"><value>Expérimental — écrit, tant que c'est actif, les calibrations matérielles réelles de Fin de Course et de Seuil maximal (plus de course et plus de force nécessaires), puis restaure vos valeurs configurées à mesure que les freins refroidissent. Nécessite que ces valeurs soient déjà définies dans Ressenti de la Pédale / Mappage d'Entrée Sim — sans effet sinon.</value></data>
 </root>

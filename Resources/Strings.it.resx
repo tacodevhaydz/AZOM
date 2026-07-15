@@ -726,4 +726,10 @@ Id: {2}</value></data>
   <data name="Label_Import" xml:space="preserve"><value>Importa</value></data>
   <data name="Label_Export" xml:space="preserve"><value>Esporta</value></data>
   <data name="Preset_RoadRumble" xml:space="preserve"><value>Rombo stradale</value></data>
+  <data name="Label_AngleSensor" xml:space="preserve"><value>Angolo</value></data>
+  <data name="Label_LoadCell" xml:space="preserve"><value>Cella di Carico</value></data>
+  <data name="Section_PedalFeelSimInput" xml:space="preserve"><value>SENSAZIONE DEL PEDALE &amp; MAPPATURA INPUT SIM</value></data>
+  <data name="Section_BrakeFade" xml:space="preserve"><value>Fading dei Freni (Sperimentale)</value></data>
+  <data name="SliderLabel_OnsetTempC" xml:space="preserve"><value>Temperatura di Innesco (°C)</value></data>
+  <data name="Hint_BrakeFadeExperimental" xml:space="preserve"><value>Sperimentale — mentre è attivo, scrive le calibrazioni hardware reali di Fine Corsa e Soglia massima (serve più corsa e più forza), poi ripristina i valori configurati man mano che i freni si raffreddano. Richiede che questi siano già impostati in Sensazione del Pedale / Mappatura Input Sim — altrimenti non ha effetto.</value></data>
 </root>

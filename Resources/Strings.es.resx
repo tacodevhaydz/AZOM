@@ -728,4 +728,10 @@ Id: {2}</value></data>
   <data name="Label_Import" xml:space="preserve"><value>Importar</value></data>
   <data name="Label_Export" xml:space="preserve"><value>Exportar</value></data>
   <data name="Preset_RoadRumble" xml:space="preserve"><value>Vibración de carretera</value></data>
+  <data name="Label_AngleSensor" xml:space="preserve"><value>Ángulo</value></data>
+  <data name="Label_LoadCell" xml:space="preserve"><value>Célula de Carga</value></data>
+  <data name="Section_PedalFeelSimInput" xml:space="preserve"><value>SENSACIÓN DEL PEDAL &amp; MAPEO DE ENTRADA DE SIMULACIÓN</value></data>
+  <data name="Section_BrakeFade" xml:space="preserve"><value>Desvanecimiento de Frenos (Experimental)</value></data>
+  <data name="SliderLabel_OnsetTempC" xml:space="preserve"><value>Temperatura de Inicio (°C)</value></data>
+  <data name="Hint_BrakeFadeExperimental" xml:space="preserve"><value>Experimental — mientras está activo, escribe las calibraciones de hardware reales de Fin de Recorrido y Umbral máximo (se necesita más recorrido y más fuerza), y luego restaura tus valores configurados a medida que los frenos se enfrían. Requiere que esos valores ya estén establecidos en Sensación del Pedal / Mapeo de Entrada de Simulación; de lo contrario, no tiene efecto.</value></data>
 </root>

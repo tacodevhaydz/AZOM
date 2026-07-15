@@ -148,8 +148,35 @@ namespace MozaPlugin.Devices
         // worker (only the primary sends the shared keepalive and runs Brake
         // Fade, which rewrites the brake's calibration once per lane).
         private readonly int _pedalAxisIndex;
-        private readonly byte _targetDevice;
         private readonly bool _isPrimary;
+
+        /// <summary>
+        /// The motor/config device id THIS worker's frames are addressed to.
+        /// Computed fresh each use (not fixed at construction) via
+        /// <see cref="MBoosterDeviceController.MotorDeviceForCurrentAxis"/> —
+        /// 0x12 (host) unless the controller genuinely has more than one axis
+        /// physically connected, since <see cref="MBoosterDeviceController.ConnectedAxes"/>
+        /// arrives asynchronously (a "PD Linked" diagnostic) well after these
+        /// workers are constructed, and a standalone unit's sole pedal
+        /// commonly reports on a non-zero HID axis regardless of chain status.
+        /// </summary>
+        private byte TargetDevice => _device.MotorDeviceForCurrentAxis(_pedalAxisIndex);
+
+        /// <summary>
+        /// Whether THIS worker's pedal axis is actually wired — same
+        /// "ConnectedAxes null means assume only axis 0 is real" convention
+        /// the UI uses (SettingsControl.xaml.cs). Guards the per-pedal effect
+        /// portion of <see cref="Tick"/>: without it, once TargetDevice above
+        /// stopped trusting axis index blindly, every phantom axis's worker
+        /// would ALSO resolve to the one real device and race the genuine
+        /// pedal's worker for it.
+        /// </summary>
+        private bool IsPedalAxisConnected()
+        {
+            var connected = _device.ConnectedAxes;
+            if (connected == null) return _pedalAxisIndex == 0;
+            return _pedalAxisIndex < connected.Length && connected[_pedalAxisIndex];
+        }
 
         /// <summary>This pedal's vibration-effect settings — the master's flat
         /// fields for axis 0, else the per-pedal entry (both implement
@@ -211,7 +238,6 @@ namespace MozaPlugin.Devices
             Func<bool> isShuttingDown,
             Func<string, double>? customEffectFormulaEvaluator = null,
             int pedalAxisIndex = 0,
-            byte targetDevice = MozaMBoosterProtocol.DeviceMotor,
             bool isPrimary = true)
         {
             _device = device;
@@ -219,7 +245,6 @@ namespace MozaPlugin.Devices
             _isShuttingDown = isShuttingDown;
             _customEffectFormulaEvaluator = customEffectFormulaEvaluator ?? (_ => 0.0);
             _pedalAxisIndex = pedalAxisIndex;
-            _targetDevice = targetDevice;
             _isPrimary = isPrimary;
         }
 
@@ -341,77 +366,91 @@ namespace MozaPlugin.Devices
             if (!_device.IsConnected) return;
 
             var lane = _settingsLookup();
-            var effects = PedalEffects(lane);
 
             MBoosterTelemetrySnapshot snap;
             lock (_telemetryLock) snap = _latest;
 
-            // Brake/throttle signal for THIS pedal: the game's value, rising to
-            // this pedal's own HID position when it's the one assigned that role
-            // (so its modulated test pulses feel right with no game running).
-            var role = PedalRole(lane);
-            double brakeSignal = EffectiveBrake(role, snap);
-            double throttleSignal = EffectiveThrottle(role, snap);
+            // Only compute/send THIS pedal's vibration effects if its axis is
+            // actually wired. This controller's HID interface commonly
+            // reports 3 axes regardless of how many pedals are physically
+            // connected (see IsPedalAxisConnected), and TargetDevice no
+            // longer assumes axis index directly maps to a real chain device
+            // id — without this guard, a phantom axis's worker would ALSO
+            // resolve to the one real device and fight the genuine pedal's
+            // worker over it. Brake Fade + keepalive below are lane-wide
+            // (primary-worker-only) responsibilities, not per-axis, so they
+            // stay outside this guard.
+            if (IsPedalAxisConnected())
+            {
+                var effects = PedalEffects(lane);
 
-            // --- Compute per-effect requests from telemetry per doc § 4 -----
+                // Brake/throttle signal for THIS pedal: the game's value, rising to
+                // this pedal's own HID position when it's the one assigned that role
+                // (so its modulated test pulses feel right with no game running).
+                var role = PedalRole(lane);
+                double brakeSignal = EffectiveBrake(role, snap);
+                double throttleSignal = EffectiveThrottle(role, snap);
 
-            UpdateEngineRequest(effects, snap, ref _engine);
-            UpdateAbsRequest(effects, brakeSignal, snap, ref _abs);
-            UpdateTractionControlRequest(effects, throttleSignal, snap, ref _tc);
-            UpdateWheelSpinRequest(effects, throttleSignal, snap, ref _wheelSpin);
-            UpdateGearShiftRequest(effects, snap, ref _gearShift);
-            UpdateLockupRequest(effects, brakeSignal, snap, ref _lockup);
-            UpdateThresholdRequest(effects, brakeSignal, snap, ref _threshold);
-            UpdateRoadTextureRequest(effects, snap, ref _roadTexture);
+                // --- Compute per-effect requests from telemetry per doc § 4 -----
 
-            // --- Apply per-effect activation edges + emit motor frame ------
-            //
-            // All vibration effects share ONE latest-wins motor stream slot
-            // (MozaSerialConnection StreamKind.MBoosterEffect — SendStream
-            // overwrites the pending value), so when more than one effect is
-            // active in the same tick only the LAST frame emitted here
-            // reaches the motor. Emission order is therefore a priority
-            // ladder, lowest first: the two continuous "ambient" effects
-            // (Engine, Road Texture) are emitted BEFORE the transient
-            // wheel-slip cues (ABS, Traction Control, Wheel Spin, Lockup,
-            // Threshold) and the Gear Shift pulse, so a lockup/ABS/TC/
-            // wheel-spin/threshold/gear-shift pulse always overrides the
-            // ambient vibration instead of being masked by it.
-            ProcessEffect(MBoosterEffectId.Engine,    ref _engine);
-            // (ProcessRoadTextureEffect / custom below now take this pedal's effects.)
-            // Road Texture has a materially different wire payload (see
-            // MozaMBoosterProtocol.BuildRoadTextureFrame) so it doesn't go
-            // through the shared ProcessEffect/BuildMotorFrame path. Even
-            // though it now only streams frames for the duration of a bump's
-            // decaying pulse (see UpdateRoadTextureRequest) rather than the
-            // whole time the car is moving, it still needs to sit here
-            // (ambient tier, before the braking cues) so a lockup/ABS/
-            // threshold pulse that lands in the same tick as a bump always
-            // wins instead of being masked by it.
-            ProcessRoadTextureEffect(effects, ref _roadTexture);
-            // Custom (NCalc) effects — Experimental. Placed in the ambient
-            // tier (after Engine/Road Texture, before the wheel-slip cues) so
-            // a user-authored effect can override built-in ambient vibration
-            // but never masks a real ABS/TC/Wheel Spin/Gear Shift/Lockup/
-            // Threshold safety pulse. They also share Engine's wire slot (effect type 4 — see
-            // ProcessCustomEffect), so a custom effect active in the same
-            // tick as the real Engine effect wins on the wire, same
-            // last-write-wins masking rule as every other pair on this ladder.
-            UpdateAndProcessCustomEffects(effects);
-            ProcessEffect(MBoosterEffectId.Abs,       ref _abs);
-            ProcessEffect(MBoosterEffectId.Lockup,    ref _lockup);
-            ProcessEffect(MBoosterEffectId.Threshold, ref _threshold);
-            // Traction Control, Wheel Spin, and Gear Shift — same wheel-slip
-            // -adjacent cue tier as ABS/Lockup/Threshold, emitted last so
-            // they always win over ambient vibration. None has a verified
-            // wire effect-type of its own (unlike ABS's confirmed type 1),
-            // so — like Custom Effects — all three reuse Engine's
-            // already-verified frame shape (effect type 4) rather than an
-            // invented, unconfirmed protocol ID (see each one's Process*
-            // method for details).
-            ProcessTractionControlEffect(ref _tc);
-            ProcessWheelSpinEffect(ref _wheelSpin);
-            ProcessGearShiftEffect(ref _gearShift);
+                UpdateEngineRequest(effects, snap, ref _engine);
+                UpdateAbsRequest(effects, brakeSignal, snap, ref _abs);
+                UpdateTractionControlRequest(effects, throttleSignal, snap, ref _tc);
+                UpdateWheelSpinRequest(effects, throttleSignal, snap, ref _wheelSpin);
+                UpdateGearShiftRequest(effects, snap, ref _gearShift);
+                UpdateLockupRequest(effects, brakeSignal, snap, ref _lockup);
+                UpdateThresholdRequest(effects, brakeSignal, snap, ref _threshold);
+                UpdateRoadTextureRequest(effects, snap, ref _roadTexture);
+
+                // --- Apply per-effect activation edges + emit motor frame ------
+                //
+                // All vibration effects share ONE latest-wins motor stream slot
+                // (MozaSerialConnection StreamKind.MBoosterEffect — SendStream
+                // overwrites the pending value), so when more than one effect is
+                // active in the same tick only the LAST frame emitted here
+                // reaches the motor. Emission order is therefore a priority
+                // ladder, lowest first: the two continuous "ambient" effects
+                // (Engine, Road Texture) are emitted BEFORE the transient
+                // wheel-slip cues (ABS, Traction Control, Wheel Spin, Lockup,
+                // Threshold) and the Gear Shift pulse, so a lockup/ABS/TC/
+                // wheel-spin/threshold/gear-shift pulse always overrides the
+                // ambient vibration instead of being masked by it.
+                ProcessEffect(MBoosterEffectId.Engine,    ref _engine);
+                // (ProcessRoadTextureEffect / custom below now take this pedal's effects.)
+                // Road Texture has a materially different wire payload (see
+                // MozaMBoosterProtocol.BuildRoadTextureFrame) so it doesn't go
+                // through the shared ProcessEffect/BuildMotorFrame path. Even
+                // though it now only streams frames for the duration of a bump's
+                // decaying pulse (see UpdateRoadTextureRequest) rather than the
+                // whole time the car is moving, it still needs to sit here
+                // (ambient tier, before the braking cues) so a lockup/ABS/
+                // threshold pulse that lands in the same tick as a bump always
+                // wins instead of being masked by it.
+                ProcessRoadTextureEffect(effects, ref _roadTexture);
+                // Custom (NCalc) effects — Experimental. Placed in the ambient
+                // tier (after Engine/Road Texture, before the wheel-slip cues) so
+                // a user-authored effect can override built-in ambient vibration
+                // but never masks a real ABS/TC/Wheel Spin/Gear Shift/Lockup/
+                // Threshold safety pulse. They also share Engine's wire slot (effect type 4 — see
+                // ProcessCustomEffect), so a custom effect active in the same
+                // tick as the real Engine effect wins on the wire, same
+                // last-write-wins masking rule as every other pair on this ladder.
+                UpdateAndProcessCustomEffects(effects);
+                ProcessEffect(MBoosterEffectId.Abs,       ref _abs);
+                ProcessEffect(MBoosterEffectId.Lockup,    ref _lockup);
+                ProcessEffect(MBoosterEffectId.Threshold, ref _threshold);
+                // Traction Control, Wheel Spin, and Gear Shift — same wheel-slip
+                // -adjacent cue tier as ABS/Lockup/Threshold, emitted last so
+                // they always win over ambient vibration. None has a verified
+                // wire effect-type of its own (unlike ABS's confirmed type 1),
+                // so — like Custom Effects — all three reuse Engine's
+                // already-verified frame shape (effect type 4) rather than an
+                // invented, unconfirmed protocol ID (see each one's Process*
+                // method for details).
+                ProcessTractionControlEffect(ref _tc);
+                ProcessWheelSpinEffect(ref _wheelSpin);
+                ProcessGearShiftEffect(ref _gearShift);
+            }
 
             // Brake Fade is NOT a vibration effect — it rewrites the brake's
             // hardware calibration, so it runs ONCE per lane on the primary
@@ -1101,7 +1140,7 @@ namespace MozaPlugin.Devices
             if (!wantActive && st.Active)
             {
                 // Deactivation edge: emit one disable frame and go silent.
-                _device.SendOneShot(MozaMBoosterProtocol.BuildDisableFrame(id, _targetDevice));
+                _device.SendOneShot(MozaMBoosterProtocol.BuildDisableFrame(id, TargetDevice));
                 st.Active = false;
                 st.PhaseRad = 0;
                 st.ElapsedSec = 0;
@@ -1140,7 +1179,7 @@ namespace MozaPlugin.Devices
             ushort freqU16 = MozaMBoosterProtocol.EncodeFreq(st.FreqHz);
             ushort ampU16 = MozaMBoosterProtocol.EncodeAmp(amp01);
 
-            var frame = MozaMBoosterProtocol.BuildMotorFrame(id, enable: true, param1, freqU16, ampU16, _targetDevice);
+            var frame = MozaMBoosterProtocol.BuildMotorFrame(id, enable: true, param1, freqU16, ampU16, TargetDevice);
             SendMotor(frame);
         }
 
@@ -1173,7 +1212,7 @@ namespace MozaPlugin.Devices
 
             if (!wantActive && st.Active)
             {
-                _device.SendOneShot(MozaMBoosterProtocol.BuildDisableFrame(id, _targetDevice));
+                _device.SendOneShot(MozaMBoosterProtocol.BuildDisableFrame(id, TargetDevice));
                 st.Active = false;
                 st.ElapsedSec = 0;
                 return;
@@ -1195,7 +1234,7 @@ namespace MozaPlugin.Devices
             ushort intensityRaw = MozaMBoosterProtocol.EncodeRoadTextureLevel(effectiveIntensityPct);
             ushort smoothnessRaw = MozaMBoosterProtocol.EncodeRoadTextureLevel(effects?.RoadTexture?.SmoothnessPct ?? 0);
 
-            var frame = MozaMBoosterProtocol.BuildRoadTextureFrame(true, intensityRaw, smoothnessRaw, noiseRaw, _targetDevice);
+            var frame = MozaMBoosterProtocol.BuildRoadTextureFrame(true, intensityRaw, smoothnessRaw, noiseRaw, TargetDevice);
             SendMotor(frame);
         }
 
@@ -1234,7 +1273,7 @@ namespace MozaPlugin.Devices
                     foreach (var key in stale)
                     {
                         if (_customEffectStates[key].Active)
-                            _device.SendOneShot(MozaMBoosterProtocol.BuildDisableFrame(MBoosterEffectId.Engine, _targetDevice));
+                            _device.SendOneShot(MozaMBoosterProtocol.BuildDisableFrame(MBoosterEffectId.Engine, TargetDevice));
                         _customEffectStates.Remove(key);
                         // Also drop a lingering test-toggle flag for a deleted
                         // effect — otherwise a stale UI row's forgotten Test
@@ -1328,7 +1367,7 @@ namespace MozaPlugin.Devices
 
             if (!wantActive && st.Active)
             {
-                _device.SendOneShot(MozaMBoosterProtocol.BuildDisableFrame(id, _targetDevice));
+                _device.SendOneShot(MozaMBoosterProtocol.BuildDisableFrame(id, TargetDevice));
                 st.Active = false;
                 st.PhaseRad = 0;
                 st.ElapsedSec = 0;
@@ -1354,7 +1393,7 @@ namespace MozaPlugin.Devices
             ushort freqU16 = MozaMBoosterProtocol.EncodeFreq(st.FreqHz);
             ushort ampU16 = MozaMBoosterProtocol.EncodeAmp(amp01);
 
-            var frame = MozaMBoosterProtocol.BuildMotorFrame(id, enable: true, param1, freqU16, ampU16, _targetDevice);
+            var frame = MozaMBoosterProtocol.BuildMotorFrame(id, enable: true, param1, freqU16, ampU16, TargetDevice);
             SendMotor(frame);
         }
 

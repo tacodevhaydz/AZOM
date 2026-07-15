@@ -723,4 +723,10 @@ Id: {2}</value></data>
   <data name="Label_Import" xml:space="preserve"><value>导入</value></data>
   <data name="Label_Export" xml:space="preserve"><value>导出</value></data>
   <data name="Preset_RoadRumble" xml:space="preserve"><value>路面震动</value></data>
+  <data name="Label_AngleSensor" xml:space="preserve"><value>角度</value></data>
+  <data name="Label_LoadCell" xml:space="preserve"><value>称重传感器</value></data>
+  <data name="Section_PedalFeelSimInput" xml:space="preserve"><value>踏板手感与模拟输入映射</value></data>
+  <data name="Section_BrakeFade" xml:space="preserve"><value>刹车热衰减 (实验性)</value></data>
+  <data name="SliderLabel_OnsetTempC" xml:space="preserve"><value>起始温度 (°C)</value></data>
+  <data name="Hint_BrakeFadeExperimental" xml:space="preserve"><value>实验性 — 激活期间会写入真实的行程终点和最大阈值硬件校准值(需要更长行程和更大力度),并在刹车冷却后恢复你配置的数值。需要事先在踏板手感/模拟输入映射中设置好这些值 — 否则不起作用。</value></data>
 </root>

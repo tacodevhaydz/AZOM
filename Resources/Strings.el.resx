@@ -722,4 +722,10 @@ Id: {2}</value></data>
   <data name="Label_Import" xml:space="preserve"><value>Εισαγωγή</value></data>
   <data name="Label_Export" xml:space="preserve"><value>Εξαγωγή</value></data>
   <data name="Preset_RoadRumble" xml:space="preserve"><value>Θόρυβος δρόμου</value></data>
+  <data name="Label_AngleSensor" xml:space="preserve"><value>Γωνία</value></data>
+  <data name="Label_LoadCell" xml:space="preserve"><value>Κυψέλη Φορτίου</value></data>
+  <data name="Section_PedalFeelSimInput" xml:space="preserve"><value>ΑΙΣΘΗΣΗ ΠΕΝΤΑΛ &amp; ΑΝΤΙΣΤΟΙΧΙΣΗ ΕΙΣΟΔΟΥ ΠΡΟΣΟΜΟΙΩΣΗΣ</value></data>
+  <data name="Section_BrakeFade" xml:space="preserve"><value>Εξασθένηση Φρένων (Πειραματικό)</value></data>
+  <data name="SliderLabel_OnsetTempC" xml:space="preserve"><value>Θερμοκρασία Έναρξης (°C)</value></data>
+  <data name="Hint_BrakeFadeExperimental" xml:space="preserve"><value>Πειραματικό — όσο είναι ενεργό, γράφει τις πραγματικές βαθμονομήσεις υλικού για το Τέλος Διαδρομής και το Μέγιστο κατώφλι (απαιτείται περισσότερη διαδρομή και περισσότερη δύναμη), και επαναφέρει τις ρυθμισμένες τιμές σας καθώς κρυώνουν τα φρένα. Απαιτεί να έχουν ήδη οριστεί αυτές οι τιμές στην Αίσθηση Πεντάλ / Αντιστοίχιση Εισόδου Προσομοίωσης — διαφορετικά δεν έχει καμία επίδραση.</value></data>
 </root>

@@ -723,4 +723,10 @@ Id: {2}</value></data>
   <data name="Label_Import" xml:space="preserve"><value>Импорт</value></data>
   <data name="Label_Export" xml:space="preserve"><value>Экспорт</value></data>
   <data name="Preset_RoadRumble" xml:space="preserve"><value>Дорожная вибрация</value></data>
+  <data name="Label_AngleSensor" xml:space="preserve"><value>Угол</value></data>
+  <data name="Label_LoadCell" xml:space="preserve"><value>Тензодатчик</value></data>
+  <data name="Section_PedalFeelSimInput" xml:space="preserve"><value>ОЩУЩЕНИЕ ПЕДАЛИ &amp; СОПОСТАВЛЕНИЕ ВВОДА СИМУЛЯТОРА</value></data>
+  <data name="Section_BrakeFade" xml:space="preserve"><value>Затухание тормозов (Экспериментально)</value></data>
+  <data name="SliderLabel_OnsetTempC" xml:space="preserve"><value>Температура начала (°C)</value></data>
+  <data name="Hint_BrakeFadeExperimental" xml:space="preserve"><value>Экспериментально — пока активно, записывает реальные калибровки оборудования для конца хода и макс. порога (требуется больше хода и больше усилия), а затем восстанавливает заданные вами значения по мере остывания тормозов. Требует, чтобы эти значения уже были заданы в разделе «Ощущение педали / Сопоставление ввода симулятора» — иначе не действует.</value></data>
 </root>

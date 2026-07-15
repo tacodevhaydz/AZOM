@@ -129,14 +129,16 @@
   <data name="Section_ThrottleOutputCurve" xml:space="preserve"><value>THROTTLE OUTPUT CURVE</value></data>
   <data name="Section_BrakeOutputCurve" xml:space="preserve"><value>BRAKE OUTPUT CURVE</value></data>
   <data name="Section_ClutchOutputCurve" xml:space="preserve"><value>CLUTCH OUTPUT CURVE</value></data>
-  <data name="Subtitle_MapPhysicalPositionToGame" xml:space="preserve"><value>// map physical position to game input</value></data>
+  <data name="Subtitle_MapPhysicalPositionToGame" xml:space="preserve"><value></value></data>
   <data name="Subtitle_ShapeBrakeResponse" xml:space="preserve"><value>// shape the brake response</value></data>
   <data name="Subtitle_ShapeClutchResponse" xml:space="preserve"><value>// shape the clutch response</value></data>
   <data name="Section_ThrottleCalibration" xml:space="preserve"><value>THROTTLE · CALIBRATION</value></data>
   <data name="Section_BrakeCalibration" xml:space="preserve"><value>BRAKE · CALIBRATION</value></data>
   <data name="Section_ClutchCalibration" xml:space="preserve"><value>CLUTCH · CALIBRATION</value></data>
   <data name="SliderLabel_SensorRatio" xml:space="preserve"><value>Sensor Ratio</value></data>
-  <data name="Hint_AngleSensorVsLoadCell" xml:space="preserve"><value>0% = Angle Sensor · 100% = Load Cell</value></data>
+  <data name="Label_AngleSensor" xml:space="preserve"><value>Angle</value></data>
+  <data name="Label_LoadCell" xml:space="preserve"><value>Load Cell</value></data>
+  <data name="Hint_AngleSensorVsLoadCell" xml:space="preserve"><value></value></data>
   <data name="Section_Ab9ActiveShifter" xml:space="preserve"><value>AB9 ACTIVE SHIFTER</value></data>
   <data name="Status_SearchingForAb9" xml:space="preserve"><value>Searching for AB9...</value></data>
   <data name="Section_MechanicalLayout" xml:space="preserve"><value>MECHANICAL LAYOUT</value></data>
@@ -160,7 +162,7 @@
   <data name="Section_GearShift" xml:space="preserve"><value>GEAR SHIFT</value></data>
   <data name="SliderLabel_VibrationIntensity" xml:space="preserve"><value>Vibration Intensity</value></data>
   <data name="Section_MBoosterPedals" xml:space="preserve"><value>MBOOSTER PEDALS</value></data>
-  <data name="Subtitle_MBoosterPedals" xml:space="preserve"><value>// select role per connected mBooster pedal</value></data>
+  <data name="Subtitle_MBoosterPedals" xml:space="preserve"><value></value></data>
   <data name="SliderLabel_Device" xml:space="preserve"><value>Device</value></data>
   <data name="SliderLabel_Role" xml:space="preserve"><value>Role</value></data>
   <data name="SliderLabel_DisplayName" xml:space="preserve"><value>Display Name</value></data>
@@ -171,7 +173,7 @@
   <data name="Option_Clutch" xml:space="preserve"><value>Clutch</value></data>
   <data name="Section_PedalFeelSimInput" xml:space="preserve"><value>PEDAL FEEL &amp; SIM INPUT MAPPING</value></data>
   <data name="Section_PedalFeel" xml:space="preserve"><value>PEDAL FEEL</value></data>
-  <data name="Subtitle_PedalFeel" xml:space="preserve"><value>// shape how the pedal feels, independent of the output curve below</value></data>
+  <data name="Subtitle_PedalFeel" xml:space="preserve"><value></value></data>
   <data name="SliderLabel_DeadzoneKg" xml:space="preserve"><value>Deadzone (kg)</value></data>
   <data name="SliderLabel_MaxForceKg" xml:space="preserve"><value>Max Force (kg)</value></data>
   <data name="Hint_DeadzoneScaleAssumption" xml:space="preserve"><value></value></data>
@@ -185,7 +187,7 @@
   <data name="Subtitle_SimInputMapping" xml:space="preserve"><value></value></data>
   <data name="SliderLabel_MaxThresholdKg" xml:space="preserve"><value>Max Threshold (kg)</value></data>
   <data name="Hint_MaxThresholdReverseEngineered" xml:space="preserve"><value></value></data>
-  <data name="Hint_OutputCurveDragX" xml:space="preserve"><value>Drag a node to move where it sits on the input axis</value></data>
+  <data name="Hint_OutputCurveDragX" xml:space="preserve"><value></value></data>
   <data name="Section_Effects" xml:space="preserve"><value>EFFECTS</value></data>
   <data name="Subtitle_EffectsTriggers" xml:space="preserve"><value></value></data>
   <data name="Section_Abs" xml:space="preserve"><value>ABS</value></data>
@@ -372,7 +374,7 @@
   <data name="Hint_ClickExpandToRender" xml:space="preserve"><value>Click expand to render the full multi-section report.</value></data>
   <data name="Hint_FullDiagRendered" xml:space="preserve"><value>// {0} lines · same content as Export bundle</value></data>
   <data name="Hint_FullDiagRenderFailed" xml:space="preserve"><value>// render failed</value></data>
-  <data name="Hint_MBoosterIntro" xml:space="preserve"><value>Each connected mBooster appears below. Pick a role (Throttle/Brake/Clutch) per device to route its pedal position. The Calibration section is experimental.</value></data>
+  <data name="Hint_MBoosterIntro" xml:space="preserve"><value></value></data>
   <data name="Hint_MBoosterCalibrationWarning" xml:space="preserve"><value>Not yet tested.</value></data>
   <data name="Title_PickLedColor" xml:space="preserve"><value>Pick LED Color</value></data>
   <data name="Label_Palette" xml:space="preserve"><value>PALETTE</value></data>

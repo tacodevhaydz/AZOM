@@ -23,9 +23,13 @@ namespace MozaPlugin.Devices
     public sealed class MBoosterDeviceController : IDisposable
     {
         private readonly MozaSerialConnection _connection;
-        // One effect worker per motor device on the chain (0x12 host + 0x1d/0x1e
-        // chain ports). Each drives its own pedal's effects to its own device id;
-        // _workers[0] is the primary (owns the shared keepalive + Brake Fade).
+        // One effect worker per possible HID axis slot (0/1/2). Each resolves
+        // its own target device id LIVE (MotorDeviceForCurrentAxis) rather
+        // than owning a fixed one — 0x12 (host) unless this controller
+        // genuinely has more than one axis connected (a real chain), since a
+        // standalone unit's sole pedal commonly reports on a non-zero axis
+        // regardless of chain status. _workers[0] is the primary (owns the
+        // shared keepalive + Brake Fade).
         private readonly MBoosterEffectWorker[] _workers;
         private readonly Func<MBoosterDeviceSettings?> _settingsLookup;
         private readonly Func<bool> _isShuttingDown;
@@ -186,12 +190,17 @@ namespace MozaPlugin.Devices
             // recovered device.
             _connection.Disconnected += OnConnectionDisconnected;
 
+            // One worker per possible HID axis slot (0/1/2). Which physical
+            // device each one's frames actually address is resolved live per
+            // tick (MBoosterEffectWorker.TargetDevice → MotorDeviceForCurrentAxis),
+            // not fixed here — ConnectedAxes isn't known yet at construction
+            // time (it arrives asynchronously from a "PD Linked" diagnostic).
             var motorIds = MozaMBoosterProtocol.MotorDeviceIds; // {0x12, 0x1d, 0x1e}
             _workers = new MBoosterEffectWorker[motorIds.Length];
             for (int i = 0; i < motorIds.Length; i++)
                 _workers[i] = new MBoosterEffectWorker(
                     this, _settingsLookup, _isShuttingDown, customEffectFormulaEvaluator,
-                    pedalAxisIndex: i, targetDevice: motorIds[i], isPrimary: i == 0);
+                    pedalAxisIndex: i, isPrimary: i == 0);
         }
 
         /// <summary>The effect worker driving pedal <paramref name="pedalIndex"/>
@@ -201,11 +210,40 @@ namespace MozaPlugin.Devices
 
         /// <summary>The motor/config device id for a pedal by HID axis index
         /// (0x12 host, 0x1d/0x1e chain ports) — used to address a chained
-        /// mBooster unit's own load-cell config. Master (0x12) if out of range.</summary>
+        /// mBooster unit's own load-cell config. Master (0x12) if out of range.
+        /// Only meaningful for a GENUINE physical chain (multiple mBooster
+        /// units on one connection) — see <see cref="MotorDeviceForCurrentAxis"/>,
+        /// which is almost always what callers actually want instead.</summary>
         public static byte MotorDeviceForAxis(int axisIndex)
         {
             var ids = MozaMBoosterProtocol.MotorDeviceIds;
             return (axisIndex >= 0 && axisIndex < ids.Length) ? ids[axisIndex] : MozaProtocol.DeviceMain;
+        }
+
+        /// <summary>
+        /// The motor/config device id for THIS controller's pedal at HID axis
+        /// <paramref name="axisIndex"/> — 0x12 (host) unless this controller
+        /// genuinely has more than one axis physically connected (a real
+        /// chain of multiple mBooster units on one connection), in which case
+        /// chain position maps to 0x1d/0x1e via <see cref="MotorDeviceForAxis"/>.
+        /// A STANDALONE unit's sole pedal always lives at 0x12 regardless of
+        /// which logical HID axis (Rx/Ry/Rz) it happens to report on — the
+        /// axis-index-to-device-id mapping only applies when that axis index
+        /// corresponds to a real separate physical unit, not to wherever a
+        /// lone pedal's data happens to land in the report descriptor.
+        /// Defaults to "not a chain" (0x12) when <see cref="ConnectedAxes"/>
+        /// hasn't arrived yet (null) — the common case is standalone, and
+        /// this corrects itself once the "PD Linked" diagnostic confirms
+        /// whether it's actually a chain.
+        /// </summary>
+        public byte MotorDeviceForCurrentAxis(int axisIndex)
+        {
+            var connected = _connectedAxes;
+            int connectedCount = 0;
+            if (connected != null)
+                foreach (var b in connected) if (b) connectedCount++;
+            bool isChain = connected != null && connectedCount > 1;
+            return isChain ? MotorDeviceForAxis(axisIndex) : MozaProtocol.DeviceMain;
         }
 
         private void OnConnectionDisconnected()

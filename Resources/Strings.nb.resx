@@ -728,4 +728,10 @@ Id: {2}</value></data>
   <data name="Label_Import" xml:space="preserve"><value>Importer</value></data>
   <data name="Label_Export" xml:space="preserve"><value>Eksporter</value></data>
   <data name="Preset_RoadRumble" xml:space="preserve"><value>Veirumling</value></data>
+  <data name="Label_AngleSensor" xml:space="preserve"><value>Vinkel</value></data>
+  <data name="Label_LoadCell" xml:space="preserve"><value>Lastcelle</value></data>
+  <data name="Section_PedalFeelSimInput" xml:space="preserve"><value>PEDALFØLELSE &amp; SIM-INNGANGSKARTLEGGING</value></data>
+  <data name="Section_BrakeFade" xml:space="preserve"><value>Bremsefading (Eksperimentell)</value></data>
+  <data name="SliderLabel_OnsetTempC" xml:space="preserve"><value>Starttemperatur (°C)</value></data>
+  <data name="Hint_BrakeFadeExperimental" xml:space="preserve"><value>Eksperimentell — skriver de ekte maskinvarekalibreringene for Sluttpunkt for bevegelse og Maks terskel mens den er aktiv (mer bevegelse og mer kraft kreves), og gjenoppretter deretter dine konfigurerte verdier etter hvert som bremsene kjøles ned. Krever at disse allerede er satt i Pedalfølelse / Sim-inngangskartlegging — har ellers ingen effekt.</value></data>
 </root>

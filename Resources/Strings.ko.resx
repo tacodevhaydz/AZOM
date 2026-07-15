@@ -722,4 +722,10 @@ Id: {2}</value></data>
   <data name="Label_Import" xml:space="preserve"><value>가져오기</value></data>
   <data name="Label_Export" xml:space="preserve"><value>내보내기</value></data>
   <data name="Preset_RoadRumble" xml:space="preserve"><value>노면 진동</value></data>
+  <data name="Label_AngleSensor" xml:space="preserve"><value>각도</value></data>
+  <data name="Label_LoadCell" xml:space="preserve"><value>로드셀</value></data>
+  <data name="Section_PedalFeelSimInput" xml:space="preserve"><value>페달 느낌 및 시뮬레이션 입력 매핑</value></data>
+  <data name="Section_BrakeFade" xml:space="preserve"><value>브레이크 페이드 (실험적)</value></data>
+  <data name="SliderLabel_OnsetTempC" xml:space="preserve"><value>시작 온도 (°C)</value></data>
+  <data name="Hint_BrakeFadeExperimental" xml:space="preserve"><value>실험적 — 활성화되어 있는 동안 실제 하드웨어 캘리브레이션 값인 이동 종료 지점과 최대 임계값을 기록하여(더 많은 이동 거리와 힘이 필요해짐) 브레이크가 식으면서 설정한 값으로 복원합니다. 페달 느낌 / 시뮬레이션 입력 매핑에서 해당 값이 이미 설정되어 있어야 하며, 그렇지 않으면 효과가 없습니다.</value></data>
 </root>
