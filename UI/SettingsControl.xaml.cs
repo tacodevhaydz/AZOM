@@ -3533,8 +3533,6 @@ namespace MozaPlugin
             SetValueText(MBoosterThresholdDecayValue, (fx?.Threshold?.DecayPct ?? 20).ToString());
             MBoosterThresholdTestToggle.IsChecked = false;
             MBoosterEngineEnable.IsChecked    = fx?.Engine?.Enabled       ?? false;
-            MBoosterEngineFrequencySlider.Value = fx?.Engine?.FrequencyHz ?? MBoosterUiConstants.EngineFreqMinHz;
-            SetValueText(MBoosterEngineFrequencyValue, MBoosterEngineFrequencySlider.Value.ToString("F0"));
             MBoosterEngineIntensity.Value     = fx?.Engine?.IntensityPct  ?? 50;
             SetValueText(MBoosterEngineIntensityValue, (fx?.Engine?.IntensityPct ?? 50).ToString());
             MBoosterEngineTestToggle.IsChecked = false;
@@ -4163,19 +4161,6 @@ namespace MozaPlugin
             var s = CurrentMBoosterEffectTarget();
             if (s == null) return;
             (s.Engine ??= new MBoosterEffectSettings()).IntensityPct = v;
-            _plugin.SaveSettings();
-        }
-        // Fixed vibration frequency (60-200Hz) — replaces the old RPM-driven
-        // auto-frequency mapping. See MBoosterEffectSettings.FrequencyHz and
-        // MBoosterEffectWorker.UpdateEngineRequest.
-        private void MBoosterEngineFrequencySlider_ValueChanged(object sender, RoutedPropertyChangedEventArgs<double> e)
-        {
-            if (_suppressEvents) return;
-            int v = Math.Max((int)MBoosterUiConstants.EngineFreqMinHz, Math.Min((int)MBoosterUiConstants.EngineFreqMaxHz, (int)Math.Round(e.NewValue)));
-            MBoosterEngineFrequencyValue.Text = v.ToString();
-            var s = CurrentMBoosterEffectTarget();
-            if (s == null) return;
-            (s.Engine ??= new MBoosterEffectSettings()).FrequencyHz = v;
             _plugin.SaveSettings();
         }
         // Sustained test toggle — unlike the other effects' fire-and-forget

@@ -490,24 +490,36 @@ namespace MozaPlugin.Devices
 
         // ===== Telemetry → effect parameters (doc § 4) ====================
 
+        // Frequency AB9's engine-vibration slider hits exactly at redline —
+        // there's no user-facing equivalent on mBooster any more, so this
+        // plays the role AB9's freq slider does in UpdateEngineRequest's
+        // rpm/redline scaling below. Matches the top of the device's
+        // hardware-safe engine range (MBoosterUiConstants.EngineFreqMaxHz).
+        private const double EngineRedlineFreqHz = MBoosterUiConstants.EngineFreqMaxHz;
+        // Redline fallback when the game doesn't report MaxRpm — same
+        // 8000-rpm convention Ab9EngineVibrationWorker and HardwareApplier use.
+        private const double EngineDefaultRedlineRpm = 8000.0;
+
         private void UpdateEngineRequest(IMBoosterEffects? effects, in MBoosterTelemetrySnapshot snap, ref EffectState st)
         {
-            // Engine's frequency used to be derived from RPM (doc § 4:
-            // clamp(rpm / 20000 * 200, 10, 200)); it's now a fixed,
-            // user-configured value (MBoosterEffectSettings.FrequencyHz,
-            // 60-200Hz) — Intensity is still the only thing telemetry (or
-            // the test pulse) modulates.
-            double freqHz = ClampEngineFreq(effects?.Engine?.FrequencyHz ?? MBoosterUiConstants.EngineFreqMinHz);
+            // Engine's frequency follows AB9's parametric model (see
+            // Ab9EngineVibrationWorker.Tick): audible = EngineRedlineFreqHz ×
+            // (rpm / redline), so pitch climbs with RPM and tops out at
+            // EngineRedlineFreqHz right at redline. There's no user-facing
+            // frequency slider any more — Intensity is the only thing
+            // telemetry (or the test pulse) modulates.
 
             // Sustained test toggle overrides telemetry-driven engine
             // entirely (ignores Enabled/RPM-idle gates, matching how the
             // other effects' test pulses also bypass them) and, unlike a
             // one-shot pulse, re-reads Intensity live every tick so slider
-            // drags are felt immediately while testing.
+            // drags are felt immediately while testing. Games aren't
+            // guaranteed to be running during a test, so play the redline
+            // tone rather than an RPM-scaled one.
             if (_engineTestSustained)
             {
                 st.IntensityRequest = Clamp01((effects?.Engine?.IntensityPct ?? 0) / 100.0);
-                st.FreqHz = freqHz;
+                st.FreqHz = ClampEngineFreq(EngineRedlineFreqHz);
                 return;
             }
 
@@ -527,7 +539,12 @@ namespace MozaPlugin.Devices
                 return;
             }
 
-            st.FreqHz = freqHz;
+            // fraction clamped to (0,1] so over-rev can't exceed the redline
+            // pitch; a missing MaxRpm falls back to EngineDefaultRedlineRpm —
+            // same shape as Ab9EngineVibrationWorker.Tick.
+            double redline = snap.MaxRpm > 100.0 ? snap.MaxRpm : EngineDefaultRedlineRpm;
+            double fraction = Math.Min(1.0, rpm / redline);
+            st.FreqHz = ClampEngineFreq(EngineRedlineFreqHz * fraction);
             // Engine continuous-effect: user 0..100 % maps ~1:1 to output
             // amplitude 0..1, matching AB9's parametric engine-vibration
             // intensity slider (no artificial ceiling — see the constants

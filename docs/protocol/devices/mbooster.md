@@ -168,15 +168,29 @@ seconds, `_mboosterPedalTraceSamples` — and reset to a flat baseline on
 device switch so it doesn't show a discontinuous mix of two different
 pedals' history.
 
-**Engine Vibration** was the first effect rebuilt: it has two real
-sliders, **Frequency (Hz)** (60–200, `MBoosterEffectSettings.FrequencyHz`,
-bounds in `MBoosterUiConstants.EngineFreqMinHz`/`MaxHz`) and
-**Intensity** (0–100%, unchanged). Frequency used to be derived from
-RPM (`clamp(rpm / 20000 * 200, 10, 200)` per doc § 4); that mapping was
-removed — Engine now vibrates at a fixed, user-chosen frequency
-whenever it's enabled and the engine is running above idle (same
-`rpm > 0.8 × idleRpm` gate as before), with only Intensity still
-modulated.
+**Engine Vibration** was the first effect rebuilt: it originally had two
+real sliders, Frequency (Hz) and Intensity, with Frequency replacing the
+telemetry-derived mapping (`clamp(rpm / 20000 * 200, 10, 200)` per doc
+§ 4) with a fixed, user-chosen value.
+
+That fixed slider has since been reverted: Engine's frequency is once
+again telemetry-derived, this time to match AB9's parametric
+engine-vibration model exactly (see `Ab9EngineVibrationWorker.Tick` and
+`docs/protocol/devices/ab9-shifter.md`) rather than the old doc § 4
+formula — `frequency = EngineRedlineFreqHz × (rpm / redline)`, clamped
+to `MBoosterUiConstants.EngineFreqMinHz`/`MaxHz` (60–200Hz), where
+`EngineRedlineFreqHz` is the constant frequency reached exactly at
+redline (`MBoosterEffectWorker.EngineRedlineFreqHz`, pinned to
+`EngineFreqMaxHz`) and `redline` is the game's reported `MaxRpm`
+(`MBoosterTelemetrySnapshot.MaxRpm`, threaded from `MozaPlugin
+.DataUpdate`), falling back to `EngineDefaultRedlineRpm` (8000, same
+convention as `Ab9EngineVibrationWorker.DefaultRedlineRpm` and
+`HardwareApplier`'s CM2 RPM-ramp fallback) when a game doesn't report
+one. There is no user-facing Frequency slider for Engine any more —
+`MBoosterEffectSettings.FrequencyHz` is unused for Engine and kept only
+so older saved profiles still deserialize; only Intensity remains
+user-configurable. The `rpm > 0.8 × idleRpm` activation gate is
+unchanged.
 
 Engine's Test control is a **toggle**, not the "Test 1s" button Lockup/
 Threshold still use — ABS used to fire the same kind of one-shot 1s
@@ -186,12 +200,13 @@ modulation to preview against a live pedal press, so a timed pulse
 didn't fit it well. Instead, `Test` turns `_engineTestSustained` on/off
 (`MBoosterEffectWorker.SetEngineTestSustained`, wired through
 `MBoosterDeviceController.SetEngineTestActive`); while on, the effect
-runs indefinitely, live-reading Frequency and Intensity from settings
-every tick (not a snapshot) so slider drags are felt immediately. This
-bypasses the `Enabled`/RPM-idle gates entirely, same as the other
-effects' test pulses. Three places explicitly turn it back off so a
-forgotten toggle can't leave the pedal buzzing: switching the selected
-mBooster device in the dropdown, closing the settings panel
+runs indefinitely at the fixed redline frequency (there's no guarantee
+a game is running to supply RPM during a test) and live-reads Intensity
+from settings every tick (not a snapshot) so slider drags are felt
+immediately. This bypasses the `Enabled`/RPM-idle gates entirely, same
+as the other effects' test pulses. Three places explicitly turn it back
+off so a forgotten toggle can't leave the pedal buzzing: switching the
+selected mBooster device in the dropdown, closing the settings panel
 (`OnUnloadedStopTimers`), and — same as always — `SendAllDisableFrames`
 on controller dispose sends the wire-level disable regardless of this
 flag's state.

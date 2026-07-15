@@ -1971,6 +1971,7 @@ namespace MozaPlugin
                 var snap = new MBoosterTelemetrySnapshot(
                     gameRunning: data.GameRunning,
                     rpm: rpm,
+                    maxRpm: maxRpm,
                     idleRpm: idleRpm,
                     brake: brake01,
                     throttle: throttle01,

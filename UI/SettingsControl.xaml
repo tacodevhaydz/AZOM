@@ -2735,23 +2735,6 @@
                                     <Grid Margin="0,4">
                                         <Grid.ColumnDefinitions>
                                             <ColumnDefinition Width="Auto"/>
-                                            <ColumnDefinition Width="Auto"/>
-                                            <ColumnDefinition Width="*"/>
-                                            <ColumnDefinition Width="Auto"/>
-                                            <ColumnDefinition Width="Auto"/>
-                                        </Grid.ColumnDefinitions>
-                                        <TextBlock Grid.Column="0" Text="{x:Static res:Strings.SliderLabel_FrequencyHz}" Style="{StaticResource SliderLabel}"/>
-                                        <TextBlock Grid.Column="1" Text="60" Style="{StaticResource SliderRangeEndLabel}" Margin="0,0,6,0"/>
-                                        <Slider Grid.Column="2" x:Name="MBoosterEngineFrequencySlider" Style="{StaticResource SettingSlider}" Minimum="60" Maximum="200" TickFrequency="1" ValueChanged="MBoosterEngineFrequencySlider_ValueChanged"/>
-                                        <TextBlock Grid.Column="3" Text="200" Style="{StaticResource SliderRangeEndLabel}" Margin="6,0,0,0"/>
-                                        <TextBox Grid.Column="4" x:Name="MBoosterEngineFrequencyValue" Style="{StaticResource SliderValueEditBox}"
-                                                 Tag="{Binding ElementName=MBoosterEngineFrequencySlider}"
-                                                 KeyDown="SliderValueBox_KeyDown" LostFocus="SliderValueBox_LostFocus"
-                                                 Text="100"/>
-                                    </Grid>
-                                    <Grid Margin="0,4">
-                                        <Grid.ColumnDefinitions>
-                                            <ColumnDefinition Width="Auto"/>
                                             <ColumnDefinition Width="*"/>
                                             <ColumnDefinition Width="Auto"/>
                                         </Grid.ColumnDefinitions>
