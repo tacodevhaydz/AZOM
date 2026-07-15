@@ -30,13 +30,17 @@ namespace MozaPlugin.Devices
         // ceilings; user 0 % is silent. Matches PitHouse's perceived loudness at
         // equivalent slider positions.
         //
-        // Engine is the exception: its intensity slider is meant to be fully
-        // parametric like AB9's engine-vibration slider (0-100 % maps ~1:1 to
-        // the device's full 0..1 amplitude range), so it has no scale ceiling
-        // of its own — see UpdateEngineRequest.
+        // Engine briefly ran uncapped (0-100 % mapped ~1:1 to the device's
+        // full 0..1 amplitude range, matching AB9's parametric engine-vibration
+        // slider) but that made the slider only usable in its bottom few
+        // percent — full amplitude at continuous-effect duty cycle is far
+        // stronger than the other effects' brief pulses. Capped again at the
+        // same 10 % ceiling as its wire-slot reusers (Custom Effects, Traction
+        // Control, Wheel Spin, Gear Shift) — see UpdateEngineRequest.
         private const double AbsScaleMax       = 0.10;
         private const double LockupScaleMax    = 0.15;
         private const double ThresholdScaleMax = 0.10;
+        private const double EngineScaleMax    = 0.10;
         // Custom effects share Engine's verified wire shape (see
         // ProcessCustomEffect) so they share a scale cap too — a
         // continuous-mode custom effect (no Threshold gate) can run
@@ -518,7 +522,7 @@ namespace MozaPlugin.Devices
             // tone rather than an RPM-scaled one.
             if (_engineTestSustained)
             {
-                st.IntensityRequest = Clamp01((effects?.Engine?.IntensityPct ?? 0) / 100.0);
+                st.IntensityRequest = Clamp01((effects?.Engine?.IntensityPct ?? 0) / 100.0) * EngineScaleMax;
                 st.FreqHz = ClampEngineFreq(EngineRedlineFreqHz);
                 return;
             }
@@ -545,11 +549,10 @@ namespace MozaPlugin.Devices
             double redline = snap.MaxRpm > 100.0 ? snap.MaxRpm : EngineDefaultRedlineRpm;
             double fraction = Math.Min(1.0, rpm / redline);
             st.FreqHz = ClampEngineFreq(EngineRedlineFreqHz * fraction);
-            // Engine continuous-effect: user 0..100 % maps ~1:1 to output
-            // amplitude 0..1, matching AB9's parametric engine-vibration
-            // intensity slider (no artificial ceiling — see the constants
-            // block above).
-            st.IntensityRequest = Clamp01(effects.Engine.IntensityPct / 100.0);
+            // Engine continuous-effect: user 0..100 % maps to output
+            // amplitude 0..EngineScaleMax — see the constants block above
+            // for why this is capped rather than 1:1.
+            st.IntensityRequest = Clamp01(effects.Engine.IntensityPct / 100.0) * EngineScaleMax;
         }
 
         private static double ClampEngineFreq(double hz)
