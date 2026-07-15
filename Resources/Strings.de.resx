@@ -185,7 +185,6 @@
   <data name="SliderLabel_Smoothness" xml:space="preserve"><value>Glätte</value></data>
   <data name="SliderLabel_TriggerLevel" xml:space="preserve"><value>Auslöseschwelle</value></data>
   <data name="SliderLabel_VibrationDecay" xml:space="preserve"><value>Vibrationsabklingen</value></data>
-  <data name="Label_PedalTrace" xml:space="preserve"><value>Pedalverlauf (letzte 5s)</value></data>
   <data name="Subtitle_CalibrationExperimental" xml:space="preserve"><value>// experimentell — wird ggf. nicht von der mBooster-Firmware übernommen</value></data>
   <data name="Label_ReversedDirection" xml:space="preserve"><value>Richtung umgekehrt</value></data>
   <data name="SliderLabel_MinRaw" xml:space="preserve"><value>Min (roh)</value></data>

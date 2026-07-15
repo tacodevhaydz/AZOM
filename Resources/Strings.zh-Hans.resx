@@ -185,7 +185,6 @@
   <data name="SliderLabel_Smoothness" xml:space="preserve"><value>平滑度</value></data>
   <data name="SliderLabel_TriggerLevel" xml:space="preserve"><value>触发输入电平</value></data>
   <data name="SliderLabel_VibrationDecay" xml:space="preserve"><value>振动衰减</value></data>
-  <data name="Label_PedalTrace" xml:space="preserve"><value>踏板轨迹(最近5秒)</value></data>
   <data name="Subtitle_CalibrationExperimental" xml:space="preserve"><value>// 实验性 — mBooster 固件可能不予响应</value></data>
   <data name="Label_ReversedDirection" xml:space="preserve"><value>反向</value></data>
   <data name="SliderLabel_MinRaw" xml:space="preserve"><value>最小(原始值)</value></data>

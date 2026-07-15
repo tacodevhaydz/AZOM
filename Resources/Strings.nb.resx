@@ -190,7 +190,6 @@
   <data name="SliderLabel_Smoothness" xml:space="preserve"><value>Glatthet</value></data>
   <data name="SliderLabel_TriggerLevel" xml:space="preserve"><value>Utløsernivå</value></data>
   <data name="SliderLabel_VibrationDecay" xml:space="preserve"><value>Vibrasjonsavklinging</value></data>
-  <data name="Label_PedalTrace" xml:space="preserve"><value>Pedalspor (siste 5s)</value></data>
   <data name="Subtitle_CalibrationExperimental" xml:space="preserve"><value>// eksperimentelt — kanskje ikke respektert av mBooster-firmware</value></data>
   <data name="Label_ReversedDirection" xml:space="preserve"><value>Reversert retning</value></data>
   <data name="SliderLabel_MinRaw" xml:space="preserve"><value>Min (rå)</value></data>

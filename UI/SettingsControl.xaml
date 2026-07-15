@@ -2164,7 +2164,6 @@
                                       Subtitle="{x:Static res:Strings.Subtitle_MBoosterPedals}"
                                       Icon="{StaticResource IconPedals}" Margin="22,18,22,0">
                         <StackPanel>
-                            <TextBlock Text="{x:Static res:Strings.Label_PedalTrace}" Style="{StaticResource LabelText}" Margin="0,0,0,6"/>
                             <ctrl:BandwidthSparkline x:Name="MBoosterPedalTraceViz" Height="70"
                                                       InBrush="{StaticResource RedBrush}"
                                                       InFillBrush="{StaticResource McuFillBrush}"
@@ -2438,7 +2437,7 @@
 
                             <StackPanel x:Name="MBoosterEffectsCardsPanel">
 
-                            <Expander Header="{x:Static res:Strings.Section_Abs}" IsExpanded="True">
+                            <Expander Header="{x:Static res:Strings.Section_Abs}" IsExpanded="True" Margin="0,0,0,10">
                                 <StackPanel Margin="8,4">
                                     <StackPanel Orientation="Horizontal" Margin="0,0,0,8">
                                         <ctrl:OffOnToggle x:Name="MBoosterAbsEnable" Content="{x:Static res:Strings.Label_Enable}" VerticalAlignment="Center" Checked="MBoosterAbsEnable_Changed" Unchecked="MBoosterAbsEnable_Changed"/>
@@ -2489,7 +2488,7 @@
                                     </Grid>
                                 </StackPanel>
                             </Expander>
-                            <Expander Header="{x:Static res:Strings.Section_TractionControl}" IsExpanded="True">
+                            <Expander Header="{x:Static res:Strings.Section_TractionControl}" IsExpanded="True" Margin="0,0,0,10">
                                 <StackPanel Margin="8,4">
                                     <StackPanel Orientation="Horizontal" Margin="0,0,0,8">
                                         <ctrl:OffOnToggle x:Name="MBoosterTcEnable" Content="{x:Static res:Strings.Label_Enable}" VerticalAlignment="Center" Checked="MBoosterTcEnable_Changed" Unchecked="MBoosterTcEnable_Changed"/>
@@ -2527,7 +2526,7 @@
                                     </Grid>
                                 </StackPanel>
                             </Expander>
-                            <Expander Header="{x:Static res:Strings.Section_WheelSpin}" IsExpanded="True">
+                            <Expander Header="{x:Static res:Strings.Section_WheelSpin}" IsExpanded="True" Margin="0,0,0,10">
                                 <StackPanel Margin="8,4">
                                     <StackPanel Orientation="Horizontal" Margin="0,0,0,8">
                                         <ctrl:OffOnToggle x:Name="MBoosterWheelSpinEnable" Content="{x:Static res:Strings.Label_Enable}" VerticalAlignment="Center" Checked="MBoosterWheelSpinEnable_Changed" Unchecked="MBoosterWheelSpinEnable_Changed"/>
@@ -2565,7 +2564,7 @@
                                     </Grid>
                                 </StackPanel>
                             </Expander>
-                            <Expander Header="{x:Static res:Strings.Section_MBoosterGearShift}" IsExpanded="True">
+                            <Expander Header="{x:Static res:Strings.Section_MBoosterGearShift}" IsExpanded="True" Margin="0,0,0,10">
                                 <StackPanel Margin="8,4">
                                     <StackPanel Orientation="Horizontal" Margin="0,0,0,8">
                                         <ctrl:OffOnToggle x:Name="MBoosterGearShiftEnable" Content="{x:Static res:Strings.Label_Enable}" VerticalAlignment="Center" Checked="MBoosterGearShiftEnable_Changed" Unchecked="MBoosterGearShiftEnable_Changed"/>
@@ -2621,7 +2620,7 @@
                                     </Grid>
                                 </StackPanel>
                             </Expander>
-                            <Expander Header="{x:Static res:Strings.Section_Lockup}" IsExpanded="True">
+                            <Expander Header="{x:Static res:Strings.Section_Lockup}" IsExpanded="True" Margin="0,0,0,10">
                                 <StackPanel Margin="8,4">
                                     <StackPanel Orientation="Horizontal" Margin="0,0,0,8">
                                         <ctrl:OffOnToggle x:Name="MBoosterLockupEnable" Content="{x:Static res:Strings.Label_Enable}" VerticalAlignment="Center" Checked="MBoosterLockupEnable_Changed" Unchecked="MBoosterLockupEnable_Changed"/>
@@ -2659,7 +2658,7 @@
                                     </Grid>
                                 </StackPanel>
                             </Expander>
-                            <Expander Header="{x:Static res:Strings.Section_Threshold}" IsExpanded="True">
+                            <Expander Header="{x:Static res:Strings.Section_Threshold}" IsExpanded="True" Margin="0,0,0,10">
                                 <StackPanel Margin="8,4">
                                     <StackPanel Orientation="Horizontal" Margin="0,0,0,8">
                                         <ctrl:OffOnToggle x:Name="MBoosterThresholdEnable" Content="{x:Static res:Strings.Label_Enable}" VerticalAlignment="Center" Checked="MBoosterThresholdEnable_Changed" Unchecked="MBoosterThresholdEnable_Changed"/>
@@ -2723,7 +2722,7 @@
                                     </Grid>
                                 </StackPanel>
                             </Expander>
-                            <Expander Header="{x:Static res:Strings.Section_EngineContinuous}" IsExpanded="True">
+                            <Expander Header="{x:Static res:Strings.Section_EngineContinuous}" IsExpanded="True" Margin="0,0,0,10">
                                 <StackPanel Margin="8,4">
                                     <StackPanel Orientation="Horizontal" Margin="0,0,0,8">
                                         <ctrl:OffOnToggle x:Name="MBoosterEngineEnable" Content="{x:Static res:Strings.Label_Enable}" VerticalAlignment="Center" Checked="MBoosterEngineEnable_Changed" Unchecked="MBoosterEngineEnable_Changed"/>
@@ -2744,7 +2743,7 @@
                                     </Grid>
                                 </StackPanel>
                             </Expander>
-                            <Expander Header="{x:Static res:Strings.Section_RoadTexture}" IsExpanded="True">
+                            <Expander Header="{x:Static res:Strings.Section_RoadTexture}" IsExpanded="True" Margin="0,0,0,10">
                                 <StackPanel Margin="8,4">
                                     <StackPanel Orientation="Horizontal" Margin="0,0,0,8">
                                         <ctrl:OffOnToggle x:Name="MBoosterRoadTextureEnable" Content="{x:Static res:Strings.Label_Enable}" VerticalAlignment="Center" Checked="MBoosterRoadTextureEnable_Changed" Unchecked="MBoosterRoadTextureEnable_Changed"/>
@@ -2778,7 +2777,7 @@
                                     </Grid>
                                 </StackPanel>
                             </Expander>
-                            <Expander Header="{x:Static res:Strings.Section_BrakeFade}" IsExpanded="False">
+                            <Expander Header="{x:Static res:Strings.Section_BrakeFade}" IsExpanded="False" Margin="0,0,0,10">
                                 <StackPanel Margin="8,4">
                                     <TextBlock TextWrapping="Wrap" Foreground="#FFE082" FontSize="11" Margin="0,0,0,8" Text="{x:Static res:Strings.Hint_BrakeFadeExperimental}"/>
                                     <StackPanel Orientation="Horizontal" Margin="0,0,0,8">

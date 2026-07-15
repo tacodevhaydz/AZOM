@@ -185,7 +185,6 @@
   <data name="SliderLabel_Smoothness" xml:space="preserve"><value>Douceur</value></data>
   <data name="SliderLabel_TriggerLevel" xml:space="preserve"><value>Niveau de déclenchement</value></data>
   <data name="SliderLabel_VibrationDecay" xml:space="preserve"><value>Décroissance de la vibration</value></data>
-  <data name="Label_PedalTrace" xml:space="preserve"><value>Trace de la pédale (5 dernières s)</value></data>
   <data name="Subtitle_CalibrationExperimental" xml:space="preserve"><value>// expérimental — peut ne pas être pris en compte par le firmware du mBooster</value></data>
   <data name="Label_ReversedDirection" xml:space="preserve"><value>Direction inversée</value></data>
   <data name="SliderLabel_MinRaw" xml:space="preserve"><value>Min (brut)</value></data>

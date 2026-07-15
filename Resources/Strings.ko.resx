@@ -185,7 +185,6 @@
   <data name="SliderLabel_Smoothness" xml:space="preserve"><value>부드러움</value></data>
   <data name="SliderLabel_TriggerLevel" xml:space="preserve"><value>트리거 입력 레벨</value></data>
   <data name="SliderLabel_VibrationDecay" xml:space="preserve"><value>진동 감쇠</value></data>
-  <data name="Label_PedalTrace" xml:space="preserve"><value>페달 궤적 (최근 5초)</value></data>
   <data name="Subtitle_CalibrationExperimental" xml:space="preserve"><value>// 실험적 기능 — mBooster 펌웨어가 적용하지 않을 수 있음</value></data>
   <data name="Label_ReversedDirection" xml:space="preserve"><value>방향 반전</value></data>
   <data name="SliderLabel_MinRaw" xml:space="preserve"><value>최소 (원시값)</value></data>

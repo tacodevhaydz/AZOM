@@ -190,7 +190,6 @@
   <data name="SliderLabel_Smoothness" xml:space="preserve"><value>Suavidad</value></data>
   <data name="SliderLabel_TriggerLevel" xml:space="preserve"><value>Nivel de activación</value></data>
   <data name="SliderLabel_VibrationDecay" xml:space="preserve"><value>Decaimiento de la vibración</value></data>
-  <data name="Label_PedalTrace" xml:space="preserve"><value>Traza del pedal (últimos 5s)</value></data>
   <data name="Subtitle_CalibrationExperimental" xml:space="preserve"><value>// experimental — puede que el firmware del mBooster lo ignore</value></data>
   <data name="Label_ReversedDirection" xml:space="preserve"><value>Dirección invertida</value></data>
   <data name="SliderLabel_MinRaw" xml:space="preserve"><value>Mín (bruto)</value></data>

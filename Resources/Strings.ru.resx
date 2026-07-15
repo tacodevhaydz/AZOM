@@ -185,7 +185,6 @@
   <data name="SliderLabel_Smoothness" xml:space="preserve"><value>Плавность</value></data>
   <data name="SliderLabel_TriggerLevel" xml:space="preserve"><value>Уровень срабатывания</value></data>
   <data name="SliderLabel_VibrationDecay" xml:space="preserve"><value>Затухание вибрации</value></data>
-  <data name="Label_PedalTrace" xml:space="preserve"><value>График педали (последние 5с)</value></data>
   <data name="Subtitle_CalibrationExperimental" xml:space="preserve"><value>// экспериментально — прошивка mBooster может это игнорировать</value></data>
   <data name="Label_ReversedDirection" xml:space="preserve"><value>Инвертированное направление</value></data>
   <data name="SliderLabel_MinRaw" xml:space="preserve"><value>Мин (сырое)</value></data>

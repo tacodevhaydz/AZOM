@@ -260,7 +260,6 @@ namespace MozaPlugin.Resources
         public static string SliderLabel_VibrationDecay => Get("SliderLabel_VibrationDecay");
         public static string SliderLabel_OnsetTempC => Get("SliderLabel_OnsetTempC");
         public static string Hint_BrakeFadeExperimental => Get("Hint_BrakeFadeExperimental");
-        public static string Label_PedalTrace => Get("Label_PedalTrace");
         public static string Section_CustomEffects => Get("Section_CustomEffects");
         public static string Subtitle_CustomEffectsExperimental => Get("Subtitle_CustomEffectsExperimental");
         public static string Hint_CustomEffectsExperimental => Get("Hint_CustomEffectsExperimental");

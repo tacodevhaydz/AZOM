@@ -185,7 +185,6 @@
   <data name="SliderLabel_Smoothness" xml:space="preserve"><value>Ομαλότητα</value></data>
   <data name="SliderLabel_TriggerLevel" xml:space="preserve"><value>Επίπεδο ενεργοποίησης</value></data>
   <data name="SliderLabel_VibrationDecay" xml:space="preserve"><value>Απόσβεση δόνησης</value></data>
-  <data name="Label_PedalTrace" xml:space="preserve"><value>Ίχνος πεντάλ (τελευταία 5δ)</value></data>
   <data name="Subtitle_CalibrationExperimental" xml:space="preserve"><value>// πειραματικό — ενδέχεται να μην υποστηρίζεται από firmware mBooster</value></data>
   <data name="Label_ReversedDirection" xml:space="preserve"><value>Αντίστροφη κατεύθυνση</value></data>
   <data name="SliderLabel_MinRaw" xml:space="preserve"><value>Ελάχ. Τιμή αισθητήρα</value></data>

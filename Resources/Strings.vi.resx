@@ -185,7 +185,6 @@
   <data name="SliderLabel_Smoothness" xml:space="preserve"><value>Độ mượt</value></data>
   <data name="SliderLabel_TriggerLevel" xml:space="preserve"><value>Mức kích hoạt đầu vào</value></data>
   <data name="SliderLabel_VibrationDecay" xml:space="preserve"><value>Độ suy giảm rung</value></data>
-  <data name="Label_PedalTrace" xml:space="preserve"><value>Đường di chuyển bàn đạp (5 giây gần nhất)</value></data>
   <data name="Subtitle_CalibrationExperimental" xml:space="preserve"><value>// thử nghiệm — có thể không được firmware mBooster áp dụng</value></data>
   <data name="Label_ReversedDirection" xml:space="preserve"><value>Chiều đảo ngược</value></data>
   <data name="SliderLabel_MinRaw" xml:space="preserve"><value>Min (thô)</value></data>
