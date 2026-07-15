@@ -178,10 +178,14 @@ namespace MozaPlugin.Devices
             return _pedalAxisIndex < connected.Length && connected[_pedalAxisIndex];
         }
 
-        /// <summary>This pedal's vibration-effect settings — the master's flat
-        /// fields for axis 0, else the per-pedal entry (both implement
-        /// <see cref="IMBoosterEffects"/>). Null when no per-pedal entry exists.</summary>
-        private IMBoosterEffects? PedalEffects(MBoosterDeviceSettings? lane)
+        /// <summary>This pedal's full config — the master's flat fields for
+        /// axis 0, else the per-pedal entry (both implement
+        /// <see cref="IMBoosterPedalConfig"/>, a superset of
+        /// <see cref="IMBoosterEffects"/> that also covers Travel End/Max
+        /// Threshold/calibration — needed by Brake Fade, which ramps THIS
+        /// pedal's own hardware calibration, not necessarily the master's).
+        /// Null when no per-pedal entry exists.</summary>
+        private IMBoosterPedalConfig? PedalEffects(MBoosterDeviceSettings? lane)
         {
             if (_pedalAxisIndex == 0) return lane;
             // Snapshot the dictionary reference: the UI publishes new pedal
@@ -277,19 +281,19 @@ namespace MozaPlugin.Devices
 
         private void TryRestoreBrakeFadeOnStop()
         {
-            var settings = _settingsLookup();
+            var pedalConfig = PedalEffects(_settingsLookup());
             if (_brakeFadeAppliedTravelEndMm >= 0)
             {
-                float baseMm = settings?.TravelEndMm ?? -1;
+                float baseMm = pedalConfig?.TravelEndMm ?? -1;
                 if (baseMm >= 0 && Math.Abs(_brakeFadeAppliedTravelEndMm - baseMm) >= 0.01f
-                    && _device.SendIntWrite("mbooster-brake-travel-end", MozaMBoosterProtocol.EncodeTravelMm(baseMm)))
+                    && _device.SendIntWrite("mbooster-brake-travel-end", MozaMBoosterProtocol.EncodeTravelMm(baseMm), TargetDevice))
                     _brakeFadeAppliedTravelEndMm = baseMm;
             }
             if (_brakeFadeAppliedThresholdKg >= 0)
             {
-                float baseKg = settings?.MaxThresholdKg ?? -1;
+                float baseKg = pedalConfig?.MaxThresholdKg ?? -1;
                 if (baseKg >= 0 && Math.Abs(_brakeFadeAppliedThresholdKg - baseKg) >= 0.5f
-                    && _device.SendIntWrite("mbooster-brake-threshold", MozaMBoosterProtocol.EncodeThresholdKg(baseKg)))
+                    && _device.SendIntWrite("mbooster-brake-threshold", MozaMBoosterProtocol.EncodeThresholdKg(baseKg), TargetDevice))
                     _brakeFadeAppliedThresholdKg = baseKg;
             }
         }
@@ -377,9 +381,9 @@ namespace MozaPlugin.Devices
             // longer assumes axis index directly maps to a real chain device
             // id — without this guard, a phantom axis's worker would ALSO
             // resolve to the one real device and fight the genuine pedal's
-            // worker over it. Brake Fade + keepalive below are lane-wide
-            // (primary-worker-only) responsibilities, not per-axis, so they
-            // stay outside this guard.
+            // worker over it. Brake Fade below has its own, similar gate
+            // (IsPedalAxisConnected + PedalRole == Brake, not primary-only);
+            // the 500ms keepalive stays primary-only/lane-wide unconditionally.
             if (IsPedalAxisConnected())
             {
                 var effects = PedalEffects(lane);
@@ -452,10 +456,20 @@ namespace MozaPlugin.Devices
                 ProcessGearShiftEffect(ref _gearShift);
             }
 
-            // Brake Fade is NOT a vibration effect — it rewrites the brake's
-            // hardware calibration, so it runs ONCE per lane on the primary
-            // worker (not per pedal) against the lane settings. See UpdateBrakeFade.
-            if (_isPrimary) UpdateBrakeFade(lane, snap);
+            // Brake Fade is NOT a vibration effect — it rewrites the ACTUAL
+            // brake pedal's Travel End/Max Threshold hardware calibration, so
+            // it runs on whichever worker's axis actually plays the Brake
+            // role — not necessarily axis 0/the primary worker (a standalone
+            // unit's sole pedal can report on any HID axis; see
+            // IsPedalAxisConnected). BrakeFade's own Enabled/Onset config
+            // stays device-level (lane.BrakeFade — one shared setting per
+            // physical unit, since there's only one real brake-temperature
+            // reading, not one per axis), but the Travel End/Max Threshold
+            // base values it ramps, and the device id its calibration writes
+            // are addressed to (TargetDevice), are THIS axis's own. See
+            // UpdateBrakeFade.
+            if (IsPedalAxisConnected() && PedalRole(lane) == MBoosterRole.Brake)
+                UpdateBrakeFade(lane, PedalEffects(lane), snap);
 
             // --- 500 ms keepalive (separate from motor frames) -------------
             // Primary worker only, and to ALL of the chain's motor device ids
@@ -1051,21 +1065,24 @@ namespace MozaPlugin.Devices
         private const float BrakeFadeWriteMinDeltaMm = 0.2f;
         private const float BrakeFadeWriteMinDeltaKg = 1.0f;
 
-        private void UpdateBrakeFade(MBoosterDeviceSettings? settings, in MBoosterTelemetrySnapshot snap)
+        private void UpdateBrakeFade(MBoosterDeviceSettings? lane, IMBoosterPedalConfig? pedalConfig, in MBoosterTelemetrySnapshot snap)
         {
-            var bf = settings?.BrakeFade;
+            // Enabled/Onset stay device-level (lane, not pedalConfig) — one
+            // shared setting per physical unit, since there's only one real
+            // brake-temperature reading, not one per axis.
+            var bf = lane?.BrakeFade;
             double ramp01;
             if (_brakeFadeTestActive) ramp01 = 1.0;
             else if (bf == null || !bf.Enabled) ramp01 = 0.0;
             else ramp01 = Clamp01((snap.BrakeTempC - bf.BrakeFadeOnsetC) / BrakeFadeSpanC);
 
-            UpdateBrakeFadeTravelEnd(settings, ramp01);
-            UpdateBrakeFadeThreshold(settings, ramp01);
+            UpdateBrakeFadeTravelEnd(pedalConfig, ramp01);
+            UpdateBrakeFadeThreshold(pedalConfig, ramp01);
         }
 
-        private void UpdateBrakeFadeTravelEnd(MBoosterDeviceSettings? settings, double ramp01)
+        private void UpdateBrakeFadeTravelEnd(IMBoosterPedalConfig? pedalConfig, double ramp01)
         {
-            float baseMm = settings?.TravelEndMm ?? -1;
+            float baseMm = pedalConfig?.TravelEndMm ?? -1;
             if (baseMm < 0) return; // no known safe base — stay fully inert
 
             float cap = MBoosterUiConstants.BrakeFadeMaxTravelEndMm;
@@ -1093,16 +1110,16 @@ namespace MozaPlugin.Devices
                 : delta >= BrakeFadeWriteMinDeltaMm && sinceLastWriteSec >= BrakeFadeWriteMinIntervalSec;
             if (!shouldWrite) return;
 
-            if (!_device.SendIntWrite("mbooster-brake-travel-end", MozaMBoosterProtocol.EncodeTravelMm(targetMm)))
+            if (!_device.SendIntWrite("mbooster-brake-travel-end", MozaMBoosterProtocol.EncodeTravelMm(targetMm), TargetDevice))
                 return; // not connected — nothing written, don't update tracking state
 
             _brakeFadeAppliedTravelEndMm = targetMm;
             _brakeFadeTravelEndLastWriteTicks = Stopwatch.GetTimestamp();
         }
 
-        private void UpdateBrakeFadeThreshold(MBoosterDeviceSettings? settings, double ramp01)
+        private void UpdateBrakeFadeThreshold(IMBoosterPedalConfig? pedalConfig, double ramp01)
         {
-            float baseKg = settings?.MaxThresholdKg ?? -1;
+            float baseKg = pedalConfig?.MaxThresholdKg ?? -1;
             if (baseKg < 0) return; // no known safe base — stay fully inert
 
             float cap = MBoosterUiConstants.BrakeFadeMaxThresholdKg;
@@ -1124,7 +1141,7 @@ namespace MozaPlugin.Devices
                 : delta >= BrakeFadeWriteMinDeltaKg && sinceLastWriteSec >= BrakeFadeWriteMinIntervalSec;
             if (!shouldWrite) return;
 
-            if (!_device.SendIntWrite("mbooster-brake-threshold", MozaMBoosterProtocol.EncodeThresholdKg(targetKg)))
+            if (!_device.SendIntWrite("mbooster-brake-threshold", MozaMBoosterProtocol.EncodeThresholdKg(targetKg), TargetDevice))
                 return;
 
             _brakeFadeAppliedThresholdKg = targetKg;

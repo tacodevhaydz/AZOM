@@ -729,15 +729,21 @@ namespace MozaPlugin.Devices
         /// this writes REAL hardware calibration — see
         /// MBoosterEffectWorker.UpdateBrakeFade. Each of the two
         /// calibrations independently requires its own configured base
-        /// value (MBoosterDeviceSettings.TravelEndMm / MaxThresholdKg
-        /// &gt;= 0) or that one stays a no-op. Always-allow-off semantics
-        /// apply here (see <see cref="SetEngineTestActive"/>) so a stuck
-        /// toggle can still restore the base values even if disconnected.
+        /// value (that pedal's own TravelEndMm / MaxThresholdKg &gt;= 0) or
+        /// that one stays a no-op. Always-allow-off semantics apply here
+        /// (see <see cref="SetEngineTestActive"/>) so a stuck toggle can
+        /// still restore the base values even if disconnected.
         /// </summary>
         public void SetBrakeFadeTestActive(bool on)
         {
             if (on && !_connection.IsConnected) return;
-            _workers[0].SetBrakeFadeTestSustained(on); // Brake Fade is per-lane (primary)
+            // Broadcast to every worker — Brake Fade only actually acts on
+            // whichever axis's role resolves to Brake (see
+            // MBoosterEffectWorker.Tick), which isn't necessarily axis 0/the
+            // primary worker (a standalone unit's sole pedal can report on
+            // any HID axis). The other workers' flag just sits unused since
+            // their own Tick() gate never lets Brake Fade run.
+            foreach (var w in _workers) w.SetBrakeFadeTestSustained(on);
         }
 
         /// <summary>
