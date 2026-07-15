@@ -364,12 +364,6 @@
             <Setter.Value>
                 <ControlTemplate TargetType="{x:Type controls:BandwidthSparkline}">
                     <Grid>
-                        <!-- Opt-in dashed horizontal gridlines (ShowGridlines) at
-                             100/75/50/25 % of the plot — stays at the very back. -->
-                        <Path Data="{Binding GridGeometry, RelativeSource={RelativeSource TemplatedParent}}"
-                              Stroke="{StaticResource BorderBrush}" StrokeThickness="1"
-                              StrokeDashArray="2 3" Opacity="0.6"/>
-
                         <!-- Third drawn furthest back, then outbound, then inbound
                              on top — so for the two-series bandwidth chart the
                              typically-louder inbound line still lays on top, and
@@ -380,24 +374,35 @@
                         <Path Data="{Binding ThirdFillGeometry, RelativeSource={RelativeSource TemplatedParent}}"
                               Fill="{TemplateBinding ThirdFillBrush}"
                               StrokeThickness="0"/>
+                        <Path Data="{Binding OutFillGeometry, RelativeSource={RelativeSource TemplatedParent}}"
+                              Fill="{TemplateBinding OutFillBrush}"
+                              StrokeThickness="0"/>
+                        <Path Data="{Binding InFillGeometry, RelativeSource={RelativeSource TemplatedParent}}"
+                              Fill="{TemplateBinding InFillBrush}"
+                              StrokeThickness="0"/>
+
+                        <!-- Opt-in dashed horizontal gridlines (ShowGridlines) at
+                             100/75/50/25 % of the plot. Drawn on top of the fills
+                             (so they stay visible through the translucent
+                             envelopes instead of being buried under them) but
+                             behind the series' own line strokes + tip dots, so
+                             the actual data reads as the foreground layer. -->
+                        <Path Data="{Binding GridGeometry, RelativeSource={RelativeSource TemplatedParent}}"
+                              Stroke="{StaticResource TextDimBrush}" StrokeThickness="1"
+                              StrokeDashArray="2 3" Opacity="0.55"/>
+
                         <Path Data="{Binding ThirdLineGeometry, RelativeSource={RelativeSource TemplatedParent}}"
                               Stroke="{TemplateBinding ThirdBrush}"
                               StrokeThickness="1.5"
                               StrokeStartLineCap="Round"
                               StrokeEndLineCap="Round"
                               Fill="{x:Null}"/>
-                        <Path Data="{Binding OutFillGeometry, RelativeSource={RelativeSource TemplatedParent}}"
-                              Fill="{TemplateBinding OutFillBrush}"
-                              StrokeThickness="0"/>
                         <Path Data="{Binding OutLineGeometry, RelativeSource={RelativeSource TemplatedParent}}"
                               Stroke="{TemplateBinding OutBrush}"
                               StrokeThickness="1.5"
                               StrokeStartLineCap="Round"
                               StrokeEndLineCap="Round"
                               Fill="{x:Null}"/>
-                        <Path Data="{Binding InFillGeometry, RelativeSource={RelativeSource TemplatedParent}}"
-                              Fill="{TemplateBinding InFillBrush}"
-                              StrokeThickness="0"/>
                         <Path Data="{Binding InLineGeometry, RelativeSource={RelativeSource TemplatedParent}}"
                               Stroke="{TemplateBinding InBrush}"
                               StrokeThickness="1.5"
