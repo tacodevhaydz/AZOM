@@ -95,6 +95,15 @@ namespace MozaPlugin.Devices
         // debounce window must survive across the pulse's own on/off
         // cycle. See UpdateGearShiftRequest.
         private double _gearShiftDebounceRemainingSec;
+        // Last GearShiftSeq this worker acted on — compared against the
+        // snapshot's monotonic counter (MBoosterTelemetrySnapshot.GearShiftSeq)
+        // so a shift can't be missed even though this worker samples telemetry
+        // on its own ~20ms timer (a one-tick bool edge would drop whenever
+        // SimHub's DataUpdate runs faster). -1 = not yet synced; the first
+        // tick adopts the current value without firing so a shift that
+        // happened before the effect was enabled / the worker started doesn't
+        // produce a spurious pulse.
+        private int _lastConsumedGearShiftSeq = -1;
 
         // Custom (NCalc) effects — one EffectState per user-created effect,
         // keyed by MBoosterCustomEffect.Id (stable across list edits/reorders,
@@ -760,10 +769,10 @@ namespace MozaPlugin.Devices
 
         // Gear Shift — unlike every other mBooster effect, this one is a
         // genuine self-terminating one-shot pulse rather than a
-        // level-triggered continuous effect: snap.GearChanged is only true
-        // for the single tick the gear string actually changed (see
-        // MozaPlugin.DataUpdate), so firing has to be latched here across
-        // ticks for GearShiftPulseDurationSec, using EffectState's own
+        // level-triggered continuous effect: a shift is signalled by
+        // snap.GearShiftSeq advancing (see MozaPlugin.DataUpdate), so firing
+        // has to be latched here across ticks for GearShiftPulseDurationSec,
+        // using EffectState's own
         // Active/ElapsedSec (already tracked by ProcessEffect-style
         // dispatch) rather than reacting to the raw edge alone. Mirrors the
         // wheelbase's own MozaPlugin.CheckGearshiftEvent: neutral-landing
@@ -802,10 +811,9 @@ namespace MozaPlugin.Devices
 
             double gearShiftScale = (effects.GearShift.IntensityPct / 100.0) * GearShiftScaleMax;
 
-            // Already mid-pulse from an earlier tick — keep it running
-            // until the fixed pulse duration elapses, regardless of
-            // whether snap.GearChanged is still true this tick (it won't
-            // be; it's a one-tick edge).
+            // Already mid-pulse from an earlier tick — keep it running until
+            // the fixed pulse duration elapses, regardless of the shift
+            // counter (this shift was already consumed when the pulse started).
             if (st.Active && st.ElapsedSec < GearShiftPulseDurationSec)
             {
                 st.FreqHz = freqHz;
@@ -813,9 +821,26 @@ namespace MozaPlugin.Devices
                 return;
             }
 
-            // Not currently pulsing — check for a fresh trigger this tick.
+            // Not currently pulsing — check for a fresh shift this tick via
+            // the monotonic counter (robust to this worker's timer being
+            // slower than DataUpdate, which would drop a one-tick bool edge).
+            int seq = snap.GearShiftSeq;
+            if (_lastConsumedGearShiftSeq < 0)
+                _lastConsumedGearShiftSeq = seq; // warm-up: adopt without firing
+            if (seq == _lastConsumedGearShiftSeq)
+            {
+                st.IntensityRequest = 0;
+                st.FreqHz = 0;
+                return;
+            }
+
+            // Consume the shift regardless of how we act on it, so a
+            // suppressed (neutral) or debounced shift can't re-fire on a
+            // later tick.
+            _lastConsumedGearShiftSeq = seq;
+
             bool suppressedNeutral = snap.GearIsNeutral && !effects.GearShift.VibrateOnNeutral;
-            if (!snap.GearChanged || suppressedNeutral || _gearShiftDebounceRemainingSec > 0)
+            if (suppressedNeutral || _gearShiftDebounceRemainingSec > 0)
             {
                 st.IntensityRequest = 0;
                 st.FreqHz = 0;
@@ -1454,7 +1479,7 @@ namespace MozaPlugin.Devices
 
             if (!wantActive && st.Active)
             {
-                _device.SendOneShot(MozaMBoosterProtocol.BuildDisableFrame(id));
+                _device.SendOneShot(MozaMBoosterProtocol.BuildDisableFrame(id, TargetDevice));
                 st.Active = false;
                 st.PhaseRad = 0;
                 st.ElapsedSec = 0;
@@ -1480,8 +1505,8 @@ namespace MozaPlugin.Devices
             ushort freqU16 = MozaMBoosterProtocol.EncodeFreq(st.FreqHz);
             ushort ampU16 = MozaMBoosterProtocol.EncodeAmp(amp01);
 
-            var frame = MozaMBoosterProtocol.BuildMotorFrame(id, enable: true, param1, freqU16, ampU16);
-            _device.SendMotorStream(frame);
+            var frame = MozaMBoosterProtocol.BuildMotorFrame(id, enable: true, param1, freqU16, ampU16, TargetDevice);
+            SendMotor(frame);
         }
 
         /// <summary>
@@ -1502,7 +1527,7 @@ namespace MozaPlugin.Devices
 
             if (!wantActive && st.Active)
             {
-                _device.SendOneShot(MozaMBoosterProtocol.BuildDisableFrame(id));
+                _device.SendOneShot(MozaMBoosterProtocol.BuildDisableFrame(id, TargetDevice));
                 st.Active = false;
                 st.PhaseRad = 0;
                 st.ElapsedSec = 0;
@@ -1528,8 +1553,8 @@ namespace MozaPlugin.Devices
             ushort freqU16 = MozaMBoosterProtocol.EncodeFreq(st.FreqHz);
             ushort ampU16 = MozaMBoosterProtocol.EncodeAmp(amp01);
 
-            var frame = MozaMBoosterProtocol.BuildMotorFrame(id, enable: true, param1, freqU16, ampU16);
-            _device.SendMotorStream(frame);
+            var frame = MozaMBoosterProtocol.BuildMotorFrame(id, enable: true, param1, freqU16, ampU16, TargetDevice);
+            SendMotor(frame);
         }
 
         /// <summary>
@@ -1539,8 +1564,7 @@ namespace MozaPlugin.Devices
         /// <see cref="ProcessWheelSpinEffect"/>, but the deactivation edge
         /// here is reached by <see cref="UpdateGearShiftRequest"/>'s own
         /// pulse-duration timeout rather than a telemetry gate going false
-        /// (the raw snap.GearChanged edge is already gone by the very next
-        /// tick either way). Uses
+        /// (the shift counter is consumed the moment the pulse starts). Uses
         /// <see cref="MBoosterEffectSynthesizer.SynthesizeGearShift"/> for
         /// the waveform — a short oscillating burst that decays to silence
         /// over <see cref="GearShiftPulseDurationSec"/>.
@@ -1552,7 +1576,7 @@ namespace MozaPlugin.Devices
 
             if (!wantActive && st.Active)
             {
-                _device.SendOneShot(MozaMBoosterProtocol.BuildDisableFrame(id));
+                _device.SendOneShot(MozaMBoosterProtocol.BuildDisableFrame(id, TargetDevice));
                 st.Active = false;
                 st.PhaseRad = 0;
                 st.ElapsedSec = 0;
@@ -1578,8 +1602,8 @@ namespace MozaPlugin.Devices
             ushort freqU16 = MozaMBoosterProtocol.EncodeFreq(st.FreqHz);
             ushort ampU16 = MozaMBoosterProtocol.EncodeAmp(amp01);
 
-            var frame = MozaMBoosterProtocol.BuildMotorFrame(id, enable: true, param1, freqU16, ampU16);
-            _device.SendMotorStream(frame);
+            var frame = MozaMBoosterProtocol.BuildMotorFrame(id, enable: true, param1, freqU16, ampU16, TargetDevice);
+            SendMotor(frame);
         }
 
         // ===== Helpers ====================================================

@@ -1660,6 +1660,12 @@ namespace MozaPlugin
         // raw edge in MBoosterEffectWorker.UpdateGearShiftRequest, so no
         // debounce timestamp is needed at this layer.
         private string? _lastMBoosterGearString;
+        // Monotonic shift counter for the mBooster Gear Shift effect — see
+        // MBoosterTelemetrySnapshot.GearShiftSeq. Advanced once per detected
+        // gear-string change; the per-device workers each track the last
+        // value they acted on so none can miss a shift the way a one-tick
+        // bool edge would when sampled by their slower ~20ms timer.
+        private int _mboosterShiftSeq;
 
         // Wheelbase LFE momentary test triggers (from the UI test buttons). No-op
         // when the firmware doesn't support LFE. Each plays a fixed pattern:
@@ -1952,8 +1958,6 @@ namespace MozaPlugin
                 // but with its own independent latch and no debounce here
                 // (each mBooster device applies its own debounce/neutral
                 // settings in MBoosterEffectWorker.UpdateGearShiftRequest).
-                bool gearChanged = false;
-                bool gearIsNeutral = false;
                 string? gearForMBooster = nd?.Gear;
                 if (!string.IsNullOrEmpty(gearForMBooster))
                 {
@@ -1964,10 +1968,13 @@ namespace MozaPlugin
                     else if (gearForMBooster != _lastMBoosterGearString)
                     {
                         _lastMBoosterGearString = gearForMBooster;
-                        gearChanged = true;
-                        gearIsNeutral = gearForMBooster == "N" || gearForMBooster == "0";
+                        _mboosterShiftSeq++; // monotonic — the worker samples this on its own timer; a bool edge would be dropped when DataUpdate outruns it
                     }
                 }
+                // Level (not edge): true whenever the current gear is Neutral,
+                // so the worker reads valid neutral-ness even if it samples a
+                // tick or two after _mboosterShiftSeq advanced.
+                bool gearIsNeutral = gearForMBooster == "N" || gearForMBooster == "0";
                 var snap = new MBoosterTelemetrySnapshot(
                     gameRunning: data.GameRunning,
                     rpm: rpm,
@@ -1981,7 +1988,7 @@ namespace MozaPlugin
                     avgWheelSpeedMs: avgWheelMs,
                     suspensionHeaveG: suspensionHeaveG,
                     brakeTempC: brakeTempC,
-                    gearChanged: gearChanged,
+                    gearShiftSeq: _mboosterShiftSeq,
                     gearIsNeutral: gearIsNeutral);
                 _mboosterRegistry.OnDataUpdate(snap);
             }

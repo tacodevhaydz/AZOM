@@ -690,23 +690,28 @@ namespace MozaPlugin.Devices
         // possibility for some titles. See docs/protocol/devices/
         // mbooster.md "Brake Fade".
         public readonly double BrakeTempC;
-        // True for exactly the one tick SimHub's Gear string differs from
-        // the previous tick (an edge, not a level) — computed once globally
-        // in MozaPlugin.DataUpdate with its own string latch, independent of
-        // the wheelbase's/AB9's own gear-shift latches. Each mBooster
-        // device's Gear Shift effect applies its own VibrateOnNeutral/
-        // DebounceMs settings on top of this raw edge — see
+        // Monotonic gear-shift counter — incremented once in
+        // MozaPlugin.DataUpdate each tick SimHub's Gear string differs from
+        // the previous one (its own string latch, independent of the
+        // wheelbase's/AB9's). A counter rather than a one-tick bool edge
+        // because the Gear Shift effect worker samples this snapshot on its
+        // own ~20ms timer: a transient edge would be dropped whenever
+        // DataUpdate runs faster than the worker. Each worker remembers the
+        // last value it acted on and fires when this differs (a jump of >1 —
+        // several shifts between two samples — still reads as one new shift;
+        // the effect's own DebounceMs dedupes rapid double transitions). See
         // MBoosterEffectWorker.UpdateGearShiftRequest.
-        public readonly bool GearChanged;
-        // Whether the gear landed in after a GearChanged edge is Neutral
-        // ("N"/"0"). Only meaningful when GearChanged is true this tick.
+        public readonly int GearShiftSeq;
+        // Whether the CURRENT gear is Neutral ("N"/"0") — a level, not tied
+        // to the shift edge, so the worker reads valid neutral-ness even when
+        // it samples a tick or two after GearShiftSeq advanced.
         public readonly bool GearIsNeutral;
 
         public MBoosterTelemetrySnapshot(
             bool gameRunning, double rpm, double maxRpm, double idleRpm, double brake, double throttle,
             bool absActive, bool tcActive,
             double vehicleSpeedMs, double avgWheelSpeedMs, double suspensionHeaveG,
-            double brakeTempC, bool gearChanged, bool gearIsNeutral)
+            double brakeTempC, int gearShiftSeq, bool gearIsNeutral)
         {
             GameRunning = gameRunning;
             Rpm = rpm;
@@ -720,11 +725,11 @@ namespace MozaPlugin.Devices
             AvgWheelSpeedMs = avgWheelSpeedMs;
             SuspensionHeaveG = suspensionHeaveG;
             BrakeTempC = brakeTempC;
-            GearChanged = gearChanged;
+            GearShiftSeq = gearShiftSeq;
             GearIsNeutral = gearIsNeutral;
         }
 
         public static readonly MBoosterTelemetrySnapshot Empty =
-            new MBoosterTelemetrySnapshot(false, 0, 0, 800, 0, 0, false, false, 0, 0, 0, 0, false, false);
+            new MBoosterTelemetrySnapshot(false, 0, 0, 800, 0, 0, false, false, 0, 0, 0, 0, 0, false);
     }
 }
