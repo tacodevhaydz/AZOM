@@ -120,6 +120,7 @@
     <EmbeddedResource Include="DeviceTemplates\MozaDashCm2\MOZA CM2 Racing Dash\device.json" LogicalName="MozaPlugin.Devices.DashCm2.device.json" />
     <EmbeddedResource Include="DeviceTemplates\MozaDashCm1\MOZA CM1 Racing Dash\device.json" LogicalName="MozaPlugin.Devices.DashCm1.device.json" />
     <EmbeddedResource Include="DeviceTemplates\MozaWheelBase\MOZA Wheel Base\device.json" LogicalName="MozaPlugin.Devices.WheelBase.device.json" />
+    <EmbeddedResource Include="DeviceTemplates\MozaMBooster\MOZA mBooster\device.json" LogicalName="MozaPlugin.Devices.MBooster.device.json" />
     <!-- Device-profile artwork. SimHub renders a profile's picture from a
          `thumbnail.png` sidecar next to device.json; DeviceDefinitionDeployer
          writes one out per detected wheel. Filename = the firmware model prefix

@@ -1242,6 +1242,15 @@ namespace MozaPlugin
                     onDeviceDetectedEdge: OnMBoosterDeviceDetected,
                     customEffectFormulaEvaluator: CreateHapticsFormulaResolver(),
                     onSerialResolved: OnMBoosterSerialResolved);
+                // Deploy the mBooster SimHub device definition on first sight —
+                // same lazy-deploy convention as the dash/base-ambient templates,
+                // so the entry doesn't clutter SimHub's device list for users who
+                // don't own one.
+                _mboosterRegistry.DeviceAdded += _ =>
+                {
+                    if (DeviceDefinitionDeployer.DeployMBoosterDefinition())
+                        DeviceDefinitionDeployed = true;
+                };
                 // Initial walk so any mBooster plugged in BEFORE SimHub launched
                 // appears immediately — without this, the user waits up to 5 s
                 // for the reconnect timer to fire.

@@ -25,11 +25,13 @@ namespace MozaPlugin.Devices
         private const string DashCm2Resource = "MozaPlugin.Devices.DashCm2.device.json";
         private const string DashCm1Resource = "MozaPlugin.Devices.DashCm1.device.json";
         private const string BaseAmbientResource = "MozaPlugin.Devices.WheelBase.device.json";
+        private const string MBoosterResource = "MozaPlugin.Devices.MBooster.device.json";
         private const string DashCm2DeviceName = "MOZA CM2 Racing Dash";
         private const string DashCm2ProductName = "CM2 Racing Dash";
         private const string DashCm1DeviceName = "MOZA CM1 Racing Dash";
         private const string DashCm1ProductName = "CM1 Racing Dash";
         private const string BaseAmbientDeviceName = "MOZA Wheel Base";
+        private const string MBoosterDeviceName = "MOZA mBooster";
 
         // 0x0006 (R9 wheelbase) is the most common documented PID. The prior
         // 0x0004 placeholder doesn't match any known device. Used only when
@@ -341,6 +343,17 @@ namespace MozaPlugin.Devices
         /// </summary>
         public static bool DeployBaseAmbient(string? discoveredPid)
             => DeployFromResource(BaseAmbientDeviceName, BaseAmbientResource, discoveredPid, MozaDeviceConstants.BaseAmbientGuid);
+
+        /// <summary>
+        /// Deploy the embedded mBooster device definition. PID is fixed
+        /// (0x0008, unlike the wheelbase family) so it's passed verbatim
+        /// rather than patched from a discovered value. Called once per
+        /// session on the first mBooster ever detected — SimHub is expected
+        /// to enumerate one DeviceInstance per physical unit sharing this
+        /// Vid/Pid, same as it does for multiple identical wheelbases.
+        /// </summary>
+        public static bool DeployMBoosterDefinition()
+            => DeployFromResource(MBoosterDeviceName, MBoosterResource, MozaUsbIds.PidMBoosterPedals, MozaDeviceConstants.MBoosterGuid);
 
         private static bool DeployGeneratedWheelDefinition(string deviceName, string guid, string productName,
             int rpmCount, bool hasFlagLeds, int buttonCount, int knobCount, int browSegmentSize, string? discoveredPid,

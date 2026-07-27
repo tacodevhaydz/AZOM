@@ -25,6 +25,12 @@ namespace MozaPlugin.Devices
         // Deployed only for bases that respond to a base-ambient-brightness probe
         // (R21 / R25 / R27 family). R9 / R12 don't have this strip — no device.
         public const string BaseAmbientGuid   = "b8361c60-1bbd-4497-8cb4-af5df7db7251";
+        // mBooster Pedals (PID 0x0008). One SimHub device *type*, but SimHub's
+        // HID detection matches physical units by Vid/Pid, so plugging in
+        // multiple mBoosters is expected to surface multiple DeviceInstances
+        // sharing this same DescriptorUniqueId — same mechanism already
+        // observed for multiple identical MOZA wheelbases (docs/simhub.md).
+        public const string MBoosterGuid      = "acda77be-88c2-473b-a7af-f3a602401b98";
 
         /// <summary>Marker prefix returned by GetWheelModelPrefix for old-protocol devices.</summary>
         public const string OldProtocolMarker = "__old__";
@@ -228,6 +234,10 @@ namespace MozaPlugin.Devices
         /// <summary>Returns true if the DeviceTypeID is the wheel base ambient LED device.</summary>
         public static bool IsBaseAmbientDevice(string deviceTypeId) =>
             !string.IsNullOrEmpty(deviceTypeId) && Matches(deviceTypeId, BaseAmbientGuid);
+
+        /// <summary>Returns true if the DeviceTypeID is the mBooster device.</summary>
+        public static bool IsMBoosterDevice(string deviceTypeId) =>
+            !string.IsNullOrEmpty(deviceTypeId) && Matches(deviceTypeId, MBoosterGuid);
 
         /// <summary>Check if deviceTypeId matches an id exactly or as a prefix (for _UserProject/_Embedded suffixes).</summary>
         private static bool Matches(string deviceTypeId, string id) =>
