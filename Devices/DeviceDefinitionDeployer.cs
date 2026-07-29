@@ -51,6 +51,7 @@ namespace MozaPlugin.Devices
         // arrives for the others.
         private const string DashCm2ThumbnailKey = "CM2";
         private const string DashCm1ThumbnailKey = "CM1";
+        private const string MBoosterThumbnailKey = "mBooster";
 
         // Device name → thumbnail key for the template-based definitions that ship
         // art. Drives RefreshDeployedThumbnails' startup top-up; the per-detection
@@ -344,16 +345,27 @@ namespace MozaPlugin.Devices
         public static bool DeployBaseAmbient(string? discoveredPid)
             => DeployFromResource(BaseAmbientDeviceName, BaseAmbientResource, discoveredPid, MozaDeviceConstants.BaseAmbientGuid);
 
+        // SimHub's Device Builder format has no hardware-interface type for a
+        // device with no LEDs at all (every DescriptorBuilder HardwareInterface
+        // implementation — LedsStandardHIDProtocol/LedsNamedProtocol/
+        // LedsStandardSerialProtocol — exists to drive an LED write path).
+        // mBooster's real HID interface has no writable report for any of
+        // them to bind to, so unlike the wheelbase family this definition
+        // uses a placeholder Vid/Pid that matches no real hardware (same
+        // "virtual device" technique documented for the fake-LED-driver
+        // pattern) rather than mBooster's real 0x346E/0x0008.
+        private const string MBoosterPlaceholderPid = "0x9999";
+
         /// <summary>
-        /// Deploy the embedded mBooster device definition. PID is fixed
-        /// (0x0008, unlike the wheelbase family) so it's passed verbatim
-        /// rather than patched from a discovered value. Called once per
-        /// session on the first mBooster ever detected — SimHub is expected
-        /// to enumerate one DeviceInstance per physical unit sharing this
-        /// Vid/Pid, same as it does for multiple identical wheelbases.
+        /// Deploy the embedded mBooster device definition. Called once per
+        /// session on the first mBooster ever detected — the device instance
+        /// itself is static (placeholder Vid/Pid, see above); the plugin's
+        /// own serial protocol does the real device communication, same as
+        /// the wheel/dash extensions.
         /// </summary>
         public static bool DeployMBoosterDefinition()
-            => DeployFromResource(MBoosterDeviceName, MBoosterResource, MozaUsbIds.PidMBoosterPedals, MozaDeviceConstants.MBoosterGuid);
+            => DeployFromResource(MBoosterDeviceName, MBoosterResource, MBoosterPlaceholderPid, MozaDeviceConstants.MBoosterGuid,
+                thumbnailKey: MBoosterThumbnailKey);
 
         private static bool DeployGeneratedWheelDefinition(string deviceName, string guid, string productName,
             int rpmCount, bool hasFlagLeds, int buttonCount, int knobCount, int browSegmentSize, string? discoveredPid,

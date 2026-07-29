@@ -1,0 +1,5 @@
+- wire trace g-force channel in pithouse
+- implement g-force ffb effect
+- fix tyre temp formula in dash
+- per car profiles for mbooster
+- device implementation

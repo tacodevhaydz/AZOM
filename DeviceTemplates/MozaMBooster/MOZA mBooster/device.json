@@ -1,6 +1,6 @@
 {
   "DescriptorUniqueId": "acda77be-88c2-473b-a7af-f3a602401b98",
-  "SchemaVersion": 1,
+  "SchemaVersion": 4,
   "MinimumSimHubVersion": "9.11.8",
   "DeviceDescription": {
     "BrandName": "MOZA",
@@ -18,8 +18,8 @@
       "HIDReportId": "0x68",
       "HIDReportSize": 64,
       "DeviceDetection": {
-        "Vid": "0x346E",
-        "Pid": "0x0008"
+        "Vid": "0x9999",
+        "Pid": "0x9999"
       }
     }
   },

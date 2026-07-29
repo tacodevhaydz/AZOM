@@ -1,6 +1,7 @@
 using System;
 using System.Collections.Generic;
 using System.Linq;
+using System.Text;
 using System.Threading;
 using HidSharp;
 using HidSharp.Reports;
@@ -11,12 +12,12 @@ namespace MozaPlugin.Protocol
     /// <summary>Per-device class for the HID reader's routing decision.</summary>
     internal enum MozaHidClass
     {
-        /// <summary>Wheelbase / pedals / handbrake / hub — standard usage→field mapping.</summary>
+        /// <summary>Wheelbase / pedals / handbrake / hub - standard usage-field mapping.</summary>
         Standard = 0,
         /// <summary>
-        /// mBooster Pedals (PID 0x0008) — single axis, position routed via
+        /// mBooster Pedals (PID 0x0008) - single axis, position routed via
         /// <c>MBoosterAxisChanged</c> event so the registry can fan it out
-        /// to whichever role the user picked. Direct usage→field assignment
+        /// to whichever role the user picked. Direct usage-field assignment
         /// is skipped for this class.
         /// </summary>
         MBooster = 1,
@@ -24,12 +25,12 @@ namespace MozaPlugin.Protocol
         /// Pedals plugged STRAIGHT into the PC (their own VID 0x346E PID 0x0001/
         /// 0x0003/0x0011 HID), NOT through a wheelbase. Their 3-axis HID layout
         /// (Rx/Ry/Rz = 0x33/0x34/0x35) differs from the base's pedal layout
-        /// (Z/Rz/Slider), so the Standard usage→field switch would route them to
+        /// (Z/Rz/Slider), so the Standard usage-field switch would route them to
         /// paddle/brake fields. This class maps them to throttle/brake/clutch.
         /// </summary>
         Pedals = 2,
         /// <summary>
-        /// MOZA Multi-Function Stalks (PID 0x0024) — a 28-button HID joystick.
+        /// MOZA Multi-Function Stalks (PID 0x0024) - a 28-button HID joystick.
         /// Its buttons are routed to <c>MozaData.StalksButtonStates</c> (NOT the
         /// shared wheel button array) and surfaced as edge events via
         /// <c>StalksButtonChanged</c> so the truck-sim keyboard feature can read
@@ -42,15 +43,15 @@ namespace MozaPlugin.Protocol
     internal sealed class MozaHidReader : IDisposable
     {
         // HID usage IDs (page << 16 | usage)
-        private const uint UsageX      = 0x00010030; // GenericDesktop.X      → steering
-        private const uint UsageY      = 0x00010031; // GenericDesktop.Y      → combined paddles
-        private const uint UsageZ      = 0x00010032; // GenericDesktop.Z      → throttle
-        private const uint UsageRx     = 0x00010033; // GenericDesktop.Rx     → right paddle
-        private const uint UsageRy     = 0x00010034; // GenericDesktop.Ry     → left paddle
-        private const uint UsageRz     = 0x00010035; // GenericDesktop.Rz     → brake
-        private const uint UsageSlider = 0x00010036; // GenericDesktop.Slider → clutch   (kernel: ABS_THROTTLE)
-        private const uint UsageDial   = 0x00010037; // GenericDesktop.Dial   → handbrake (Wine maps ABS_RUDDER here)
-        private const uint UsageSimRud = 0x000200BA; // Simulation.Rudder     → handbrake (native Windows)
+        private const uint UsageX      = 0x00010030; // GenericDesktop.X      - steering
+        private const uint UsageY      = 0x00010031; // GenericDesktop.Y      - combined paddles
+        private const uint UsageZ      = 0x00010032; // GenericDesktop.Z      - throttle
+        private const uint UsageRx     = 0x00010033; // GenericDesktop.Rx     - right paddle
+        private const uint UsageRy     = 0x00010034; // GenericDesktop.Ry     - left paddle
+        private const uint UsageRz     = 0x00010035; // GenericDesktop.Rz     - brake
+        private const uint UsageSlider = 0x00010036; // GenericDesktop.Slider - clutch   (kernel: ABS_THROTTLE)
+        private const uint UsageDial   = 0x00010037; // GenericDesktop.Dial   - handbrake (Wine maps ABS_RUDDER here)
+        private const uint UsageSimRud = 0x000200BA; // Simulation.Rudder     - handbrake (native Windows)
 
         private static readonly uint[] TrackedUsages = { UsageX, UsageY, UsageZ, UsageRx, UsageRy, UsageRz, UsageSlider, UsageDial, UsageSimRud };
 
@@ -63,9 +64,9 @@ namespace MozaPlugin.Protocol
         /// Fires when an mBooster's HID axis changes. Args: device identity
         /// (extracted USB parent instance segment from
         /// <see cref="HidDevice.DevicePath"/>); Windows Container ID of the HID
-        /// interface (identical to the CDC lane's — used to pair HID↔CDC across
+        /// interface (identical to the CDC lane's - used to pair HID-CDC across
         /// multiple lanes; "" when unavailable); axis index (0 = the master
-        /// unit's pedal, 1 = 2nd chained device, 2 = 3rd — a stable order by
+        /// unit's pedal, 1 = 2nd chained device, 2 = 3rd - a stable order by
         /// ascending GenericDesktop usage id, since a chain host reports all
         /// its pedals as separate axes on one HID report); normalized position
         /// in [0, 1]. Subscribed by <c>MozaMBoosterRegistry.OnHidAxisUpdate</c>
@@ -219,7 +220,7 @@ namespace MozaPlugin.Protocol
                     // Hub) one device's stream dropping MUST trigger a full
                     // re-enumerate so that device gets reopened. Waiting for ALL
                     // threads instead would park on the still-live sibling forever
-                    // and freeze the dead device's values permanently — the base's
+                    // and freeze the dead device's values permanently - the base's
                     // HID thread (the only one carrying the steering X axis) dies,
                     // the hub thread keeps the reader alive, and Moza.SteeringAngle
                     // stays stuck at its last value while pedals/handbrake (hub)
@@ -310,7 +311,7 @@ namespace MozaPlugin.Protocol
                                 foreach (uint usage in dataItem.Usages.GetAllValues())
                                 {
                                     // For mBooster we want EVERY GenericDesktop axis
-                                    // (page 0x0001, usages 0x30..0x37) — the doc
+                                    // (page 0x0001, usages 0x30..0x37) - the doc
                                     // doesn't pin a specific axis, so we accept the
                                     // first one that streams data at runtime.
                                     bool isAxis = (usage >> 16) == 0x0001 && (usage & 0xFFFF) >= 0x30 && (usage & 0xFFFF) <= 0x37;
@@ -332,18 +333,19 @@ namespace MozaPlugin.Protocol
                         if (isMBooster)
                         {
                             // Diagnostic for the HID/CDC identity-reconciliation gap
-                            // (docs/protocol/devices/mbooster.md) — logs the raw
+                            // (docs/protocol/devices/mbooster.md) - logs the raw
                             // DevicePath alongside the extracted identity so a
                             // mismatch against the CDC InstanceId can be read
                             // straight out of a support-bundle export.
                             string path = "", hidSerial = "";
                             try { path = dev.DevicePath ?? ""; } catch { }
-                            // USB iSerialNumber (present on the mBooster — descriptor
+                            // USB iSerialNumber (present on the mBooster - descriptor
                             // index 3, capture-confirmed). If HidSharp surfaces it,
                             // it's a per-unit key that matches across the HID + CDC
-                            // interfaces — a candidate HID↔CDC pairing token (Stage 4).
+                            // interfaces - a candidate HID-CDC pairing token (Stage 4).
                             try { hidSerial = dev.GetSerialNumber() ?? ""; } catch { }
                             MozaLog.Debug($"[AZOM/mBooster] HID identity extracted: '{identity}' serial='{MozaLog.RedactId(hidSerial)}' from path '{path}'");
+                            LogMBoosterDescriptorOnce(descriptor);
                         }
                         result.Add((dev, usages, kind, identity));
                     }
@@ -362,7 +364,7 @@ namespace MozaPlugin.Protocol
         /// segment. Mirroring the registry walk in <see cref="MozaPortDiscovery"/>
         /// lets the registry's CDC port match against the HID device.
         ///
-        /// Falls back to the full device path if the format doesn't match —
+        /// Falls back to the full device path if the format doesn't match -
         /// the registry tolerates non-canonical identities (it's still
         /// deterministic per-physical-device, just less collision-tolerant
         /// across replug-to-different-USB-port).
@@ -378,6 +380,40 @@ namespace MozaPlugin.Protocol
             if (parts.Length >= 3 && !string.IsNullOrEmpty(parts[2]))
                 return parts[2];
             return path;
+        }
+
+        // Fires once per process. Temporary migration diagnostic - dumps
+        // mBooster's real HID report descriptor (top-level collection usage +
+        // every Input/Output/Feature report's ReportID/size) so a correct
+        // SimHub device.json HardwareInterface can be authored without
+        // guessing. Logged via MozaLog.Info so it lands in the Diagnostics
+        // tab's export bundle regardless of the SimHub log level.
+        private static int _mBoosterDescriptorLogged;
+
+        private static void LogMBoosterDescriptorOnce(ReportDescriptor descriptor)
+        {
+            if (Interlocked.Exchange(ref _mBoosterDescriptorLogged, 1) != 0) return;
+
+            try
+            {
+                var sb = new StringBuilder();
+                sb.Append("[AZOM/mBooster] HID report descriptor dump:");
+                foreach (var item in descriptor.DeviceItems)
+                {
+                    var collectionUsages = string.Join(", ", item.Usages.GetAllValues().Select(u => $"0x{u:X8}"));
+                    sb.Append($"\n  DeviceItem: CollectionType={item.CollectionType}, Usages=[{collectionUsages}]");
+                    foreach (var report in item.Reports)
+                    {
+                        var dataUsages = string.Join(", ", report.DataItems.SelectMany(di => di.Usages.GetAllValues()).Select(u => $"0x{u:X8}"));
+                        sb.Append($"\n    Report: Type={report.ReportType}, ReportID=0x{report.ReportID:X2}, LengthBits={report.Length}, DataUsages=[{dataUsages}]");
+                    }
+                }
+                MozaLog.Info(sb.ToString());
+            }
+            catch (Exception ex)
+            {
+                MozaLog.Warn($"[AZOM/mBooster] Could not dump HID descriptor: {ex.Message}");
+            }
         }
 
         private void ReadDevice(HidDevice device, HidStream stream, Dictionary<uint, (int min, int max)> usages, bool isHandbrake, MozaHidClass kind = MozaHidClass.Standard, string identity = "")
@@ -407,7 +443,7 @@ namespace MozaPlugin.Protocol
                 if (targetItem == null)
                 {
                     if (kind == MozaHidClass.MBooster)
-                        MozaLog.Warn($"[AZOM/mBooster] {identity}: no DeviceItem contains any tracked usage — HID read never started for this device.");
+                        MozaLog.Warn($"[AZOM/mBooster] {identity}: no DeviceItem contains any tracked usage - HID read never started for this device.");
                     return;
                 }
 
@@ -424,7 +460,7 @@ namespace MozaPlugin.Protocol
                 var buffer = new byte[descriptor.MaxInputReportLength];
                 var stopped = new ManualResetEventSlim(false);
 
-                // Diagnostic-only counters for the mBooster HID pipeline —
+                // Diagnostic-only counters for the mBooster HID pipeline -
                 // every step here (report parse failure, no changed usages,
                 // an untracked usage firing) previously failed completely
                 // silently, which made a stuck-at-zero position bar
@@ -457,7 +493,7 @@ namespace MozaPlugin.Protocol
                         $"[{string.Join(", ", axisUsages.Select(u => $"0x{u & 0xFFFF:X2}"))}] container='{mBoosterContainerId}'");
                 }
 
-                // changedIndex → usage is fixed by the report descriptor; caching
+                // changedIndex - usage is fixed by the report descriptor; caching
                 // it avoids a LINQ enumerator per changed value per report (the
                 // steering axis changes continuously at report rate).
                 var usageByChangedIndex = new Dictionary<int, uint>();
@@ -513,14 +549,14 @@ namespace MozaPlugin.Protocol
                                 else if ((usage >> 16) == 0x0009)
                                 {
                                     // mBooster Pedals don't share the wheel button surface
-                                    // — never route their button reports into the wheel's
+                                    // - never route their button reports into the wheel's
                                     // button-state table or the handbrake's pressed flag.
                                     if (kind == MozaHidClass.MBooster) continue;
 
                                     bool pressed = value.GetLogicalValue() != 0;
 
                                     // MOZA Stalks buttons ride their own surface so they
-                                    // never collide with wheel button indices — route to
+                                    // never collide with wheel button indices - route to
                                     // StalksButtonStates and raise an edge event on change.
                                     if (kind == MozaHidClass.Stalks)
                                     {
@@ -564,7 +600,7 @@ namespace MozaPlugin.Protocol
                                     {
                                         if (kind == MozaHidClass.MBooster)
                                         {
-                                            // mBooster axes route via the registry — never directly into
+                                            // mBooster axes route via the registry - never directly into
                                             // MozaData. A chain host reports EVERY hosted pedal as its own
                                             // GenericDesktop axis on one report, so we emit ALL of them
                                             // (each tagged with its stable index) rather than only the

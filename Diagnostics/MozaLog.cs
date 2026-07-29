@@ -16,7 +16,7 @@ namespace MozaPlugin
     public static class MozaLog
     {
         // Gates the per-frame Debug lines on the serial read thread (the WIRE
-        // session-chunk diag and the firmware-debug echo) — each pays caller
+        // session-chunk diag and the firmware-debug echo) - each pays caller
         // string interpolation + a ring insert under the global lock at frame
         // rate. Everything else logs unconditionally. Default on (the ring is
         // the diagnostics export's source); MozaPluginSettings.VerboseWireDebugLog
@@ -92,24 +92,24 @@ namespace MozaPlugin
 
         /// <summary>
         /// Redact a string identifier, leaving only the last
-        /// <see cref="RedactTailChars"/> characters visible. Returns "—" for
+        /// <see cref="RedactTailChars"/> characters visible. Returns "-" for
         /// null/empty, all-asterisks if the value is shorter than the tail.
         /// </summary>
         public static string RedactId(string s)
         {
-            if (string.IsNullOrEmpty(s)) return "—";
+            if (string.IsNullOrEmpty(s)) return "-";
             if (s.Length <= RedactTailChars) return new string('*', s.Length);
             return new string('*', s.Length - RedactTailChars) + s.Substring(s.Length - RedactTailChars);
         }
 
         /// <summary>
         /// Hex-encode a byte array and redact all but the trailing
-        /// <see cref="RedactTailChars"/> hex characters. Returns "—" for
+        /// <see cref="RedactTailChars"/> hex characters. Returns "-" for
         /// null/empty.
         /// </summary>
         public static string RedactBytesHex(byte[] b)
         {
-            if (b == null || b.Length == 0) return "—";
+            if (b == null || b.Length == 0) return "-";
             var hex = BitConverter.ToString(b).Replace("-", "");
             return RedactId(hex);
         }
