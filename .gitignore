@@ -1,5 +1,10 @@
+<<<<<<< Updated upstream
 _todo.md
 .vscode/*
+=======
+.vscode
+_todo.md
+>>>>>>> Stashed changes
 
 ## Claude stuff
 .claude*
