@@ -13,7 +13,7 @@ using MozaPlugin.Resources;
 using MozaPlugin.UI;
 using SerialTrafficCapture = MozaPlugin.Diagnostics.SerialTrafficCapture;
 
-namespace MozaPlugin
+namespace MozaPlugin.UI
 {
     // Partial-class continuation of SettingsControl that holds wiring for the
     // 2026-05 redesign (new top bar, status bar, SectionCard-wrapped sections,
@@ -37,6 +37,15 @@ namespace MozaPlugin
         private long _bwPeakOut;
         private long _bwSessionIn;
         private long _bwSessionOut;
+
+        // ---- Live-torque sparkline ----
+        // Samples and the wire poll live on MozaPlugin (_plugin.TorqueHistory,
+        // fed by a background timer) exactly like the temperature graph. This
+        // class only renders a snapshot on the shared 500 ms refresh tick and
+        // owns no timer of its own: the first cut sampled on the WPF dispatcher
+        // and made the panel lag.
+        private const double TorqueScaleFloorNm = 2.0;  // only used when the rating is unknown
+        private double _torqueScaleNm;                  // last MaxValue pushed; avoids redundant sets
 
         // Temperature-graph history + session peaks live on MozaPlugin
         // (_plugin.TemperatureHistory), sampled by a plugin-lifetime background
@@ -107,17 +116,22 @@ namespace MozaPlugin
                 BindEditorToSliders(MBoosterCurveEditor, new[]
                 {
                     MBoosterY1Slider, MBoosterY2Slider, MBoosterY3Slider,
-                    MBoosterY4Slider, MBoosterY5Slider
+                    MBoosterY4Slider, MBoosterY5Slider, MBoosterY6Slider
                 });
                 BindEditorXToSliders(MBoosterCurveEditor, new[]
                 {
                     MBoosterX1Slider, MBoosterX2Slider, MBoosterX3Slider,
-                    MBoosterX4Slider, MBoosterX5Slider
+                    MBoosterX4Slider, MBoosterX5Slider, MBoosterX6Slider
                 });
                 BindEditorToSliders(MBoosterInputCurveEditor, new[]
                 {
                     MBoosterInputY1Slider, MBoosterInputY2Slider, MBoosterInputY3Slider,
-                    MBoosterInputY4Slider, MBoosterInputY5Slider
+                    MBoosterInputY4Slider, MBoosterInputY5Slider, MBoosterInputY6Slider
+                });
+                BindEditorXToSliders(MBoosterInputCurveEditor, new[]
+                {
+                    MBoosterInputX1Slider, MBoosterInputX2Slider, MBoosterInputX3Slider,
+                    MBoosterInputX4Slider, MBoosterInputX5Slider, MBoosterInputX6Slider
                 });
 
                 // Two-way bindings: CurveEditor.YN ↔ EqNSlider.Value (FFB EQ
@@ -192,6 +206,13 @@ namespace MozaPlugin
                 _bandwidthTimer.Tick += OnBandwidthTick;
                 _bandwidthTimer.Start();
 
+                // InitRedesignControls is NOT inside a suppressor scope, so
+                // seeding SelectedIndex would fire the handler and write the
+                // setting straight back. Suppress, then apply explicitly.
+                using (_suppressor.Begin())
+                    BaseGraphModeCombo.SelectedIndex = (int)_plugin.Settings.BaseTabGraph;
+                ApplyBaseGraphMode();
+
                 // Wire the custom hue picker so every PaletteStrip's CUSTOM chip
                 // opens the existing ColorPickerDialog. Set globally (static) but
                 // each plugin init resets it — that's fine since the factory is
@@ -257,17 +278,17 @@ namespace MozaPlugin
 
         // Two-way bind a MozaCurveEditor's X dependency properties to sliders —
         // only meaningful when the editor has AllowHorizontalDrag="True". Accepts
-        // 5 sliders (mBooster Sim Input Mapping — all nodes draggable) or 4 (the
-        // wheelbase FFB curve, whose last node is pinned at input=100 via
-        // LockLastNodeX so X5 keeps its DP default). No X6 — horizontal drag
-        // isn't offered on the 6-band EQ.
+        // 6 sliders (mBooster Sim Input Mapping and Pedal Feel — all nodes
+        // draggable) or 4 (the wheelbase FFB curve, whose last node is pinned
+        // at input=100 via LockLastNodeX so X5 keeps its DP default).
+        // Horizontal drag isn't offered on the 6-band EQ.
         private void BindEditorXToSliders(MozaControls.MozaCurveEditor editor, Slider[] sliders)
         {
             if (editor == null || sliders == null || sliders.Length < 4) return;
             var xs = new[] {
                 MozaControls.MozaCurveEditor.X1Property, MozaControls.MozaCurveEditor.X2Property,
                 MozaControls.MozaCurveEditor.X3Property, MozaControls.MozaCurveEditor.X4Property,
-                MozaControls.MozaCurveEditor.X5Property };
+                MozaControls.MozaCurveEditor.X5Property, MozaControls.MozaCurveEditor.X6Property };
             int n = Math.Min(sliders.Length, xs.Length);
             for (int i = 0; i < n; i++)
             {
@@ -287,6 +308,7 @@ namespace MozaPlugin
             try
             {
                 UpdateTemperatureDisplays();
+                UpdateTorqueDisplays();
 
                 if (SteeringArcViz != null)
                 {
@@ -302,7 +324,12 @@ namespace MozaPlugin
             }
             catch (Exception ex)
             {
-                MozaLog.Debug($"[Redesign] live update failed: {ex.Message}");
+                // Runs on the 500 ms settings refresh tick — a persistent fault
+                // (a null visual during a rebuild, say) emitted 2 lines/s for as
+                // long as the tab stayed open. Collapse repeats; a change in the
+                // failure mode still comes through.
+                MozaLog.DebugIfChanged("redesign-live-update",
+                    $"[Redesign] live update failed: {ex.Message}");
             }
         }
 
@@ -403,11 +430,21 @@ namespace MozaPlugin
             SteeringArcViz.Angle = valid ? degrees : 0;
         }
 
+        // Under Wine the port key is the tty name; append the COM name Wine gave
+        // it so the pill still matches what other tools show. Windows returns the
+        // port name unchanged.
+        private static string DescribePort(string? portName)
+        {
+            if (string.IsNullOrEmpty(portName)) return "—";
+            string? com = global::MozaPlugin.Protocol.WineComNameResolver.ResolveComName(portName!);
+            return com == null ? portName! : $"{portName} ({com})";
+        }
+
         private void UpdateConnectionPill()
         {
             if (ConnectionPill == null) return;
             ConnectionPill.IsConnected = _data.IsConnected;
-            ConnectionPill.PortName = _plugin.Connection?.LastPortName ?? "—";
+            ConnectionPill.PortName = DescribePort(_plugin.Connection?.LastPortName);
             if (!_data.IsConnected)
             {
                 ConnectionPill.StatusText = global::MozaPlugin.Resources.Strings.Status_Disconnected;
@@ -477,6 +514,79 @@ namespace MozaPlugin
         {
             series.Add(value);
             while (series.Count > BandwidthSamples) series.RemoveAt(0);
+        }
+
+        // ===== Base-tab graph selector (Bandwidth | Torque) =====
+
+        private void BaseGraphModeCombo_Changed(object sender, SelectionChangedEventArgs e)
+        {
+            if (_suppressEvents) return;
+            _plugin.Settings.BaseTabGraph = BaseGraphModeCombo.SelectedIndex == 1
+                ? Settings.BaseGraphMode.Torque
+                : Settings.BaseGraphMode.Bandwidth;
+            _plugin.SaveSettings();
+            ApplyBaseGraphMode();
+        }
+
+        /// <summary>Show the selected card and enable the background torque poll
+        /// only for the torque graph — picking Bandwidth must take that traffic
+        /// off the wire, not just hide the chart.</summary>
+        private void ApplyBaseGraphMode()
+        {
+            bool torque = _plugin.Settings.BaseTabGraph == Settings.BaseGraphMode.Torque;
+
+            if (BandwidthCard != null)
+                BandwidthCard.Visibility = torque ? Visibility.Collapsed : Visibility.Visible;
+            if (TorqueCard != null)
+                TorqueCard.Visibility = torque ? Visibility.Visible : Visibility.Collapsed;
+
+            // IsLoaded matters because ApplyBaseGraphMode also runs from
+            // InitRedesignControls, before the control is loaded. Polling the
+            // wire for an unloaded panel is what this gate exists to prevent.
+            _plugin.TorqueGraphActive = torque && IsLoaded;
+        }
+
+        // Renders a snapshot of the plugin-side history. Called from the shared
+        // 500 ms refresh tick, so this costs ONE geometry rebuild per half second
+        // — the same as the temperature graph beside it. MaxValue is written only
+        // when it actually changes, because that DP's callback also rebuilds.
+        private void UpdateTorqueDisplays()
+        {
+            if (_plugin.Settings.BaseTabGraph != Settings.BaseGraphMode.Torque)
+                return;
+
+            var hist = _plugin.TorqueHistory;
+            if (hist == null) return;
+
+            bool connected = _data.IsBaseConnected;
+            double nm = connected ? _data.LiveTorqueNm : 0.0;
+            double peak = hist.PeakNm;
+
+            // Ceiling is the base's RATED torque, so the trace shows real
+            // headroom instead of being restretched every time a new peak
+            // arrives. Auto-scale (floored) only when the rating isn't
+            // established — see BaseModelInfo.RatedNm.
+            int rated = Devices.BaseModelInfo.RatedNm(_data.BaseModelName);
+            double scale = rated > 0
+                ? rated
+                : Math.Max(TorqueScaleFloorNm, Math.Ceiling(peak));
+
+            if (TorqueGraphViz != null)
+            {
+                TorqueGraphViz.InSamples = hist.Take();
+                if (Math.Abs(scale - _torqueScaleNm) > 0.001)
+                {
+                    TorqueGraphViz.MaxValue = scale;
+                    _torqueScaleNm = scale;
+                }
+            }
+
+            if (TorqueValueText != null)
+                TorqueValueText.Text = connected ? $"{nm:F1} Nm" : "--";
+            if (TorquePeakText != null)
+                TorquePeakText.Text = peak > 0 ? $"max {peak:F1} Nm" : "";
+            if (TorqueScaleText != null)
+                TorqueScaleText.Text = rated > 0 ? $"{scale:F0} Nm" : $"{scale:F0} Nm (auto)";
         }
 
         private static string FormatBytesPerSec(double bps)

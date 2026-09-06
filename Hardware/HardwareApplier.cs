@@ -1,6 +1,8 @@
 using System;
 using MozaPlugin.Devices;
 using MozaPlugin.Settings;
+using MozaPlugin.Devices.Led;
+using MozaPlugin.Devices.Extensions;
 
 namespace MozaPlugin.Hardware
 {
@@ -9,26 +11,31 @@ namespace MozaPlugin.Hardware
     /// family. Profile + per-page overlay are the source of truth; writes are
     /// detection-gated and sentinel-guarded.
     /// </summary>
-    internal sealed class HardwareApplier
+    internal sealed partial class HardwareApplier
     {
         private readonly MozaPlugin _plugin;
         private readonly MozaData _data;
         private readonly MozaDeviceManager _deviceManager;
         private readonly MozaAb9DeviceManager _ab9Manager;
         private readonly DeviceDetectionState _detectionState;
+        // Dedicated pipe for a standalone-USB CM2 dashboard — the CM2 write
+        // routing in HardwareApplier.Cm2.cs picks between this and _deviceManager.
+        private readonly MozaDashboardDeviceManager _dashboardManager;
 
         public HardwareApplier(
             MozaPlugin plugin,
             MozaData data,
             MozaDeviceManager deviceManager,
             MozaAb9DeviceManager ab9Manager,
-            DeviceDetectionState detectionState)
+            DeviceDetectionState detectionState,
+            MozaDashboardDeviceManager dashboardManager)
         {
             _plugin = plugin;
             _data = data;
             _deviceManager = deviceManager;
             _ab9Manager = ab9Manager;
             _detectionState = detectionState;
+            _dashboardManager = dashboardManager;
         }
 
         // ── Write-on-change cache for persistent (flash-backed) wheel settings ──
@@ -44,16 +51,56 @@ namespace MozaPlugin.Hardware
         private readonly System.Collections.Generic.Dictionary<string, long> _wheelCfgCache
             = new System.Collections.Generic.Dictionary<string, long>();
         private byte[] _wheelCfgCacheUid = System.Array.Empty<byte>();
+        // Leaf lock guarding _wheelCfgCache/_wheelCfgCacheUid only. Three threads reach
+        // them — the detection/UI thread via ApplyWheelToHardware, the UI thread via the
+        // WriteIf* handlers, and the coalescing flush timer's ThreadPool callback. Every
+        // critical section is a dictionary get/set with no I/O and no nesting; device
+        // writes always happen after the lock is released.
+        private readonly object _wheelCfgCacheLock = new object();
+        // Guarded by _wheelCfgCacheLock, all keyed like _wheelCfgCache:
+        //  · LastWriteTicks — when we last actually issued a write, so a readback that
+        //    contradicts the cache can tell "the wheel really diverged" from "our write
+        //    is still in flight".
+        //  · Desired — the value we last INTENDED, recorded even when the change gate
+        //    suppressed the write, so a divergence can be re-asserted.
+        //  · ReassertCount — bounded so a register the wheel refuses to accept can't turn
+        //    the ~80 s parity-poll readback into an endless flash-write loop.
+        private readonly System.Collections.Generic.Dictionary<string, long> _wheelCfgLastWriteTicks
+            = new System.Collections.Generic.Dictionary<string, long>(System.StringComparer.Ordinal);
+        private readonly System.Collections.Generic.Dictionary<string, long> _wheelCfgDesired
+            = new System.Collections.Generic.Dictionary<string, long>(System.StringComparer.Ordinal);
+        private readonly System.Collections.Generic.Dictionary<string, int> _wheelCfgReassertCount
+            = new System.Collections.Generic.Dictionary<string, int>(System.StringComparer.Ordinal);
+        private const double WheelCfgAdoptQuietMs = 1500.0;
+        private const int WheelCfgMaxReasserts = 3;
 
         private void SyncWheelCfgCache()
         {
+            lock (_wheelCfgCacheLock) SyncWheelCfgCacheLocked();
+        }
+
+        private void SyncWheelCfgCacheLocked()
+        {
             var uid = _data.WheelMcuUid ?? System.Array.Empty<byte>();
+
+            // An UNKNOWN uid is not evidence of a different wheel. The uid arrives
+            // asynchronously (and on some rims — the FSR1 among them — never does), so
+            // treating empty→known or known→empty as a hot-swap would clear the cache
+            // mid-session and re-write every flash-backed setting the connect-time
+            // apply had already written. Only a change between two KNOWN uids is a
+            // genuine hot-swap. Adopt the uid the first time we learn it.
+            if (uid.Length == 0) return;
+            if (_wheelCfgCacheUid.Length == 0) { _wheelCfgCacheUid = (byte[])uid.Clone(); return; }
+
             bool same = uid.Length == _wheelCfgCacheUid.Length;
             for (int i = 0; same && i < uid.Length; i++)
                 if (uid[i] != _wheelCfgCacheUid[i]) same = false;
             if (!same)
             {
                 _wheelCfgCache.Clear();
+                _wheelCfgLastWriteTicks.Clear();
+                _wheelCfgDesired.Clear();
+                _wheelCfgReassertCount.Clear();
                 _wheelCfgCacheUid = (byte[])uid.Clone();
             }
         }
@@ -63,12 +110,288 @@ namespace MozaPlugin.Hardware
         /// change worth a flash write. Returns false to skip a redundant re-write.</summary>
         private bool WheelCfgChanged(string key, long value)
         {
-            if (_wheelCfgCache.TryGetValue(key, out var prev) && prev == value) return false;
-            _wheelCfgCache[key] = value;
-            return true;
+            lock (_wheelCfgCacheLock)
+            {
+                // Record the intent even when the write is suppressed — that's what
+                // PrimeWheelCfgFromDevice re-asserts after adopting a contradicting readback.
+                _wheelCfgDesired[key] = value;
+                if (_wheelCfgCache.TryGetValue(key, out var prev) && prev == value) return false;
+                _wheelCfgCache[key] = value;
+                _wheelCfgLastWriteTicks[key] = System.DateTime.UtcNow.Ticks;
+                return true;
+            }
+        }
+
+        /// <summary>Diagnostics read-out: what the change gate believes is in the wheel's
+        /// register for this key, and what we last intended to put there. Either is null
+        /// when the key has never been seen.</summary>
+        internal (long? Cached, long? Desired) WheelCfgDiag(string key)
+        {
+            lock (_wheelCfgCacheLock)
+            {
+                long? cached = _wheelCfgCache.TryGetValue(key, out var c) ? c : (long?)null;
+                long? desired = _wheelCfgDesired.TryGetValue(key, out var d) ? d : (long?)null;
+                return (cached, desired);
+            }
+        }
+
+        /// <summary>Peek the change gate WITHOUT recording — for "should I call the writer"
+        /// decisions where the writer itself owns the gate (see
+        /// <see cref="WriteKnobRingColors"/>). Recording here would consume the change and
+        /// make the writer's own gate return false.</summary>
+        private bool WheelCfgDiffers(string key, long value)
+        {
+            lock (_wheelCfgCacheLock)
+                return !(_wheelCfgCache.TryGetValue(key, out var prev) && prev == value);
+        }
+
+        /// <summary>
+        /// Prime the wheel write cache with a value the WHEEL ITSELF reported, so a
+        /// profile that already matches the device writes nothing.
+        ///
+        /// The wheel's readback is GROUND TRUTH: when it contradicts what we believe we
+        /// wrote, the cache adopts the device value and the intended value is re-asserted
+        /// once. This used to be add-only, which let a single divergence become permanent —
+        /// the register drifted (power cycle, wheel-side menu, another host), the plugin
+        /// read the new value, the gate still said "already written" and suppressed the
+        /// corrective write forever. Bundle GY9RWKMR is exactly that: buttons/knob
+        /// brightness sat at 5/10 while the cache said 100, and no brightness write went
+        /// out again for the rest of the session. Adoption is skipped while our own write
+        /// is still in flight (<see cref="WheelCfgAdoptQuietMs"/>) and the re-assert is
+        /// capped (<see cref="WheelCfgMaxReasserts"/>) so a register the firmware refuses
+        /// can't turn the periodic readback into a flash-write loop.
+        ///
+        /// Why: these settings are flash-backed and the wheel persists them across
+        /// power cycles, so re-asserting them at every connect is pure parameter-store
+        /// wear. PitHouse never does it — across four FSR1 captures it issues ZERO
+        /// writes to the idle/sleep-light family (0x3F cmds 1c/1d/1e/20/21/22/24) and
+        /// only ever READS them, writing solely when the user changes a setting in its
+        /// UI. The plugin wrote 8-12 of them per connect. On the FSR1 — whose param
+        /// store wedges into an unrecoverable read-failure storm (wheel-0x17.md
+        /// § Param-store wedge) — that difference is the whole ballgame.
+        /// </summary>
+        internal void PrimeWheelCfgFromDevice(string key, long deviceValue)
+        {
+            long desired = 0;
+            bool reassert = false;
+            lock (_wheelCfgCacheLock)
+            {
+                SyncWheelCfgCacheLocked();
+                if (!_wheelCfgCache.TryGetValue(key, out var cached))
+                {
+                    _wheelCfgCache[key] = deviceValue;
+                    return;
+                }
+                if (cached == deviceValue)
+                {
+                    // Converged — clear the retry budget so a genuinely new divergence
+                    // later gets its full allowance.
+                    _wheelCfgReassertCount.Remove(key);
+                    return;
+                }
+
+                // Don't fight a write that hasn't had time to land.
+                if (_wheelCfgLastWriteTicks.TryGetValue(key, out var lastWrite)
+                    && (System.DateTime.UtcNow.Ticks - lastWrite)
+                       < (long)(WheelCfgAdoptQuietMs * System.TimeSpan.TicksPerMillisecond))
+                    return;
+
+                _wheelCfgCache[key] = deviceValue;
+                _wheelCfgReassertCount.TryGetValue(key, out int tries);
+                if (tries < WheelCfgMaxReasserts
+                    && _wheelCfgDesired.TryGetValue(key, out desired)
+                    && desired != deviceValue)
+                {
+                    _wheelCfgReassertCount[key] = tries + 1;
+                    reassert = true;
+                }
+            }
+
+            if (!reassert)
+            {
+                MozaLog.Debug($"[AZOM] wheel-cfg '{key}': wheel reports {deviceValue}, cache adopted it");
+                return;
+            }
+
+            MozaLog.Debug(
+                $"[AZOM] wheel-cfg '{key}': wheel reports {deviceValue} but {desired} was intended — re-asserting");
+            // This runs on the serial READ thread. Hop to the pool so the read thread's
+            // ack path never touches the coalescing lock or the flush timer.
+            long value = desired;
+            System.Threading.ThreadPool.QueueUserWorkItem(_ =>
+            {
+                try { QueueWheelCfgWrite(key, value, () => _deviceManager.WriteSetting(key, (int)value)); }
+                catch (System.Exception ex) { MozaLog.Warn($"[AZOM] wheel-cfg re-assert '{key}': {ex.Message}"); }
+            });
+        }
+
+        /// <summary>
+        /// Flash-backed wheel settings — the scalar/array/colour commands the wheel
+        /// persists to its parameter store. Exactly the set
+        /// <see cref="ApplyWheelToHardware"/> guards with <see cref="WheelCfgChanged"/>,
+        /// minus the LED colour arrays (the live telemetry pipeline owns those
+        /// registers and repaints them every frame, so caching them would suppress a
+        /// repaint the pipeline needs).
+        ///
+        /// The UI's WriteIf* handlers write these same commands. Until they shared
+        /// this cache every dropdown/slider interaction was an unconditional flash
+        /// write, and a later ApplyWheelToHardware then wrote the value a SECOND time
+        /// because the cache had never seen the UI's write. On the FSR1 — whose param
+        /// store wedges permanently into a read-failure storm (wheel-0x17.md
+        /// § Param-store wedge) — that is the difference between a working display and
+        /// one that needs a power cycle.
+        /// </summary>
+        private static readonly System.Collections.Generic.HashSet<string> s_flashBackedWheelCfg =
+            new System.Collections.Generic.HashSet<string>(System.StringComparer.Ordinal)
+            {
+                "wheel-telemetry-mode", "wheel-buttons-led-mode", "wheel-knob-led-mode",
+                "wheel-telemetry-idle-effect", "wheel-buttons-idle-effect", "wheel-knob-idle-effect",
+                "wheel-telemetry-idle-interval", "wheel-buttons-idle-interval", "wheel-knob-idle-interval",
+                "wheel-idle-mode", "wheel-idle-timeout", "wheel-idle-speed", "wheel-idle-color",
+                "wheel-rpm-brightness", "wheel-buttons-brightness", "wheel-knob-brightness",
+                "wheel-old-rpm-brightness", "dash-flags-brightness",
+                "wheel-rpm-indicator-mode", "wheel-set-rpm-display-mode", "wheel-knob-mode",
+            };
+
+        /// <summary>Flash-backed per the set above, plus the per-knob signal modes
+        /// (<c>wheel-knob-signal-mode{fwIdx}</c>) whose names carry a firmware index.</summary>
+        private static bool IsFlashBackedWheelCfg(string command) =>
+            command != null
+            && (s_flashBackedWheelCfg.Contains(command)
+                || command.StartsWith("wheel-knob-signal-mode", System.StringComparison.Ordinal));
+
+        // ── Coalescing gate for UI-driven flash-backed wheel writes ──
+        // A slider raises ValueChanged per tick, so dragging "Sleep speed" or a
+        // brightness slider used to emit one flash write per tick — ~50 per drag. The
+        // change-cache above can't help: every intermediate value genuinely differs.
+        // So UI writes to flash-backed commands are parked in a latest-wins slot per
+        // command and flushed once the user stops moving, which turns a whole drag into
+        // a single write. Same pending+coalesce+throttle shape Fsr1DisplayDriver already
+        // uses for its own EEPROM writes (dashboard select / display brightness).
+        //
+        // The change-cache check happens at FLUSH time, not queue time, so a drag that
+        // ends back where it started writes nothing at all.
+        private const double WheelCfgFlushDelayMs = 400.0;
+        private readonly System.Collections.Generic.Dictionary<string, (long CacheValue, System.Action Write)> _pendingWheelCfg
+            = new System.Collections.Generic.Dictionary<string, (long, System.Action)>(System.StringComparer.Ordinal);
+        // Leaf lock: guards only the dictionary above. Never held across a device
+        // write — the flush copies out, releases, then writes.
+        private readonly object _pendingWheelCfgLock = new object();
+        private System.Timers.Timer? _wheelCfgFlushTimer;
+
+        /// <summary>
+        /// Park a flash-backed wheel write until the user stops changing it.
+        /// Latest value per command wins; the quiet window restarts on every call.
+        /// </summary>
+        private void QueueWheelCfgWrite(string command, long cacheValue, System.Action write)
+        {
+            lock (_pendingWheelCfgLock)
+            {
+                _pendingWheelCfg[command] = (cacheValue, write);
+                if (_wheelCfgFlushTimer == null)
+                {
+                    _wheelCfgFlushTimer = new System.Timers.Timer(WheelCfgFlushDelayMs) { AutoReset = false };
+                    _wheelCfgFlushTimer.Elapsed += (_, __) => FlushPendingWheelCfgWrites();
+                }
+                // Restart the quiet window.
+                _wheelCfgFlushTimer.Stop();
+                _wheelCfgFlushTimer.Start();
+            }
+        }
+
+        private void FlushPendingWheelCfgWrites()
+        {
+            System.Collections.Generic.KeyValuePair<string, (long CacheValue, System.Action Write)>[] due;
+            lock (_pendingWheelCfgLock)
+            {
+                if (_pendingWheelCfg.Count == 0) return;
+                due = System.Linq.Enumerable.ToArray(_pendingWheelCfg);
+                _pendingWheelCfg.Clear();
+            }
+
+            SyncWheelCfgCache();
+            foreach (var kv in due)
+            {
+                try
+                {
+                    // Re-check against the cache now: the value may have travelled and
+                    // come back, or an apply may have written it in the meantime.
+                    if (!WheelCfgChanged(kv.Key, kv.Value.CacheValue)) continue;
+                    kv.Value.Write();
+                }
+                catch (System.Exception ex)
+                {
+                    MozaLog.Warn($"[AZOM] wheel-cfg flush '{kv.Key}': {ex.Message}");
+                }
+            }
+        }
+
+        /// <summary>Stop the coalescing timer and drop anything still parked. Called
+        /// from the plugin teardown; pending values are already persisted in the
+        /// profile, so the next connect's apply carries them.</summary>
+        internal void Shutdown()
+        {
+            System.Timers.Timer? t;
+            lock (_pendingWheelCfgLock)
+            {
+                _pendingWheelCfg.Clear();
+                t = _wheelCfgFlushTimer;
+                _wheelCfgFlushTimer = null;
+            }
+            try { t?.Stop(); t?.Dispose(); } catch { /* teardown is best-effort */ }
         }
 
         private static long Fnv(long h, long v) { unchecked { return (h ^ v) * 1099511628211L; } }
+
+        /// <summary>
+        /// Change-gate keyed on the PAYLOAD BYTES actually going out. Used for the
+        /// multi-field array commands so the UI handler and
+        /// <see cref="ApplyWheelToHardware"/> agree on the cache value without having
+        /// to encode the same (mode, ms) composite identically in two places — what
+        /// matters is only whether the bytes on the wire changed.
+        /// </summary>
+        private bool WheelCfgChangedBytes(string key, byte[]? payload) =>
+            WheelCfgChanged(key, HashPayload(payload));
+
+        private static long HashPayload(byte[]? payload)
+        {
+            long h = unchecked((long)1469598103934665603UL);
+            if (payload == null) return Fnv(h, -9);
+            h = Fnv(h, payload.Length);
+            foreach (var b in payload) h = Fnv(h, b);
+            return h;
+        }
+
+        /// <summary>
+        /// True when a profile apply must NOT touch flash-backed wheel settings at all.
+        ///
+        /// The FSR1 is the one wheel we deliberately read NOTHING back from — its param
+        /// store wedges into a permanent read-failure storm (wheel-0x17.md § Param-store
+        /// wedge), so <c>DeviceProber.BuildNewWheelLedReadCommands</c> returns an empty
+        /// list for it. That makes <see cref="PrimeWheelCfgFromDevice"/> inert here (it
+        /// can only prime keys the wheel reports), so every connect re-asserted the whole
+        /// idle/sleep-light family from the profile — 8 commands, 2 of which reached
+        /// flash, on a wheel that bricks its display from exactly that wear.
+        ///
+        /// PitHouse's own behaviour is the model: it never writes this family on connect
+        /// and only writes when the user changes a control. The wheel persists the values
+        /// across power cycles, so nothing is lost except re-asserting a per-game profile's
+        /// wheel LED/idle settings on an FSR1 — that now happens when the user touches the
+        /// control, not at every connect.
+        /// </summary>
+        private bool SuppressApplyFlashCfgWrites => _data.IsFsr1DisplayWheel;
+
+        /// <summary>
+        /// Apply-path change gate — <see cref="WheelCfgChanged"/> plus the FSR1
+        /// suppression above. Returns false WITHOUT recording the value, so a later user
+        /// edit to that same value still reaches the wheel.
+        /// </summary>
+        private bool WheelCfgChangedForApply(string key, long value) =>
+            !(SuppressApplyFlashCfgWrites && IsFlashBackedWheelCfg(key)) && WheelCfgChanged(key, value);
+
+        /// <summary>Apply-path counterpart of <see cref="WheelCfgChangedBytes"/>.</summary>
+        private bool WheelCfgChangedBytesForApply(string key, byte[]? payload) =>
+            !(SuppressApplyFlashCfgWrites && IsFlashBackedWheelCfg(key)) && WheelCfgChangedBytes(key, payload);
 
         private bool WheelCfgChangedArr(string key, int[]? arr)
         {
@@ -148,6 +471,16 @@ namespace MozaPlugin.Hardware
             if (s_baseCfgCache.TryGetValue(key, out var prev) && prev == value) return false;
             s_baseCfgCache[key] = value;
             return true;
+        }
+
+        /// <summary>Prime the write cache with the base's READ-BACK value (add-only, never
+        /// overwrites a recorded write). With the cache primed, the first apply of a session
+        /// skips every param the base already holds — the base persists its settings, so a
+        /// fresh SimHub session re-writing an unchanged profile was pure parameter-store
+        /// wear (observed as the full Table-5 "Written" burst on every connect).</summary>
+        private void BaseCfgPrime(string key, long deviceValue)
+        {
+            if (!s_baseCfgCache.ContainsKey(key)) s_baseCfgCache[key] = deviceValue;
         }
 
         // Resolve the pipe that owns pedals / handbrake. Pedals or a handbrake
@@ -231,6 +564,15 @@ namespace MozaPlugin.Hardware
             // ApplyMasterWheelLedBrightness path, which shares the same cfg cache.
             int ledMaster = _plugin.WheelLedMasterBrightness;
             if (ledMaster >= 0) { rpmBri = ledMaster; btnBri = ledMaster; knobRingBri = ledMaster; }
+            // Per-zone "Brightness limiter and balance" sliders are more specific than the
+            // master, so a zone the user has actually moved wins over it (and over the
+            // profile value). -1 = zone never moved; keep whatever the two lines above left.
+            int zoneRpmBri  = _plugin.WheelLedBrightnessRpm;
+            int zoneBtnBri  = _plugin.WheelLedBrightnessButtons;
+            int zoneKnobBri = _plugin.WheelLedBrightnessKnob;
+            if (zoneRpmBri  >= 0) rpmBri      = zoneRpmBri;
+            if (zoneBtnBri  >= 0) btnBri      = zoneBtnBri;
+            if (zoneKnobBri >= 0) knobRingBri = zoneKnobBri;
 
             // _data mirror (UI binding).
             if (telemMode      >= 0) _data.WheelTelemetryMode      = telemMode;
@@ -364,12 +706,33 @@ namespace MozaPlugin.Hardware
                 // CS and unidentified wheels (HasSleepLight=false) are skipped.
                 bool hasIdleLed = hasSleepLight;
 
-                if (telemMode      >= 0            && WheelCfgChanged("wheel-telemetry-mode", telemMode))          _deviceManager.WriteSetting("wheel-telemetry-mode", telemMode);
-                if (idleEffect     >= 0 && hasRpm  && hasIdleLed && WheelCfgChanged("wheel-telemetry-idle-effect", idleEffect)) _deviceManager.WriteSetting("wheel-telemetry-idle-effect", idleEffect);
-                if (btnIdleEffect  >= 0 && hasBtn  && hasIdleLed && WheelCfgChanged("wheel-buttons-idle-effect", btnIdleEffect))_deviceManager.WriteSetting("wheel-buttons-idle-effect", btnIdleEffect);
-                if (knobIdleEffect >= 0 && hasKnob && hasIdleLed && WheelCfgChanged("wheel-knob-idle-effect", knobIdleEffect))  _deviceManager.WriteSetting("wheel-knob-idle-effect", knobIdleEffect);
-                if (knobLedMode    >= 0 && hasKnob && WheelCfgChanged("wheel-knob-led-mode", knobLedMode))        _deviceManager.WriteSetting("wheel-knob-led-mode", knobLedMode);
-                if (btnLedMode     >= 0 && hasBtn  && WheelCfgChanged("wheel-buttons-led-mode", btnLedMode))      _deviceManager.WriteSetting("wheel-buttons-led-mode", btnLedMode);
+                // FSR1: never push the idle / sleep-light family from an APPLY (connect,
+                // profile switch, re-detect). This wheel HAS the feature — PitHouse
+                // exposes it and reads those params back — but across every FSR1 capture
+                // PitHouse issues ZERO writes to the family (0x3F cmds 1d/1e/20/21/22/24)
+                // and writes only when the user moves the control in its UI. The wheel
+                // persists the values itself, so an apply that re-asserts them is pure
+                // parameter-store wear on the one rim whose store wedges irrecoverably
+                // (docs wheel-0x17.md § Param-store wedge; 2026-08-13 bundle: 7 writes →
+                // 8 Table-2 param writes at connect, storm 3.4 min later).
+                //
+                // Nothing is lost: the sleep/idle controls write straight through on user
+                // edit via WriteIfWheelDetected / WriteArrayIfWheelDetected /
+                // WriteColorIfWheelDetected (MozaWheelSettingsControl), which is exactly
+                // PitHouse's model. These are also wheel-level prefs (not per-game), so
+                // there is no profile-switch behaviour to preserve here.
+                if (_plugin.IsFsr1DisplayWheel)
+                {
+                    hasIdleLed = false;
+                    hasSleepLight = false;
+                }
+
+                if (telemMode      >= 0            && WheelCfgChangedForApply("wheel-telemetry-mode", telemMode))          _deviceManager.WriteSetting("wheel-telemetry-mode", telemMode);
+                if (idleEffect     >= 0 && hasRpm  && hasIdleLed && WheelCfgChangedForApply("wheel-telemetry-idle-effect", idleEffect)) _deviceManager.WriteSetting("wheel-telemetry-idle-effect", idleEffect);
+                if (btnIdleEffect  >= 0 && hasBtn  && hasIdleLed && WheelCfgChangedForApply("wheel-buttons-idle-effect", btnIdleEffect))_deviceManager.WriteSetting("wheel-buttons-idle-effect", btnIdleEffect);
+                if (knobIdleEffect >= 0 && hasKnob && hasIdleLed && WheelCfgChangedForApply("wheel-knob-idle-effect", knobIdleEffect))  _deviceManager.WriteSetting("wheel-knob-idle-effect", knobIdleEffect);
+                if (knobLedMode    >= 0 && hasKnob && WheelCfgChangedForApply("wheel-knob-led-mode", knobLedMode))        _deviceManager.WriteSetting("wheel-knob-led-mode", knobLedMode);
+                if (btnLedMode     >= 0 && hasBtn  && WheelCfgChangedForApply("wheel-buttons-led-mode", btnLedMode))      _deviceManager.WriteSetting("wheel-buttons-led-mode", btnLedMode);
 
                 // Knob input signal mode (encoder = BUTTON vs KNOB) — overlay-only,
                 // per-(profile x wheel-page). Re-push on connect/profile-switch,
@@ -380,17 +743,29 @@ namespace MozaPlugin.Hardware
                 // (logical->firmware index remapped) on those that report it. The UI
                 // only edits one family per wheel, so the overlay only carries the
                 // family this wheel supports — writing whatever is set is safe.
-                if (knobMode >= 0 && hasKnob && WheelCfgChanged("wheel-knob-mode", knobMode))
+                //
+                // No hasKnob gate: that is the knob-LED capability, and most rims
+                // have encoders with no knob LEDs. The overlay is its own capability
+                // evidence here — it is keyed by the wheel's page GUID and has no
+                // profile baseline, so a value >= 0 means the user set it on THIS
+                // rim's page, which only happens when the UI offered the control,
+                // which only happens when the wheel answered the read. Same reasoning
+                // as the paddle/clutch/stick block below. A capability gate would
+                // also mis-fire on ordering: DeviceProber issues the signal-mode
+                // reads just BEFORE the first-sight ApplyProfile, so the answers land
+                // after this runs and the re-assert would be skipped on exactly the
+                // wheels that need it.
+                if (knobMode >= 0 && WheelCfgChangedForApply("wheel-knob-mode", knobMode))
                     _deviceManager.WriteSetting("wheel-knob-mode", knobMode);
-                if (hasKnob && ov?.WheelKnobSignalModes != null)
+                if (ov?.WheelKnobSignalModes != null)
                 {
-                    int nSig = Math.Min(model.KnobCount, ov.WheelKnobSignalModes.Length);
+                    int nSig = ov.WheelKnobSignalModes.Length;
                     for (int i = 0; i < nSig && i < 5; i++)
                     {
                         int sm = ov.WheelKnobSignalModes[i];
                         if (sm < 0) continue;
                         int fwIdx = model.SignalModeFirmwareIndex(i);
-                        if (WheelCfgChanged($"wheel-knob-signal-mode{fwIdx}", sm))
+                        if (WheelCfgChangedForApply($"wheel-knob-signal-mode{fwIdx}", sm))
                             _deviceManager.WriteSetting($"wheel-knob-signal-mode{fwIdx}", sm);
                     }
                 }
@@ -410,37 +785,45 @@ namespace MozaPlugin.Hardware
                 // attach instead of dedup'ing against the previous rim's write.
                 // Wire form is 1/2/3 while the overlay stores the 0/1/2 display
                 // form — hence the +1, matching the UI handler.
-                if (paddles >= 0 && WheelCfgChanged("wheel-paddles-mode", paddles))
+                if (paddles >= 0 && WheelCfgChangedForApply("wheel-paddles-mode", paddles))
                     _deviceManager.WriteSetting("wheel-paddles-mode", paddles + 1);
-                if (clutchPoint >= 0 && WheelCfgChanged("wheel-clutch-point", clutchPoint))
+                if (clutchPoint >= 0 && WheelCfgChangedForApply("wheel-clutch-point", clutchPoint))
                     _deviceManager.WriteSetting("wheel-clutch-point", clutchPoint);
-                if (idleEffect >= 0 && idleSpeed >= 0 && hasRpm && hasIdleLed
-                        && WheelCfgChanged("wheel-telemetry-idle-interval", ((long)idleEffect << 32) | (uint)idleSpeed))
-                    _deviceManager.WriteArray("wheel-telemetry-idle-interval",
-                        BuildIdleIntervalPayload(idleEffect, idleSpeed));
-                if (btnIdleEffect >= 0 && btnIdleSpeed >= 0 && hasBtn && hasIdleLed
-                        && WheelCfgChanged("wheel-buttons-idle-interval", ((long)btnIdleEffect << 32) | (uint)btnIdleSpeed))
-                    _deviceManager.WriteArray("wheel-buttons-idle-interval",
-                        BuildIdleIntervalPayload(btnIdleEffect, btnIdleSpeed));
-                if (knobIdleEffect >= 0 && knobIdleSpeed >= 0 && hasKnob && hasIdleLed
-                        && WheelCfgChanged("wheel-knob-idle-interval", ((long)knobIdleEffect << 32) | (uint)knobIdleSpeed))
-                    _deviceManager.WriteArray("wheel-knob-idle-interval",
-                        BuildIdleIntervalPayload(knobIdleEffect, knobIdleSpeed));
-                if (sleepMode    >= 0 && hasSleepLight && WheelCfgChanged("wheel-idle-mode", sleepMode))       _deviceManager.WriteSetting("wheel-idle-mode", sleepMode);
-                if (sleepTimeout >= 0 && hasSleepLight && WheelCfgChanged("wheel-idle-timeout", sleepTimeout)) _deviceManager.WriteSetting("wheel-idle-timeout", sleepTimeout);
-                if (sleepMode >= 0 && sleepSpeed >= 0 && hasSleepLight
-                        && WheelCfgChanged("wheel-idle-speed", ((long)sleepMode << 32) | (uint)sleepSpeed))
-                    _deviceManager.WriteArray("wheel-idle-speed",
-                        BuildIdleIntervalPayload(sleepMode, sleepSpeed));
+                if (idleEffect >= 0 && idleSpeed >= 0 && hasRpm && hasIdleLed)
+                {
+                    var p = BuildIdleIntervalPayload(idleEffect, idleSpeed);
+                    if (WheelCfgChangedBytesForApply("wheel-telemetry-idle-interval", p))
+                        _deviceManager.WriteArray("wheel-telemetry-idle-interval", p);
+                }
+                if (btnIdleEffect >= 0 && btnIdleSpeed >= 0 && hasBtn && hasIdleLed)
+                {
+                    var p = BuildIdleIntervalPayload(btnIdleEffect, btnIdleSpeed);
+                    if (WheelCfgChangedBytesForApply("wheel-buttons-idle-interval", p))
+                        _deviceManager.WriteArray("wheel-buttons-idle-interval", p);
+                }
+                if (knobIdleEffect >= 0 && knobIdleSpeed >= 0 && hasKnob && hasIdleLed)
+                {
+                    var p = BuildIdleIntervalPayload(knobIdleEffect, knobIdleSpeed);
+                    if (WheelCfgChangedBytesForApply("wheel-knob-idle-interval", p))
+                        _deviceManager.WriteArray("wheel-knob-idle-interval", p);
+                }
+                if (sleepMode    >= 0 && hasSleepLight && WheelCfgChangedForApply("wheel-idle-mode", sleepMode))       _deviceManager.WriteSetting("wheel-idle-mode", sleepMode);
+                if (sleepTimeout >= 0 && hasSleepLight && WheelCfgChangedForApply("wheel-idle-timeout", sleepTimeout)) _deviceManager.WriteSetting("wheel-idle-timeout", sleepTimeout);
+                if (sleepMode >= 0 && sleepSpeed >= 0 && hasSleepLight)
+                {
+                    var p = BuildIdleIntervalPayload(sleepMode, sleepSpeed);
+                    if (WheelCfgChangedBytesForApply("wheel-idle-speed", p))
+                        _deviceManager.WriteArray("wheel-idle-speed", p);
+                }
                 if (sleepColor != null && sleepColor.Length > 0 && hasSleepLight)
                 {
                     var rgb = MozaProfile.UnpackColor(sleepColor[0]);
-                    if (WheelCfgChanged("wheel-idle-color", ((long)rgb[0] << 16) | ((long)rgb[1] << 8) | rgb[2]))
+                    if (WheelCfgChangedForApply("wheel-idle-color", ((long)rgb[0] << 16) | ((long)rgb[1] << 8) | rgb[2]))
                         _deviceManager.WriteColor("wheel-idle-color", rgb[0], rgb[1], rgb[2]);
                 }
-                if (rpmBri   >= 0 && hasRpm && WheelCfgChanged("wheel-rpm-brightness", rpmBri))     _deviceManager.WriteSetting("wheel-rpm-brightness", rpmBri);
-                if (btnBri   >= 0 && hasBtn && WheelCfgChanged("wheel-buttons-brightness", btnBri)) _deviceManager.WriteSetting("wheel-buttons-brightness", btnBri);
-                if (flagsBri >= 0 && _detectionState.DashDetected && WheelCfgChanged("dash-flags-brightness", flagsBri))
+                if (rpmBri   >= 0 && hasRpm && WheelCfgChangedForApply("wheel-rpm-brightness", rpmBri))     _deviceManager.WriteSetting("wheel-rpm-brightness", rpmBri);
+                if (btnBri   >= 0 && hasBtn && WheelCfgChangedForApply("wheel-buttons-brightness", btnBri)) _deviceManager.WriteSetting("wheel-buttons-brightness", btnBri);
+                if (flagsBri >= 0 && _detectionState.DashDetected && WheelCfgChangedForApply("dash-flags-brightness", flagsBri))
                     _deviceManager.WriteSetting("dash-flags-brightness", flagsBri);
 
                 if (WheelCfgChangedArr("wheel-rpm-color", rpmColors))
@@ -455,13 +838,19 @@ namespace MozaPlugin.Hardware
                 if (idleColor != null && idleColor.Length > 0 && hasSleepLight)
                 {
                     var rgb = MozaProfile.UnpackColor(idleColor[0]);
-                    if (WheelCfgChanged("wheel-idle-color", ((long)rgb[0] << 16) | ((long)rgb[1] << 8) | rgb[2]))
+                    if (WheelCfgChangedForApply("wheel-idle-color", ((long)rgb[0] << 16) | ((long)rgb[1] << 8) | rgb[2]))
                         _deviceManager.WriteColor("wheel-idle-color", rgb[0], rgb[1], rgb[2]);
                 }
                 bool knobBgChg  = WheelCfgChangedArr("wheel-knob-bg-color", knobBgColors);
                 bool knobPriChg = WheelCfgChangedArr("wheel-knob-primary-color", knobPrimaryColors);
+                // Brightness keys on the REAL command name ("wheel-knob-brightness"), the
+                // one the readback and the zone/master paths use — a separate
+                // "wheel-knob-ring-brightness" key described the same 1B 03 FF register
+                // under a name no command owns, so the two writers could not dedupe
+                // against each other and the wheel's readback never primed it.
                 bool knobRingChg = WheelCfgChangedArr("wheel-knob-ring-color", knobRingColors)
-                                   | WheelCfgChanged("wheel-knob-ring-brightness", knobRingBri);
+                                   | (knobRingBri >= 0
+                                      && WheelCfgDiffers("wheel-knob-brightness", knobRingBri));
                 // Invalidate the live cache after each Apply pass so the next live tick
                 // re-sends instead of dedup'ing against a frame whose underlying wheel
                 // state we may have just rewritten. Live cache is volatile (no flash
@@ -486,9 +875,12 @@ namespace MozaPlugin.Hardware
 
             if (_detectionState.OldWheelDetected)
             {
-                if (rpmInd   >= 0 && WheelCfgChanged("wheel-rpm-indicator-mode", rpmInd))     _deviceManager.WriteSetting("wheel-rpm-indicator-mode", rpmInd + 1);
-                if (rpmDisp  >= 0 && WheelCfgChanged("wheel-set-rpm-display-mode", rpmDisp))   _deviceManager.WriteSetting("wheel-set-rpm-display-mode", rpmDisp);
-                if (esRpmBri >= 0 && WheelCfgChanged("wheel-old-rpm-brightness", esRpmBri))    _deviceManager.WriteSetting("wheel-old-rpm-brightness", esRpmBri);
+                // Cache the value that goes on the WIRE (+1), not the stored form —
+                // the UI handler writes the same +1 raw, so both paths must key the
+                // cache identically or each would see the other's write as a change.
+                if (rpmInd   >= 0 && WheelCfgChangedForApply("wheel-rpm-indicator-mode", rpmInd + 1)) _deviceManager.WriteSetting("wheel-rpm-indicator-mode", rpmInd + 1);
+                if (rpmDisp  >= 0 && WheelCfgChangedForApply("wheel-set-rpm-display-mode", rpmDisp))   _deviceManager.WriteSetting("wheel-set-rpm-display-mode", rpmDisp);
+                if (esRpmBri >= 0 && WheelCfgChangedForApply("wheel-old-rpm-brightness", esRpmBri))    _deviceManager.WriteSetting("wheel-old-rpm-brightness", esRpmBri);
                 if (WheelCfgChangedArr("wheel-old-rpm-color", esRpmColors))
                     WriteColorArray(esRpmColors, "wheel-old-rpm-color", 10);
             }
@@ -598,23 +990,23 @@ namespace MozaPlugin.Hardware
             // telemetry mode so screen widgets + LED ramp follow value frames.
             // TODO(cm2): cm2-normal-mode 1 vs 2 visually similar in CM2.md
             // lab — confirm 1 is the correct SimHub-mode value via capture.
-            _plugin.WriteCm2Config("cm2-normal-mode", 1);
-            _plugin.WriteCm2Config("cm2-rpm-group-mode", 1);
-            _plugin.WriteCm2Config("cm2-flag-group-mode", 1);
+            WriteCm2Config("cm2-normal-mode", 1);
+            WriteCm2Config("cm2-rpm-group-mode", 1);
+            WriteCm2Config("cm2-flag-group-mode", 1);
 
             // RPM regulation mode + thresholds. CM2.md notes percent-vs-absolute
             // encoding is not independently verified, so we write BOTH (percent
             // mode + percent thresholds, plus absolute thresholds derived from
             // MaxRpm) and let the firmware honour whichever it actually uses.
             // TODO(cm2): confirm regulation-mode encoding via capture.
-            _plugin.WriteCm2Config("cm2-rpm-regulation-mode", 0);
+            WriteCm2Config("cm2-rpm-regulation-mode", 0);
 
             // Default percent ramp: 50,55,60,…,95 covering the upper half of
             // the rev range. CM2 has 16 physical LEDs but the firmware accepts
             // a 10-entry percent ramp (one entry per "rung"; the firmware
             // interpolates across physical positions).
             byte[] percentRamp = new byte[] { 50, 55, 60, 65, 70, 75, 80, 85, 90, 95 };
-            _plugin.WriteCm2Config("cm2-rpm-percent-thresholds", percentRamp);
+            WriteCm2Config("cm2-rpm-percent-thresholds", percentRamp);
 
             // Absolute thresholds derived from MaxRpm (fallback 8000 per
             // CM2.md). Each rung gets (rpm * (i+1) / 10) so the 10 thresholds
@@ -625,7 +1017,7 @@ namespace MozaPlugin.Hardware
             for (byte i = 0; i < 10; i++)
             {
                 int threshold = (int)((long)maxRpm * (i + 1) / 10);
-                _plugin.WriteCm2Config($"cm2-rpm-absolute-threshold{i + 1}", threshold);
+                WriteCm2Config($"cm2-rpm-absolute-threshold{i + 1}", threshold);
             }
 
             // Indicator brightness — authoritative path for CM2. Reuse the
@@ -633,7 +1025,7 @@ namespace MozaPlugin.Hardware
             // does not double up; the legacy dash-rpm-brightness write above
             // is kept for compatibility.
             if (profile.DashRpmBrightness >= 0)
-                _plugin.WriteCm2Config("cm2-indicator-brightness", profile.DashRpmBrightness);
+                WriteCm2Config("cm2-indicator-brightness", profile.DashRpmBrightness);
 
             // STANDBY per-LED colors only (idle appearance, shown when no game
             // is running). rs21_parameter.db: SetIndicatorGroupStandbyModeColor
@@ -650,7 +1042,7 @@ namespace MozaPlugin.Hardware
                 for (int i = 0; i < rpmCount; i++)
                 {
                     var rgb = MozaProfile.UnpackColor(profile.DashRpmColors[i]);
-                    _plugin.WriteCm2Config($"cm2-stored-color{i + 1}", new byte[] { rgb[0], rgb[1], rgb[2] });
+                    WriteCm2Config($"cm2-stored-color{i + 1}", new byte[] { rgb[0], rgb[1], rgb[2] });
                 }
             }
             if (profile.DashFlagColors != null)
@@ -659,7 +1051,7 @@ namespace MozaPlugin.Hardware
                 for (int i = 0; i < flagCount; i++)
                 {
                     var rgb = MozaProfile.UnpackColor(profile.DashFlagColors[i]);
-                    _plugin.WriteCm2Config($"cm2-stored-color{i + 11}", new byte[] { rgb[0], rgb[1], rgb[2] });
+                    WriteCm2Config($"cm2-stored-color{i + 11}", new byte[] { rgb[0], rgb[1], rgb[2] });
                 }
             }
         }
@@ -683,13 +1075,69 @@ namespace MozaPlugin.Hardware
             // Per-section gate only — see ApplyWheelToHardware comment for why
             // _data.IsConnected was dropped here.
             if (!_detectionState.BaseAmbientLedSupported) return;
-            if (profile.BaseAmbientBrightness     >= 0) BaseManager.WriteSetting("base-ambient-brightness", profile.BaseAmbientBrightness);
+            // Brightness is percent: clamp so a profile written by an older build
+            // (whose slider went to 255) cannot push an out-of-range value.
+            if (profile.BaseAmbientBrightness     >= 0) BaseManager.WriteSetting("base-ambient-brightness", System.Math.Min(100, profile.BaseAmbientBrightness));
             if (profile.BaseAmbientStandbyMode    >= 0) BaseManager.WriteSetting("base-ambient-standby-mode", profile.BaseAmbientStandbyMode);
             if (profile.BaseAmbientIndicatorState >= 0) BaseManager.WriteSetting("base-ambient-indicator-state", profile.BaseAmbientIndicatorState);
             if (profile.BaseAmbientSleepMode      >= 0) BaseManager.WriteSetting("base-ambient-sleep-mode", profile.BaseAmbientSleepMode);
             if (profile.BaseAmbientSleepTimeout   >= 0) BaseManager.WriteSetting("base-ambient-sleep-timeout", profile.BaseAmbientSleepTimeout);
             if (profile.BaseAmbientStartupColor   >= 0) WritePackedColor("base-ambient-startup-color", profile.BaseAmbientStartupColor);
             if (profile.BaseAmbientShutdownColor  >= 0) WritePackedColor("base-ambient-shutdown-color", profile.BaseAmbientShutdownColor);
+
+            // Per-mode animation intervals (modes 2..5 only — off and constant
+            // have no register) and the sleep breathing speed.
+            if (profile.BaseAmbientStandbyIntervals != null)
+            {
+                for (int mode = 2; mode <= 5 && mode < profile.BaseAmbientStandbyIntervals.Length; mode++)
+                {
+                    int ms = profile.BaseAmbientStandbyIntervals[mode];
+                    if (ms >= 0)
+                        BaseManager.WriteSetting($"base-ambient-standby-interval-mode{mode}", ms);
+                }
+            }
+            if (profile.BaseAmbientSleepBreathInterval >= 0)
+                BaseManager.WriteSetting("base-ambient-sleep-breath-interval", profile.BaseAmbientSleepBreathInterval);
+
+            ApplyBaseAmbientPalettes(profile);
+        }
+
+        /// <summary>
+        /// Push the per-LED idle (standby modes 1 + 2) and sleep palettes. Only
+        /// entries the user has actually set (>= 0) are written, so an untouched
+        /// profile leaves the firmware's stored colours alone.
+        ///
+        /// Each command carries its own mode byte, so all three palettes can be
+        /// written regardless of which standby mode is currently active — the
+        /// device stores them independently. Only the palette of the *active*
+        /// mode is visible, which is a display consequence, not a write gate.
+        /// </summary>
+        private void ApplyBaseAmbientPalettes(MozaProfile profile)
+        {
+            int ledsPerStrip = _data.ResolvedAmbientLedsPerStrip;
+            int stride = Devices.BaseModelInfo.MaxLedsPerStrip;
+
+            for (int strip = 0; strip < 2; strip++)
+            {
+                for (int led = 0; led < ledsPerStrip; led++)
+                {
+                    int i = strip * stride + led;
+                    WritePaletteEntry(profile.BaseAmbientIdleColorsConstant, i,
+                        $"base-ambient-led-color-strip{strip}-mode1-led{led}");
+                    WritePaletteEntry(profile.BaseAmbientIdleColorsBreath, i,
+                        $"base-ambient-led-color-strip{strip}-mode2-led{led}");
+                    WritePaletteEntry(profile.BaseAmbientSleepColors, i,
+                        $"base-ambient-sleep-led-color-strip{strip}-led{led}");
+                }
+            }
+        }
+
+        private void WritePaletteEntry(int[]? palette, int index, string command)
+        {
+            if (palette == null || index < 0 || index >= palette.Length) return;
+            int packed = palette[index];
+            if (packed < 0) return;
+            WritePackedColor(command, packed);
         }
 
         /// <summary>Push handbrake settings. No-op unless detected.</summary>
@@ -839,6 +1287,7 @@ namespace MozaPlugin.Hardware
             MozaLog.Debug(
                 $"[AZOM] ApplyBaseToHardware '{profile.Name}': " +
                 $"Limit={profile.Limit} ({(profile.Limit >= 0 ? (profile.Limit * 2) + "°" : "skip")}), " +
+                $"MaxAngle={profile.MaxAngle} ({(profile.MaxAngle >= 0 ? (profile.MaxAngle * 2) + "°" : "skip")}), " +
                 $"FfbStrength={profile.FfbStrength}, Torque={profile.Torque}, Speed={profile.Speed}, " +
                 $"BaseDetected={_detectionState.BaseDetected}, " +
                 $"_data.IsBaseConnected={_data.IsBaseConnected}, baseSettingsRead={_data.BaseSettingsRead}");
@@ -854,9 +1303,16 @@ namespace MozaPlugin.Hardware
             // MozaProfile.CopyProfilePropertiesFrom and CaptureFromCurrent,
             // and the field declaration itself — no parallel seed list to
             // drift out of sync.
+            // Two independent registers: base-limit is the mechanical stop,
+            // base-max-angle the in-game full lock (gameMax <= limit).
+            // ORDER IS LOAD-BEARING: base-limit first — the base rejects a
+            // max-angle write made while a higher old limit still stands.
             Apply(() => profile.Limit,              v => profile.Limit              = v,
-                  () => _data.Limit,                v => { _data.Limit = v; _data.MaxAngle = v; },
-                  "base-limit", "base-max-angle");
+                  () => _data.Limit,                v => _data.Limit                = v,
+                  "base-limit");
+            Apply(() => profile.MaxAngle,           v => profile.MaxAngle           = v,
+                  () => _data.MaxAngle,             v => _data.MaxAngle             = v,
+                  "base-max-angle");
             Apply(() => profile.FfbStrength,        v => profile.FfbStrength        = v,
                   () => _data.FfbStrength,          v => _data.FfbStrength          = v,
                   "base-ffb-strength");
@@ -935,6 +1391,10 @@ namespace MozaPlugin.Hardware
                 Func<int> dataGet,    Action<int> dataSet,
                 params string[] commands)
             {
+                // Device-read value (valid only once the settings read sweep populated
+                // _data) — captured BEFORE the mirror below overwrites it. Primes the
+                // write cache so an unchanged profile writes nothing (write-on-diff).
+                int deviceVal = _data.BaseSettingsRead ? dataGet() : -1;
                 int val = profileGet();
                 if (val < 0)
                 {
@@ -950,8 +1410,11 @@ namespace MozaPlugin.Hardware
                 dataSet(val);
                 if (_detectionState.BaseDetected)
                     foreach (var cmd in commands)
+                    {
+                        if (deviceVal >= 0) BaseCfgPrime(cmd, deviceVal);
                         if (BaseCfgChanged(cmd, val))
                             BaseManager.WriteSetting(cmd, val);
+                    }
             }
 
             // FFB Equalizer (sentinel = -1000): mirror always, write when live.
@@ -1056,7 +1519,8 @@ namespace MozaPlugin.Hardware
             if (profile.Limit == 0 && profile.FfbStrength == 0 && profile.Torque == 0 && profile.Speed == 0)
             {
                 MozaLog.Warn("[AZOM] Profile has zeroed base settings — resetting to sentinels");
-                profile.Limit = -1; profile.FfbStrength = -1; profile.Torque = -1; profile.Speed = -1;
+                profile.Limit = -1; profile.MaxAngle = -1;
+                profile.FfbStrength = -1; profile.Torque = -1; profile.Speed = -1;
                 profile.Damper = -1; profile.Friction = -1; profile.Inertia = -1; profile.Spring = -1;
                 profile.SpeedDamping = -1; profile.SpeedDampingPoint = -1;
                 profile.NaturalInertia = -1; profile.SoftLimitStiffness = -1;
@@ -1105,7 +1569,7 @@ namespace MozaPlugin.Hardware
             foreach (var controller in registry.Devices)
             {
                 var s = _plugin.GetOrCreateMBoosterSettings(controller.Identity);
-                _plugin.ApplyMBoosterToHardware(controller, s);
+                ApplyMBoosterToHardware(controller, s);
             }
         }
 
@@ -1182,8 +1646,13 @@ namespace MozaPlugin.Hardware
         public void WriteIfWheelDetected(string command, int value)
         {
             if (value < 0) return;
-            if (_detectionState.NewWheelDetected || _detectionState.OldWheelDetected)
-                _deviceManager.WriteSetting(command, value);
+            if (!_detectionState.NewWheelDetected && !_detectionState.OldWheelDetected) return;
+            if (IsFlashBackedWheelCfg(command))
+            {
+                QueueWheelCfgWrite(command, value, () => _deviceManager.WriteSetting(command, value));
+                return;
+            }
+            _deviceManager.WriteSetting(command, value);
         }
         public void WriteIfDashDetected(string command, int value)
         {
@@ -1226,12 +1695,36 @@ namespace MozaPlugin.Hardware
         public void WriteIfPedalsDetected(string command, int value)
         {
             if (value < 0) return;
+            if (SuppressPedalsWrite(command)) return;
             if (_detectionState.PedalsDetected) PedalsManager.WriteSetting(command, value);
         }
         public void WriteFloatIfPedalsDetected(string command, int value)
         {
             if (value < 0) return;
+            if (SuppressPedalsWrite(command)) return;
             if (_detectionState.PedalsDetected) PedalsManager.WriteFloat(command, value);
+        }
+
+        // An mBooster on a base/hub pedal port answers as device 0x19 and so
+        // latches PedalsDetected, but the pedals-* command set writes the SAME
+        // group/cmd bytes as mbooster-* — every write here would land on the
+        // mBooster's own registers, and pedals-*-cal-start would run a CRP/SRP
+        // calibration sweep against a motorized pedal. Gated at the write path,
+        // not just in the UI, because the SDK/CoAP pedal resources reach these
+        // same two methods. The mBooster card owns that hardware.
+        private readonly System.Collections.Generic.HashSet<string> _pedalsWriteSuppressedLogged =
+            new System.Collections.Generic.HashSet<string>(StringComparer.Ordinal);
+
+        private bool SuppressPedalsWrite(string command)
+        {
+            if (!(_plugin?.MBoosterRegistry?.AnyRoutedPedalLane ?? false)) return false;
+            bool isNew;
+            lock (_pedalsWriteSuppressedLogged) isNew = _pedalsWriteSuppressedLogged.Add(command ?? "");
+            if (isNew)
+                MozaLog.Info(
+                    $"[AZOM] '{command}' suppressed — the pedal slot (0x19) holds an mBooster, " +
+                    "not CRP/SRP pedals; use the mBooster card");
+            return true;
         }
         public void WriteIfHgpDetected(string command, int value)
         {
@@ -1262,8 +1755,16 @@ namespace MozaPlugin.Hardware
         }
         public void WriteColorIfWheelDetected(string command, byte r, byte g, byte b)
         {
-            if (_detectionState.NewWheelDetected || _detectionState.OldWheelDetected)
-                _deviceManager.WriteColor(command, r, g, b);
+            if (!_detectionState.NewWheelDetected && !_detectionState.OldWheelDetected) return;
+            // Only the flash-backed colours (idle/sleep light) are coalesced; LED colour
+            // registers are owned by the live pipeline and must stay immediate+uncached.
+            if (IsFlashBackedWheelCfg(command))
+            {
+                QueueWheelCfgWrite(command, ((long)r << 16) | ((long)g << 8) | b,
+                    () => _deviceManager.WriteColor(command, r, g, b));
+                return;
+            }
+            _deviceManager.WriteColor(command, r, g, b);
         }
 
         /// <summary>
@@ -1340,8 +1841,12 @@ namespace MozaPlugin.Hardware
             {
                 case LedKind.Rpm:
                 {
+                    // No IsWheelLedGroupPresent check: that mask only tracks the EXTENDED
+                    // groups (2 Single / 3 Rotary / 4 Ambient) and returns false for 0/1 by
+                    // construction, which made this arm dead code. Groups 0/1 are proven
+                    // present by the model's own LED counts.
                     int count = model.RpmLedCount;
-                    if (count <= 0 || !_detectionState.IsWheelLedGroupPresent(0)) return;
+                    if (count <= 0) return;
                     var src = _data.WheelRpmColors;
                     int len = Math.Min(src.Length, count);
                     for (int i = 0; i < len; i++)
@@ -1355,7 +1860,7 @@ namespace MozaPlugin.Hardware
                 case LedKind.Button:
                 {
                     int count = model.ButtonLedCount;
-                    if (count <= 0 || !_detectionState.IsWheelLedGroupPresent(1)) return;
+                    if (count <= 0) return;   // see the group-0 note above
                     var src = _data.WheelButtonColors;
                     int len = Math.Min(src.Length, count);
                     for (int i = 0; i < len; i++)
@@ -1371,24 +1876,63 @@ namespace MozaPlugin.Hardware
                     int knobs = model.KnobCount;
                     if (knobs <= 0) return;
 
+                    // Unlike the RPM/button palettes — which DeviceProber reads back at
+                    // every detection, so _data always holds the wheel's own values —
+                    // the knob palettes are only read on Knobs-tab activation, and that
+                    // read is skipped while the group is in SimHub mode. So on the
+                    // transition INTO Static, _data can still be the all-black
+                    // InitColorArray default, and pushing it would erase the wheel's
+                    // stored palette instead of restoring the user's (bundle 0TWEX2AK:
+                    // "Static mode does not seem to work, all knobs go black").
+                    // Push only what the user actually has saved — the same overlay/
+                    // profile arrays ApplyWheelToHardware writes from — and when there
+                    // is nothing saved, read the wheel's values back to seed the UI and
+                    // write nothing.
+                    var profile = _plugin.Settings?.ProfileStore?.CurrentProfile;
+                    var ov = _plugin.GetCurrentWheelOverlay(profile);
+                    int[]? savedPrimary = EffArr(ov?.WheelKnobPrimaryColors, profile?.WheelKnobPrimaryColors);
+                    int[]? savedRing    = EffArr(ov?.WheelKnobRingColors,    profile?.WheelKnobRingColors);
+
                     // Per-knob "Active" LED color (cmd 0x27 ROLE=0).
-                    var prim = _data.WheelKnobPrimaryColors;
-                    int primLen = Math.Min(prim.Length, knobs);
-                    for (int i = 0; i < primLen; i++)
+                    if (savedPrimary != null)
                     {
-                        var rgb = prim[i];
-                        _deviceManager.WriteColor($"wheel-knob{i + 1}-active-color", rgb[0], rgb[1], rgb[2]);
+                        int primLen = Math.Min(savedPrimary.Length, knobs);
+                        for (int i = 0; i < primLen; i++)
+                        {
+                            var rgb = MozaProfile.UnpackColor(savedPrimary[i]);
+                            _deviceManager.WriteColor($"wheel-knob{i + 1}-active-color", rgb[0], rgb[1], rgb[2]);
+                        }
+                    }
+                    else
+                    {
+                        for (int i = 0; i < knobs && i < 5; i++)
+                            _deviceManager.ReadSetting($"wheel-knob{i + 1}-active-color");
                     }
 
-                    // Per-ring-LED "background" color (cmd 0x1F 0x03 0x01).
+                    // Per-ring-LED "background" color (cmd 0x1F 0x03 0x01), indexed by
+                    // RING LED 0..KnobRingLedTotal-1 — NOT by knob. The old source,
+                    // _data.WheelKnobBackgroundColors, is a 5-entry per-KNOB scratch for
+                    // "fill ring with selected", so it wrote knob-indexed colours into
+                    // ring-LED slots and Min(5, KnobRingLedTotal) capped the sweep at the
+                    // first 5 LEDs — on a KS Pro (rings 12/12/8/12/12) that repainted
+                    // part of knob 1 and left the other 51 untouched.
                     if (model.KnobRingLeds != null && _detectionState.IsWheelLedGroupPresent(3))
                     {
-                        var bg = _data.WheelKnobBackgroundColors;
-                        int bgLen = Math.Min(bg.Length, model.KnobRingLedTotal);
-                        for (int i = 0; i < bgLen; i++)
+                        if (savedRing != null)
                         {
-                            var rgb = bg[i];
-                            _deviceManager.WriteColor($"wheel-knob-bg-color{i + 1}", rgb[0], rgb[1], rgb[2]);
+                            int ringLen = Math.Min(savedRing.Length, model.KnobRingLedTotal);
+                            for (int i = 0; i < ringLen; i++)
+                            {
+                                var rgb = MozaProfile.UnpackColor(savedRing[i]);
+                                _deviceManager.WriteColor($"wheel-knob-bg-color{i + 1}", rgb[0], rgb[1], rgb[2]);
+                            }
+                        }
+                        else
+                        {
+                            var reads = new string[model.KnobRingLedTotal];
+                            for (int i = 0; i < reads.Length; i++)
+                                reads[i] = $"wheel-knob-bg-color{i + 1}";
+                            _deviceManager.ReadSettingsPaced(reads);
                         }
                     }
                     MozaLedDeviceManager.InvalidateLiveCacheAny(LedKind.Knob);
@@ -1407,8 +1951,13 @@ namespace MozaPlugin.Hardware
         }
         public void WriteArrayIfWheelDetected(string command, byte[] payload)
         {
-            if (_detectionState.NewWheelDetected || _detectionState.OldWheelDetected)
-                _deviceManager.WriteArray(command, payload);
+            if (!_detectionState.NewWheelDetected && !_detectionState.OldWheelDetected) return;
+            if (IsFlashBackedWheelCfg(command))
+            {
+                QueueWheelCfgWrite(command, HashPayload(payload), () => _deviceManager.WriteArray(command, payload));
+                return;
+            }
+            _deviceManager.WriteArray(command, payload);
         }
 
         // ===== Per-cluster sentinel-guarded helpers =====
@@ -1560,7 +2109,9 @@ namespace MozaPlugin.Hardware
         {
             var model = _plugin.WheelModelInfo;
             if (model?.KnobRingLeds == null || !_detectionState.IsWheelLedGroupPresent(3)) return;
-            if (brightness >= 0)
+            // Change-gated like every other flash-backed write — this register is EEPROM
+            // and the colour re-push above can fire for a colour-only change.
+            if (brightness >= 0 && WheelCfgChangedForApply("wheel-knob-brightness", brightness))
                 _deviceManager.WriteSetting("wheel-knob-brightness", brightness);
             if (packedColors == null) return;
             int total = Math.Min(packedColors.Length, model.KnobRingLedTotal);
@@ -1614,6 +2165,59 @@ namespace MozaPlugin.Hardware
             }
         }
 
+        /// <summary>
+        /// Push SimHub's PER-ZONE LED brightness ("Brightness limiter and balance": Telemetry
+        /// Leds / Buttons / Encoders) to each zone's own firmware register — rpm = group 0,
+        /// buttons = group 1, knob rings = group 3, cmd <c>1B [G] FF</c>. Each value already
+        /// carries the global master term (SimHub hands the driver
+        /// <c>global/100 × zone/100</c>), so the master slider still moves all three.
+        /// <c>-1</c> = the user has not moved that zone's slider; leave its register alone.
+        ///
+        /// This is what makes the per-zone sliders work for a zone the firmware renders from
+        /// its static palette (Button / Knob LED mode = Static). The live-frame RGB scaling
+        /// in <see cref="MozaLedDeviceManager"/> only reaches zones in SimHub mode, so
+        /// before this a Static zone had no reachable dimmer and its slider looked dead.
+        ///
+        /// Called from the data thread when the driver publishes a settled value, and
+        /// change-gated through the same per-wheel cfg cache as
+        /// <see cref="ApplyWheelToHardware"/> so a value already on the wheel is not
+        /// re-flashed. <see cref="MozaPlugin.WheelLedAppliedBrightnessRpm"/> and siblings
+        /// mirror what is now in each register so the driver can divide it back out of its
+        /// per-frame factor instead of dimming twice; they stay -1 for a zone this wheel has
+        /// no writable register for.
+        /// </summary>
+        public void ApplyWheelLedZoneBrightness(int rpmValue, int buttonsValue, int knobValue)
+        {
+            if (!_detectionState.NewWheelDetected) return;
+            var model = _plugin.WheelModelInfo;   // null until identity resolves
+            if (model == null) return;
+
+            SyncWheelCfgCache();
+
+            if (rpmValue >= 0 && model.RpmLedCount > 0)
+            {
+                _data.WheelRpmBrightness = rpmValue;
+                _plugin.WheelLedAppliedBrightnessRpm = rpmValue;
+                if (WheelCfgChanged("wheel-rpm-brightness", rpmValue))
+                    _deviceManager.WriteSetting("wheel-rpm-brightness", rpmValue);
+            }
+            if (buttonsValue >= 0 && model.ButtonLedCount > 0)
+            {
+                _data.WheelButtonsBrightness = buttonsValue;
+                _plugin.WheelLedAppliedBrightnessButtons = buttonsValue;
+                if (WheelCfgChanged("wheel-buttons-brightness", buttonsValue))
+                    _deviceManager.WriteSetting("wheel-buttons-brightness", buttonsValue);
+            }
+            if (knobValue >= 0 && model.KnobRingLeds != null
+                    && _detectionState.IsWheelLedGroupPresent(3))
+            {
+                _data.KnobRingBrightness = knobValue;
+                _plugin.WheelLedAppliedBrightnessKnob = knobValue;
+                if (WheelCfgChanged("wheel-knob-brightness", knobValue))
+                    _deviceManager.WriteSetting("wheel-knob-brightness", knobValue);
+            }
+        }
+
         public static void UnpackPackedColor(int packed, byte[] dst)
         {
             dst[0] = (byte)((packed >> 16) & 0xFF);
@@ -1626,8 +2230,9 @@ namespace MozaPlugin.Hardware
             byte r = (byte)((packed >> 16) & 0xFF);
             byte g = (byte)((packed >> 8) & 0xFF);
             byte b = (byte)(packed & 0xFF);
-            // Only the base-ambient startup/shutdown colours route here — target
-            // the base-owning pipe (see BaseManager).
+            // Only base-ambient colours route here (startup/shutdown plus the
+            // per-LED idle/sleep palettes) — target the base-owning pipe (see
+            // BaseManager).
             BaseManager.WriteColor(command, r, g, b);
         }
 

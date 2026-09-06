@@ -4,6 +4,7 @@ using System.Threading;
 using MozaPlugin.Telemetry.Dashboard;
 using MozaPlugin.Telemetry.Era;
 using MozaPlugin.Telemetry.TestMode;
+using MozaPlugin.Telemetry;
 
 namespace MozaPlugin.Telemetry.Frames
 {
@@ -29,7 +30,7 @@ namespace MozaPlugin.Telemetry.Frames
         private int _tierDefBlindSentRounds;
         private int _tierDefBlindLastTickCount;
         private static int TierDefBlindMaxRounds
-            => global::MozaPlugin.Protocol.RetryBackoff.TierDefBlindMs.Length;
+            => global::MozaPlugin.Telemetry.RetryBackoff.TierDefBlindMs.Length;
 
         // Tier-def binding completeness (last emission). Channels whose URL
         // isn't in the wheel's catalog get chIndex=0 → wheel can't bind them.
@@ -78,6 +79,29 @@ namespace MozaPlugin.Telemetry.Frames
             _lastTierDefUnboundCount = -1;
             _lastTierDefTotalCount = -1;
             _lastSubscriptionDiag = null;
+        }
+
+        /// <summary>Drop the previous tier-def emission's chunks from the
+        /// retransmit queue. A new flagBase supersedes them, so replaying them
+        /// would push a stale generation at the wheel. Scoped to exactly those
+        /// chunks — <see cref="_tierDefBlindFrames"/> is an exact record of the
+        /// tier-def chunks the retransmitter holds, since both are populated
+        /// only under BlindRetransmitTierDef. Everything else queued (FF init
+        /// handshake, property pushes, value frames) is current-generation on a
+        /// seq counter that is NOT reset here, so it stays ackable and keeps its
+        /// retx cover.</summary>
+        public void DropTrackedTierDefChunks()
+        {
+            var frames = _tierDefBlindFrames;
+            _tierDefBlindFrames = null;
+            _tierDefBlindSentRounds = 0;
+            _tierDefBlindLastTickCount = 0;
+            if (frames == null) return;
+            foreach (var frame in frames)
+            {
+                if (frame == null || frame.Length < 10) continue;
+                _sender.Retransmitter.Drop(frame[6], frame[8] | (frame[9] << 8));
+            }
         }
 
         /// <summary>
@@ -315,7 +339,21 @@ namespace MozaPlugin.Telemetry.Frames
 
             // V0: synthesize from catalog. V2/Type02: send all channels. V2 legacy: filter to catalog.
             // NEVER assign Profile property here — its setter re-expands tiers exponentially.
-            var catalog = _sender.CatalogParser.Catalog;
+            //
+            // LiveCatalog, not Catalog: Catalog is the never-pruned merge of every
+            // dashboard the wheel has loaded this connection (stale idxs are kept
+            // deliberately so back-ref resolution keeps working). Filtering the
+            // tier-def against it declares channels the CURRENT dashboard has no
+            // slot for — bundle 5XR0GQDB emitted idx 19/20 (TyreWearRearLeft,
+            // TyrePressureRearRight, left over from a prior "Nebula" dash) into the
+            // pkg-2000 tier, and the wheel logged
+            // "TelemetryBitPackageError:type size not match" and never rendered that
+            // tier, killing BestLapTime while the pkg-30 tier kept working.
+            // LiveCatalog is Catalog masked to the current END-marker generation —
+            // same positional idxs, stale slots blanked — so this only ever narrows
+            // what we declare. Falls back to Catalog before the first live commit
+            // (cold start), preserving the old behaviour there.
+            var catalog = _sender.CatalogParser.LiveCatalog ?? _sender.CatalogParser.Catalog;
             var policy = _sender.Policy;
             if (catalog != null && catalog.Count > 0)
             {
@@ -416,7 +454,7 @@ namespace MozaPlugin.Telemetry.Frames
                     // Type02 indexes channels by wheel-catalog position. Without
                     // a catalog, fall through to alphabetic indices.
                     bool cspIdx = policy.Encoding == TierDefEncoding.V2Type02;
-                    if (cspIdx && (_sender.CatalogParser.Catalog == null || _sender.CatalogParser.Catalog.Count == 0))
+                    if (cspIdx && (catalog == null || catalog.Count == 0))
                     {
                         MozaLog.Debug(
                             "[AZOM] No wheel catalog — using alphabetic indices for initial tier-def. " +
@@ -451,11 +489,10 @@ namespace MozaPlugin.Telemetry.Frames
                         }
                     }
 
-                    // Now re-filter+re-sort against current catalog.
-                    if (_sender.CatalogParser.Catalog != null
-                        && _sender.CatalogParser.Catalog.Count > 0)
+                    // Now re-filter+re-sort against the current generation's catalog.
+                    if (catalog != null && catalog.Count > 0)
                     {
-                        SortTierChannelsByCatalogIdx(profile, _sender.CatalogParser.Catalog);
+                        SortTierChannelsByCatalogIdx(profile, catalog);
                         RebuildFrameBuildersFromProfile();
                     }
 
@@ -490,7 +527,7 @@ namespace MozaPlugin.Telemetry.Frames
                         profile, flagBase,
                         includeEnableEntries: true,
                         useWheelCatalogIndices: cspIdx,
-                        wheelCatalog: _sender.CatalogParser.Catalog,
+                        wheelCatalog: catalog,
                         endMarkerCounter: endForThisEmission,
                         prevFlagBase: doReuse ? (byte?)null : prevSub?.FlagBase,
                         prevTierCount: doReuse ? 0 : (prevSub?.TierCount ?? 0),
@@ -545,7 +582,7 @@ namespace MozaPlugin.Telemetry.Frames
                     // fire the kind=4 probe — VGS response to kind=4 is unverified,
                     // and an over-eager probe causes sess=0x09 state-push storms
                     // that overwhelm the serial reassembler.
-                    var catalogSnapshot = _sender.CatalogParser.Catalog;
+                    var catalogSnapshot = catalog;
                     if (catalogSnapshot != null && catalogSnapshot.Count > 0)
                     {
                         var have = new HashSet<string>(
@@ -660,7 +697,7 @@ namespace MozaPlugin.Telemetry.Frames
                 _tierDefBlindFrames = null;
                 return;
             }
-            var schedule = global::MozaPlugin.Protocol.RetryBackoff.TierDefBlindMs;
+            var schedule = global::MozaPlugin.Telemetry.RetryBackoff.TierDefBlindMs;
             int gateMs = schedule[Math.Min(_tierDefBlindSentRounds, schedule.Length - 1)];
             if (Environment.TickCount - _tierDefBlindLastTickCount < gateMs) return;
 
